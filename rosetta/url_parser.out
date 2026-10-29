@@ -1,0 +1,142 @@
+foo://example.com:8042/over/there?name=ferret#nose
+    scheme   = foo
+    domain   = example.com
+    port     = 8042
+    path     = /over/there
+    query    = name=ferret
+    fragment = nose
+
+urn:example:animal:ferret:nose
+    scheme   = urn
+    path     = example:animal:ferret:nose
+
+jdbc:mysql://test_user:ouupppssss@localhost:3306/sakila?profileSQL=true
+    scheme   = jdbc
+    path     = mysql://test_user:ouupppssss@localhost:3306/sakila
+    query    = profileSQL=true
+    the path is itself a URL:
+        scheme   = mysql
+        username = test_user
+        password = ouupppssss
+        domain   = localhost
+        port     = 3306
+        path     = /sakila
+
+ftp://ftp.is.co.za/rfc/rfc1808.txt
+    scheme   = ftp
+    domain   = ftp.is.co.za
+    path     = /rfc/rfc1808.txt
+
+http://www.ietf.org/rfc/rfc2396.txt#header1
+    scheme   = http
+    domain   = www.ietf.org
+    path     = /rfc/rfc2396.txt
+    fragment = header1
+
+ldap://[2001:db8::7]/c=GB?objectClass=one&objectClass=two
+    scheme   = ldap
+    domain   = [2001:db8::7]
+    path     = /c=GB
+    query    = objectClass=one&objectClass=two
+
+mailto:John.Doe@example.com
+    scheme   = mailto
+    path     = John.Doe@example.com
+
+news:comp.infosystems.www.servers.unix
+    scheme   = news
+    path     = comp.infosystems.www.servers.unix
+
+tel:+1-816-555-1212
+    scheme   = tel
+    path     = +1-816-555-1212
+
+telnet://192.0.2.16:80/
+    scheme   = telnet
+    domain   = 192.0.2.16
+    port     = 80
+    path     = /
+
+urn:oasis:names:specification:docbook:dtd:xml:4.1.2
+    scheme   = urn
+    path     = oasis:names:specification:docbook:dtd:xml:4.1.2
+
+ssh://alice@example.com
+    scheme   = ssh
+    username = alice
+    domain   = example.com
+
+https://bob:pass@example.com/place
+    scheme   = https
+    username = bob
+    password = pass
+    domain   = example.com
+    path     = /place
+
+http://example.com/?a=1&b=2+2&c=3&c=4&d=%65%6e%63%6F%64%65%64
+    scheme   = http
+    domain   = example.com
+    path     = /
+    query    = a=1&b=2+2&c=3&c=4&d=%65%6e%63%6F%64%65%64
+
+HTTP://Example.COM:8080/Over/There?Name=Ferret#Nose
+    scheme   = http
+    domain   = example.com
+    port     = 8080
+    path     = /Over/There
+    query    = Name=Ferret
+    fragment = Nose
+
+Texts that are not URLs, and why:
+
+(an empty text)
+    not a URL: an empty text is no URL
+
+example.com/over/there
+    not a URL: no scheme: a URL begins with its scheme and a colon, as http: does
+
+http://exa[mple.com/
+    not a URL: '[' and ']' stand only around an IP address in the domain (character 11)
+
+://example.com
+    not a URL: the scheme before the ':' is empty (character 1)
+
+8ball://example.com
+    not a URL: the scheme begins with a letter, not '8' (character 1)
+
+my_scheme://example.com
+    not a URL: the scheme holds letters, digits, '+', '-' and '.', not '_' (character 3)
+
+http://exa mple.com/
+    not a URL: ' ' may not stand in a URL: write it %20 (character 11)
+
+http://example.com/café
+    not a URL: 'é' may not stand in a URL: write it %C3%A9 (character 23)
+
+http://example.com/100%
+    not a URL: '%' begins an escape, and the URL ends before two hex digits follow it (character 23)
+
+http://example.com/%zz
+    not a URL: '%' begins an escape, and two hex digits follow it, not 'zz' (character 20)
+
+http://example.com:80a/
+    not a URL: the port is digits, not '80a' (character 22)
+
+http://[2001:db8::7/c=GB
+    not a URL: the '[' that opens an IP address is never closed (character 8)
+
+http://[2001:db8::g]/
+    not a URL: an IP address in brackets holds hex digits, ':' and '.', not 'g' (character 19)
+
+http://[::1]x/
+    not a URL: only a ':' and the port may follow an IP address, not 'x' (character 13)
+
+http://bob@alice@example.com/
+    not a URL: a second '@': the first ends the username and password, so a '@' in them is written %40 (character 17)
+
+http://example.com/a#b#c
+    not a URL: a second '#': a fragment holds none, so it is written %23 (character 23)
+
+http://example.com/a[1]
+    not a URL: '[' and ']' stand only around an IP address in the domain (character 21)
+

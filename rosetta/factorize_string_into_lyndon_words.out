@@ -1,0 +1,38 @@
+The word to be factorized:
+01101001100101101001011001101001100101100110100101101001100101101001011001101001011010011001011001101001100101101001011001101001
+Its 9 Lyndon factors:
+    011
+    01
+    0011
+    00101101
+    0010110011010011
+    00101100110100101101001100101101
+    001011001101001011010011001011001101001100101101
+    001011001101
+    001
+Checked: true
+
+The word to be factorized:
+banana
+Its 4 Lyndon factors:
+    b
+    an
+    an
+    a
+Checked: true
+
+The word to be factorized:
+abracadabra
+Its 3 Lyndon factors:
+    abracad
+    abr
+    a
+Checked: true
+
+The word to be factorized:
+0101
+Its 2 Lyndon factors:
+    01
+    01
+Checked: true
+

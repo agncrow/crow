@@ -1,0 +1,114 @@
+--- Rosetta Code: Wasteful, equidigital and frugal numbers
+--- https://rosettacode.org/wiki/Wasteful,_equidigital_and_frugal_numbers
+--- A sieve finds every number's smallest prime factor p. Then D(n), the digits of n's
+--- factorisation, follows from a smaller number's: n = p * q, and when p divides q
+--- too, n's power of p is one more than q's and the rest of its factorisation is q's
+--- rest; otherwise n is q with one more prime. So each number costs a few steps, in
+--- order, as far as the 10,000th frugal number (1,953,125 in base 10 and 2,659,171 in
+--- base 11, the bonus, whose results are shown in base 10 too).
+
+--- the smallest prime factor of every number below limit, 0 for a prime
+fn smallest_factors[limit]
+    spf = for i in range[limit]
+        0
+    i = 2
+    while i * i lt limit
+        if spf[i] eq 0
+            j = i * i
+            while j lt limit
+                if spf[j] eq 0
+                    spf[j] = i
+                j = j + i
+        i = i + 1
+    return spf
+
+fn digits[n, base]
+    count = 1
+    while n gte base
+        n = n / base
+        count = count + 1
+    return count
+
+fn show_list[numbers]
+    k = 0
+    while k lt len[numbers]
+        row = for n in slice[numbers, k, k + 10]
+            fmt[n, width = 5]
+        log[join[row, '']]
+        k = k + 10
+
+fn classify[spf, base, limit]
+    cost = for i in range[limit]
+        0
+    rest = for i in range[limit]
+        0
+    power = for i in range[limit]
+        0
+    names = ['Wasteful', 'Equidigital', 'Frugal']
+    wasteful = []
+    equal = []
+    frugal = []
+    counts = [0, 0, 0]
+    below = [0, 0, 0]
+    nth = [0, 0, 0]
+    length = 1
+    next = base
+    n = 1
+    while n lt limit and nth[2] eq 0
+        if n eq next
+            length = length + 1
+            next = next * base
+        kind = 1
+        if n gt 1
+            p = spf[n]
+            if p eq 0
+                p = n
+            q = n / p
+            if q % p eq 0
+                power[n] = power[q] + 1
+                rest[n] = rest[q]
+            else
+                power[n] = 1
+                rest[n] = cost[q]
+            c = rest[n] + digits[p, base]
+            if power[n] gt 1
+                c = c + digits[power[n], base]
+            cost[n] = c
+            if length lt c
+                kind = 0
+            else if length gt c
+                kind = 2
+        counts[kind] = counts[kind] + 1
+        if n lt 1000000
+            below[kind] = below[kind] + 1
+        if counts[kind] eq 10000
+            nth[kind] = n
+        if counts[kind] lte 50
+            if kind eq 0
+                wasteful = push[wasteful, n]
+            else if kind eq 1
+                equal = push[equal, n]
+            else
+                frugal = push[frugal, n]
+        n = n + 1
+    log['In base `base`:']
+    log['']
+    log['The first 50 wasteful numbers:']
+    show_list[wasteful]
+    log['The first 50 equidigital numbers:']
+    show_list[equal]
+    log['The first 50 frugal numbers:']
+    show_list[frugal]
+    log['']
+    for k in range[3]
+        log['The 10,000th `lower[names[k]]` number: `fmt[nth[k], commas = true]`']
+    log['']
+    log['Below 1,000,000:']
+    for k in range[3]
+        log['  `fmt[names[k], width = 12]` `fmt[below[k], width = 7, commas = true]`']
+    log['']
+
+limit = 2700000
+spf = smallest_factors[limit]
+classify[spf, 10, limit]
+classify[spf, 11, limit]

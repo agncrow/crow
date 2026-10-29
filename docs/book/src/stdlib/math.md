@@ -42,7 +42,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 | `asin[t]` | Element-wise arcsine | [Math: tensors](../by-example/math.md) |
 | `acos[t]` | Element-wise arccosine | [Math: tensors](../by-example/math.md) |
 | `atan[t]` | Element-wise arctangent | [Math: tensors](../by-example/math.md) |
-| `atan2[y, x]` | Element-wise two-argument arctangent | [Math: tensors](../by-example/math.md) |
+| `atan2[y, x]` | Two-argument arctangent: of two numbers a number, of tensors element by element | [Math: tensors](../by-example/math.md) |
 | `sinh[t]` | Element-wise hyperbolic sine | [Math: tensors](../by-example/math.md) |
 | `cosh[t]` | Element-wise hyperbolic cosine | [Math: tensors](../by-example/math.md) |
 | `tanh[t]` | Element-wise hyperbolic tangent | [Math: tensors](../by-example/math.md) |

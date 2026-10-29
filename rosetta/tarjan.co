@@ -1,0 +1,93 @@
+--- Rosetta Code: Tarjan
+--- https://rosettacode.org/wiki/Tarjan
+--- Tarjan's strongly connected components: a depth-first search numbers each node
+--- as it is reached and keeps the lowest number it can reach back to among the nodes
+--- still on the stack; a node whose lowest number is its own is the root of a
+--- component, which is every node above it on the stack. The search's state is a
+--- record the recursive step takes and hands back. Components come out in reverse
+--- topological order, each listed root first, in the order its nodes were reached.
+
+struct Search [index, low, on_stack, stack, count, components]
+
+fn strongconnect[graph, v, s]
+    root = len[s.stack]
+    s.index[v] = s.count
+    s.low[v] = s.count
+    s.count = s.count + 1
+    s.stack = push[s.stack, v]
+    s.on_stack[v] = true
+    for w in graph[v]
+        if s.index[w] lt 0
+            s = strongconnect[graph, w, s]
+            s.low[v] = min[s.low[v], s.low[w]]
+        else if s.on_stack[w]
+            s.low[v] = min[s.low[v], s.index[w]]
+    if s.low[v] eq s.index[v]
+        component = slice[s.stack, root, len[s.stack]]
+        s.stack = slice[s.stack, 0, root]
+        for w in component
+            s.on_stack[w] = false
+        s.components = push[s.components, component]
+    return s
+
+--- the strongly connected components of a graph given as each node's successors
+fn tarjan[graph]
+    unseen = for v in graph
+        -1
+    off = for v in graph
+        false
+    s = Search[unseen, unseen, off, [], 0, []]
+    for v in range[len[graph]]
+        if s.index[v] lt 0
+            s = strongconnect[graph, v, s]
+    return s.components
+
+--- where x first is in xs
+fn position[xs, x]
+    i = 0
+    while xs[i] ne x
+        i = i + 1
+    return i
+
+--- the nodes the edges name, in the order they first appear
+fn nodes_of[edges]
+    names = []
+    for e in edges
+        for name in e
+            if name not in names
+                names = push[names, name]
+    return names
+
+--- each node's successors, by the nodes' places in names
+fn successors[edges, names]
+    graph = for name in names
+        targets = for e in edges
+            if e[0] eq name
+                position[names, e[1]]
+        targets
+    return graph
+
+fn shown[component, names]
+    parts = for v in component
+        names[v]
+    text = join[parts, ' ']
+    return '[`text`]'
+
+--- edges written 'a>b c>d …': each a pair of names
+fn edges_of[text]
+    pairs = for e in split[text, ' ']
+        split[e, '>']
+    return pairs
+
+fn report[title, written]
+    edges = edges_of[written]
+    names = nodes_of[edges]
+    log[title]
+    for component in tarjan[successors[edges, names]]
+        log['  `shown[component, names]`']
+
+report['The eight-node graph of the zkl and Go entries:', '0>1 1>2 2>0 3>1 3>2 3>4 4>5 4>3 5>2 5>6 6>5 7>4 7>7 7>6']
+log['']
+report['The first graph of the Python entry:', '1>2 3>1 3>6 6>7 7>6 2>3 4>2 4>3 4>5 5>6 5>4 8>5 8>7 8>6']
+log['']
+report['The second, its nodes named:', 'A>B B>C C>A A>Other']

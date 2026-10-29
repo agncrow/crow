@@ -1,0 +1,79 @@
+--- Rosetta Code: Continued fraction/Arithmetic/Construct from rational number
+--- https://rosettacode.org/wiki/Continued_fraction/Arithmetic/Construct_from_rational_number
+--- Crow has no generators, so the lazy r2cf is a value: what is left of N1/N2. Each
+--- call of next_term answers one term and what is left after it, so a caller takes the
+--- terms one at a time, as many as it wants. The integer part is Crow's division of
+--- ints, which cuts toward zero, the remainder keeping N1's sign, so -151/77 is
+--- [-1; -1, -24, -1, -2] (floor division, Python's divmod, gives [-2; 25, 1, 2]).
+
+--- what is left of the continued fraction of n1/n2
+struct Rest [n1, n2]
+
+--- one term, and what is left after it
+struct Step [term, rest]
+
+fn r2cf[n1, n2]
+    return Rest[n1, n2]
+
+fn exhausted[r]
+    return r.n2 eq 0
+
+fn next_term[r]
+    return Step[r.n1 / r.n2, Rest[r.n2, r.n1 % r.n2]]
+
+--- terms written as [a0; a1, a2, ...]
+fn written[terms]
+    first = terms[0]
+    if len[terms] eq 1
+        return '[`first`]'
+    rest = join[slice[terms, 1, len[terms]], ', ']
+    return '[`first`; `rest`]'
+
+--- the continued fraction of n1/n2, its terms taken one at a time
+fn expansion[n1, n2]
+    r = r2cf[n1, n2]
+    terms = []
+    while not exhausted[r]
+        s = next_term[r]
+        terms = push[terms, s.term]
+        r = s.rest
+    return written[terms]
+
+--- the first terms of the continued fraction of the square root of n (no square),
+--- exactly, by the recurrence of its periodic expansion
+fn root_expansion[n, count]
+    a0 = floor[sqrt[float[n]]]
+    m = 0
+    d = 1
+    a = a0
+    terms = [a0]
+    while len[terms] lt count
+        m = d * a - m
+        d = (n - m * m) / d
+        a = (a0 + m) / d
+        terms = push[terms, a]
+    return '`slice[written[terms], 0, -1]`, ...]'
+
+fn report[label, terms, width]
+    shown = fmt[label, width = width, align = 'right']
+    log['`shown` = `terms`']
+
+fn report_fraction[n1, n2, width]
+    report['`n1`/`n2`', expansion[n1, n2], width]
+
+for pair in [[1, 2], [3, 1], [23, 8], [13, 11], [22, 7], [-151, 77]]
+    report_fraction[pair[0], pair[1], 7]
+log['']
+log['Approaching the square root of 2:']
+scale = 10000
+for n1 in [14142, 141421, 1414214, 14142136]
+    report_fraction[n1, scale, 17]
+    scale = scale * 10
+report['sqrt 2', root_expansion[2, 20], 17]
+log['']
+log['Approaching 22/7, a rational number:']
+scale = 10
+for n1 in [31, 314, 3142, 31428, 314285, 3142857, 31428571, 314285714]
+    report_fraction[n1, scale, 19]
+    scale = scale * 10
+report_fraction[22, 7, 19]

@@ -1,0 +1,107 @@
+--- Rosetta Code: Execute Brain****
+--- https://rosettacode.org/wiki/Execute_Brain****
+--- RCBF in Crow: the program's eight command characters are kept (anything else
+--- is a comment), each bracket's partner is found once with a stack, and the
+--- tape is a list of 8-bit cells that grows to the right as the pointer moves.
+--- Input comes from a text handed to run; at its end `,` stores 0. The output is
+--- gathered and shown line by line.
+use bits
+
+fn commands[source]
+    kept = for c in split[source, '']
+        if c in '<>+-.,[]'
+            c
+    return kept
+
+fn partners[prog]
+    --- for each bracket the position of its partner, -1 for every other command
+    partner = for c in prog
+        -1
+    open = []
+    i = 0
+    while i lt len[prog]
+        if prog[i] eq '['
+            open = push[open, i]
+        else if prog[i] eq ']'
+            if len[open] eq 0
+                halt['unmatched ] at command `i`']
+            j = open[-1]
+            open = pop[open]
+            partner[i] = j
+            partner[j] = i
+        i = i + 1
+    if len[open] gt 0
+        halt['unmatched [ at command `open[-1]`']
+    return partner
+
+fn run[source, feed]
+    --- the program's output, as text
+    prog = commands[source]
+    partner = partners[prog]
+    given = split[feed, '']
+    tape = [0]
+    ptr = 0
+    pc = 0
+    taken = 0
+    out = []
+    while pc lt len[prog]
+        op = prog[pc]
+        if op eq '>'
+            ptr = ptr + 1
+            if ptr eq len[tape]
+                tape = push[tape, 0]
+        else if op eq '<'
+            if ptr eq 0
+                halt['the pointer moved left of the first cell, at command `pc`']
+            ptr = ptr - 1
+        else if op eq '+'
+            tape[ptr] = (tape[ptr] + 1) % 256
+        else if op eq '-'
+            tape[ptr] = (tape[ptr] + 255) % 256
+        else if op eq '.'
+            out = push[out, char[tape[ptr]]]
+        else if op eq ','
+            if taken lt len[given]
+                tape[ptr] = code[given[taken]] % 256
+                taken = taken + 1
+            else
+                tape[ptr] = 0
+        else if op eq '[' and tape[ptr] eq 0
+            pc = partner[pc]
+        else if op eq ']' and tape[ptr] ne 0
+            pc = partner[pc]
+        pc = pc + 1
+    return join[out, '']
+
+fn show[title, source, feed]
+    log['`title`:']
+    lines = split[run[source, feed], '\n']
+    if len[lines] gt 1 and lines[-1] eq ''
+        lines = pop[lines]
+    for line in lines
+        log['    `line`']
+
+hello = '++++++++++[>+++++++>++++++++++>+++>+<<<<-]>++.>+.+++++++..+++.>++.<<+++++++++++++++.>.+++.------.--------.>+.>.'
+show['Hello World (the RCBF sample)', hello, '']
+
+--- a program written with comments, as Brain**** source often is: every character but the eight commands is skipped
+alphabet = 'cell 1 is eight eights and one (an A) ++++++++[>++++++++<-]>+ cell 2 counts 26 >++++++++++++++++++++++++++ print and step [<.+>-] then a newline ++++++++++.'
+show['The alphabet', alphabet, '']
+
+--- reads its input to the end, then prints it backwards
+backwards = '>,[>,]<[.<]'
+show['Its input reversed', backwards, 'Brain**** in Crow']
+
+--- the cells are 8 bits: 0 - 1 is 255, less 19 * 10 is 65, an A; plus 16 * 16 is 65 again
+wrapping = '->++++++++++[<------------------->-]<.>++++++++++++++++[<++++++++++++++++>-]<.'
+show['Wrapping cells', wrapping, '']
+
+--- Daniel B Cristofani's squares from 0 to 10000, one a line, shown here in rows
+squares = '++++[>+++++<-]>[<+++++>-]+<+[>[>+>+<<-]++>>[<<+>>-]>>>[-]++>[-]+>>>+[[-]++++++>>>]<<<[[<++++++++<++>>-]+<.<[>----<-]<]<<[>>>>>[>>>[-]+++++++++<[>-<-]+++++++++>[-[<->-]+[<<<]]<[>+<-]>]<<-]<<-]'
+numbers = split[trim[run[squares, '']], '\n']
+log['The squares from 0 to 10000 (`len[numbers]` lines):']
+row = 0
+while row * 15 lt len[numbers]
+    line = join[slice[numbers, row * 15, row * 15 + 15], ' ']
+    log['    `line`']
+    row = row + 1

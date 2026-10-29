@@ -1,0 +1,20 @@
+--- a function's body may end on `halt[…]`: the program does not go on
+--- past it, so no answer is owed there — it had been refused as a body
+--- that could end without its answer, and written with a `return` after
+--- the halt it never reaches (Rosetta Code, Sequence: smallest number
+--- greater than previous term with exactly n divisors)
+
+fn pick[xs]
+    for x in xs
+        if x gt 2
+            return x
+    halt['none above 2']
+
+fn named[n]
+    if n eq 1
+        return 'one'
+    halt['no name for `n`']
+
+log[pick[[1, 5]]]
+log[named[1]]
+log[pick[[1, 2]]]

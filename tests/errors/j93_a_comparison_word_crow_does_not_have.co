@@ -1,0 +1,8 @@
+--- a word left on a condition's line — `if k ge 0`, where Crow's word is
+--- `gte` — is named for what it is: it had been told the block has no body
+fn f[k]
+    if k ge 0
+        return 1
+    return 0
+
+log[f[2]]

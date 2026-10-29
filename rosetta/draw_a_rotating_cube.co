@@ -1,0 +1,177 @@
+--- Rosetta Code: Draw a rotating cube
+--- https://rosettacode.org/wiki/Draw_a_rotating_cube
+--- A wire-frame cube drawn in characters, stood on a corner: its main diagonal,
+--- from corner (-1, -1, -1) to corner (1, 1, 1), is turned to point straight up,
+--- and the cube turns about it. An edge a face toward the viewer borders is drawn
+--- with - | / \ by its slope, a hidden edge with dots, a corner as o. The cube
+--- looks as it started after a third of a turn, so the frames printed here are
+--- six, 20 degrees apart, side by side. Run with the argument `live` and it turns
+--- twice round in the terminal instead, each frame drawn over the last by ANSI codes.
+
+use math
+use bits
+
+struct Point [x, y, z]
+
+--- -1 or 1: the side of the cube a corner lies on, along the axis of bit b
+fn side[corner, b]
+    if bitand[corner, b] eq 0
+        return -1.0
+    return 1.0
+
+--- corner i of the cube: its bits 4, 2 and 1 give the signs of x, y and z
+fn corner_at[i]
+    return Point[side[i, 4], side[i, 2], side[i, 1]]
+
+--- the outward normal of the face across the axis of bit b, on the side of a corner
+fn face_normal[corner, b]
+    s = side[corner, b]
+    if b eq 4
+        return Point[s, 0.0, 0.0]
+    if b eq 2
+        return Point[0.0, s, 0.0]
+    return Point[0.0, 0.0, s]
+
+--- a point of the cube as the viewer sees it, turned by theta about the diagonal:
+--- x to the right, y up the diagonal, z toward the viewer
+fn turned[v, theta]
+    x = (v.x - v.y) / sqrt[2.0]
+    y = (v.x + v.y + v.z) / sqrt[3.0]
+    z = (2.0 * v.z - v.x - v.y) / sqrt[6.0]
+    return Point[x * cos[theta] + z * sin[theta], y, z * cos[theta] - x * sin[theta]]
+
+--- the twelve edges: the pairs of corners that differ along one axis
+fn edges[]
+    pairs = []
+    for i in range[8]
+        for j in range[i + 1, 8]
+            if bitcount[bitxor[i, j]] eq 1
+                pairs = push[pairs, [i, j]]
+    return pairs
+
+--- whether a face of corner i, other than the one across the axis of bit `but`,
+--- faces the viewer: an edge shows when either face it borders does (`but` the
+--- axis it runs along), and a corner when any of its three faces does (`but` 0)
+fn shows[i, but, theta]
+    seen = false
+    for b in [4, 2, 1]
+        if b ne but and turned[face_normal[i, b], theta].z gt 0.0
+            seen = true
+    return seen
+
+--- the character for a stroke that moves dc columns and dr rows
+fn stroke[dc, dr]
+    if abs[dr] lt 0.3 * abs[dc]
+        return '-'
+    if abs[dc] lt 0.3 * abs[dr]
+        return '|'
+    if dc * dr lt 0.0
+        return '/'
+    return '\\'
+
+--- a frame of the drawing: a grid of cells, `cols` wide
+struct Frame [cols, rows, scale, cells]
+
+fn blank[cols, rows, scale]
+    cells = for i in range[cols * rows]
+        ' '
+    return Frame[cols, rows, scale, cells]
+
+--- where a point lies on the grid, as a column and a row: a character is about
+--- twice as tall as it is wide, so x is stretched by two
+fn column_of[f, p]
+    return (f.cols - 1) / 2.0 + 2.0 * f.scale * p.x
+
+fn row_of[f, p]
+    return (f.rows - 1) / 2.0 - f.scale * p.y
+
+fn line[f, a, b, mark]
+    c1 = column_of[f, a]
+    r1 = row_of[f, a]
+    dc = column_of[f, b] - c1
+    dr = row_of[f, b] - r1
+    steps = max[ceil[abs[dc]], ceil[abs[dr]]]
+    cells = f.cells
+    for k in range[steps + 1]
+        c = round[c1 + dc * k / steps]
+        r = round[r1 + dr * k / steps]
+        cells[r * f.cols + c] = mark
+    f.cells = cells
+    return f
+
+fn draw[f, theta]
+    points = for i in range[8]
+        turned[corner_at[i], theta]
+    --- the hidden edges first, so that the edges in front are drawn over them
+    for pair in edges[]
+        if not shows[pair[0], bitxor[pair[0], pair[1]], theta]
+            f = line[f, points[pair[0]], points[pair[1]], '.']
+    for pair in edges[]
+        if shows[pair[0], bitxor[pair[0], pair[1]], theta]
+            a = points[pair[0]]
+            b = points[pair[1]]
+            mark = stroke[column_of[f, b] - column_of[f, a], row_of[f, b] - row_of[f, a]]
+            f = line[f, a, b, mark]
+    cells = f.cells
+    for i in range[8]
+        if shows[i, 0, theta]
+            p = points[i]
+            cells[round[row_of[f, p]] * f.cols + round[column_of[f, p]]] = 'o'
+    f.cells = cells
+    return f
+
+fn lines_of[f]
+    lines = for r in range[f.rows]
+        join[slice[f.cells, r * f.cols, (r + 1) * f.cols], '']
+    return lines
+
+--- the frame at a turn of `degrees`, as lines of text
+fn picture[degrees, scale]
+    rows = 2 * ceil[sqrt[3.0] * scale] + 1
+    cols = 2 * ceil[2.0 * sqrt[8.0 / 3.0] * scale] + 1
+    return lines_of[draw[blank[cols, rows, scale], degrees * pi / 180.0]]
+
+--- frames side by side, under a caption each
+fn strip[frames, captions, gap]
+    width = len[frames[0][0]]
+    heads = for c in captions
+        fmt[c, width = width + gap]
+    out = [trim_end[join[heads, '']]]
+    for r in range[len[frames[0]]]
+        parts = for f in frames
+            fmt[f[r], width = width + gap]
+        out = push[out, trim_end[join[parts, '']]]
+    return out
+
+--- text without the blanks at its end
+fn trim_end[s]
+    cs = split[s, '']
+    last = len[cs] - 1
+    while last gte 0 and cs[last] eq ' '
+        last = last - 1
+    return join[slice[cs, 0, last + 1], '']
+
+fn live[scale]
+    esc = char[27]
+    log['`esc`[2J']
+    for k in range[720]
+        lines = picture[k * 1.0, scale]
+        text = join[lines, '\n']
+        log['`esc`[H`text`']
+        sleep[30]
+
+scale = 5.0
+if 'live' in args[]
+    live[scale]
+else
+    for row in range[3]
+        frames = []
+        captions = []
+        for k in range[2]
+            degrees = (2 * row + k) * 20
+            frames = push[frames, picture[degrees * 1.0, scale]]
+            captions = push[captions, '`degrees` degrees:']
+        if row gt 0
+            log['']
+        for l in strip[frames, captions, 6]
+            log[l]

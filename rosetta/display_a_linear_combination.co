@@ -1,0 +1,45 @@
+--- Rosetta Code: Display a linear combination
+--- https://rosettacode.org/wiki/Display_a_linear_combination
+--- Each nonzero scalar becomes a term, its size before e(i) unless the size is 1; its sign
+--- is the operator joining it to the terms before it (a minus before the first term).
+
+fn term[size, i]
+    if size eq 1
+        return 'e(`i`)'
+    return '`size`*e(`i`)'
+
+fn joined[text, scalar, i]
+    t = term[abs[scalar], i]
+    if text eq ''
+        if scalar lt 0
+            return '-`t`'
+        return t
+    if scalar lt 0
+        return '`text` - `t`'
+    return '`text` + `t`'
+
+fn linear_combination[scalars]
+    text = ''
+    for i in range[len[scalars]]
+        if scalars[i] ne 0
+            text = joined[text, scalars[i], i + 1]
+    if text eq ''
+        return '0'
+    return text
+
+--- the task's lists are of different lengths: a list of them is built with push
+cases = []
+cases = push[cases, [1, 2, 3]]
+cases = push[cases, [0, 1, 2, 3]]
+cases = push[cases, [1, 0, 3, 4]]
+cases = push[cases, [1, 2, 0]]
+cases = push[cases, [0, 0, 0]]
+cases = push[cases, [0]]
+cases = push[cases, [1, 1, 1]]
+cases = push[cases, [-1, -1, -1]]
+cases = push[cases, [-1, -2, 0, -3]]
+cases = push[cases, [-1]]
+for i in range[len[cases]]
+    number = fmt['`i + 1`)', width = 4, align = 'right']
+    scalars = fmt[str[cases[i]], width = 16]
+    log['`number` `scalars` ->  `linear_combination[cases[i]]`']

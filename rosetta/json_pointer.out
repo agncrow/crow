@@ -1,0 +1,36 @@
+The task's examples:
+"" -> {"":"Rosetta"," ":"Code","abc":["is","a"],"def":{"":"programming"},"g/h":"chrestomathy","i~j":"site","wiki":{"links":["https://rosettacode.org/wiki/Rosetta_Code","https://discord.com/channels/1011262808001880065"]}}
+"/" -> "Rosetta"
+"/ " -> "Code"
+"/abc" -> ["is","a"]
+"/def/" -> "programming"
+"/g~1h" -> "chrestomathy"
+"/i~0j" -> "site"
+"/wiki/links/0" -> "https://rosettacode.org/wiki/Rosetta_Code"
+"/wiki/links/1" -> "https://discord.com/channels/1011262808001880065"
+"/wiki/links/2" -> error: an array of 2 items has no item 2
+"/wiki/name" -> error: the object has no member 'name'
+"/no/such/thing" -> error: the object has no member 'no'
+"bad/pointer" -> error: a pointer that is not empty begins with /
+
+RFC 6901's examples, then a few errors:
+"" -> {"":0," ":7,"a/b":1,"c%d":2,"e^f":3,"foo":["bar","baz"],"g|h":4,"i\\j":5,"k\"l":6,"m~n":8,"none":null}
+"/foo" -> ["bar","baz"]
+"/foo/0" -> "bar"
+"/" -> 0
+"/a~1b" -> 1
+"/c%d" -> 2
+"/e^f" -> 3
+"/g|h" -> 4
+"/i\j" -> 5
+"/k"l" -> 6
+"/ " -> 7
+"/m~0n" -> 8
+"/none" -> null
+"/foo/01" -> error: '01' is no index of an array
+"/foo/-" -> error: '-' is no index of an array
+"/foo/1/x" -> error: a string has no member 'x'
+"/none/x" -> error: null has no member 'x'
+"/a~01b" -> error: the object has no member 'a~1b'
+"/m~n" -> error: a '~' is followed by neither 0 nor 1 in 'm~n'
+"/~2" -> error: a '~' is followed by neither 0 nor 1 in '~2'

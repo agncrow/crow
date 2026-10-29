@@ -448,7 +448,7 @@ pub fn len_column(c: &crate::frame::CrowColumn) -> i64 {
 pub fn len_json(j: &serde_json::Value) -> Result<i64, String> {
     let got = match j {
         serde_json::Value::Array(_) | serde_json::Value::Object(_) | serde_json::Value::String(_) => return Ok(crate::json::len(j)),
-        serde_json::Value::Number(n) if n.is_i64() => "an int",
+        serde_json::Value::Number(n) if n.is_i64() || n.is_u64() => "an int",
         serde_json::Value::Number(_) => "a number",
         serde_json::Value::Bool(_) => "a bool",
         serde_json::Value::Null => "a value",
@@ -893,6 +893,11 @@ pub fn read_line(prompt: Option<&str>) -> Result<String, String> {
     }
     let mut line = String::new();
     match std::io::stdin().read_line(&mut line) {
+        // (the end of the input is no line: a failure the program can see,
+        // as Python's EOFError is — an empty text there had been a blank
+        // line forever, and a loop reading every line never ended; Rosetta
+        // Code, ABC correlation)
+        Ok(0) => Err("end of input".to_string()),
         Ok(_) => Ok(line.trim_end_matches('\n').trim_end_matches('\r').to_string()),
         Err(e) => Err(format!("input error: {}", e)),
     }

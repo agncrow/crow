@@ -1,0 +1,43 @@
+--- Rosetta Code: Catamorphism
+--- https://rosettacode.org/wiki/Catamorphism
+--- Crow has no reduce builtin (the spec keeps named reductions: sum, prod,
+--- min, max, join), so the folds are written here: each takes a function by
+--- name, a starting value and a list. foldl leans left, foldr right, and
+--- reduce starts from the first item. A function taking a function serves
+--- one kind of value, so every fold below works on ints.
+
+fn foldl[f, acc, xs]
+    for x in xs
+        acc = f[acc, x]
+    return acc
+
+fn foldr[f, acc, xs]
+    i = len[xs] - 1
+    while i gte 0
+        acc = f[xs[i], acc]
+        i = i - 1
+    return acc
+
+fn reduce[f, xs]
+    return foldl[f, xs[0], slice[xs, 1, len[xs]]]
+
+fn add[a, b]
+    return a + b
+
+fn multiply[a, b]
+    return a * b
+
+fn subtract[a, b]
+    return a - b
+
+--- b's digits written after a's
+fn append_digits[a, b]
+    return a * 10 ^ len[str[b]] + b
+
+xs = range[1, 11]
+log[xs]
+log['sum: `reduce[add, xs]`']
+log['product: `reduce[multiply, xs]`']
+log['concat: `reduce[append_digits, xs]`']
+log['foldl subtract from 0: `foldl[subtract, 0, xs]`   (((0 - 1) - 2) - …) - 10']
+log['foldr subtract from 0: `foldr[subtract, 0, xs]`   1 - (2 - (… - (10 - 0)))']

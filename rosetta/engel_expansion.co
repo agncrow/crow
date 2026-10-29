@@ -1,0 +1,52 @@
+--- Rosetta Code: Engel expansion
+--- https://rosettacode.org/wiki/Engel_expansion
+--- Exact fractions throughout, so even the long approximations expand and come
+--- back without loss: each term is the ceiling of 1/x, and x becomes x * a - 1
+--- until it is 0. Back again, the terms' running product's reciprocals are summed.
+
+fn to_engel[x]
+    terms = []
+    while x ne 0
+        a = ceil[1 / x]
+        terms = push[terms, a]
+        x = x * a - 1
+    return terms
+
+fn from_engel[terms]
+    total = fraction[0, 1]
+    product = fraction[1, 1]
+    for a in terms
+        product = product / a
+        total = total + product
+    return total
+
+--- The places a number written with a point has after it.
+fn places_of[text]
+    len[split[text, '.'][1]]
+
+--- A fraction written with the given places after its point (cut, not rounded).
+fn decimal_text[f, places]
+    digits = str[floor[f * 10 ^ places]]
+    whole = slice[digits, 0, len[digits] - places]
+    part = slice[digits, len[digits] - places, len[digits]]
+    '`whole`.`part`'
+
+fn shown[terms]
+    parts = for a in slice[terms, 0, 30]
+        str[a]
+    join[parts, ' ']
+
+numbers = ['3.14159265358979', '2.71828182845904', '1.414213562373095', '7.59375', '3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679821480865132823066470938446095505822317253594081284811174502841027019385211', '2.71828182845904523536028747135266249775724709369995957496696762772407663035354759457138217852516642743', '1.4142135623730950488016887242096980785696718753769480731766797379907324784621070388503875343276415727350138462309122970249248360558507372126441214970999358314132226659275055927558', '25.62890625']
+
+for text in numbers
+    x = fraction[decimal[text]]
+    terms = to_engel[x]
+    back = from_engel[terms]
+    log['Rational number: `text`']
+    if len[terms] gt 30
+        log['Engel expansion: `shown[terms]` … (the first 30 of `len[terms]` terms)']
+    else
+        log['Engel expansion: `shown[terms]` (`len[terms]` terms)']
+    log[' Converted back: `decimal_text[back, places_of[text]]`']
+    log['     The same as: `back eq x`']
+    log['']

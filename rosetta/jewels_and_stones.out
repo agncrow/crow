@@ -1,0 +1,5 @@
+stones 'aAAbbbb', jewels 'aA': 3
+stones 'ZZ', jewels 'z': 0
+stones '', jewels 'abc': 0
+stones 'Mississippi', jewels 'is': 8
+stones 'The quick brown fox', jewels 'aeiou': 5

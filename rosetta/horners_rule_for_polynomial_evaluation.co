@@ -1,0 +1,37 @@
+--- Rosetta Code: Horner's rule for polynomial evaluation
+--- https://rosettacode.org/wiki/Horner's_rule_for_polynomial_evaluation
+--- The coefficients come lowest power first; Horner's rule takes them from the
+--- highest down, multiplying what it has by x and adding the next one. An int
+--- grows as it needs, so a large x is evaluated exactly.
+
+fn horner[coefficients, x]
+    accumulator = 0
+    i = len[coefficients] - 1
+    while i gte 0
+        accumulator = accumulator * x + coefficients[i]
+        i = i - 1
+    return accumulator
+
+fn written[coefficients]
+    --- the polynomial as text, lowest power first
+    text = ''
+    for i in range[len[coefficients]]
+        c = coefficients[i]
+        power = ''
+        if i eq 1
+            power = 'x'
+        else if i gt 1
+            power = 'x^`i`'
+        if i eq 0
+            text = '`c``power`'
+        else if c lt 0
+            text = '`text` - `abs[c]``power`'
+        else
+            text = '`text` + `c``power`'
+    return text
+
+coefficients = [-19, 7, -4, 6]
+log['p(x) = `written[coefficients]`']
+log['p(3) = `horner[coefficients, 3]`']
+log['p(-2) = `horner[coefficients, -2]`']
+log['p(10^20) = `horner[coefficients, 10 ^ 20]`']

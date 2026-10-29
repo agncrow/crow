@@ -262,6 +262,11 @@ impl Ty {
             (Ty::Unknown, _) | (_, Ty::Unknown) => true,
             (Ty::Unit, _) | (_, Ty::Unit) => true,
             (Ty::Int, Ty::Float) | (Ty::Float, Ty::Int) => true,
+            // an int is a whole number of any size: held in 64 bits or
+            // growing, it is one kind (`answer = 0` then `answer = m + 1`
+            // of a growing `m` had been refused, "from int to int";
+            // Rosetta Code, Prime reciprocal sum)
+            (Ty::Int, Ty::Big) | (Ty::Big, Ty::Int) => true,
             // markup is a string wherever a string is read
             (Ty::Markup, Ty::Str) | (Ty::Str, Ty::Markup) => true,
             (Ty::List(a), Ty::List(b)) => a.compatible(b),
@@ -315,8 +320,14 @@ impl Ty {
                     // (the list's length is not stated, so the matrix's rows
                     // are not either; its rows' own shape is joined)
                     let row = Ty::Tensor(b.clone(), Some(dims[1..].to_vec()));
+                    // (a list of numbers beside a row is the list, by the
+                    // rule below: the matrix holds its numbers — taken as
+                    // the element, a list of rows beside a matrix had been
+                    // a tensor of lists, which no value is; Rosetta Code,
+                    // Determinant and permanent)
                     let (elem, row_dims) = match a.unify(&row) {
                         Ty::Tensor(e, d) => (*e, d),
+                        Ty::List(e) if matches!(e.as_ref(), Ty::Int | Ty::Float | Ty::Unknown) => (*e, Some(dims[1..].to_vec())),
                         e => (e, Some(dims[1..].to_vec())),
                     };
                     let mut joined = vec![None];
@@ -965,6 +976,13 @@ impl TypeContext {
                     } else if matches!((&*held, given), (Ty::Frame(_), Ty::Frame(_))) {
                         // (a frame's columns, joined: open where the calls differ)
                         *held = held.unify(given);
+                    } else if Self::numbers_alike(held, given) {
+                        // (ints and floats, as numbers, a tensor's or a
+                        // list's: one copy of floats — the first call's ints
+                        // had stayed, and a second call handing a matrix of
+                        // floats disagreed with itself; Rosetta Code, K-d
+                        // tree)
+                        *held = held.unify(given);
                     }
                 }
                 // (and the copy already made for it, where it moved: a
@@ -990,6 +1008,20 @@ impl TypeContext {
                 }
             }
             None => entry.push(sig),
+        }
+    }
+
+    /// Two numbers, two tensors, two lists or two maps of numbers, which
+    /// one copy takes as floats where either holds them.
+    fn numbers_alike(a: &Ty, b: &Ty) -> bool {
+        let number = |t: &Ty| matches!(t, Ty::Int | Ty::Float);
+        match (a, b) {
+            (Ty::Tensor(..), Ty::Tensor(..)) => true,
+            // (a map's values too: `show[map[x = 3]]` beside `show[map[x =
+            // 0.5]]` had kept the first call's ints; Rosetta Code, Runtime
+            // evaluation/In an environment)
+            (Ty::List(x), Ty::List(y)) | (Ty::Map(_, x), Ty::Map(_, y)) => number(x) && number(y),
+            _ => number(a) && number(b),
         }
     }
 
@@ -1209,6 +1241,18 @@ impl TypeContext {
         self.current_fn_name = scope.outer_fn_name;
     }
 
+    /// Two types that differ only in how they hold numbers — a list of
+    /// numbers where the other holds a vector, at any depth.
+    fn numbers_reformed(a: &Ty, b: &Ty) -> bool {
+        match (a, b) {
+            (Ty::List(x), Ty::Tensor(y, d)) | (Ty::Tensor(y, d), Ty::List(x)) => {
+                d.as_ref().is_none_or(|d| d.len() <= 1) && matches!(x.as_ref(), Ty::Int | Ty::Float) && matches!(y.as_ref(), Ty::Int | Ty::Float)
+            }
+            (Ty::List(x), Ty::List(y)) | (Ty::Map(_, x), Ty::Map(_, y)) | (Ty::Result(x), Ty::Result(y)) => Self::numbers_reformed(x, y),
+            _ => false,
+        }
+    }
+
     /// Out of a function's body once a provisional lowering typed it: its
     /// return type the values it returns joined (each typed where it is
     /// returned, as the lowering met it), widened to a Result when the
@@ -1246,7 +1290,20 @@ impl TypeContext {
             // keeps the failure, which a function value handed on was typed
             // by — a fuzz program's `ap[h2, …]`)
             let differ = !sig.return_type.compatible(&ret) && !Self::without_failures(&sig.return_type).compatible(&Self::without_failures(&ret));
-            sig.return_type = if !differ || matches!(ret, Ty::Unknown | Ty::Unit) { sig.return_type.unify(&ret) } else { ret.clone() };
+            // (numbers an earlier round answered as a list and this one, every
+            // item known, as a vector — or the other way — are this round's:
+            // the earlier form was a guess made while an item was not known
+            // (`[x]` of an `x` no call had typed yet is a list), and joined
+            // it had typed the answer as a map of lists where the body
+            // answered a map of vectors; Rosetta Code, Disarium numbers)
+            let reformed = ret.is_concrete() && Self::numbers_reformed(&sig.return_type, &ret);
+            sig.return_type = if reformed {
+                ret.clone()
+            } else if !differ || matches!(ret, Ty::Unknown | Ty::Unit) {
+                sig.return_type.unify(&ret)
+            } else {
+                ret.clone()
+            };
             if fails && !matches!(sig.return_type, Ty::Result(_)) {
                 let inner = std::mem::replace(&mut sig.return_type, Ty::Unknown);
                 sig.return_type = Ty::Result(Box::new(inner));
@@ -1360,7 +1417,23 @@ impl TypeContext {
             }
             _ => true,
         };
-        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.has_markup() == y.has_markup() && frames_alike(x, y) && cells_alike(x, y))
+        // (a list of vectors and a list of lists are two signatures: held
+        // as tensors and as lists, one copy had taken both, and the call
+        // handing the other disagreed with itself — the pairs a collect
+        // made, `[i, i]`, beside rows grown by `push`; Rosetta Code,
+        // Cartesian product)
+        let rows_alike = |x: &Ty, y: &Ty| {
+            let rows = |t: &Ty| match t.payload() {
+                Ty::List(item) => match item.payload() {
+                    Ty::Tensor(..) => Some(true),
+                    Ty::List(_) => Some(false),
+                    _ => None,
+                },
+                _ => None,
+            };
+            !matches!((rows(x), rows(y)), (Some(a), Some(b)) if a != b)
+        };
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.has_markup() == y.has_markup() && frames_alike(x, y) && cells_alike(x, y) && rows_alike(x, y))
     }
 
     /// The specialization of `name` a call reaches, given its arguments'
@@ -1417,6 +1490,12 @@ impl TypeContext {
             // a parsed value's items are parsed values, read as one type
             // where the body computes with them
             Ty::Json => Ty::Json,
+            // a list that can fail is walked once its failure is refused —
+            // the loop stops on it — so its items are the payload's (read
+            // as nothing known, `range[int[s]]`'s item had been compared as
+            // a float, and the compiled program did not build; Rosetta
+            // Code, French Republican calendar)
+            Ty::Result(inner) => Self::loop_item(*inner),
             _ => Ty::Unknown,
         }
     }

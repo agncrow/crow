@@ -1,0 +1,47 @@
+--- Rosetta Code: Permutations/Derangements
+--- https://rosettacode.org/wiki/Permutations/Derangements
+--- Derangements made directly, place by place: position i takes any unused number but i,
+--- so no permutation with a fixed point is ever built, and they come out in order. The
+--- subfactorial from !n = (n - 1)(!(n - 1) + !(n - 2)), with !0 = 1 and !1 = 0, in ints
+--- that grow (the stretch goal !20, and further).
+
+--- The derangements of 0..n-1 that begin with prefix, appended to found in order.
+fn derange_from[n, prefix, found]
+    i = len[prefix]
+    if i eq n
+        return push[found, prefix]
+    for v in range[n]
+        if v ne i and v not in prefix
+            found = derange_from[n, push[prefix, v], found]
+    found
+
+fn derangements[n]
+    derange_from[n, [], []]
+
+fn subfactorial[n]
+    if n eq 0
+        return 1
+    older = 1
+    last = 0
+    for k in range[2, n + 1]
+        next = (k - 1) * (last + older)
+        older = last
+        last = next
+    last
+
+fn shown[items]
+    parts = for x in items
+        str[x]
+    join[parts, ' ']
+
+log['The derangements of 0 1 2 3:']
+for d in derangements[4]
+    log['  `shown[d]`']
+log['']
+log[' n   counted       !n']
+for n in range[10]
+    counted = len[derangements[n]]
+    log['`fmt[n, width = 2]`  `fmt[counted, width = 8]`  `fmt[subfactorial[n], width = 7]`']
+log['']
+log['!20 = `subfactorial[20]`']
+log['!50 = `subfactorial[50]`']

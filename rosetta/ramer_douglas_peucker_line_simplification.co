@@ -1,0 +1,47 @@
+--- Rosetta Code: Ramer-Douglas-Peucker line simplification
+--- https://rosettacode.org/wiki/Ramer-Douglas-Peucker_line_simplification
+--- The point farthest from the chord between the ends stays when it is farther
+--- than the threshold, and both halves around it are simplified in turn;
+--- otherwise the chord alone stands for the whole stretch.
+
+struct Point [x, y]
+
+--- the distance of p from the line through a and b (from a, where they meet)
+fn distance[p, a, b]
+    dx = b.x - a.x
+    dy = b.y - a.y
+    if dx eq 0 and dy eq 0
+        return sqrt[(p.x - a.x) ^ 2 + (p.y - a.y) ^ 2]
+    return abs[dy * p.x - dx * p.y + b.x * a.y - b.y * a.x] / sqrt[dx * dx + dy * dy]
+
+fn simplified[points, epsilon]
+    last = len[points] - 1
+    far = 0
+    most = 0.0
+    i = 1
+    while i lt last
+        d = distance[points[i], points[0], points[last]]
+        if d gt most
+            far = i
+            most = d
+        i = i + 1
+    if most gt epsilon
+        left = simplified[slice[points, 0, far + 1], epsilon]
+        right = simplified[slice[points, far, len[points]], epsilon]
+        return concat[pop[left], right]
+    return [points[0], points[last]]
+
+fn shown[points]
+    parts = for p in points
+        '(`p.x`, `p.y`)'
+    return join[parts, ' ']
+
+line = [Point[0, 0], Point[1, 0.1], Point[2, -0.1], Point[3, 5], Point[4, 6],
+    Point[5, 7], Point[6, 8.1], Point[7, 9], Point[8, 9], Point[9, 9]]
+log['The line:        `shown[line]`']
+log['Simplified, 1.0: `shown[simplified[line, 1.0]]`']
+log['']
+--- the threshold decides how much is kept
+for epsilon in [0.1, 0.5, 2.0, 10.0]
+    kept = simplified[line, epsilon]
+    log['threshold `fmt[epsilon, decimals = 1, width = 4]`: `len[kept]` points: `shown[kept]`']

@@ -1,0 +1,38 @@
+--- Rosetta Code: Gray code
+--- https://rosettacode.org/wiki/Gray_code
+--- Binary reflected Gray code: encoding is b xor (b >> 1); decoding xors in every
+--- right shift of the code, g >> 1, g >> 2, ..., which is b[i] = g[i] xor b[i-1]
+--- for all the bits at once. bitxor and shift are use bits's, and ints grow, so
+--- both work at any width: a 100-bit number makes the round trip too.
+use bits
+
+fn gray_encode[b]
+    return bitxor[b, shift[b, -1]]
+
+fn gray_decode[g]
+    b = g
+    rest = shift[g, -1]
+    while rest ne 0
+        b = bitxor[b, rest]
+        rest = shift[rest, -1]
+    return b
+
+fn binary[n, width]
+    digits = for i in range[width]
+        str[bitand[shift[n, i + 1 - width], 1]]
+    return join[digits, '']
+
+fn is_one[n]
+    return n eq 1
+
+log['DEC,   BIN =>  GRAY => DEC']
+for i in range[32]
+    gray = gray_encode[i]
+    back = gray_decode[gray]
+    log['`fmt[i, width = 3]`, `binary[i, 5]` => `binary[gray, 5]` => `fmt[back, width = 2]`']
+
+steps = for i in range[1, 32]
+    bitcount[bitxor[gray_encode[i], gray_encode[i - 1]]]
+log['Each code differs from the one before it in one bit: `all[steps, is_one]`']
+big = 3 ^ 63
+log['3^63 = `big` encodes to `gray_encode[big]`, which decodes to `gray_decode[gray_encode[big]]`']

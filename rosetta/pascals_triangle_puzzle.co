@@ -1,0 +1,90 @@
+--- Rosetta Code: Pascal's triangle/Puzzle
+--- https://rosettacode.org/wiki/Pascal%27s_triangle/Puzzle
+--- Every brick is a sum of base bricks, so with Y = X + Z each is a linear form
+--- a X + b Z + c: the base holds 1 X for X, 1 X + 1 Z for Y, 1 Z for Z and the numbers
+--- as constants, and each row above adds neighbouring forms. The bricks given above the
+--- base (151 and 40) are then two equations in X and Z, solved exactly by Cramer's rule;
+--- the pyramid is filled in and every given brick checked.
+
+struct Form [x, z, c]
+
+fn add[f, g]
+    return Form[f.x + g.x, f.z + g.z, f.c + g.c]
+
+--- a base brick as written: X, Y, Z or a number
+fn form_of[brick]
+    if brick eq 'X'
+        return Form[1, 0, 0]
+    if brick eq 'Y'
+        return Form[1, 1, 0]
+    if brick eq 'Z'
+        return Form[0, 1, 0]
+    return Form[0, 0, int[brick]]
+
+--- the rows of forms, the top first, from the forms of the base
+fn rows_over[base]
+    rows = [base]
+    row = base
+    while len[row] gt 1
+        above = for i in range[len[row] - 1]
+            add[row[i], row[i + 1]]
+        rows = concat[[above], rows]
+        row = above
+    return rows
+
+fn value_of[f, x, z]
+    return f.x * x + f.z * z + f.c
+
+--- a row of bricks drawn as the task draws them, centred over a base `width` bricks wide
+fn shown[row, width]
+    cells = for v in row
+        '[`fmt[v, width = 3, align = \'right\']`]'
+    indent = repeat[' ', 2 * (width - len[row])]
+    line = join[cells, '']
+    return '`indent``line`'
+
+puzzle = ['151', '_ _', '40 _ _', '_ _ _ _', 'X 11 Y 4 Z']
+log['The puzzle (Y = X + Z):']
+for line in puzzle
+    bricks = for brick in split[line, ' ']
+        replace[brick, '_', '']
+    log[shown[bricks, len[puzzle]]]
+
+base = for brick in split[puzzle[-1], ' ']
+    form_of[brick]
+forms = rows_over[base]
+
+--- each brick given above the base: a X + b Z = value - c
+equations = []
+for r in range[len[puzzle] - 1]
+    bricks = split[puzzle[r], ' ']
+    for i in range[len[bricks]]
+        if bricks[i] ne '_'
+            f = forms[r][i]
+            equations = push[equations, [f.x, f.z, int[bricks[i]] - f.c]]
+a1 = equations[0][0]
+b1 = equations[0][1]
+r1 = equations[0][2]
+a2 = equations[1][0]
+b2 = equations[1][1]
+r2 = equations[1][2]
+det = a1 * b2 - a2 * b1
+x = fraction[r1 * b2 - r2 * b1, det]
+z = fraction[a1 * r2 - a2 * r1, det]
+log['']
+log['Equations: `a1` X + `b1` Z = `r1` and `a2` X + `b2` Z = `r2`']
+log['X = `x`, Y = `x + z`, Z = `z`']
+log['']
+
+--- the solved pyramid, every given brick checked against it
+xi = int[x]
+zi = int[z]
+width = len[forms]
+for r in range[width]
+    row = for f in forms[r]
+        value_of[f, xi, zi]
+    log[shown[row, width]]
+    bricks = split[puzzle[r], ' ']
+    for i in range[len[bricks]]
+        if bricks[i] ne '_' and bricks[i] ne 'X' and bricks[i] ne 'Y' and bricks[i] ne 'Z'
+            assert[row[i] eq int[bricks[i]]]

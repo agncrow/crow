@@ -1,0 +1,21 @@
+The task's own lines:
+z= 1
+
+In each kind of number:
+int                    0 ^ 0                          = 1  (int)
+growing int            (2 ^ 100 - 2 ^ 100) ^ 0        = 1  (int)
+float                  0.0 ^ 0.0                      = 1  (float)
+float                  (-0.0) ^ 0.0                   = 1  (float)
+float and int          0.0 ^ 0                        = 1  (float)
+int and float          0 ^ 0.0                        = 1  (float)
+decimal                decimal['0.00'] ^ 0            = 1  (decimal)
+decimal of 50 digits   decimal[0, digits = 50] ^ 0    = 1  (decimal)
+fraction               fraction[0, 1] ^ 0             = 1  (fraction)
+tensor, item by item   [0.0, 0.0] .^ [0.0, 0.0]       = [1, 1]  (array)
+
+A float's rule, IEEE 754's: anything to the power 0.0 is 1, even NaN and infinity:
+float                  NaN ^ 0.0                      = 1  (float)
+float                  infinity ^ 0.0                 = 1  (float)
+
+Without the brackets a power binds tighter than the minus before it: -(0.0 ^ 0.0).
+float                  -0.0 ^ 0.0                     = -1  (float)

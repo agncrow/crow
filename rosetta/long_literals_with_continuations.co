@@ -1,0 +1,84 @@
+--- Rosetta Code: Long literals, with continuations
+--- https://rosettacode.org/wiki/Long_literals,_with_continuations
+--- Crow has no continuation character, and needs none. A string literal goes on
+--- over as many lines as it needs, up to its closing quote; and a line that
+--- starts inside an open bracket goes on with the statement above it. The list
+--- of elements is written both ways below. A statement at the top level starts
+--- in column 1 and a block's are indented four spaces a level; a line that goes
+--- on with a literal may start in any column (crow fmt leaves a string's lines
+--- as written and indents the lines of a bracket four spaces). Every line here
+--- is under 81 characters, and a literal has no limit of its own on its length.
+
+--- The date of the last revision of the lists below.
+revised = moment[2026, 10, 28]
+
+--- 1. One string literal over several lines. Its line breaks and the blanks
+--- that indent its lines are part of the text, so the names are taken out of it
+--- (words) and joined again with one blank between them. To add an element,
+--- write its name before the closing quote.
+written = 'hydrogen helium lithium beryllium boron carbon nitrogen oxygen
+    fluorine neon sodium magnesium aluminum silicon phosphorus sulfur chlorine
+    argon potassium calcium scandium titanium vanadium chromium manganese iron
+    cobalt nickel copper zinc gallium germanium arsenic selenium bromine krypton
+    rubidium strontium yttrium zirconium niobium molybdenum technetium ruthenium
+    rhodium palladium silver cadmium indium tin antimony tellurium iodine xenon
+    cesium barium lanthanum cerium praseodymium neodymium promethium samarium
+    europium gadolinium terbium dysprosium holmium erbium thulium ytterbium
+    lutetium hafnium tantalum tungsten rhenium osmium iridium platinum gold
+    mercury thallium lead bismuth polonium astatine radon francium radium
+    actinium thorium protactinium uranium neptunium plutonium americium curium
+    berkelium californium einsteinium fermium mendelevium nobelium lawrencium
+    rutherfordium dubnium seaborgium bohrium hassium meitnerium darmstadtium
+    roentgenium copernicium nihonium flerovium moscovium livermorium tennessine
+    oganesson'
+
+--- 2. One list literal over several lines, a name to an item. To add an
+--- element, write its name, quoted, before the closing bracket.
+listed = ['hydrogen', 'helium', 'lithium', 'beryllium', 'boron', 'carbon',
+    'nitrogen', 'oxygen', 'fluorine', 'neon', 'sodium', 'magnesium', 'aluminum',
+    'silicon', 'phosphorus', 'sulfur', 'chlorine', 'argon', 'potassium',
+    'calcium', 'scandium', 'titanium', 'vanadium', 'chromium', 'manganese',
+    'iron', 'cobalt', 'nickel', 'copper', 'zinc', 'gallium', 'germanium',
+    'arsenic', 'selenium', 'bromine', 'krypton', 'rubidium', 'strontium',
+    'yttrium', 'zirconium', 'niobium', 'molybdenum', 'technetium', 'ruthenium',
+    'rhodium', 'palladium', 'silver', 'cadmium', 'indium', 'tin', 'antimony',
+    'tellurium', 'iodine', 'xenon', 'cesium', 'barium', 'lanthanum', 'cerium',
+    'praseodymium', 'neodymium', 'promethium', 'samarium', 'europium',
+    'gadolinium', 'terbium', 'dysprosium', 'holmium', 'erbium', 'thulium',
+    'ytterbium', 'lutetium', 'hafnium', 'tantalum', 'tungsten', 'rhenium',
+    'osmium', 'iridium', 'platinum', 'gold', 'mercury', 'thallium', 'lead',
+    'bismuth', 'polonium', 'astatine', 'radon', 'francium', 'radium',
+    'actinium', 'thorium', 'protactinium', 'uranium', 'neptunium', 'plutonium',
+    'americium', 'curium', 'berkelium', 'californium', 'einsteinium', 'fermium',
+    'mendelevium', 'nobelium', 'lawrencium', 'rutherfordium', 'dubnium',
+    'seaborgium', 'bohrium', 'hassium', 'meitnerium', 'darmstadtium',
+    'roentgenium', 'copernicium', 'nihonium', 'flerovium', 'moscovium',
+    'livermorium', 'tennessine', 'oganesson']
+
+--- The words of a text: its pieces between blanks and line breaks, none empty.
+fn words[text]
+    pieces = split[replace[text, '\n', ' '], ' ']
+    kept = for piece in pieces
+        if piece ne ''
+            piece
+    return kept
+
+--- A day as words, its weekday first.
+fn spelled[day]
+    weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+        'Saturday', 'Sunday']
+    months = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+        'August', 'September', 'October', 'November', 'December']
+    weekday = weekdays[day.weekday - 1]
+    return '`weekday`, `day.day` `months[day.month - 1]` `day.year`'
+
+elements = join[words[written], ' ']
+names = split[elements, ' ']
+log['Last revision of the lists: `str[revised]` (`spelled[revised]`)']
+log['Number of elements:         `len[names]`']
+log['Last element:               `names[-1]`']
+log['']
+double = '  '
+single = not (double in elements) and trim[elements] eq elements
+log['One blank between names, none at either end: `single`']
+log['The list literal holds the same names, in order: `listed eq names`']

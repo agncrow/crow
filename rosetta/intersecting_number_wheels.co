@@ -1,0 +1,52 @@
+--- Rosetta Code: Intersecting number wheels
+--- https://rosettacode.org/wiki/Intersecting_number_wheels
+--- A group is read from its lines into each wheel's values and one position per
+--- wheel, shared by every reference to it; a term follows names from the first
+--- wheel until a number turns up, advancing each wheel it reads on the way.
+
+struct Group [first, wheels, turned]
+
+fn name_of[line]
+    return replace[split[line, ' '][0], ':', '']
+
+--- the lines 'A: 1 B C', 'B: 3 4', … as each wheel's values by its name,
+--- every wheel at its first value
+fn group_of[lines]
+    wheels = map[]
+    turned = map[]
+    for line in lines
+        parts = split[line, ' ']
+        wheels = set[wheels, name_of[line], slice[parts, 1, len[parts]]]
+        turned = set[turned, name_of[line], 0]
+    return Group[name_of[lines[0]], wheels, turned]
+
+fn is_number[value]
+    return matches[value, '^[0-9]+$']
+
+--- the first count terms the group generates from its first wheel
+fn terms[g, count]
+    turned = g.turned
+    out = []
+    while len[out] lt count
+        name = g.first
+        value = ''
+        while value eq ''
+            wheel = g.wheels[name]
+            v = wheel[turned[name] % len[wheel]]
+            turned = set[turned, name, turned[name] + 1]
+            if is_number[v]
+                value = v
+            else
+                name = v
+        out = push[out, value]
+    return out
+
+groups = [['A: 1 2 3'], ['A: 1 B 2', 'B: 3 4'], ['A: 1 D D', 'D: 6 7 8'], ['A: 1 B C', 'B: 3 4', 'C: 5 B']]
+for lines in groups
+    log['Intersecting Number Wheel group:']
+    for line in lines
+        log['  `line`']
+    shown = join[terms[group_of[lines], 20], ' ']
+    log['  Generates:']
+    log['    `shown` ...']
+    log['']

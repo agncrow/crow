@@ -1,0 +1,9 @@
+no arguments:             hello
+two arguments:            5
+any number, as a list:    10
+an optional argument:     25 and 125
+named arguments:          a medium red kite, a medium blue kite, a large green kite
+mutual recursion:         true false
+a record declared below:  3, 4
+a function as a value:    7
+A SUBROUTINE ANSWERS NOTHING

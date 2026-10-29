@@ -1,0 +1,148 @@
+--- Rosetta Code: Least m such that n! + m is prime
+--- https://rosettacode.org/wiki/Least_m_such_that_n!_%2B_m_is_prime
+--- n! grows one factor a step (an int keeps every digit). For each n the m are taken in
+--- windows of 1024: a sieve of the primes up to 10,000 strikes the m where a small prime
+--- divides n! + m (from n! mod p, kept up to date for each p), and the rest are asked of
+--- a Miller-Rabin test (twelve bases) in order until one is prime.
+---
+--- The task's part takes under a second; the stretch is shown to m > 3000 (position 192,
+--- a few seconds). Each threshold after that costs far more (to 4000, position 284, took
+--- half a minute here; the Phix entry, over GMP, reports 26 minutes to 10,000): give the
+--- last threshold on the command line to go on, as in
+--- crow run least_m_such_that_n_plus_m_is_prime.co 10000
+
+--- The primes up to limit, by the sieve of Eratosthenes.
+fn primes_upto[limit]
+    composite = for i in range[limit + 1]
+        false
+    found = []
+    p = 2
+    while p lte limit
+        if not composite[p]
+            found = push[found, p]
+            k = p * p
+            while k lte limit
+                composite[k] = true
+                k = k + p
+        p = p + 1
+    return found
+
+--- base ^ exponent mod modulus, by repeated squaring.
+fn power_mod[base, exponent, modulus]
+    result = 1
+    b = base % modulus
+    e = exponent
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % modulus
+        b = b * b % modulus
+        e = e / 2
+    return result
+
+--- Whether odd n > 2 is a strong probable prime to base a.
+fn strong_probable_prime[n, a]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    x = power_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return true
+    r = 1
+    while r lt s
+        x = x * x % n
+        if x eq n - 1
+            return true
+        r = r + 1
+    return false
+
+--- Miller-Rabin over the first twelve primes as bases: exact below 3.3 * 10^24, and no
+--- composite is known to pass it above.
+fn probable_prime[n]
+    bases = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]
+    if n lt 2
+        return false
+    for p in bases
+        if n % p eq 0
+            return n eq p
+    i = 0
+    while i lt len[bases]
+        if not strong_probable_prime[n, bases[i]]
+            return false
+        i = i + 1
+    return true
+
+--- The least m in lo .. lo + width - 1 with fact + m prime, or 0 when there is none. A
+--- prime p of the sieve divides fact + m where m = -(fact mod p), mod p: those m are
+--- struck, unless fact + m is p itself.
+fn window_search[fact, lo, width, primes, residues]
+    struck = for i in range[width]
+        false
+    i = 0
+    while i lt len[primes]
+        p = primes[i]
+        itself = p - fact
+        m = lo + (p - (residues[i] + lo) % p) % p
+        while m lt lo + width
+            if m ne itself
+                struck[m - lo] = true
+            m = m + p
+        i = i + 1
+    m = lo
+    while m lt lo + width
+        if not struck[m - lo] and probable_prime[fact + m]
+            return m
+        m = m + 1
+    return 0
+
+--- The least m with fact + m prime; residues holds fact mod each prime of the sieve.
+fn least_m[fact, primes, residues]
+    width = 1024
+    lo = 1
+    found = 0
+    while found eq 0
+        found = window_search[fact, lo, width, primes, residues]
+        lo = lo + width
+    return found
+
+--- The last threshold of the stretch: 3000, or the one the command line gives.
+fn last_threshold[given]
+    if len[given] gt 0
+        asked = int[given[0]]
+        if asked.ok
+            return asked
+    return 3000
+
+fn show_rows[terms, per_row]
+    i = 0
+    while i lt len[terms]
+        row = for v in slice[terms, i, i + per_row]
+            fmt[v, width = 3]
+        log[join[row, ' ']]
+        i = i + per_row
+
+limit = last_threshold[args[]]
+primes = primes_upto[10000]
+residues = for p in primes
+    1
+fact = 1
+n = 0
+threshold = 1000
+first = []
+while n lt 50 or threshold lte limit
+    if n gt 0
+        fact = fact * n
+        residues = for i in range[len[primes]]
+            residues[i] * n % primes[i]
+    m = least_m[fact, primes, residues]
+    if n lt 50
+        first = push[first, m]
+        if n eq 49
+            log['Least positive m such that n! + m is prime; first 50:']
+            show_rows[first, 10]
+            log['']
+    while m gt threshold and threshold lte limit
+        log['First m > `threshold` is `m` at position `n`']
+        threshold = threshold + 1000
+    n = n + 1

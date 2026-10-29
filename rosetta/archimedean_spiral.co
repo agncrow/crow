@@ -1,0 +1,70 @@
+--- Rosetta Code: Archimedean spiral
+--- https://rosettacode.org/wiki/Archimedean_spiral
+--- The points of r = a + b θ (a = 1, b = 5) over five turns, drawn twice: as a
+--- picture in characters, and as an SVG polyline written to archimedean_spiral.svg
+--- in the current directory.
+
+use math
+
+struct Point [x, y]
+
+fn spiral[a, b, turns, steps]
+    points = for i in range[steps + 1]
+        theta = 2.0 * pi * turns * i / steps
+        r = a + b * theta
+        Point[r * cos[theta], r * sin[theta]]
+    return points
+
+--- a row of cells as text, without the blanks after its last mark
+fn row_text[row]
+    last = len[row] - 1
+    while last gte 0 and row[last] eq ' '
+        last = last - 1
+    return join[slice[row, 0, last + 1], '']
+
+--- the points plotted on a grid of characters, x and y from -reach to reach;
+--- the rows the spiral leaves empty above and below it are left out
+fn picture[points, reach, columns, rows]
+    cells = for i in range[columns * rows]
+        ' '
+    for p in points
+        c = round[(p.x / reach + 1.0) * (columns - 1) / 2.0]
+        r = round[(1.0 - p.y / reach) * (rows - 1) / 2.0]
+        cells[r * columns + c] = '*'
+    lines = for r in range[rows]
+        row_text[slice[cells, r * columns, (r + 1) * columns]]
+    first = 0
+    while first lt rows and lines[first] eq ''
+        first = first + 1
+    last = rows - 1
+    while last gt first and lines[last] eq ''
+        last = last - 1
+    return slice[lines, first, last + 1]
+
+--- the points as an SVG polyline, the centre of a square of the given side
+fn svg[points, reach, side]
+    scale = side / (2.0 * reach)
+    pairs = for p in points
+        x = fmt[side / 2.0 + p.x * scale, decimals = 2]
+        y = fmt[side / 2.0 - p.y * scale, decimals = 2]
+        '`x`,`y`'
+    path = join[pairs, ' ']
+    head = '<svg xmlns="http://www.w3.org/2000/svg" width="`side`" height="`side`">'
+    background = '<rect width="100%" height="100%" fill="white"/>'
+    line = '<polyline points="`path`" fill="none" stroke="navy" stroke-width="2"/>'
+    return '`head`\n`background`\n`line`\n</svg>\n'
+
+a = 1.0
+b = 5.0
+turns = 5
+points = spiral[a, b, turns, 2000]
+--- the outermost radius, and a margin
+reach = (a + b * 2.0 * pi * turns) * 1.04
+
+log['r = `a` + `b` θ, `turns` turns:']
+for line in picture[points, reach, 79, 39]
+    log[line]
+
+written = write['archimedean_spiral.svg', svg[points, reach, 500]]
+log['']
+log['The same spiral, as an SVG image, is in archimedean_spiral.svg']

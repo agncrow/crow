@@ -1,0 +1,39 @@
+--- Rosetta Code: Pythagorean quadruples
+--- https://rosettacode.org/wiki/Pythagorean_quadruples
+--- d is represented when d ^ 2 - c ^ 2 is a sum of two positive squares for some c from 1
+--- to d - 1. The sums a ^ 2 + b ^ 2 below 2200 ^ 2 are marked once, then each d tries
+--- c = 1, 2, ... until one fits. The marks are a tensor of 4,840,000 zeros (8 bytes a
+--- place), set to 1 at each sum: a list of truths that long is 800 MB interpreted.
+
+use math
+
+--- 1 at each m below limit that is a ^ 2 + b ^ 2 with a, b >= 1, else 0
+fn two_square_sums[limit]
+    sums = zeros[limit]
+    a = 1
+    while 2 * a * a lt limit
+        b = a
+        while a * a + b * b lt limit
+            sums[a * a + b * b] = 1.0
+            b = b + 1
+        a = a + 1
+    return sums
+
+--- whether d ^ 2 = a ^ 2 + b ^ 2 + c ^ 2 for positive a, b and c
+fn represented[d, sums]
+    c = 1
+    while c lt d
+        if sums[d * d - c * c] eq 1.0
+            return true
+        c = c + 1
+    return false
+
+top = 2200
+sums = two_square_sums[top * top]
+missing = for d in range[1, top + 1]
+    if not represented[d, sums]
+        d
+shown = for d in missing
+    str[d]
+log['The d from 1 to `top` with no positive a, b, c making a ^ 2 + b ^ 2 + c ^ 2 = d ^ 2:']
+log[join[shown, ' ']]

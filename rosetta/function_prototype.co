@@ -1,0 +1,75 @@
+--- Rosetta Code: Function prototype
+--- https://rosettacode.org/wiki/Function_prototype
+--- Crow has no prototypes, and no declaration apart from the definition: a call finds a
+--- function (or a record) wherever in the file it is written, before the call or after
+--- it, and the kinds of its parameters and of its answer are inferred from its uses,
+--- never written. Each part of the task is shown as the definition that stands where a
+--- prototype would; varargs have no form of their own (a function takes a list). What a
+--- prototype lets a compiler check is checked against the definition before the program
+--- runs: `add[1]` is refused with "missing argument 'b' in call to 'add'", `add[1, 2, 3]`
+--- with "'add' expects 2 arguments, got 3", and a name no parameter has likewise.
+
+fn show[what, value]
+    log['`fmt[what, width = 26]``value`']
+
+--- No placement rule: every call below comes before its definition, and mutual recursion
+--- needs no forward declaration.
+show['no arguments:', greeting[]]
+show['two arguments:', '`add[2, 3]`']
+show['any number, as a list:', '`total[[1, 2, 3, 4]]`']
+show['an optional argument:', '`power[5]` and `power[5, 3]`']
+plain = describe['kite']
+one_named = describe['kite', colour = 'blue']
+two_named = describe['kite', colour = 'green', size = 'large']
+show['named arguments:', '`plain`, `one_named`, `two_named`']
+show['mutual recursion:', '`is_even[10]` `is_odd[10]`']
+p = Point[3, 4]
+show['a record declared below:', '`p.x`, `p.y`']
+show['a function as a value:', '`apply_twice[add_one, 5]`']
+shout['a subroutine answers nothing']
+
+--- a function of no arguments
+fn greeting[]
+    return 'hello'
+
+--- a function of two arguments
+fn add[a, b]
+    return a + b
+
+--- no varargs: a function that takes any number of values takes one list of them
+fn total[numbers]
+    so_far = 0
+    for n in numbers
+        so_far = so_far + n
+    return so_far
+
+--- an optional argument: a parameter given a literal default, after the positional ones
+fn power[base, exponent = 2]
+    return base ^ exponent
+
+--- named parameters: a parameter with a default may be named at the call, in any order
+fn describe[thing, size = 'medium', colour = 'red']
+    return 'a `size` `colour` `thing`'
+
+fn is_even[n]
+    if n eq 0
+        return true
+    return is_odd[n - 1]
+
+fn is_odd[n]
+    if n eq 0
+        return false
+    return is_even[n - 1]
+
+--- a subroutine is a function that answers nothing
+fn shout[text]
+    log[upper[text]]
+
+struct Point [x, y]
+
+--- a function handed as a value: its parameters are typed by how it is applied
+fn apply_twice[f, x]
+    return f[f[x]]
+
+fn add_one[n]
+    return n + 1

@@ -1,0 +1,184 @@
+--- Rosetta Code: Pentomino tiling
+--- https://rosettacode.org/wiki/Pentomino_tiling
+--- Four random cells of the 8 x 8 board are left uncovered (the draws are seeded,
+--- so a run shows the same board each time). A depth-first search fills the
+--- first empty cell, in reading order, with each unused piece in each of its
+--- turns and mirror images whose first cell lands there, and gives up a board
+--- at once when an empty region's size is no multiple of 5. Where the holes
+--- leave no tiling, four new ones are drawn.
+
+use math
+
+struct Piece [name, shapes]
+
+--- the cells of a drawing (rows of # and . parted by /): their rows and columns
+struct Cells [rows, cols]
+
+fn cells_of[drawing]
+    rs = []
+    cs = []
+    lines = split[drawing, '/']
+    for r in range[len[lines]]
+        marks = split[lines[r], '']
+        for c in range[len[marks]]
+            if marks[c] eq '#'
+                rs = push[rs, r]
+                cs = push[cs, c]
+    return Cells[rs, cs]
+
+fn smallest[xs]
+    return sort[xs][0]
+
+--- the cells turned a quarter turn t % 4 times, mirrored first when t >= 4, moved
+--- to the top left corner and listed in reading order as row * 8 + column
+fn turned[cells, t]
+    rs = []
+    cs = []
+    for i in range[len[cells.rows]]
+        r = cells.rows[i]
+        c = cells.cols[i]
+        if t gte 4
+            c = -c
+        k = 0
+        while k lt t % 4
+            was = r
+            r = c
+            c = -was
+            k = k + 1
+        rs = push[rs, r]
+        cs = push[cs, c]
+    top = smallest[rs]
+    left = smallest[cs]
+    codes = for i in range[len[rs]]
+        (rs[i] - top) * 8 + cs[i] - left
+    return sort[codes]
+
+--- a piece's distinct shapes, each as the row and column steps from its first
+--- cell to the other four: [r1, c1, r2, c2, r3, c3, r4, c4]
+fn shapes_of[drawing]
+    cells = cells_of[drawing]
+    known = []
+    shapes = []
+    for t in range[8]
+        codes = turned[cells, t]
+        key = join[codes, ' ']
+        if key not in known
+            known = push[known, key]
+            first = codes[0]
+            steps = []
+            for code in slice[codes, 1, 5]
+                steps = push[steps, code / 8 - first / 8]
+                steps = push[steps, code % 8 - first % 8]
+            shapes = push[shapes, steps]
+    return shapes
+
+fn pentominoes[]
+    drawings = ['.##/##./.#.', '#/#/#/#/#', '#./#./#./##', '.#/##/#./#.', '##/##/#.', '###/.#./.#.', '#.#/###', '..#/..#/###', '..#/.##/##.', '.#./###/.#.', '.#/##/.#/.#', '##./.#./.##']
+    names = split['FILNPTUVWXYZ', '']
+    pieces = for i in range[12]
+        Piece[names[i], shapes_of[drawings[i]]]
+    return pieces
+
+--- whether a shape fits on the board with its first cell at row r, column c
+fn room_for[board, shape, r, c]
+    k = 0
+    while k lt 8
+        rr = r + shape[k]
+        cc = c + shape[k + 1]
+        if rr lt 0 or rr gte 8 or cc lt 0 or cc gte 8
+            return false
+        if board[rr * 8 + cc] ne '.'
+            return false
+        k = k + 2
+    return true
+
+fn put[board, shape, r, c, name]
+    placed = board
+    placed[r * 8 + c] = name
+    k = 0
+    while k lt 8
+        placed[(r + shape[k]) * 8 + c + shape[k + 1]] = name
+        k = k + 2
+    return placed
+
+--- whether every region of empty cells holds a multiple of 5 of them: each
+--- region is flooded on a copy of the board, its cells marked * as they are met
+fn regions_fit[board]
+    flooded = board
+    start = 0
+    while start lt 64
+        if flooded[start] eq '.'
+            flooded[start] = '*'
+            stack = [start]
+            size = 0
+            while len[stack] gt 0
+                x = stack[-1]
+                stack = pop[stack]
+                size = size + 1
+                if x gte 8 and flooded[x - 8] eq '.'
+                    flooded[x - 8] = '*'
+                    stack = push[stack, x - 8]
+                if x lt 56 and flooded[x + 8] eq '.'
+                    flooded[x + 8] = '*'
+                    stack = push[stack, x + 8]
+                if x % 8 gt 0 and flooded[x - 1] eq '.'
+                    flooded[x - 1] = '*'
+                    stack = push[stack, x - 1]
+                if x % 8 lt 7 and flooded[x + 1] eq '.'
+                    flooded[x + 1] = '*'
+                    stack = push[stack, x + 1]
+            if size % 5 ne 0
+                return false
+        start = start + 1
+    return true
+
+--- the board tiled from the first empty cell at or after `from` on, or [] if it cannot be
+fn tile[board, used, from, pieces]
+    at = from
+    while at lt 64 and board[at] ne '.'
+        at = at + 1
+    if at eq 64
+        return board
+    i = 0
+    while i lt 12
+        if not used[i]
+            shapes = pieces[i].shapes
+            j = 0
+            while j lt len[shapes]
+                if room_for[board, shapes[j], at / 8, at % 8]
+                    placed = put[board, shapes[j], at / 8, at % 8, pieces[i].name]
+                    if regions_fit[placed]
+                        now_used = used
+                        now_used[i] = true
+                        tiled = tile[placed, now_used, at + 1, pieces]
+                        if len[tiled] gt 0
+                            return tiled
+                j = j + 1
+        i = i + 1
+    return []
+
+--- a board with four cells drawn at random left uncovered (-)
+fn with_holes[]
+    board = for i in range[64]
+        '.'
+    holes = 0
+    while holes lt 4
+        at = rand[64]
+        if board[at] eq '.'
+            board[at] = '-'
+            holes = holes + 1
+    return board
+
+pieces = pentominoes[]
+unused = for p in pieces
+    false
+seed[2026]
+tiling = []
+while len[tiling] eq 0
+    board = with_holes[]
+    if regions_fit[board]
+        tiling = tile[board, unused, 0, pieces]
+    if len[tiling] eq 0
+        log['These four holes leave no tiling; drawing four more.']
+for r in range[8]
+    log[join[slice[tiling, 8 * r, 8 * r + 8], ' ']]

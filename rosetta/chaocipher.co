@@ -1,0 +1,57 @@
+--- Rosetta Code: Chaocipher
+--- https://rosettacode.org/wiki/Chaocipher
+--- Each wheel is a text of 26 letters, its zenith at 0 and its nadir at 13.
+--- A letter turns both wheels until it reaches the zenith of its own wheel
+--- (the right wheel when enciphering, the left when deciphering); the other
+--- wheel's zenith is the answer. Then each wheel is permuted as the paper
+--- says: one letter is lifted out and dropped in at the nadir.
+
+fn position[wheel, letter]
+    i = 0
+    while wheel[i] ne letter
+        i = i + 1
+    return i
+
+--- the wheel turned until its n-th letter is at the zenith
+fn turned[wheel, n]
+    head = slice[wheel, n, len[wheel]]
+    tail = slice[wheel, 0, n]
+    return '`head``tail`'
+
+--- the letter k places after the zenith lifted out and dropped at the nadir,
+--- the letters between moving up one place
+fn dropped_to_nadir[wheel, k]
+    kept = slice[wheel, 0, k]
+    between = slice[wheel, k + 1, 14]
+    lifted = wheel[k]
+    rest = slice[wheel, 14, 26]
+    return '`kept``between``lifted``rest`'
+
+fn chaocipher[text, left, right, enciphering]
+    out = []
+    for letter in split[upper[text], '']
+        if letter gte 'A' and letter lte 'Z'
+            known = left
+            if enciphering
+                known = right
+            n = position[known, letter]
+            left = turned[left, n]
+            right = turned[right, n]
+            answer = right[0]
+            if enciphering
+                answer = left[0]
+            out = push[out, answer]
+            left = dropped_to_nadir[left, 1]
+            right = dropped_to_nadir[turned[right, 1], 2]
+    return join[out, '']
+
+left = 'HXUCZVAMDSLKPEFJRIGTWOBNYQ'
+right = 'PTLNBQDEOYSFAVZKGJRIHWXUMC'
+plain = 'WELLDONEISBETTERTHANWELLSAID'
+secret = chaocipher[plain, left, right, true]
+back = chaocipher[secret, left, right, false]
+log['Left wheel:  `left`']
+log['Right wheel: `right`']
+log['Plaintext:   `plain`']
+log['Ciphertext:  `secret`']
+log['Deciphered:  `back`']

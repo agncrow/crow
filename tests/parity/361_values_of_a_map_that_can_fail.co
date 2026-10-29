@@ -1,0 +1,13 @@
+--- `values` of a map a function that can fail answers is a list of the
+--- map's values that can fail: it had been typed a list of nothing known,
+--- and the compiled failure held a list of text beside the success's ints
+fn f[t]
+    if int[t] gt 2
+        return map[a = 1]
+    return map[a = 2]
+
+log[values[f['3']]]
+log[values[f['1']]]
+log[keys[f['3']]]
+v = values[f['x']]
+log[v.ok]

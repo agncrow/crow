@@ -1033,26 +1033,39 @@ fn infer_and_convert_refs(raw: &[&str], valid: &[bool]) -> Column {
 /// an offset of hours alone (`-08`, as Postgres writes one) or `-0800`.
 pub fn parse_datetime(s: &str) -> Option<(i64, i16)> {
     let s = s.trim();
+    // the year: four digits, or ISO 8601's expanded form outside 0 to 9999
+    // — a sign and four digits or more (`-0005`, `+10000`), as `str` writes
+    // one (a year past them had not read back)
+    let (year, s): (i32, &str) = match s.as_bytes().first() {
+        Some(b'+') | Some(b'-') => {
+            let digits = s[1..].bytes().take_while(u8::is_ascii_digit).count();
+            if digits < 4 {
+                return None;
+            }
+            let y: i32 = s.get(1..1 + digits)?.parse().ok()?;
+            (if s.starts_with('-') { -y } else { y }, s.get(1 + digits..)?)
+        }
+        _ => (s.get(0..4)?.parse().ok()?, s.get(4..)?),
+    };
+    let b = s.as_bytes();
 
-    // Date-only: YYYY-MM-DD
-    if s.len() == 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
-        let year: i32 = s[0..4].parse().ok()?;
-        let month: u32 = s[5..7].parse().ok()?;
-        let day: u32 = s[8..10].parse().ok()?;
+    // Date-only: -MM-DD after the year
+    if s.len() == 6 && b[0] == b'-' && b[3] == b'-' {
+        let month: u32 = s.get(1..3)?.parse().ok()?;
+        let day: u32 = s.get(4..6)?.parse().ok()?;
         let millis = date_to_epoch_millis(year, month, day, 0, 0, 0)?;
         return Some((millis, 0));
     }
 
-    // DateTime: YYYY-MM-DDTHH:MM:SS[offset]
-    if s.len() >= 19 && (s.as_bytes()[10] == b'T' || s.as_bytes()[10] == b' ') {
-        let year: i32 = s[0..4].parse().ok()?;
-        let month: u32 = s[5..7].parse().ok()?;
-        let day: u32 = s[8..10].parse().ok()?;
-        let hour: u32 = s[11..13].parse().ok()?;
-        let min: u32 = s[14..16].parse().ok()?;
-        let sec: u32 = s[17..19].parse().ok()?;
+    // DateTime: -MM-DDTHH:MM:SS[offset] after the year
+    if s.len() >= 15 && b[0] == b'-' && b[3] == b'-' && (b[6] == b'T' || b[6] == b' ') {
+        let month: u32 = s.get(1..3)?.parse().ok()?;
+        let day: u32 = s.get(4..6)?.parse().ok()?;
+        let hour: u32 = s.get(7..9)?.parse().ok()?;
+        let min: u32 = s.get(10..12)?.parse().ok()?;
+        let sec: u32 = s.get(13..15)?.parse().ok()?;
 
-        let mut rest = &s[19..];
+        let mut rest = s.get(15..)?;
         // a fraction of a second, kept to the millisecond
         let mut frac_millis: i64 = 0;
         if let Some(after_dot) = rest.strip_prefix('.') {
@@ -1109,7 +1122,8 @@ fn date_to_epoch_millis(year: i32, month: u32, day: u32, hour: u32, min: u32, se
 
     // Adjust for months Jan, Feb
     let (y_adj, m_adj) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
-    let days = 365 * y_adj + y_adj / 4 - y_adj / 100 + y_adj / 400
+    // (floor division: a year before 0 had been a day off)
+    let days = 365 * y_adj + y_adj.div_euclid(4) - y_adj.div_euclid(100) + y_adj.div_euclid(400)
         + (m_adj * 306 + 5) / 10 + d - 1
         - 719468; // offset to Unix epoch
 
@@ -1136,19 +1150,32 @@ pub fn format_datetime(epoch_millis: i64, offset_minutes: i16) -> String {
     // Civil date from days since epoch
     let (year, month, day) = civil_from_days(days);
 
+    let year = iso_year(year);
     if offset_minutes == 0 {
         if hour == 0 && min == 0 && sec == 0 && fraction.is_empty() {
-            format!("{:04}-{:02}-{:02}", year, month, day)
+            format!("{}-{:02}-{:02}", year, month, day)
         } else {
-            format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}Z", year, month, day, hour, min, sec, fraction)
+            format!("{}-{:02}-{:02}T{:02}:{:02}:{:02}{}Z", year, month, day, hour, min, sec, fraction)
         }
     } else {
         let sign = if offset_minutes >= 0 { '+' } else { '-' };
         let abs_off = offset_minutes.unsigned_abs();
         let oh = abs_off / 60;
         let om = abs_off % 60;
-        format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{}{:02}:{:02}",
+        format!("{}-{:02}-{:02}T{:02}:{:02}:{:02}{}{}{:02}:{:02}",
             year, month, day, hour, min, sec, fraction, sign, oh, om)
+    }
+}
+
+/// A year as ISO 8601 writes it: four digits from 0 to 9999, and outside
+/// them its sign and four digits or more (`-0005`, `+10000`), as `fmt`'s
+/// date style writes one (the sign had counted among four digits, `-005`,
+/// which read back a day off).
+fn iso_year(year: i32) -> String {
+    match year {
+        0..=9999 => format!("{:04}", year),
+        y if y < 0 => format!("-{:04}", y.unsigned_abs()),
+        y => format!("+{}", y),
     }
 }
 

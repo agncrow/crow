@@ -1,0 +1,15 @@
+The 5-cycle: 5 vertices, 5 edges
+  Maximum matching size: 2
+  Matched pairs: 0 – 1, 2 – 3
+The Petersen graph: 10 vertices, 15 edges
+  Maximum matching size: 5
+  Matched pairs: 0 – 1, 2 – 3, 4 – 9, 5 – 7, 6 – 8
+A triangle in the way: 6 vertices, 7 edges
+  Maximum matching size: 3
+  Matched pairs: 0 – 3, 1 – 4, 2 – 5
+Two triangles joined by an edge: 6 vertices, 7 edges
+  Maximum matching size: 3
+  Matched pairs: 0 – 1, 2 – 3, 4 – 5
+A star (one centre, five leaves): 6 vertices, 5 edges
+  Maximum matching size: 1
+  Matched pairs: 0 – 1

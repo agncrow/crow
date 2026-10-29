@@ -1,0 +1,10 @@
+Seed 675248, the first five numbers:
+959861
+333139
+981593
+524817
+432883
+
+Each number was also the square divided by 1,000, modulo 1,000,000: true
+Number 210 after the seed is 625000, and the sequence repeats from there
+in a cycle of 1: 625000 squared is 390625000000.

@@ -1,0 +1,127 @@
+--- Rosetta Code: Tree datastructures
+--- https://rosettacode.org/wiki/Tree_datastructures
+--- The nest form is a record per node: its name and the list of its child
+--- nodes; as text, name(child, child, ...). The indent form is a list of
+--- (level, name) records in reading order, the root at level 0; as text, a
+--- "level name" line each. Nest to indent walks the tree depth first; indent
+--- to nest reads the list back recursively, a node's children being the
+--- entries one level deeper that follow it, up to the next one at its own
+--- level or above. Both texts are read back too, and every round trip is
+--- compared with what it started from.
+
+struct Node [name, children]
+struct Entry [level, name]
+
+fn leaf[name]
+    Node[name, []]
+
+--- the nest form's text
+fn nest_text[node]
+    if len[node.children] eq 0
+        return node.name
+    parts = for c in node.children
+        nest_text[c]
+    inner = join[parts, ', ']
+    '`node.name`(`inner`)'
+
+--- nest to indent: the node at its level, then each child's entries, a level deeper
+fn indented[node, level]
+    entries = [Entry[level, node.name]]
+    for c in node.children
+        entries = concat[entries, indented[c, level + 1]]
+    entries
+
+--- the subtree rooted at entry `at`, and the place after its last entry
+struct Built [node, next]
+
+fn build[entries, at]
+    root = entries[at]
+    children = []
+    next = at + 1
+    while next lt len[entries] and entries[next].level gt root.level
+        if entries[next].level ne root.level + 1
+            halt['entry `next` (`entries[next].name`) is more than one level below the entry before it']
+        child = build[entries, next]
+        children = push[children, child.node]
+        next = child.next
+    Built[Node[root.name, children], next]
+
+--- indent to nest: the list must hold one tree, its root first at level 0
+fn nested[entries]
+    if len[entries] eq 0 or entries[0].level ne 0
+        halt['an indent form starts with its root, at level 0']
+    tree = build[entries, 0]
+    if tree.next ne len[entries]
+        halt['entry `tree.next` (`entries[tree.next].name`) is a second root']
+    tree.node
+
+--- the indent form's text, and the tree drawn as the task draws it
+fn indent_text[entries]
+    lines = for e in entries
+        '`e.level` `e.name`'
+    join[lines, '\n']
+
+fn drawn[entries]
+    lines = for e in entries
+        margin = repeat[' ', 4 * e.level]
+        '`margin``e.name`'
+    join[lines, '\n']
+
+--- the texts read back. A nest text's tokens are names, brackets and commas.
+struct Parsed [node, at]
+
+fn parse_node[tokens, at]
+    name = tokens[at]
+    at = at + 1
+    children = []
+    if at lt len[tokens] and tokens[at] eq '('
+        --- past the bracket, then a child at a time, each past its comma
+        --- or the closing bracket
+        at = at + 1
+        more = true
+        while more
+            child = parse_node[tokens, at]
+            children = push[children, child.node]
+            more = tokens[child.at] eq ','
+            at = child.at + 1
+    Parsed[Node[name, children], at]
+
+fn read_nest[text]
+    spaced = replace[replace[replace[text, '(', ' ( '], ')', ' ) '], ',', ' , ']
+    tokens = for t in split[spaced, ' ']
+        if t ne ''
+            t
+    parse_node[tokens, 0].node
+
+fn read_indent[text]
+    entries = for line in split[text, '\n']
+        words = split[line, ' ']
+        Entry[int[words[0]], join[slice[words, 1, len[words]], ' ']]
+    entries
+
+example = Node['RosettaCode', [Node['rocks', [leaf['code'], leaf['comparison'], leaf['wiki']]], Node['mocks', [leaf['trolling']]]]]
+
+log['The example in the nest form:']
+log[nest_text[example]]
+log['']
+as_indent = indented[example, 0]
+log['... to the indent form:']
+log[indent_text[as_indent]]
+log['']
+log['... drawn, four spaces a level:']
+log[drawn[as_indent]]
+log['']
+again = nested[as_indent]
+log['... back to the nest form:']
+log[nest_text[again]]
+log['']
+log['The first and the final nest forms are the same: `again eq example`']
+log['Each text read back is the form it was written from: `read_nest[nest_text[example]] eq example` and `read_indent[indent_text[as_indent]] eq as_indent`']
+log['']
+
+--- another tree, read from its nest text, through the indent form and back
+other = read_nest['a(b(c(d, e), f), g, h(i(j(k))))']
+other_indent = indented[other, 0]
+log['Another tree: `nest_text[other]`, drawn:']
+log[drawn[other_indent]]
+log['Back from its indent form: `nest_text[nested[other_indent]]`, the same: `nested[other_indent] eq other`']

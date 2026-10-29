@@ -1,0 +1,11 @@
+Reference, NASA 2024-12-31: x = 4.64e+10 m, v = 5.81e+04 m/s, m = 3.30e+23 kg
+NKTg₁ = x·m·v = 8.896e+38, held constant; dm/dt = -0.5 kg/s
+
+Date        v NKTg (m/s)  v NASA (m/s)  Error (%)     p = m·v  NKTg₂ = (dm/dt)·p
+2025-01-01     5.224e+04     5.340e+04    -2.1630   1.724e+28         -8.620e+27
+2025-04-01     3.868e+04     3.890e+04    -0.5713   1.276e+28         -6.382e+27
+2025-07-01     4.910e+04     5.040e+04    -2.5703   1.620e+28         -8.102e+27
+2025-10-01     3.947e+04     3.980e+04    -0.8277   1.303e+28         -6.513e+27
+2025-12-31     5.848e+04     5.890e+04    -0.7163   1.930e+28         -9.649e+27
+
+NKTg₂ is negative on every date: the loss of mass works against the motion.

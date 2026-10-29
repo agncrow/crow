@@ -1,0 +1,90 @@
+--- Rosetta Code: Check if a polygon overlaps with a rectangle
+--- https://rosettacode.org/wiki/Check_if_a_polygon_overlaps_with_a_rectangle
+--- The rectangle becomes a polygon of its four corners. Two simple polygons
+--- overlap when an edge of one meets an edge of the other, or, where no edges
+--- meet, when one holds a corner of the other (then it holds all of it).
+--- Touching counts as overlapping. Unlike the separating-axis test this holds
+--- for concave polygons too, and with int corners every test is exact.
+
+struct Point [x, y]
+struct Rect [x, y, width, height]
+
+fn corners[r]
+    return [Point[r.x, r.y], Point[r.x, r.y + r.height], Point[r.x + r.width, r.y + r.height], Point[r.x + r.width, r.y]]
+
+--- where c lies from the line a → b: positive on the left, negative on the
+--- right, zero on the line
+fn turn[a, b, c]
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+--- c, on the line through a and b, lies between them
+fn between[a, b, c]
+    return min[a.x, b.x] lte c.x and c.x lte max[a.x, b.x] and min[a.y, b.y] lte c.y and c.y lte max[a.y, b.y]
+
+fn sign_of[v]
+    if v gt 0
+        return 1
+    if v lt 0
+        return -1
+    return 0
+
+--- the segments p1-p2 and q1-q2 cross, or an end of one lies on the other
+fn segments_meet[p1, p2, q1, q2]
+    d1 = sign_of[turn[q1, q2, p1]]
+    d2 = sign_of[turn[q1, q2, p2]]
+    d3 = sign_of[turn[p1, p2, q1]]
+    d4 = sign_of[turn[p1, p2, q2]]
+    if d1 * d2 lt 0 and d3 * d4 lt 0
+        return true
+    an_end_of_p = (d1 eq 0 and between[q1, q2, p1]) or (d2 eq 0 and between[q1, q2, p2])
+    an_end_of_q = (d3 eq 0 and between[p1, p2, q1]) or (d4 eq 0 and between[p1, p2, q2])
+    return an_end_of_p or an_end_of_q
+
+fn edges_meet[a, b]
+    i = 0
+    while i lt len[a]
+        j = 0
+        while j lt len[b]
+            if segments_meet[a[i], a[(i + 1) % len[a]], b[j], b[(j + 1) % len[b]]]
+                return true
+            j = j + 1
+        i = i + 1
+    return false
+
+--- even-odd rule: count the edges a ray from p to the right crosses
+fn holds[poly, p]
+    inside = false
+    for i in range[len[poly]]
+        a = poly[i]
+        b = poly[(i + 1) % len[poly]]
+        if a.y lte p.y and p.y lt b.y and turn[a, b, p] gt 0
+            inside = not inside
+        if b.y lte p.y and p.y lt a.y and turn[a, b, p] lt 0
+            inside = not inside
+    return inside
+
+fn polygons_overlap[a, b]
+    return edges_meet[a, b] or holds[b, a[0]] or holds[a, b[0]]
+
+fn overlaps_rect[poly, r]
+    return polygons_overlap[poly, corners[r]]
+
+fn poly_text[poly]
+    texts = for p in poly
+        '[`p.x`, `p.y`]'
+    inside = join[texts, ', ']
+    return '[`inside`]'
+
+fn rect_text[r]
+    return '(`r.x`, `r.y`, `r.width`, `r.height`)'
+
+fn show[name, poly, rects]
+    log['`name` = `poly_text[poly]`']
+    for r in rects
+        log['  rect `rect_text[r]` => `poly_text[corners[r]]`: overlap? `overlaps_rect[poly, r]`']
+
+log['The task\'s polygon (x, y, width, height for each rectangle):']
+show['poly', [Point[0, 0], Point[0, 2], Point[1, 4], Point[2, 2], Point[2, 0]], [Rect[4, 0, 2, 2], Rect[1, 0, 8, 2], Rect[2, 0, 2, 2], Rect[-5, -5, 20, 20]]]
+log['']
+log['A concave polygon, a U, and rectangles in its notch, across it, in its base and above it:']
+show['u', [Point[0, 0], Point[9, 0], Point[9, 9], Point[6, 9], Point[6, 3], Point[3, 3], Point[3, 9], Point[0, 9]], [Rect[4, 5, 1, 2], Rect[2, 5, 5, 2], Rect[1, 1, 7, 1], Rect[4, 10, 1, 1]]]

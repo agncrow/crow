@@ -1,0 +1,3 @@
+j90_a_collecting_loop_ending_in_a_call_that_answers_nothing.co:5:5: a collecting loop's last line is its item, and log[] answers nothing, which 'ys' cannot hold — end the body with the value to collect
+  5 │     log[i]
+    │     ^^^

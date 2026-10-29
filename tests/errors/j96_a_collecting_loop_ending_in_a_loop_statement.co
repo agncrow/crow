@@ -1,0 +1,9 @@
+--- a collecting loop's last line is its item, and a `for` or `while`
+--- statement is no value: refused, with the fix — the interpreter had
+--- collected the inner loop's last value, `[3, 6]`, and the compiled
+--- program nothing, `[]` (Rosetta Code, Tropical algebra overloading)
+
+h = for a in [1, 2]
+    for b in [3]
+        a * b
+log[h]

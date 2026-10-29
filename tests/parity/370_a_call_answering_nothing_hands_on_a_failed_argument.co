@@ -1,0 +1,25 @@
+--- a call of a function that answers nothing, handed a value that can
+--- fail, answers that failure when it failed: dropped by its line, a
+--- function hands it back and the top level halts — typed as nothing, the
+--- failure had vanished in both modes, and the compiled program had not
+--- built where the call was a function's last line
+fn show[x]
+    log[x]
+
+fn maybe[n]
+    if n gt 0
+        return n
+    return error['not positive']
+
+fn run[n]
+    show[maybe[n]]
+
+fn tried[n]
+    r = run[n]
+    return r.ok
+
+run[1]
+log[tried[2]]
+log[tried[-2]]
+run[-1]
+log['not reached']

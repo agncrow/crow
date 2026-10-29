@@ -1,0 +1,145 @@
+--- Rosetta Code: Smarandache-Wellin primes
+--- https://rosettacode.org/wiki/Smarandache-Wellin_primes
+--- The n-th Smarandache-Wellin number is the (n-1)-th times 10 to the number of digits
+--- of the n-th prime, plus that prime: an int that grows. Its derived number is the
+--- counts of the digits 0 to 9 so far, written one after another and read as an int
+--- (which drops the leading zeros). A number is tried by the primes below 1,000 first,
+--- then by a Fermat test to base 3 (a failure proves it composite), and a number that
+--- passes is confirmed by strong tests to the first thirteen primes: certain below
+--- 3.3 x 10^24, a probable prime beyond. Shown: the first three of each, then the
+--- stretch, the 4th to 7th Smarandache-Wellin primes (to 1,543 digits) and the first 20
+--- derived ones, in a few seconds a mode. The 8th, of 5,719 digits from the first 1,429
+--- primes, takes minutes: give the program the argument 8 to look for it.
+
+struct Found [index, digits, last, number]
+
+fn primes_below[n]
+    composite = for i in range[n]
+        false
+    found = []
+    for i in range[2, n]
+        if not composite[i]
+            found = push[found, i]
+            j = i * i
+            while j lt n
+                composite[j] = true
+                j = j + i
+    return found
+
+--- the bits of e, most significant first
+fn bits_of[e]
+    bits = []
+    while e gt 0
+        bits = push[bits, e % 2]
+        e = e / 2
+    return reverse[bits]
+
+--- a^e mod m, left to right over e's bits, a small
+fn power_mod[a, e, m]
+    x = 1
+    for bit in bits_of[e]
+        x = x * x % m
+        if bit eq 1
+            x = x * a % m
+    return x
+
+--- the strong probable prime test of the odd n > 3 to base a
+fn strong[n, a]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    x = power_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return true
+    r = 1
+    while r lt s
+        x = x * x % n
+        if x eq n - 1
+            return true
+        r = r + 1
+    return false
+
+fn probably_prime[n, small]
+    if n lt 2
+        return false
+    for q in small
+        if n % q eq 0
+            return n eq q
+    if n lt 1000000
+        return true
+    if power_mod[3, n - 1, n] ne 1
+        return false
+    for a in [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41]
+        if not strong[n, a]
+            return false
+    return true
+
+--- the number as its first and last 20 digits where it has more than 40
+fn shortened[number]
+    text = str[number]
+    if len[text] lte 40
+        return text
+    head = slice[text, 0, 20]
+    tail = slice[text, len[text] - 20, len[text]]
+    return '`head`...`tail`'
+
+--- the first `wanted` Smarandache-Wellin primes
+fn wellin_primes[primes, small, wanted]
+    found = []
+    number = 0
+    digits = 0
+    i = 0
+    while len[found] lt wanted and i lt len[primes]
+        p = primes[i]
+        width = len[str[p]]
+        number = number * 10 ^ width + p
+        digits = digits + width
+        i = i + 1
+        if probably_prime[number, small]
+            found = push[found, Found[i, digits, p, number]]
+    return found
+
+--- the first `wanted` derived Smarandache-Wellin primes
+fn derived_primes[primes, small, wanted]
+    found = []
+    counts = for d in range[10]
+        0
+    digits = 0
+    i = 0
+    while len[found] lt wanted and i lt len[primes]
+        p = primes[i]
+        for c in split[str[p], '']
+            d = int[c]
+            counts[d] = counts[d] + 1
+        digits = digits + len[str[p]]
+        i = i + 1
+        number = int[join[counts, '']]
+        if probably_prime[number, small]
+            found = push[found, Found[i, digits, p, number]]
+    return found
+
+given = args[]
+wanted = 7
+if len[given] gt 0
+    wanted = int[given[0]]
+primes = primes_below[20000]
+small = primes_below[1000]
+
+log['The first `wanted` Smarandache-Wellin primes:']
+wellin = wellin_primes[primes, small, wanted]
+for i in range[len[wellin]]
+    f = wellin[i]
+    index = fmt[f.index, width = 4]
+    digits = fmt[f.digits, width = 4]
+    last = fmt[f.last, width = 5]
+    log['`i + 1`: index `index`, digits `digits`, last prime `last`: `shortened[f.number]`']
+log['']
+log['The first 20 derived Smarandache-Wellin primes:']
+derived = derived_primes[primes, small, 20]
+for i in range[len[derived]]
+    f = derived[i]
+    n = fmt[i + 1, width = 2]
+    index = fmt[f.index, width = 4]
+    log['`n`: index `index`: `f.number`']

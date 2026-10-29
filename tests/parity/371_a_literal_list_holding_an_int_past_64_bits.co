@@ -1,0 +1,11 @@
+--- a list of whole numbers written down holding one past 64 bits — a
+--- numeral, or a power of two literals — is a list of ints, every digit
+--- kept: each had stopped where the literal was made (`a whole number
+--- past 64 bits where an int is held in 64 bits`)
+xs = [1, 9589776899767587796600]
+log[xs]
+log[sort[[2 ^ 65, 3, 2 ^ 64]]]
+ys = [2 ^ 70, 5]
+ys = push[ys, 7]
+log[ys]
+log[len[[2 ^ 3, 1]]]

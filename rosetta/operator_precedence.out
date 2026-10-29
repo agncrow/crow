@@ -1,0 +1,62 @@
+Crow's operators, from the tightest binding to the loosest:
+
+level  operators                             associativity  notes
+    1  ( )  [ ]  map[ ]                       n/a            grouping; a list or a map written down
+    2  f[x]  xs[i]  r.field                   left           a call, an index and a field, read left to right
+    3  ^  .^                                  right          a power; the exponent may carry a sign: 2 ^ -1
+    4  -  not                                 right          prefixes: -x, not b (and not (x eq y) for a comparison)
+    5  *  /  %  .*  ./                        left           times, divide (ints cut toward zero), remainder
+    6  +  -                                   left           plus and minus
+    7  then                                   left           x then f[a] is f[x, a]
+    8  eq  ne  lt  gt  lte  gte  in  not in   left           comparisons and membership
+    9  and                                    left           the right side runs only where the left does not decide
+   10  or                                     left           the right side runs only where the left does not decide
+
+Assignment (=, and a, b = x, y) is a statement, not an operator.
+
+Level 2 before 3: an index binds before a power.
+  xs[1] ^ 2  is 16: read as (xs[1]) ^ 2; xs[(1 ^ 2)] would be 4
+Level 2 reads left to right: a call, then an index of its answer.
+  split['a bc', ' '][1]  is bc: the call first, then the index of its answer
+Level 3 is right-associative.
+  2 ^ 3 ^ 2  is 512: read as 2 ^ (3 ^ 2); (2 ^ 3) ^ 2 would be 64
+  2.0 ^ -1  is 0.5: the exponent carries its own sign
+Level 3 before 4: a power binds before the minus sign in front of it.
+  -3 ^ 2  is -9: read as -(3 ^ 2); (-3) ^ 2 would be 9
+Level 4 before 8 and 9: not binds before a comparison and before and, so
+not of a comparison is written with parentheses, not (x eq y).
+  not false and false  is false: read as (not false) and false; not (false and false) would be true
+Level 5 before 6: times before plus.
+  2 + 3 * 4  is 14: read as 2 + (3 * 4); (2 + 3) * 4 would be 20
+Level 5 is left-associative, % with * and /.
+  24 / 4 / 2  is 3: read as (24 / 4) / 2; 24 / (4 / 2) would be 12
+  7 * 3 % 4  is 1: read as (7 * 3) % 4; 7 * (3 % 4) would be 21
+Level 6 is left-associative.
+  10 - 4 - 3  is 3: read as (10 - 4) - 3; 10 - (4 - 3) would be 9
+Level 6 before 7: then takes the whole sum.
+  2 + 3 then str  is 5: read as str[2 + 3]; 2 + str[3] would be refused: text is no number
+Level 7 before 8: then before a comparison.
+  16 then sqrt eq 4.0  is true: read as sqrt[16] eq 4.0; sqrt[16 eq 4.0] would be refused: a truth has no root
+Level 7 chains left to right.
+  'b c a' then split[' '] then sort  is ['a', 'b', 'c']: sort[split['b c a', ' ']]
+Level 6 before 8: arithmetic before a comparison or membership.
+  1 + 2 eq 3  is true: read as (1 + 2) eq 3; 1 + (2 eq 3) would be refused: a truth is no number
+  2 + 2 in [3, 4]  is true: read as (2 + 2) in [3, 4]; 2 + (2 in [3, 4]) would be refused
+Level 8 is left-associative.
+  1 lt 2 eq true  is true: read as (1 lt 2) eq true; 1 lt (2 eq true) would be refused: a number is no truth
+  so 1 lt x lt 3 is no range test: (1 lt x) lt 3 is refused, a truth having no order
+Level 8 before 9 before 10: comparisons, then and, then or.
+  true or true and false  is true: read as true or (true and false); (true or true) and false would be false
+  1 gt 2 or 3 lt 4  is true: read as (1 gt 2) or (3 lt 4); 1 gt (2 or 3) lt 4 would be refused
+and and or decide from the left: the right side runs only where it must.
+  len[ys] gt 5 and ys[5] gt 0  is false: ys has two items, and ys[5] is never read
+Every other operator computes its left side first, then its right:
+    evaluated left
+    evaluated right
+    evaluated third
+  noted['left'] + noted['right'] * noted['third']  is 2: evaluated left to right, multiplied before added
+
+Arguments are passed by value: a function that writes into its list and its
+record changes its own copies, never its caller's.
+  inside the function: [99, 2, 3] and Point[x = 99, y = 2]
+  the caller's afterwards: [1, 2, 3] and Point[x = 1, y = 2]

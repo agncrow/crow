@@ -1,0 +1,120 @@
+--- Rosetta Code: Blossom algorithm
+--- https://rosettacode.org/wiki/Blossom_algorithm
+--- Edmonds' algorithm in its O(V^3) form: from each unmatched vertex a breadth-first
+--- search grows an alternating tree; an odd cycle met on the way (a blossom) is
+--- contracted to its base, and an unmatched vertex reached flips the path into the matching.
+
+struct Search [mate, parent, base, used, blossom, queue]
+
+fn filled[n, value]
+    xs = for i in range[n]
+        value
+    return xs
+
+fn adjacency[n, edges]
+    adj = for i in range[n]
+        []
+    for e in edges
+        adj[e[0]] = push[adj[e[0]], e[1]]
+        adj[e[1]] = push[adj[e[1]], e[0]]
+    return adj
+
+fn common_base[s, a, b]
+    --- The base where the tree paths from a and from b to the root first meet.
+    seen = filled[len[s.base], false]
+    a = s.base[a]
+    seen[a] = true
+    while s.mate[a] ne -1
+        a = s.base[s.parent[s.mate[a]]]
+        seen[a] = true
+    b = s.base[b]
+    while not seen[b]
+        b = s.base[s.parent[s.mate[b]]]
+    return b
+
+fn mark_path[s, v, b, x]
+    --- Marks the blossom's bases on the path from v down to its base b, each
+    --- vertex's parent turned to point the other way round the cycle.
+    while s.base[v] ne b
+        s.blossom[s.base[v]] = true
+        s.blossom[s.base[s.mate[v]]] = true
+        s.parent[v] = x
+        x = s.mate[v]
+        v = s.parent[x]
+    return s
+
+fn contract[s, v, u]
+    --- The odd cycle through the edge v-u shrunk to its base: every vertex in it
+    --- takes that base, and the ones not yet in the tree join the search.
+    b = common_base[s, v, u]
+    s.blossom = filled[len[s.base], false]
+    s = mark_path[s, v, b, u]
+    s = mark_path[s, u, b, v]
+    for i in range[len[s.base]]
+        if s.blossom[s.base[i]]
+            s.base[i] = b
+            if not s.used[i]
+                s.used[i] = true
+                s.queue = push[s.queue, i]
+    return s
+
+fn augment[s, u]
+    --- The alternating path from u back to the root flipped: a matching one larger.
+    while u ne -1
+        v = s.parent[u]
+        next = s.mate[v]
+        s.mate[u] = v
+        s.mate[v] = u
+        u = next
+    return s
+
+fn search_from[s, adj, root]
+    n = len[adj]
+    s.used = filled[n, false]
+    s.parent = filled[n, -1]
+    s.base = range[n]
+    s.used[root] = true
+    s.queue = push[[], root]
+    head = 0
+    while head lt len[s.queue]
+        v = s.queue[head]
+        head = head + 1
+        for u in adj[v]
+            if s.base[v] ne s.base[u] and s.mate[v] ne u
+                if u eq root or (s.mate[u] ne -1 and s.parent[s.mate[u]] ne -1)
+                    s = contract[s, v, u]
+                else if s.parent[u] eq -1
+                    s.parent[u] = v
+                    if s.mate[u] eq -1
+                        return augment[s, u]
+                    s.used[s.mate[u]] = true
+                    s.queue = push[s.queue, s.mate[u]]
+    return s
+
+fn max_matching[adj]
+    --- mate[v] is v's partner, or -1.
+    n = len[adj]
+    s = Search[filled[n, -1], filled[n, -1], range[n], filled[n, false], filled[n, false], []]
+    for v in range[n]
+        if s.mate[v] eq -1
+            s = search_from[s, adj, v]
+    return s.mate
+
+fn report[name, n, edges]
+    mate = max_matching[adjacency[n, edges]]
+    pairs = for u in range[n]
+        if u lt mate[u]
+            '`u` – `mate[u]`'
+    log['`name`: `n` vertices, `len[edges]` edges']
+    log['  Maximum matching size: `len[pairs]`']
+    shown = join[pairs, ', ']
+    log['  Matched pairs: `shown`']
+
+report['The 5-cycle', 5, [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0]]]
+report['The Petersen graph', 10, [[0, 1], [1, 2], [2, 3], [3, 4], [4, 0], [0, 5], [1, 6], [2, 7], [3, 8], [4, 9], [5, 7], [7, 9], [9, 6], [6, 8], [8, 5]]]
+--- With 0-1 and 2-4 matched first, the only augmenting path from 3 is 3-0-1-4-2-5:
+--- it enters the triangle 1-2-4 at 1 and leaves it by 2, the long way round, which
+--- the search finds only once the triangle is shrunk to its base.
+report['A triangle in the way', 6, [[0, 1], [0, 3], [0, 5], [1, 2], [1, 4], [2, 4], [2, 5]]]
+report['Two triangles joined by an edge', 6, [[0, 1], [1, 2], [2, 0], [3, 4], [4, 5], [5, 3], [2, 3]]]
+report['A star (one centre, five leaves)', 6, [[0, 1], [0, 2], [0, 3], [0, 4], [0, 5]]]

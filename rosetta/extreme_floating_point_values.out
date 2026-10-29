@@ -1,0 +1,47 @@
+Computed from ordinary floats:
+0.0 * -1.0                     -0
+-1.0 / (largest * 2.0)         -0
+1.0 / 0.0                      inf
+largest * 2.0                  inf
+-1.0 / 0.0                     -inf
+0.0 / 0.0                      NaN
+sqrt[-1.0]                     NaN
+largest: (2 - 2^-52) * 2^1023  1.7976931348623157e308
+smallest normal: 2^-1022       2.2250738585072014e-308
+smallest subnormal: 2^-1074    5e-324
+epsilon: 2^-52                 2.220446049250313e-16
+
+Entered directly:
+-0.0                           -0
+inf (use math)                 inf
+-inf                           -inf
+nan (use math)                 NaN
+
+Arithmetic:
+inf + 1.0                      inf
+inf + inf                      inf
+inf - inf                      NaN
+inf * -1.0                     -inf
+inf * 0.0                      NaN
+1.0 / inf                      0
+-1.0 / inf                     -0
+1.0 / -0.0                     -inf
+-0.0 + 0.0                     0
+-0.0 * -0.0                    0
+abs[-0.0]                      0
+nan + 1.0                      NaN
+nan * 0.0                      NaN
+min[nan, 1.0]                  NaN
+smallest subnormal / 2.0       0
+largest + 1.0 eq largest       true
+1.0 + epsilon gt 1.0           true
+1.0 + epsilon / 2.0 eq 1.0     true
+
+Comparisons:
+-0.0 eq 0.0                    true
+inf gt largest                 true
+-inf lt -largest               true
+nan eq nan                     false
+nan ne nan                     true
+nan lt 1.0                     false
+nan gte 1.0                    false

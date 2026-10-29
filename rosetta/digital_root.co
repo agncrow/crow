@@ -1,0 +1,66 @@
+--- Rosetta Code: Digital root
+--- https://rosettacode.org/wiki/Digital_root
+--- Sum the digits until one digit is left, counting the sums (the additive persistence).
+--- Any base from 2 to 36 works: a number is read from its digits 0-9 and a-z in that base.
+
+use bits
+
+struct Root [persistence, root]
+
+fn digit_value[c]
+    if c gte 'a'
+        return code[c] - code['a'] + 10
+    return code[c] - code['0']
+
+fn digit_text[d]
+    if d lt 10
+        return char[code['0'] + d]
+    return char[code['a'] + d - 10]
+
+fn parse[text, base]
+    n = 0
+    for c in split[lower[text], '']
+        n = n * base + digit_value[c]
+    return n
+
+fn written[n, base]
+    if n eq 0
+        return '0'
+    digits = []
+    while n gt 0
+        digits = push[digits, digit_text[n % base]]
+        n = n / base
+    return join[reverse[digits], '']
+
+fn digit_sum[n, base]
+    s = 0
+    while n gt 0
+        s = s + n % base
+        n = n / base
+    return s
+
+fn digital_root[n, base]
+    persistence = 0
+    while n gte base
+        n = digit_sum[n, base]
+        persistence = persistence + 1
+    return Root[persistence, n]
+
+fn report[text, base]
+    r = digital_root[parse[text, base], base]
+    shown = fmt[text, width = 31, align = 'right']
+    log['`shown` (base `fmt[base, width = 2]`) has additive persistence `r.persistence` and digital root `written[r.root, base]`']
+
+for n in [627615, 39390, 588225, 393900588225, 55]
+    report[str[n], 10]
+report['448944221089', 10]
+report['e', 16]
+report['87', 16]
+report['7e0', 16]
+report['14e344', 16]
+report['d60141', 16]
+report['12343210', 16]
+report['DigitalRoot', 30]
+report['1101122201121110011000000', 3]
+report['1111111111111111111111111111111', 2]
+report[str[2 ^ 100], 10]

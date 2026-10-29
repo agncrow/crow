@@ -1,0 +1,9 @@
+The first player rolls 9 dice of 4 faces, the second 6 dice of 6 faces:
+    the first player wins:  0.5731440767829801 (48679795/84934656)
+    a draw:                 0.070766169838454 (144252007/2038431744)
+    the second player wins: 0.3560897533785659 (725864657/2038431744)
+
+The first player rolls 5 dice of 10 faces, the second 6 dice of 7 faces:
+    the first player wins:  0.6427886287176262 (3781171969/5882450000)
+    a draw:                 0.044496030310499875 (523491347/11764900000)
+    the second player wins: 0.312715340971874 (735812943/2352980000)

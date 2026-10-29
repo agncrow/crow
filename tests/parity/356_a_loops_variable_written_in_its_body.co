@@ -1,0 +1,27 @@
+--- a loop's variable written in its body: each round binds it anew (spec,
+--- Scope), and the body writes its own copy of the round's item — a count,
+--- a text, a list the loop walks — compiled, the variable had been bound
+--- immutably, E0384, as a Miller–Rabin test reusing it for an inner
+--- `while` met it
+for i in range[3]
+    i = i * 10
+    log[i]
+
+for w in ['a', 'b']
+    w = '`w`!'
+    log[w]
+
+for xs in [['a'], ['b', 'c']]
+    xs = push[xs, 'z']
+    log[xs]
+
+fn trial[n]
+    found = 0
+    for i in range[n]
+        i = 1
+        while i lt 3
+            i = i + 1
+        found = found + i
+    return found
+
+log[trial[4]]

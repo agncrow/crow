@@ -578,6 +578,31 @@ impl<'a> Lowerer<'a> {
 
     /// A name read as a value.
     pub(super) fn check_ident(&mut self, name: &str) {
+        // (a record's name is defined for the calls that make one; read as
+        // a value — `p = Point` for `Point[…]` — the lowered program had
+        // read a name nothing bound; Rosetta Code, Draw a rotating cube)
+        if self.ctx.structs.contains_key(name) && !self.ctx.functions.contains_key(name) && !self.scopes.iter().any(|s| s.contains(name)) && !self.v.stored.contains(name) {
+            self.refuse(format!("'{}' is a record's name, not a value — make one with {}[…]", name, name));
+            return;
+        }
+        // (a top-level variable read before the line that gives it its
+        // first value holds none yet: the interpreter had stopped there,
+        // "undefined variable", and the compiled program had not built;
+        // Rosetta Code, Idiomatically determine all the characters that
+        // can be used for symbols)
+        if self.pass == Pass::Final
+            && matches!(self.at, Where::Top)
+            && !self.fragment
+            && self.v.module_vars.contains(name)
+            && !self.scopes.iter().any(|s| s.contains(name))
+            && !self.v.stored.contains(name)
+            && !self.ctx.functions.contains_key(name)
+            && !self.ctx.derives.contains(name)
+            && !self.is_fact(name)
+        {
+            self.refuse(format!("'{}' is read before it is given a value — it is given one further down: give it its value before this line", name));
+            return;
+        }
         if self.defined(name) || BUILTINS.contains(&name) {
             return;
         }
@@ -726,6 +751,23 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// A variable, a parameter or a loop variable named like a function of
+    /// the program's: `scores[0]` would read as the function's call (spec,
+    /// Names Are Never Ambiguous — `fn first[scores]` beside `fn
+    /// scores[x]` had read the index as the call, a silent wrong answer in
+    /// both modes; Rosetta Code, Distance and Bearing). A standard module's
+    /// function, inlined, sees none of the program's names.
+    pub(super) fn check_not_a_function(&mut self, name: &str, what: &str) {
+        // (nor does the standard library's own source, checked alone — the
+        // one kind of file that imports `sys` — whose functions are tested
+        // as the program: `chunk = chunk[…]` in encode.co's tests; inlined
+        // into a program, a module's function is skipped above)
+        if crate::modules::is_crow_fn(&self.current_fn) || !self.ctx.functions.contains_key(name) || self.ctx.derives.contains(name) || self.ctx.bare_modules.contains("sys") {
+            return;
+        }
+        self.refuse(format!("'{}' is a function of this program — pick another name for this {}: `{}[…]` would call the function", name, what, name));
+    }
+
     /// An assignment: a derivation is not assigned, and a variable keeps the
     /// type it was first given.
     pub(super) fn check_assign(&mut self, name: &str, new_ty: &Ty) {
@@ -747,7 +789,11 @@ impl<'a> Lowerer<'a> {
             if existing_ty.compatible(inner)
                 || (matches!(existing_ty, Ty::Float) && matches!(inner.as_ref(), Ty::Int)))
             || matches!(&existing_ty, Ty::Result(inner) if inner.compatible(new_ty));
-        if !unwraps && !existing_ty.compatible(new_ty) && !matches!(existing_ty, Ty::Unknown) && !matches!(new_ty, Ty::Unknown) {
+        // (rows of whole numbers written down, given a list of lists of
+        // ints, hold one from the declaration on — settle's rule — as one
+        // list of them given a list of ints does)
+        let int_rows = crate::type_infer::settle::is_int_rows(&existing_ty) && crate::type_infer::settle::is_int_lists(new_ty.payload());
+        if !unwraps && !int_rows && !existing_ty.compatible(new_ty) && !matches!(existing_ty, Ty::Unknown) && !matches!(new_ty, Ty::Unknown) {
             // a value whose type the program does not know (a cell of a
             // column no database described, a parsed document's member)
             // says what it is first
@@ -831,6 +877,44 @@ impl<'a> Lowerer<'a> {
     /// program reads, shown as `done`; after `y = 1.0` the lowered program
     /// had disagreed with itself, an internal error.) True when refused.
     pub(super) fn refuse_nothing_held(&mut self, place: &str, x: &Expr) -> bool {
+        // (a collecting loop's item is its body's last line: one that
+        // answers nothing — `log[i]` — is no item, and the modes had
+        // disagreed, `[]` interpreted and `[done, done, done]` compiled;
+        // Rosetta Code, Longest common subsequence)
+        if let Expr::ForExpr { body, .. } = x
+            && let Some(Stmt::Do(last)) = body.iter().rev().find(|s| !matches!(s, Stmt::Line(_)))
+            && let Some(call) = self.answers_nothing(last)
+        {
+            self.refuse(format!("a collecting loop's last line is its item, and {} answers nothing, which {} cannot hold — end the body with the value to collect", call, place));
+            return true;
+        }
+        // (and a loop statement is no value: the interpreter had collected
+        // the inner loop's last value, the compiled program nothing;
+        // Rosetta Code, Tropical algebra overloading)
+        if let Expr::ForExpr { body, .. } = x
+            && let Some(last @ (Stmt::For { .. } | Stmt::While { .. })) = body.iter().rev().find(|s| !matches!(s, Stmt::Line(_)))
+        {
+            let word = if matches!(last, Stmt::For { .. }) { "a `for` statement" } else { "a `while` statement" };
+            // (named at the statement's own line, not the last line inside it)
+            let at = body
+                .iter()
+                .rev()
+                .skip_while(|s| !matches!(s, Stmt::For { .. } | Stmt::While { .. }))
+                .find_map(|s| match s {
+                    Stmt::Line(n) => Some(*n),
+                    _ => None,
+                });
+            let line = self.v.line;
+            if let Some(n) = at {
+                self.v.line = n;
+            }
+            self.refuse(format!(
+                "a collecting loop's last line is its item, and {} is no value, which {} cannot hold — end the body with the value to collect (an inner list is a collecting loop held by a name: `row = for b in …`, then `row`)",
+                word, place
+            ));
+            self.v.line = line;
+            return true;
+        }
         let Some(call) = self.answers_nothing(x) else { return false };
         self.refuse(format!("{} answers nothing, which {} cannot hold — call it on a line of its own", call, place));
         true
@@ -1097,6 +1181,14 @@ impl<'a> Lowerer<'a> {
             BinOp::Lte => crow_runtime::mask::Cmp::Lte,
             _ => return,
         };
+        // (a function is no value to compare: interpreted it had compared by
+        // name, compiled by address or not built at all — `f eq 'a'`, `one
+        // eq one`; Rosetta Code, Stair-climbing puzzle. Its name is
+        // `describe[f].name`)
+        if matches!(l.payload(), Ty::Fn(..) | Ty::Fns(_)) || matches!(r.payload(), Ty::Fn(..) | Ty::Fns(_)) {
+            self.refuse(format!("{} compares values, and a function is none — compare what it answers, or its name: describe[f].name", cmp.word()));
+            return;
+        }
         let failing = |t: &Ty| matches!(t.payload(), Ty::List(item) if item.is_result());
         let one = |t: &Ty| matches!(order_side(t), Some(OrderSide::One(_)));
         if (failing(l) && one(r)) || (one(l) && failing(r)) {
@@ -1385,7 +1477,7 @@ impl<'a> Lowerer<'a> {
             self.refuse(format!("json[] takes text to parse, or a map, a list, a record or a frame to answer with, got {}", what));
             return;
         }
-        if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
+        if let Some(e) = crate::table::refusal_typed(&modules, name, &kinds, types) {
             // the form for these arguments may be a module's the program does
             // not import: it says that module (`abs` of a column is math's —
             // it had said abs[] takes an int or a number)
@@ -1428,9 +1520,15 @@ impl<'a> Lowerer<'a> {
         if name == "route" && !self.defined("route") && !matches!(arg_type(self, 0), Ty::Str | Ty::Unknown) {
             self.refuse("route[] takes a path first — the app is implicit: route['/', handler]".to_string());
         }
+        // (a function of the program's own of a name no import reserves —
+        // `connect` without `use db`, `fits` or `box` without `use web` — is
+        // the program's: its definition passed the reservation, and its
+        // calls had been checked against the module's form, refused by its
+        // count or as a test's word; Rosetta Code, Kirkpatrick-Seidel)
+        let program_fn = self.ctx.functions.contains_key(name) && !crate::modules::is_crow_fn(&self.current_fn) && !self.declared(name);
         // Test-harness builtins exist only inside test blocks (which never
         // reach a build) — accept them there, refuse them anywhere else.
-        if crate::table::has(name, crate::table::Prop::TestOnly) {
+        if crate::table::has(name, crate::table::Prop::TestOnly) && !program_fn {
             if self.at != Where::Test {
                 self.refuse(format!("'{}' is a test-harness builtin — it only works inside a test block", name));
             }
@@ -1454,8 +1552,27 @@ impl<'a> Lowerer<'a> {
         // a route and its responses are web's: without `use web` neither
         // mode has them (the interpreter had answered msgpack, arrow, bytes
         // and stream with a map that only looked like a response)
-        if !own && !self.web_program() && !self.provided_bare(name) && matches!(name, "route" | "serve" | "respond" | "redirect" | "msgpack" | "arrow" | "bytes" | "stream") {
+        // (a variable of the program's named like one is indexed, not
+        // called: `bytes = [1, 2]` then `bytes[0]` had been refused as
+        // web's form; Rosetta Code, Bitcoin address validation)
+        if !own && !self.declared(name) && !self.web_program() && !self.provided_bare(name) && matches!(name, "route" | "serve" | "respond" | "redirect" | "msgpack" | "arrow" | "bytes" | "stream") {
             self.refuse(format!("{}[] is web's: add `use web`", name));
+            return;
+        }
+        // (sys's forms over functions — `describe`, `apply` — are the
+        // standard library's own (spec, sys): a program's call of one had
+        // passed every check, then the interpreter stopped, "does not run
+        // 'describe' yet", and the compiled program did not build; Rosetta
+        // Code, Metaprogramming. After web's: a name web answers too —
+        // `bytes` — is web's to refuse, naming its import)
+        if !program_fn
+            && !crate::modules::is_crow_fn(&self.current_fn)
+            && !self.declared(name)
+            && !self.ctx.bare_modules.contains("sys")
+            && crate::table::rows_named(name).any(|r| r.module == "sys")
+            && !crate::table::rows_named(name).any(|r| r.module.is_empty() || (r.module != "sys" && self.ctx.bare_modules.contains(r.module)))
+        {
+            self.refuse(format!("{}[] is the standard library's own (sys): a program outside it does not call it — a function is called by its name", name));
             return;
         }
         // a response's body is text, as a feed's put takes it, and its
@@ -1775,7 +1892,15 @@ impl<'a> Lowerer<'a> {
                     self.refuse_kinds(name, argc, types);
                     return;
                 }
-                // Imported under an alias?
+                // Imported under an alias? Its names are qualified-only (spec,
+                // Aliased Imports): a name the core answers too (`min`), the
+                // program's own function (`rank`) or a variable (`sum = [1,
+                // 2]`, indexed) is that one, never the module's — each had
+                // been refused as math's (Rosetta Code, Index finite lists,
+                // Permutations/Rank of a permutation)
+                if self.ctx.functions.contains_key(name) || self.declared(name) || CORE_RESERVED.contains(&name) {
+                    return;
+                }
                 let alias = self.ctx.module_aliases.iter().find(|(_, p)| p.as_str() == module).map(|(a, _)| a.clone());
                 if let Some(alias) = alias {
                     let module = module.to_string();
@@ -1807,7 +1932,7 @@ impl<'a> Lowerer<'a> {
         // Known builtin? Check where it is called and its argument count
         // (a local or a parameter of the name, indexed — `query[0]` of a
         // parameter `query` — is a value read, not the builtin)
-        if BUILTINS.contains(&name) && !self.declared(name) {
+        if BUILTINS.contains(&name) && !self.declared(name) && !program_fn {
             let for_session = self.in_fn().map_or(false, |f| self.ctx.view_handlers.contains(&f));
             // the notice is the session's: only something acting for a
             // session — a handler, or a function a handler calls — can say it

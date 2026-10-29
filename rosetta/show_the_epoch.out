@@ -1,0 +1,24 @@
+moment[0] is 1970-01-01 (ISO 8601 writes midnight UTC as the bare date): 1970-01-01 00:00:00 UTC
+its fields: year 1970, month 1, day 1, hour 0, minute 0, second 0, offset 0 minutes, weekday 4 (a Thursday)
+
+The other way: a moment read back as seconds since the epoch
+    1970-01-01T00:00:00Z: 0
+    1970-01-01T09:00:00+09:00: 0 (the same instant)
+    2000-01-01: 946684800
+
+The epoch written in other zones:
+    America/New_York 1969-12-31T19:00:00-05:00
+    Europe/London    1970-01-01T01:00:00+01:00
+    Asia/Tokyo       1970-01-01T09:00:00+09:00
+    +05:30           1970-01-01T05:30:00+05:30
+(Britain kept summer time all year from 1968 to 1971)
+
+Around it:
+         -1 s: 1969-12-31T23:59:59Z
+       -0.5 s: 1969-12-31T23:59:59.500Z
+      0.001 s: 1970-01-01T00:00:00.001Z
+          1 s: 1970-01-01T00:00:01Z
+      86400 s: 1970-01-02
+2^31 seconds on, where a signed 32-bit count of seconds runs out: 2038-01-19T03:14:08Z
+The moments a moment holds lie 100,000,000 days either side of the epoch:
+    from -271821-04-20 to 275760-09-13

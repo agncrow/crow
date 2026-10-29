@@ -1,0 +1,243 @@
+--- Rosetta Code: Set of real numbers
+--- https://rosettacode.org/wiki/Set_of_real_numbers
+--- A set is a finite union of intervals, held as a list of spans that neither meet
+--- nor touch, in order: each span its two ends and whether each end is in it (an
+--- infinite end never is). A union sorts the spans of both and merges those that
+--- meet; the complement is the gaps between the spans; the intersection and the
+--- difference follow by De Morgan's laws, so no operation does arithmetic and the
+--- answers are exact on the floats given.
+
+use math
+
+struct Span [lo, hi, lo_in, hi_in]
+
+fn empty_span[s]
+    if s.lo gt s.hi
+        return true
+    if s.lo eq s.hi
+        return not (s.lo_in and s.hi_in)
+    return false
+
+--- whether b, which starts no sooner than a, meets or touches it
+fn touches[a, b]
+    return b.lo lt a.hi or (b.lo eq a.hi and (b.lo_in or a.hi_in))
+
+--- a and b made one span, b starting no sooner than a
+fn joined[a, b]
+    lo_in = a.lo_in or (b.lo eq a.lo and b.lo_in)
+    if b.hi gt a.hi
+        return Span[a.lo, b.hi, lo_in, b.hi_in]
+    if b.hi eq a.hi
+        return Span[a.lo, a.hi, lo_in, a.hi_in or b.hi_in]
+    return Span[a.lo, a.hi, lo_in, a.hi_in]
+
+--- any spans as a set: the empty ones dropped, the rest in order and merged
+fn normalized[spans]
+    kept = for s in spans
+        if not empty_span[s]
+            Span[s.lo, s.hi, s.lo_in and s.lo gt -inf, s.hi_in and s.hi lt inf]
+    merged = []
+    if len[kept] eq 0
+        return merged
+    lows = for s in kept
+        s.lo
+    for i in argsort[lows]
+        s = kept[i]
+        if len[merged] gt 0 and touches[merged[-1], s]
+            merged[len[merged] - 1] = joined[merged[-1], s]
+        else
+            merged = push[merged, s]
+    return merged
+
+--- an interval written as the task writes one: '[0, 2)', '(-inf, 1]'
+fn interval[written]
+    inner = slice[written, 1, len[written] - 1]
+    bounds = split[inner, ',']
+    lo = float[trim[bounds[0]]]
+    hi = float[trim[bounds[1]]]
+    return normalized[[Span[lo, hi, written[0] eq '[', written[-1] eq ']']]]
+
+fn holds[s, x]
+    above = x gt s.lo or (s.lo_in and x eq s.lo)
+    below = x lt s.hi or (s.hi_in and x eq s.hi)
+    return above and below
+
+--- by bisection: the spans in order, the last one starting at or before x is the
+--- only one that can hold it, since no two spans meet or touch
+fn member[a, x]
+    lo = 0
+    hi = len[a]
+    while lo lt hi
+        mid = (lo + hi) / 2
+        if a[mid].lo gt x
+            hi = mid
+        else
+            lo = mid + 1
+    if lo eq 0
+        return false
+    return holds[a[lo - 1], x]
+
+fn union[a, b]
+    return normalized[concat[a, b]]
+
+fn complement[a]
+    gaps = []
+    lo = -inf
+    lo_in = false
+    for s in a
+        gaps = push[gaps, Span[lo, s.lo, lo_in, not s.lo_in]]
+        lo = s.hi
+        lo_in = not s.hi_in
+    gaps = push[gaps, Span[lo, inf, lo_in, false]]
+    return normalized[gaps]
+
+fn intersection[a, b]
+    return complement[union[complement[a], complement[b]]]
+
+fn difference[a, b]
+    return intersection[a, complement[b]]
+
+fn is_empty[a]
+    return len[a] eq 0
+
+--- the length of the real line a set covers
+fn measure[a]
+    total = 0.0
+    for s in a
+        total = total + (s.hi - s.lo)
+    return total
+
+--- a number to six decimals at most, without trailing zeros
+fn num[x]
+    digits = fmt[x, decimals = 6]
+    if '.' in digits
+        while ends[digits, '0']
+            digits = slice[digits, 0, len[digits] - 1]
+        if ends[digits, '.']
+            digits = slice[digits, 0, len[digits] - 1]
+    return digits
+
+fn span_text[s]
+    left = '('
+    if s.lo_in
+        left = '['
+    right = ')'
+    if s.hi_in
+        right = ']'
+    return '`left``num[s.lo]`, `num[s.hi]``right`'
+
+fn shown[a]
+    if is_empty[a]
+        return '∅'
+    parts = for s in a
+        span_text[s]
+    return join[parts, ' ∪ ']
+
+fn verdict[a, x]
+    if member[a, x]
+        return 'in '
+    return 'out'
+
+--- a line of the test: the expression, the set it makes, and where 0, 1 and 2 fall
+fn test_line[left, op, right]
+    made = combine[interval[left], op, interval[right]]
+    marks = for x in [0.0, 1.0, 2.0]
+        '`num[x]`: `verdict[made, x]`'
+    found = trim[join[marks, '  ']]
+    made_text = fmt[shown[made], width = 17]
+    log['`left` `op` `right` = `made_text`  `found`']
+
+fn combine[a, op, b]
+    if op eq '∪'
+        return union[a, b]
+    if op eq '∩'
+        return intersection[a, b]
+    return difference[a, b]
+
+fn example[left, op, right]
+    made = combine[interval[left], op, interval[right]]
+    log['`left` `op` `right` = `shown[made]`']
+
+log['The task\'s test:']
+test_line['(0, 1]', '∪', '[0, 2)']
+test_line['[0, 2)', '∩', '(1, 2]']
+test_line['[0, 3)', '−', '(0, 1)']
+test_line['[0, 3)', '−', '[0, 1]']
+log['']
+
+log['The examples of each operation:']
+one_two = interval['[1, 2)']
+for x in [1.0, 2.0, 3.0]
+    log['`num[x]` ∈ [1, 2): `member[one_two, x]`']
+example['[0, 2)', '∪', '(1, 3)']
+example['[0, 1)', '∪', '(2, 3]']
+example['[0, 2)', '∩', '(1, 3)']
+example['[0, 1)', '∩', '(2, 3]']
+example['[0, 2)', '−', '(1, 3)']
+log['']
+
+log['Infinite ends (ℝ is (-inf, inf)):']
+example['(-inf, 0)', '∪', '[0, inf)']
+example['(-inf, inf)', '−', '[0, 1]']
+example['(-inf, 5]', '∩', '[3, inf)']
+example['(-inf, inf)', '−', '(-inf, 0]']
+reals = interval['(-inf, inf)']
+unit = interval['[0, 1]']
+log['ℝ − (ℝ − [0, 1]) = `shown[difference[reals, difference[reals, unit]]]`']
+right_half = interval['[0, inf)']
+log['the length of [0, inf) is `measure[right_half]`, of [0, 1] `measure[unit]`']
+log['']
+
+log['Empty sets:']
+for written in ['[0, 0]', '(0, 0)', '[0, 0)', '(2, 1]']
+    log['`written` is empty: `is_empty[interval[written]]`']
+for pair in [['[0, 2)', '[2, 3]'], ['[0, 2]', '[2, 3]'], ['[0, 1)', '(2, 3]']]
+    meet = combine[interval[pair[0]], '∩', interval[pair[1]]]
+    log['`pair[0]` ∩ `pair[1]` is empty: `is_empty[meet]`']
+log['ℝ − ℝ is empty: `is_empty[difference[reals, reals]]`']
+log['']
+
+--- the optional part. |sin(π y)| > 1/2 just where n + 1/6 < y < n + 5/6 for a whole
+--- n (as the task allows), so A, where y = x² below 100, is the spans between the
+--- square roots of those bounds, and B the spans between the bounds themselves
+fn sine_spans[count, squared]
+    spans = for n in range[count]
+        lo = n + 1.0 / 6.0
+        hi = n + 5.0 / 6.0
+        if squared
+            lo = sqrt[lo]
+            hi = sqrt[hi]
+        Span[lo, hi, false, false]
+    return normalized[spans]
+
+--- the predicates themselves, to test the sets against
+fn in_a[x]
+    return 0.0 lt x and x lt 10.0 and abs[sin[pi * x * x]] gt 0.5
+
+fn in_b[x]
+    return 0.0 lt x and x lt 10.0 and abs[sin[pi * x]] gt 0.5
+
+zero_ten = interval['(0, 10)']
+a = intersection[zero_ten, sine_spans[100, true]]
+b = intersection[zero_ten, sine_spans[10, false]]
+a_less_b = difference[a, b]
+log['A = {x | 0 < x < 10 and |sin(π x²)| > 1/2} is `len[a]` intervals, B = {x | 0 < x < 10 and |sin(π x)| > 1/2} is `len[b]`']
+log['A − B is `len[a_less_b]` intervals, the first four:']
+for s in slice[a_less_b, 0, 4]
+    log['    `span_text[s]`']
+log['the length of A − B is `measure[a_less_b]`']
+
+--- a million points across (0, 10), each tested by the sines and by the set
+points = 1000000
+inside = 0
+wrong = 0
+i = 0
+while i lt points
+    x = (i + 0.5) * 10.0 / points
+    by_sines = in_a[x] and not in_b[x]
+    if by_sines
+        inside = inside + 1
+    if by_sines ne member[a_less_b, x]
+        wrong = wrong + 1
+    i = i + 1
+log['of `points` points spread evenly over (0, 10), `inside` are in A − B by the sines (a length near `fmt[10.0 * inside / points, decimals = 5]`), and the set disagrees with the sines on `wrong`']

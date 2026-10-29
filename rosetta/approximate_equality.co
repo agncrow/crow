@@ -1,0 +1,21 @@
+--- Rosetta Code: Approximate equality
+--- https://rosettacode.org/wiki/Approximate_equality
+--- As Python's math.isclose: two floats are close when they differ by at most a
+--- relative tolerance (1e-9) of the larger magnitude, or by an absolute tolerance.
+
+fn close[a, b, rel_tol = 0.000000001, abs_tol = 0.0]
+    if a eq b
+        return true
+    return abs[a - b] lte max[rel_tol * max[abs[a], abs[b]], abs_tol]
+
+fn verdict[a, b]
+    if close[a, b]
+        return 'is'
+    return 'is NOT'
+
+pairs = [[100000000000000.01, 100000000000000.011], [100.01, 100.011], [10000000000000.001 / 10000.0, 1000000000.0000001000], [0.001, 0.0010000001], [0.000000000000000000000101, 0.0], [sqrt[2] * sqrt[2], 2.0], [-sqrt[2] * sqrt[2], -2.0], [3.14159265358979323846, 3.14159265358979324]]
+for pair in pairs
+    log['`pair[0]` `verdict[pair[0], pair[1]]` approximately equal to `pair[1]`']
+
+log['']
+log['With a looser tolerance, close[100.01, 100.011, rel_tol = 0.0001] is `close[100.01, 100.011, rel_tol = 0.0001]`']

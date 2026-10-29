@@ -1,0 +1,35 @@
+--- Rosetta Code: Currency
+--- https://rosettacode.org/wiki/Currency
+--- Money is held as decimals, Crow's exact base-ten numbers: + and * of decimals (and
+--- of a decimal and an int) are exact and keep their places, so no amount drifts, and
+--- the tax is rounded to the nearest cent, a half away from zero, before it is added.
+
+--- a line of the bill: how many, of what, at what price each
+struct Item [quantity, name, price]
+
+fn subtotal[items]
+    total = decimal['0.00']
+    for item in items
+        total = total + item.quantity * item.price
+    return total
+
+fn line[label, amount]
+    dollars = fmt[amount, commas = true]
+    shown = fmt['$`dollars`', width = 27, align = 'right']
+    return '`fmt[label, width = 16]``shown`'
+
+items = [
+    Item[4000000000000000, 'hamburgers', decimal['5.50']],
+    Item[2, 'milkshakes', decimal['2.86']]
+]
+rate = decimal['0.0765']
+for item in items
+    log['`item.quantity` `item.name` at $`item.price` each']
+percent = fmt[rate * 100, decimals = 2]
+log['tax rate `percent`%']
+log['']
+before = subtotal[items]
+tax = round[before * rate, 2]
+log[line['total before tax', before]]
+log[line['tax', tax]]
+log[line['total with tax', before + tax]]

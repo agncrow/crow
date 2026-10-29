@@ -1,0 +1,30 @@
+120 beats a minute, 4 beats a bar (HLLL), 2 bars:
+   0.000 s   bar 1 beat 1   ██████  TICK
+   0.500 s   bar 1 beat 2   ░░░░░░  tock
+   1.000 s   bar 1 beat 3   ░░░░░░  tock
+   1.500 s   bar 1 beat 4   ░░░░░░  tock
+   2.000 s   bar 2 beat 1   ██████  TICK
+   2.500 s   bar 2 beat 2   ░░░░░░  tock
+   3.000 s   bar 2 beat 3   ░░░░░░  tock
+   3.500 s   bar 2 beat 4   ░░░░░░  tock
+
+90 beats a minute, 3 beats a bar (HLL), 2 bars:
+   0.000 s   bar 1 beat 1   ██████  TICK
+   0.667 s   bar 1 beat 2   ░░░░░░  tock
+   1.333 s   bar 1 beat 3   ░░░░░░  tock
+   2.000 s   bar 2 beat 1   ██████  TICK
+   2.667 s   bar 2 beat 2   ░░░░░░  tock
+   3.333 s   bar 2 beat 3   ░░░░░░  tock
+
+172 beats a minute, 5 beats a bar (HLLHL), 2 bars:
+   0.000 s   bar 1 beat 1   ██████  TICK
+   0.349 s   bar 1 beat 2   ░░░░░░  tock
+   0.698 s   bar 1 beat 3   ░░░░░░  tock
+   1.047 s   bar 1 beat 4   ██████  TICK
+   1.395 s   bar 1 beat 5   ░░░░░░  tock
+   1.744 s   bar 2 beat 1   ██████  TICK
+   2.093 s   bar 2 beat 2   ░░░░░░  tock
+   2.442 s   bar 2 beat 3   ░░░░░░  tock
+   2.791 s   bar 2 beat 4   ██████  TICK
+   3.140 s   bar 2 beat 5   ░░░░░░  tock
+

@@ -1,0 +1,72 @@
+A B : A ^ B
+0 0 : 0
+0 1 : 1
+1 0 : 1
+1 1 : 0
+
+S T U : S | ( T ^ U )
+0 0 0 : 0
+0 0 1 : 1
+0 1 0 : 1
+0 1 1 : 0
+1 0 0 : 1
+1 0 1 : 1
+1 1 0 : 1
+1 1 1 : 1
+
+A B C D : A ^ (B ^ (C ^ D))
+0 0 0 0 : 0
+0 0 0 1 : 1
+0 0 1 0 : 1
+0 0 1 1 : 0
+0 1 0 0 : 1
+0 1 0 1 : 0
+0 1 1 0 : 0
+0 1 1 1 : 1
+1 0 0 0 : 1
+1 0 0 1 : 0
+1 0 1 0 : 0
+1 0 1 1 : 1
+1 1 0 0 : 0
+1 1 0 1 : 1
+1 1 1 0 : 1
+1 1 1 1 : 0
+
+p q : (p -> q) <-> (!q -> !p)
+0 0 : 1
+0 1 : 1
+1 0 : 1
+1 1 : 1
+(true in every row: a tautology)
+
+rain wind : not (rain and wind) = not rain or not wind
+0    0    : 1
+0    1    : 1
+1    0    : 1
+1    1    : 1
+(true in every row: a tautology)
+
+a b c : a & b | !c
+0 0 0 : 1
+0 0 1 : 0
+0 1 0 : 1
+0 1 1 : 0
+1 0 0 : 1
+1 0 1 : 0
+1 1 0 : 1
+1 1 1 : 1
+
+x y z : x -> y -> z
+0 0 0 : 1
+0 0 1 : 1
+0 1 0 : 1
+0 1 1 : 1
+1 0 0 : 1
+1 0 1 : 1
+1 1 0 : 0
+1 1 1 : 1
+
+cannot read a & | b: | is not where a value goes
+
+cannot read (a | b: a ( is not closed
+

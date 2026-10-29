@@ -1,0 +1,35 @@
+input number                     places  suffixes          new number
+────────────────────────────────────────────────────────────────────────
+87,654,321                       all     metric            87.654321M
+-998,877,665,544,332,211,000     3       metric            -998.878E
++112,233                         0       metric            +112K
+16,777,216                       1       metric            16.8M
+456,789,100,000,000              2       metric            456.79T
+456,789,100,000,000              2       metric            456.79T
+456,789,100,000,000              5       "binary" metric   415.44727Ti
+456,789,100,000.000e+00          0       metric            457G
++16777216                        all     "binary" metric   +16Mi
+1.2e101                          all     metric            12googol
+
+The task's pseudo-code:
+ aa= 456.7891T
+  n= 456.8T
+  f= 415.4Ti
+bin= 415.44727Ti
+win= 415Ti
+big= +16Mi
+
+More cases:
+input number                     places  suffixes          new number
+────────────────────────────────────────────────────────────────────────
+-123.7e-01                       all     metric            -12.37
+1,000,000                        all     "binary" metric   976.5625Ki
+1e36                             all     metric            1U
+1e39                             all     metric            1000U
+999,999.6                        0       metric            1M
+1,048,575.9                      0       "binary" metric   1Mi
+0                                all     metric            0
+-0.000456                        5       metric            -0.00046
+1.2e101                          3       "binary" metric   90277966143151680611998966058668468056473514760096321651872131042.182Ui
+twelve                           all     metric            refused: 'twelve' is no number
+1e3                              1       base 16           refused: the base is 10 (metric) or 2 ("binary" metric), not 16

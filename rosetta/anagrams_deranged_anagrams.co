@@ -1,0 +1,53 @@
+--- Rosetta Code: Anagrams/Deranged anagrams
+--- https://rosettacode.org/wiki/Anagrams/Deranged_anagrams
+--- Words are grouped by their sorted letters; a pair in a group is deranged when no
+--- position holds the same letter in both words. The longest such pairs win.
+
+fn sorted_letters[word]
+    return join[sort[split[word, '']], '']
+
+fn deranged[a, b]
+    i = 0
+    while i lt len[a]
+        if a[i] eq b[i]
+            return false
+        i = i + 1
+    return true
+
+fn deranged_pairs[group]
+    pairs = []
+    for i in range[len[group]]
+        for j in range[i + 1, len[group]]
+            if deranged[group[i], group[j]]
+                pairs = push[pairs, '`group[i]`, `group[j]`']
+    return pairs
+
+words = split[trim[read['unixdict.txt']], '\n']
+groups = map[]
+for w in words
+    k = sorted_letters[w]
+    if k in groups
+        groups[k] = push[groups[k], w]
+    else
+        groups = set[groups, k, [w]]
+
+anagram_groups = 0
+longest = 0
+best = []
+for k in keys[groups]
+    group = groups[k]
+    if len[group] gt 1
+        anagram_groups = anagram_groups + 1
+        if len[k] gte longest
+            pairs = deranged_pairs[group]
+            if len[pairs] gt 0
+                if len[k] gt longest
+                    longest = len[k]
+                    best = []
+                best = concat[best, pairs]
+
+log['Word count: `len[words]`']
+log['Groups of anagrams: `anagram_groups`']
+log['The longest deranged anagrams (`longest` letters):']
+for pair in best
+    log['    `pair`']

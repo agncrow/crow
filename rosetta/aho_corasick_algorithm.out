@@ -1,0 +1,14 @@
+Text: abaaabaa (positions counted from 0)
+a      starts at 0, 2, 3, 4, 6, 7
+aa     starts at 2, 3, 6
+abaa   starts at 0, 4
+abaaa  starts at 0
+bb     does not occur
+
+25104 words of unixdict.txt, a trie of 75907 nodes, searched for
+in a random text of 100000 letters: 124543 matches.
+The longest words found have 5 letters:
+agave alloy amoco caulk crest diego dingy drool
+heron human inlet kitty lease lodge lofty motto
+orono patch pauli phony pocus poole primp rowdy
+sepal shoji stage stock twill weiss woman yukon

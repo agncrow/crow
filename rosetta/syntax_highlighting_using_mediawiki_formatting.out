@@ -1,0 +1,100 @@
+ ''--- Rosetta Code: Syntax highlighting using Mediawiki formatting''
+ ''--- https://rosettacode.org/wiki/Syntax_highlighting_using_Mediawiki_formatting''
+ ''--- A Crow source as MediaWiki markup: the words Crow keeps for itself in bold,''
+ ''--- comments (three dashes to the end of the line) in italics, strings (which may''
+ ''--- run over several lines) as they are, and the quote, ampersand, less-than and''
+ ''--- greater-than written as entities; every line, a blank one too, starts with a''
+ ''--- space. Crow&apos;s calls nest in square brackets, and two opening ones in a row''
+ ''--- would read as a wiki link, so the first of such a pair is written &amp;#91; too.''
+ ''--- The file is the first argument; with none the program reads its own source,''
+ ''--- by its path in the repository (it runs from a work directory).''
+ 
+ '''fn''' keywords[]
+     '''return''' [&apos;and&apos;, &apos;break&apos;, &apos;continue&apos;, &apos;derive&apos;, &apos;else&apos;, &apos;eq&apos;, &apos;false&apos;, &apos;fn&apos;, &apos;for&apos;, &apos;gt&apos;, &apos;gte&apos;, &apos;if&apos;, &apos;in&apos;, &apos;lt&apos;, &apos;lte&apos;, &apos;ne&apos;, &apos;not&apos;, &apos;or&apos;, &apos;return&apos;, &apos;struct&apos;, &apos;test&apos;, &apos;then&apos;, &apos;true&apos;, &apos;use&apos;, &apos;view&apos;, &apos;while&apos;]
+ 
+ '''fn''' entities[text]
+     t = replace[text, &apos;&amp;&apos;, &apos;&amp;amp;&apos;]
+     t = replace[t, &apos;\&apos;&apos;, &apos;&amp;apos;&apos;]
+     t = replace[t, &apos;&lt;&apos;, &apos;&amp;lt;&apos;]
+     '''return''' replace[t, &apos;&gt;&apos;, &apos;&amp;gt;&apos;]
+ 
+ '''fn''' is_word_char[c]
+     '''return''' (c '''gte''' &apos;a&apos; '''and''' c '''lte''' &apos;z&apos;) '''or''' (c '''gte''' &apos;A&apos; '''and''' c '''lte''' &apos;Z&apos;) '''or''' (c '''gte''' &apos;0&apos; '''and''' c '''lte''' &apos;9&apos;) '''or''' c '''eq''' &apos;_&apos;
+ 
+ ''--- where the string opening at `start` ends: past its closing quote, a backslash''
+ ''--- taking the character after it with it''
+ '''fn''' string_end[chars, start]
+     j = start + 1
+     '''while''' j '''lt''' len[chars] '''and''' chars[j] '''ne''' &apos;\&apos;&apos;
+         '''if''' chars[j] '''eq''' &apos;\\&apos;
+             j = j + 1
+         j = j + 1
+     '''return''' min[j + 1, len[chars]]
+ 
+ ''--- where a comment ends: at the line break, or at the end of the source''
+ '''fn''' line_end[chars, start]
+     j = start
+     '''while''' j '''lt''' len[chars] '''and''' chars[j] '''ne''' &apos;\n&apos;
+         j = j + 1
+     '''return''' j
+ 
+ ''--- where a word ends: past its last letter, digit or underscore''
+ '''fn''' word_end[chars, start]
+     j = start
+     '''while''' j '''lt''' len[chars] '''and''' is_word_char[chars[j]]
+         j = j + 1
+     '''return''' j
+ 
+ '''fn''' opens_comment[chars, i]
+     '''return''' join[slice[chars, i, i + 3], &apos;&apos;] '''eq''' &apos;---&apos;
+ 
+ '''fn''' opens_link[chars, i]
+     '''return''' chars[i] '''eq''' &apos;[&apos; '''and''' i + 1 '''lt''' len[chars] '''and''' chars[i + 1] '''eq''' &apos;[&apos;
+ 
+ ''--- the source as one marked-up text, a piece at a time''
+ '''fn''' marked_up[source, reserved]
+     chars = split[source, &apos;&apos;]
+     pieces = []
+     i = 0
+     '''while''' i '''lt''' len[chars]
+         c = chars[i]
+         j = i + 1
+         piece = entities[c]
+         '''if''' c '''eq''' &apos;\&apos;&apos;
+             j = string_end[chars, i]
+             piece = entities[join[slice[chars, i, j], &apos;&apos;]]
+         '''else''' '''if''' c '''eq''' &apos;-&apos; '''and''' opens_comment[chars, i]
+             j = line_end[chars, i]
+             comment = entities[join[slice[chars, i, j], &apos;&apos;]]
+             piece = &apos;\&apos;\&apos;`comment`\&apos;\&apos;&apos;
+         '''else''' '''if''' is_word_char[c]
+             j = word_end[chars, i]
+             word = join[slice[chars, i, j], &apos;&apos;]
+             piece = word
+             '''if''' word '''in''' reserved
+                 piece = &apos;\&apos;\&apos;\&apos;`word`\&apos;\&apos;\&apos;&apos;
+         '''else''' '''if''' opens_link[chars, i]
+             piece = &apos;&amp;#91;&apos;
+         pieces = push[pieces, piece]
+         i = j
+     '''return''' join[pieces, &apos;&apos;]
+ 
+ ''--- every line led by a space, so the wiki shows the whole source as one block''
+ '''fn''' wiki_lines[source, reserved]
+     lines = split[marked_up[source, reserved], &apos;\n&apos;]
+     '''if''' len[lines] '''gt''' 0 '''and''' lines[-1] '''eq''' &apos;&apos;
+         lines = pop[lines]
+     shown = '''for''' line '''in''' lines
+         &apos; `line`&apos;
+     '''return''' shown
+ 
+ given = args[]
+ path = &apos;/Users/vijay/code/rust_projects/crow/rosetta/syntax_highlighting_using_mediawiki_formatting.co&apos;
+ '''if''' len[given] '''gt''' 0
+     path = given[0]
+ source = read[path]
+ '''if''' source.ok
+     '''for''' line '''in''' wiki_lines[source, keywords[]]
+         log[line]
+ '''else'''
+     log[&apos;cannot read `path`: `source.reason`&apos;]

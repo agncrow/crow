@@ -1,0 +1,30 @@
+A US Letter page at 72 dots an inch: 612 x 792 dots.
+Written pinstripe_printer.pgm: 969,443 bytes, sha256 15ed342039e496fafb81c52ef53bf4284aee20b49a45e129c01524f12bb388a1.
+
+Each inch of the page, its stripes and how many there are across:
+  inch  1: 1 point stripes, 612 of them
+  inch  2: 2 point stripes, 306 of them
+  inch  3: 3 point stripes, 204 of them
+  inch  4: 4 point stripes, 153 of them
+  inch  5: 5 point stripes, 123 of them, the last one cut by the edge
+  inch  6: 6 point stripes, 102 of them
+  inch  7: 7 point stripes, 88 of them, the last one cut by the edge
+  inch  8: 8 point stripes, 77 of them, the last one cut by the edge
+  inch  9: 9 point stripes, 68 of them
+  inch 10: 10 point stripes, 62 of them, the last one cut by the edge
+  inch 11: 11 point stripes, 56 of them, the last one cut by the edge
+
+The first 78 points of each inch:
+   1 .#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#.#
+   2 ..##..##..##..##..##..##..##..##..##..##..##..##..##..##..##..##..##..##..##..
+   3 ...###...###...###...###...###...###...###...###...###...###...###...###...###
+   4 ....####....####....####....####....####....####....####....####....####....##
+   5 .....#####.....#####.....#####.....#####.....#####.....#####.....#####.....###
+   6 ......######......######......######......######......######......######......
+   7 .......#######.......#######.......#######.......#######.......#######.......#
+   8 ........########........########........########........########........######
+   9 .........#########.........#########.........#########.........#########......
+  10 ..........##########..........##########..........##########..........########
+  11 ...........###########...........###########...........###########...........#
+
+Removed pinstripe_printer.pgm.

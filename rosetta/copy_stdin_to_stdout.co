@@ -1,0 +1,12 @@
+--- Rosetta Code: Copy stdin to stdout
+--- https://rosettacode.org/wiki/Copy_stdin_to_stdout
+--- Read standard input a line at a time until it ends (input[] at the end of
+--- the input is an error value) and write each line back out. Run it as
+---     crow run copy_stdin_to_stdout.co < some.txt
+--- A line's ending is written as one line feed; on Unix,
+--- write['/dev/stdout', read['/dev/stdin']] copies the bytes exactly instead.
+
+line = input[]
+while line.ok
+    log[line]
+    line = input[]

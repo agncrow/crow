@@ -1,0 +1,14 @@
+--- `fmt` lays out a whole number with every digit: past 64 bits it had
+--- been refused, and within them an int past 2^53 had been formatted
+--- through a float and lost its last digits (Rosetta Code,
+--- Almkvist-Giullera formula for pi).
+log[fmt[2 ^ 70, commas = true]]
+log[fmt[2 ^ 70, width = 30]]
+log[fmt[2 ^ 60 + 1]]
+log[fmt[2 ^ 60 + 1, commas = true]]
+log[fmt[-1234567, commas = true, decimals = 2]]
+log[fmt[42, width = 5, fill = '0']]
+log[fmt[3, percent = true]]
+x = 10 ^ 25 + 7
+log[fmt[x, commas = true, width = 40, align = 'left']]
+log[fmt[1234.567, decimals = 2, commas = true]]

@@ -1,0 +1,89 @@
+--- Rosetta Code: Parsing/Shunting-yard algorithm
+--- https://rosettacode.org/wiki/Parsing/Shunting-yard_algorithm
+--- Dijkstra's algorithm: a number goes straight to the output; an operator first sends to
+--- the output each operator on the stack that binds at least as tightly (more tightly,
+--- for the right-associative ^), stopping at a bracket, then is pushed; ( is pushed, and
+--- ) sends operators to the output down to its ( and discards both; at the end the stack
+--- is drained. Every action is a row of the table, with the extra credit's notes.
+
+fn precedence[op]
+    if op eq '^'
+        return 4
+    if op eq '*' or op eq '/'
+        return 3
+    return 2
+
+--- whether the operator on top of the stack goes to the output before `op` is pushed
+fn yields_to[top, op]
+    if top eq '('
+        return false
+    if op eq '^'
+        return precedence[top] gt precedence[op]
+    return precedence[top] gte precedence[op]
+
+fn row[token, action, output, stack, note]
+    out = join[output, ' ']
+    ops = join[stack, ' ']
+    line = '`fmt[token, width = 6]``fmt[action, width = 24]``fmt[out, width = 26]``fmt[ops, width = 10]``note`'
+    return sub[line, ' +$', '']
+
+--- the RPN of a space-separated infix expression, each step shown when `show` is true
+fn shunting[infix, show]
+    if show
+        log[row['Token', 'Action', ['RPN output'], ['Op stack'], 'Notes']]
+    output = []
+    stack = []
+    for token in split[infix, ' ']
+        if token eq '('
+            stack = push[stack, token]
+            if show
+                log[row[token, 'Push op token to stack', output, stack, '']]
+        else if token eq ')'
+            shown = token
+            note = 'Pop ops from stack to output'
+            while stack[-1] ne '('
+                output = push[output, stack[-1]]
+                stack = pop[stack]
+                if show
+                    log[row[shown, '(Pop op)', output, stack, note]]
+                shown = ''
+                note = ''
+            stack = pop[stack]
+            if show
+                log[row[shown, '(Pop & discard "(")', output, stack, '']]
+                log[row['', 'Discard ")"', output, stack, '']]
+        else if token in ['+', '-', '*', '/', '^']
+            shown = token
+            note = 'Pop ops from stack to output'
+            while len[stack] gt 0 and yields_to[stack[-1], token]
+                output = push[output, stack[-1]]
+                stack = pop[stack]
+                if show
+                    log[row[shown, '(Pop op)', output, stack, note]]
+                shown = ''
+                note = ''
+            stack = push[stack, token]
+            if show
+                log[row[shown, 'Push op token to stack', output, stack, '']]
+        else
+            output = push[output, token]
+            if show
+                log[row[token, 'Add number to output', output, stack, '']]
+    note = 'Drain stack to output'
+    while len[stack] gt 0
+        output = push[output, stack[-1]]
+        stack = pop[stack]
+        if show
+            log[row['', '(Pop op)', output, stack, note]]
+        note = ''
+    return join[output, ' ']
+
+infix = '3 + 4 * 2 / ( 1 - 5 ) ^ 2 ^ 3'
+log['For infix expression: `infix`']
+log['']
+rpn = shunting[infix, true]
+log['']
+log['The final output RPN is: `rpn`']
+log['']
+for e in ['( ( 1 + 2 ) ^ ( 3 + 4 ) ) ^ ( 5 + 6 )', '1 - 2 - 3', '1 - ( 2 - 3 )', '2 ^ 3 ^ 4', '( 2 ^ 3 ) ^ 4', '5 + ( 1 + 2 ) * 4 - 3']
+    log['`fmt[e, width = 38]` -> `shunting[e, false]`']

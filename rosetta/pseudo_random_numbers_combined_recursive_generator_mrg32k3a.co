@@ -1,0 +1,75 @@
+--- Rosetta Code: Pseudo-random numbers/Combined recursive generator MRG32k3a
+--- https://rosettacode.org/wiki/Pseudo-random_numbers/Combined_recursive_generator_MRG32k3a
+--- The generator is a value: a record of each recurrence's last three values, newest
+--- first. step answers the next state and value reads its number, so next_int is
+--- step then value. mod is the mathematical one (the sums go negative), where Crow's
+--- % keeps the sign of the left side.
+
+struct Mrg [x1, x2]
+
+fn a1[]
+    return [0, 1403580, -810728]
+
+fn m1[]
+    return 2 ^ 32 - 209
+
+fn a2[]
+    return [527612, 0, -1370589]
+
+fn m2[]
+    return 2 ^ 32 - 22853
+
+fn d[]
+    return m1[] + 1
+
+--- a modulo m, from 0 to m - 1 whatever a's sign
+fn modulo[a, m]
+    r = a % m
+    if r lt 0
+        return r + m
+    return r
+
+fn seeded[seed]
+    if seed lte 0 or seed gte d[]
+        return error['the seed must be above 0 and below d', 'seed']
+    return Mrg[[seed, 0, 0], [seed, 0, 0]]
+
+--- a's coefficients over the last three values
+fn combined[a, x]
+    return a[0] * x[0] + a[1] * x[1] + a[2] * x[2]
+
+fn step[g]
+    x1i = modulo[combined[a1[], g.x1], m1[]]
+    x2i = modulo[combined[a2[], g.x2], m2[]]
+    return Mrg[[x1i, g.x1[0], g.x1[1]], [x2i, g.x2[0], g.x2[1]]]
+
+--- the number a state stands for: 1 to m1
+fn value[g]
+    return modulo[g.x1[0] - g.x2[0], m1[]] + 1
+
+fn as_float[g]
+    return float[value[g]] / float[d[]]
+
+g = seeded[1234567]
+log['Seed 1234567, the first five integers:']
+k = 0
+while k lt 5
+    g = step[g]
+    log[value[g]]
+    k = k + 1
+
+g = seeded[987654321]
+counts = [0, 0, 0, 0, 0]
+k = 0
+while k lt 100000
+    g = step[g]
+    slot = floor[as_float[g] * 5.0]
+    counts[slot] = counts[slot] + 1
+    k = k + 1
+log['']
+log['Seed 987654321, floor(next_float * 5) over 100,000 draws:']
+parts = for i in range[5]
+    '`i`: `counts[i]`'
+log[join[parts, ', ']]
+bad = seeded[0]
+log['A seed of 0: `bad.reason`']

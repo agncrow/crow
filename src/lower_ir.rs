@@ -85,7 +85,10 @@ fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &Ha
 }
 
 fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>, earlier: &[&Fn], fragment: bool) -> Result<Program, Refusal> {
-    let in_ui = stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui"));
+    // (a console cell is in a ui program when an earlier cell imported ui:
+    // the session's imports are its context's — a view typed after `use ui`
+    // in a cell of its own had been refused, `add use ui`)
+    let in_ui = stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui")) || (fragment && (ctx.bare_modules.contains("ui") || ctx.bare_modules.contains("web.ui")));
     let mut l = Lowerer::new(ctx, in_ui);
     l.fragment = fragment;
     if fragment {
@@ -795,6 +798,8 @@ pub(crate) struct Seen {
     /// The type of each value the body returns, where it is returned (a
     /// collecting loop's body returns nothing of the function's).
     pub returns: Vec<Ty>,
+    /// The local each of those returns hands back, where it is one.
+    pub returned: Vec<Option<String>>,
     /// Each place an error leaves the body — a decision on a value that
     /// can fail, or an assignment refusing one — and whether it is inside
     /// a collecting loop.
@@ -841,6 +846,10 @@ struct Lowerer<'a> {
     /// The locals that hold a gradient (`g = grad[f]`), by the function
     /// each is of: a call of one types that function's parameters.
     grad_of: HashMap<String, String>,
+    /// A local pushed (or set) as an item while its own items were not
+    /// known yet, by the function it is of: the holder's items are what
+    /// the local settles on (`settled`).
+    items_of: Vec<(String, String, String)>,
     /// Lowering `grad`'s arguments: the function it differentiates is typed
     /// by the run that traces it, as the verifier reads it.
     differentiating: bool,
@@ -849,6 +858,10 @@ struct Lowerer<'a> {
     /// lowered at the copy those arguments reach, chosen once they are
     /// lowered, so it is no value of several kinds where it is named.
     handed_to_row: Option<String>,
+    /// The variables each enclosing block grows with `push` (`v = push[v,
+    /// …]`), innermost last: a list of whole numbers written down for one
+    /// of them is a list of ints (`grown_by_push`).
+    grown: Vec<HashSet<String>>,
     /// The locals holding a decomposition's pieces (`parts = svd[m]`), with
     /// each piece's shape by position (shapes::piece_dims).
     pieces: HashMap<String, Vec<Option<Dims>>>,
@@ -1031,8 +1044,10 @@ impl<'a> Lowerer<'a> {
             fragment: false,
             yields: HashSet::new(),
             grad_of: HashMap::new(),
+            items_of: Vec::new(),
             differentiating: false,
             handed_to_row: None,
+            grown: Vec::new(),
             pieces: HashMap::new(),
             scopes: vec![HashSet::new()],
             pre: Vec::new(),
@@ -1203,6 +1218,7 @@ impl<'a> Lowerer<'a> {
                 self.ctx.fn_defaults.insert(name.clone(), defaults.clone());
             }
         }
+        let top_grown = top_grown(stmts);
         for s in stmts {
             match s {
                 S::FnDecl { name, params, body, is_view, .. } => {
@@ -1226,7 +1242,7 @@ impl<'a> Lowerer<'a> {
                     self.at = Where::Top;
                     self.current_fn = "<main>".to_string();
                     self.ctx.registry.enter(&self.current_fn);
-                    self.provisional(Pass::Scan, None, std::slice::from_ref(other));
+                    self.top_statement(Pass::Scan, other, &top_grown);
                 }
             }
         }
@@ -1241,7 +1257,22 @@ impl<'a> Lowerer<'a> {
         self.at = if self.ctx.derives.contains(name) { Where::Derive } else { Where::In(self.kind_of(name, body, false)) };
         self.current_fn = name.to_string();
         self.ctx.registry.enter(&self.current_fn);
-        let seen = self.provisional(Pass::Settle, Some(params), body);
+        let mut seen = self.provisional(Pass::Settle, Some(params), body);
+        // (a local handed back before the line that typed it — `return xs`
+        // of `xs = []` inside a `while true`, the push after — answers what
+        // the local settled on: typed where it was met, the answer had
+        // been a list of nothing known, compiled as text; Rosetta Code,
+        // Piprimes)
+        for (t, local) in seen.returns.iter_mut().zip(&seen.returned) {
+            if t.has_unknown()
+                && let Some(v) = local
+                && let Some(settled) = self.ctx.vars.get(v)
+                && settled.is_concrete()
+                && t.compatible(settled)
+            {
+                *t = settled.clone();
+            }
+        }
         self.ctx.finish_body(name, scope, &seen.returns, !seen.refusals.is_empty());
     }
 
@@ -1340,14 +1371,26 @@ impl<'a> Lowerer<'a> {
         self.at = Where::Top;
         self.current_fn = "<main>".to_string();
         self.ctx.registry.enter(&self.current_fn);
+        let top_grown = top_grown(stmts);
         for s in stmts {
             match s {
                 S::FnDecl { .. } | S::Derive { .. } | S::TestBlock { .. } | S::StructDecl { .. } | S::Use { .. } => {}
-                other => {
-                    self.provisional(Pass::Settle, None, std::slice::from_ref(other));
-                }
+                other => self.top_statement(Pass::Settle, other, &top_grown),
             }
         }
+    }
+
+    /// One top-level statement lowered provisionally, alone, with what the
+    /// whole top level grows by `push` in view, as the final pass has it:
+    /// rows of whole numbers written down and grown are a list of lists of
+    /// ints in every pass (met alone, `decks = [[2, 4, 1, 3]]` had been a
+    /// matrix the push made one of floats, and the final pass's list of
+    /// lists was refused as a reassignment; Rosetta Code, Topswops).
+    fn top_statement(&mut self, pass: Pass, stmt: &S, top_grown: &HashSet<String>) {
+        self.lists_grown(top_grown);
+        self.grown.push(top_grown.clone());
+        self.provisional(pass, None, std::slice::from_ref(stmt));
+        self.grown.pop();
     }
 
     /// A call's arguments' types noted for its callee's signature, in the
@@ -1434,6 +1477,16 @@ impl<'a> Lowerer<'a> {
         };
         let fact_names: BTreeSet<String> = self.ctx.facts.clone();
         let written: BTreeSet<String> = facts_written_by_fns(stmts, &fact_names);
+        // (the top level's own statements, as a block's: `grown_by_push`)
+        let mut top_grown = HashSet::new();
+        grown_by_push(stmts, &mut top_grown);
+        self.lists_grown(&top_grown);
+        self.grown = vec![top_grown];
+        // (a name declared twice — two functions, two records, a function
+        // and a derivation — means two things: the later had silently
+        // replaced the earlier interpreted, and the compiled program had
+        // not built for a record; Rosetta Code, Sealed classes and methods)
+        let mut declared: HashMap<String, usize> = HashMap::new();
         for s in stmts {
             // an error is owned by the declaration it is found in; a line
             // marker belongs to the statement after it, and an attached test
@@ -1441,6 +1494,20 @@ impl<'a> Lowerer<'a> {
             match s {
                 S::Line(_) | S::TestBlock { name: None, .. } => {}
                 _ => self.v.decl = checks::declared_name(s),
+            }
+            if let S::StructDecl { name, .. } | S::FnDecl { name, .. } | S::Derive { name, .. } = s
+                && !crate::modules::is_crow_fn(name)
+            {
+                match declared.get(name) {
+                    Some(first) => self.refuse(format!(
+                        "'{}' is declared twice — first on line {}: a name means one thing (spec, Names Are Never Ambiguous), so rename one",
+                        crate::lower::shown(name),
+                        first
+                    )),
+                    None => {
+                        declared.insert(name.clone(), self.v.line);
+                    }
+                }
             }
             match s {
                 S::Use { path, alias } => {
@@ -1468,7 +1535,16 @@ impl<'a> Lowerer<'a> {
                         self.check_reserved(name, if *is_view { "view" } else { "function" });
                         for p in params {
                             self.check_reserved(p, "parameter");
+                            self.check_not_a_function(p, "parameter");
                         }
+                    }
+                    // a view is drawn by the ui module: without `use ui` its
+                    // elements are no names at all (the interpreter had
+                    // stopped on the first, "does not run 'p' yet", and the
+                    // compiled program had not built; Rosetta Code, Create an
+                    // HTML table)
+                    if *is_view && !self.in_ui && !crate::modules::is_crow_fn(name) {
+                        self.refuse(format!("'{}' is a view, which `use ui` draws: add `use ui`", crate::lower::shown(name)));
                     }
                     // (a function copied per signature is called only through
                     // its copies: its own lowering, at every call's types
@@ -1757,7 +1833,10 @@ impl<'a> Lowerer<'a> {
             read.clear();
         }
         self.scopes.push(params.iter().cloned().collect());
+        // (a function sees no top-level variable, nor what grows there)
+        let enclosing = std::mem::take(&mut self.grown);
         let block = self.lower_block(body);
+        self.grown = enclosing;
         self.scopes.pop();
         self.v.reactive = false;
         let mut block = block?;
@@ -1824,7 +1903,10 @@ impl<'a> Lowerer<'a> {
         self.provisional(Pass::Settle, Some(HashSet::new()), body);
         self.record_env(name, &[], body);
         self.scopes.push(HashSet::new());
+        // (a function sees no top-level variable, nor what grows there)
+        let enclosing = std::mem::take(&mut self.grown);
         let block = self.lower_block(body);
+        self.grown = enclosing;
         let mut block = block?;
         self.scopes.pop();
         self.ctx.leave_body(scope);
@@ -1957,6 +2039,16 @@ impl<'a> Lowerer<'a> {
     }
 
     fn lower_test_body(&mut self, body: &[S]) -> Result<(Block, usize), String> {
+        let mut grown = HashSet::new();
+        grown_by_push(body, &mut grown);
+        self.lists_grown(&grown);
+        let enclosing = std::mem::replace(&mut self.grown, vec![grown]);
+        let out = self.lower_test_stmts(body);
+        self.grown = enclosing;
+        out
+    }
+
+    fn lower_test_stmts(&mut self, body: &[S]) -> Result<(Block, usize), String> {
         let mut out = Vec::new();
         let mut truths = 0;
         let body = Self::truths_under_guards(body, false, &mut truths);
@@ -2046,7 +2138,45 @@ impl<'a> Lowerer<'a> {
 
     // ── statements ──────────────────────────────────────────────────
 
+    /// A variable grown by `push` that inference settled as a tensor of
+    /// whole numbers of one axis (its literal's kind) is a list of ints:
+    /// its literal is lowered as one (`S::Assign`), and its pushes and
+    /// reads follow the variable's kind.
+    fn lists_grown(&mut self, grown: &HashSet<String>) {
+        for name in grown {
+            // (through a failure: a push of a value that can fail had typed
+            // the variable as one, the literal was lowered as a list and the
+            // variable stayed a tensor — the lowered program disagreed with
+            // itself; the push hands its failure on, and the variable holds
+            // the list; Rosetta Code, colorful numbers)
+            if let Some(t) = self.ctx.vars.get_mut(name)
+                && matches!(t.payload(), Ty::Tensor(e, d) if **e == Ty::Int && d.as_ref().is_none_or(|d| d.len() <= 1))
+            {
+                *t = Ty::List(Box::new(Ty::Int));
+            }
+            // (and a matrix of them written down and grown is a list of
+            // lists of ints: grown as a matrix, its rows of ints had been
+            // pushed as floats — the lowered program disagreed with itself;
+            // Rosetta Code, Lah numbers)
+            if let Some(t) = self.ctx.vars.get_mut(name)
+                && matches!(t.payload(), Ty::Tensor(e, Some(d)) if **e == Ty::Int && d.len() == 2)
+            {
+                *t = Ty::List(Box::new(Ty::List(Box::new(Ty::Int))));
+            }
+        }
+    }
+
     fn lower_block(&mut self, stmts: &[S]) -> Result<Block, String> {
+        let mut grown = HashSet::new();
+        grown_by_push(stmts, &mut grown);
+        self.lists_grown(&grown);
+        self.grown.push(grown);
+        let out = self.lower_stmts(stmts);
+        self.grown.pop();
+        out
+    }
+
+    fn lower_stmts(&mut self, stmts: &[S]) -> Result<Block, String> {
         let mut out = Vec::new();
         for s in stmts {
             let lowered = self.lower_stmt(s)?;
@@ -2151,11 +2281,11 @@ impl<'a> Lowerer<'a> {
     fn grown_in_place(&mut self, var: &str, path: &[PathStep], expr: Expr) -> (Vec<Stmt>, Expr, bool) {
         let found = match &expr {
             Expr::Call { target: Target::Row(row), args, ty, propagates }
-                if row.takes_in_place()
+                if row.grows_in_place()
                     && args.first().is_some_and(|first| {
                         let place = first.ty();
                         !place.is_result()
-                            && matches!(place.payload(), Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes)
+                            && matches!(place.payload(), Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes | Ty::Tensor(..))
                             && reads_place(first, var, path)
                     })
                     && path.iter().all(|p| match p {
@@ -2282,9 +2412,83 @@ impl<'a> Lowerer<'a> {
                 if !self.defined(name) {
                     self.check_reserved(name, "variable");
                 }
+                self.check_not_a_function(name, "variable");
                 self.check_top_write(name);
                 let refused_before = self.v.errors.len();
                 let expr = self.lower_expr(value)?;
+                // a list of whole numbers written down for a variable the
+                // program grows with `push` is a list of ints, which keeps
+                // every digit: a tensor holds floats, and `fib = [0, 1]`
+                // grown by its sums had rounded past 2^53 interpreted and
+                // overflowed compiled (Rosetta Code, Abundant odd numbers)
+                let expr = match expr {
+                    Expr::ListLit(items, Ty::Tensor(e, d))
+                        if matches!(value, A::Array(_)) && *e == Ty::Int && d.as_ref().is_none_or(|d| d.len() <= 1) && self.grown.iter().any(|g| g.contains(name)) =>
+                    {
+                        Expr::ListLit(items, Ty::List(Box::new(Ty::Int)))
+                    }
+                    // (a matrix of them, row by row — a row held in a
+                    // variable converted where it is written: `decks =
+                    // [cards]` grown by a pushed range had been a matrix of
+                    // floats beside rows of ints; Rosetta Code, Topswops)
+                    Expr::ListLit(rows, Ty::Tensor(e, Some(d)))
+                        if matches!(value, A::Array(_))
+                            && *e == Ty::Int
+                            && d.len() == 2
+                            && self.grown.iter().any(|g| g.contains(name))
+                            && rows.iter().all(|r| matches!(r, Expr::ListLit(..)) || crate::type_infer::settle::is_ints(&r.ty())) =>
+                    {
+                        let rows = rows
+                            .into_iter()
+                            .map(|r| match r {
+                                Expr::ListLit(items, _) => Expr::ListLit(items, Ty::List(Box::new(Ty::Int))),
+                                other => listed(other, Ty::Int),
+                            })
+                            .collect();
+                        Expr::ListLit(rows, Ty::List(Box::new(Ty::List(Box::new(Ty::Int)))))
+                    }
+                    other => other,
+                };
+                // a list of plain items given a literal whose items can fail
+                // holds each item that is good, and the assignment refuses
+                // one that failed, as a variable whose first value could not
+                // fail refuses a later failure (spec, §1): the reassignment
+                // had been refused as a change of kind — `parts = ['b`x`']`
+                // of a text read from the environment; Rosetta Code,
+                // Terminal control/Coloured text
+                // (and a vector given numbers that can fail, as `[y, 3.0]`)
+                let lands = |held: &Ty, item: &Ty| match held {
+                    Ty::List(h) => !h.is_result() && h.compatible(item.payload()),
+                    Ty::Tensor(e, d) => d.as_ref().is_none_or(|d| d.len() == 1) && (e.as_ref() == item.payload() || matches!((e.as_ref(), item.payload()), (Ty::Float, Ty::Int))),
+                    _ => false,
+                };
+                let expr = match (self.declared(name).then(|| self.ctx.vars.get(name).cloned()).flatten(), expr) {
+                    (Some(held), Expr::ListLit(items, Ty::List(item))) if item.is_result() && lands(&held, &item) => {
+                        let landed_ty = match &held {
+                            Ty::Tensor(e, _) => Ty::Tensor(e.clone(), Some(vec![Some(items.len())])),
+                            _ => Ty::List(Box::new(item.payload().clone())),
+                        };
+                        let mut landed = Vec::with_capacity(items.len());
+                        for x in items {
+                            landed.push(if x.ty().is_result() {
+                                self.decided(x, Decision::Assign(name.clone()))
+                            } else if crate::ir::quiet(&x) {
+                                x
+                            } else {
+                                // (in its place among the items hoisted)
+                                let t = self.fresh();
+                                if let Some(scope) = self.scopes.last_mut() {
+                                    scope.insert(t.clone());
+                                }
+                                let ty = x.ty();
+                                self.pre.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: x });
+                                Expr::Local(t, ty)
+                            });
+                        }
+                        Expr::ListLit(landed, landed_ty)
+                    }
+                    (_, e) => e,
+                };
                 // (a value whose making was refused: what the program reads
                 // of it is that mistake's echo, not judged again)
                 if self.v.errors.len() > refused_before {
@@ -2309,7 +2513,13 @@ impl<'a> Lowerer<'a> {
                     // judged against it)
                     if self.refuse_nothing_held(&format!("'{}'", crate::lower::shown(name)), &expr) {
                         self.v.contested.insert(name.clone());
-                    } else {
+                    } else if self.declared(name) || self.in_fn().is_some() || self.is_fact(name) {
+                        // (a top-level variable's first assignment is judged
+                        // against nothing: what an earlier round guessed of it
+                        // — a mask of a function's answer read as one number
+                        // before the function was typed — had refused the one
+                        // assignment it has; Rosetta Code, Statistics/Normal
+                        // distribution)
                         self.check_assign(name, &self.checked(&expr));
                     }
                 }
@@ -2348,6 +2558,9 @@ impl<'a> Lowerer<'a> {
                 for n in &new {
                     self.check_reserved(n, "variable");
                 }
+                for n in names {
+                    self.check_not_a_function(n, "variable");
+                }
                 out
             }
             S::FieldAssign { object, field, value } => {
@@ -2363,6 +2576,17 @@ impl<'a> Lowerer<'a> {
                 // alone: a record's fields are fixed before the program runs.
                 let computed = field.contains('`');
                 let held = self.target_type(object);
+                // (a field the record does not declare is no place to write:
+                // refused as a read of it is — interpreted it had stopped as
+                // it ran, and the compiled program had not built; Rosetta
+                // Code, Sealed classes and methods)
+                if !computed && self.pass == Pass::Final {
+                    match held.payload() {
+                        t @ Ty::Record(_) => self.check_field(&t.clone(), field),
+                        Ty::OptRecord(n) => self.check_field(&Ty::Record(n.clone()), field),
+                        _ => {}
+                    }
+                }
                 if computed && self.pass == Pass::Final && !matches!(held.payload(), Ty::Frame(_) | Ty::Unknown) {
                     self.refuse(format!(
                         "`.{}` names a frame's column by a computed name, and this is {}: a record's fields are fixed before the program runs, and a map's key is written as `m[key] = …`",
@@ -2423,6 +2647,20 @@ impl<'a> Lowerer<'a> {
                 if self.pass != Pass::Final {
                     self.settled_field(object, field, &expr);
                 }
+                // a list of numbers written down for a field that holds a
+                // list is that list: a literal's tensor written as it was
+                // had stopped interpreted ("expected a list") and not built
+                // compiled (Rosetta Code, Blossom algorithm)
+                let field_ty = match self.target_type(object).payload() {
+                    Ty::Record(r) | Ty::OptRecord(r) => self.ctx.structs.get(r).and_then(|sig| sig.fields.iter().find(|(n, _)| n == field).map(|(_, t)| t.clone())),
+                    _ => None,
+                };
+                let expr = match (field_ty, expr.ty()) {
+                    (Some(Ty::List(item)), Ty::Tensor(e, d)) if matches!(*item, Ty::Int | Ty::Float) && (*e == *item || *item == Ty::Float) && d.as_ref().is_none_or(|d| d.len() <= 1) => {
+                        listed(expr, *item)
+                    }
+                    _ => expr,
+                };
                 let (var, mut path, _) = self.muted_target(object)?;
                 path.push(PathStep::Field(field.clone()));
                 self.forget_shape(&var);
@@ -2443,11 +2681,15 @@ impl<'a> Lowerer<'a> {
                         return Ok(Vec::new());
                     }
                 }
-                if self.pass == Pass::Settle {
-                    self.settled_entry(object, &expr);
-                }
                 let idx = self.lower_expr(index)?;
                 let idx = self.decided_index(idx);
+                // (in the scan too, as a field's write is: the top level is
+                // scanned before it settles, and a call scanned after `m['a']
+                // = 1` had typed its parameter by the open map — `Map(?)`,
+                // which did not build compiled; Rosetta Code, Erdős–Selfridge)
+                if self.pass != Pass::Final {
+                    self.settled_entry(object, &expr, &idx);
+                }
                 let (var, mut path, held) = self.muted_target(object)?;
                 // a map is written at a key of its keys' kind (text or an int),
                 // a list, text or a tensor at an int: `m[2.5] = 3` into a map
@@ -2487,7 +2729,7 @@ impl<'a> Lowerer<'a> {
                         // string", and the compiled program had not built)
                         Ty::Str | Ty::Markup => {
                             self.refuse(format!(
-                                "'{}' is text, which is made anew, not written by position: concat[slice[s, 0, i], 'x', slice[s, i + 1, len[s]]]",
+                                "'{}' is text, which is made anew, not written by position: concat[[slice[s, 0, i], 'x', slice[s, i + 1, len[s]]]]",
                                 crate::lower::shown(&var)
                             ));
                         }
@@ -2529,6 +2771,25 @@ impl<'a> Lowerer<'a> {
                     Ty::List(item) | Ty::Map(_, item) => Some(*item),
                     _ => None,
                 };
+                // (a list of numbers written down for an item that is a list
+                // is that list: a literal's tensor written as it was had been
+                // an internal error; Rosetta Code, Christofides algorithm)
+                // (and whole numbers written for a list of floats are its
+                // floats: `k[0] = [2, 3]` beside `k[0][1] = 4.25`)
+                let expr = match (&items, expr.ty()) {
+                    (Some(Ty::List(item)), Ty::Tensor(e, d)) if matches!(item.as_ref(), Ty::Int | Ty::Float) && (*e == **item || **item == Ty::Float) && d.as_ref().is_none_or(|d| d.len() <= 1) => {
+                        listed(expr, (**item).clone())
+                    }
+                    _ => expr,
+                };
+                // (a provisional pass observes the refusal too, as an
+                // assignment's does (`held_by`): inside a function the
+                // failure is handed back, which the function's answer must
+                // say — the item's write had halted the whole program;
+                // Rosetta Code, Compiler/AST interpreter)
+                if self.pass != Pass::Final && expr.ty().is_result() && items.as_ref().is_some_and(|item| !item.has_unknown() && !item.is_result()) {
+                    self.saw_refusal(&Decision::Assign(var.clone()));
+                }
                 let expr = match items {
                     Some(item) if self.pass == Pass::Final && !item.has_unknown() && !item.is_result() => {
                         let expr = if expr.ty().is_result() { self.decided(expr, Decision::Assign(var.clone())) } else { expr };
@@ -2787,6 +3048,7 @@ impl<'a> Lowerer<'a> {
             }
             S::For { var, iter, body } => {
                 self.check_reserved(var, "loop variable");
+                self.check_not_a_function(var, "loop variable");
                 // a list that can fail is refused like a condition
                 let it = self.lower_expr(iter)?;
                 // (`[]` written as what a loop walks walks no items, of any
@@ -2867,6 +3129,7 @@ impl<'a> Lowerer<'a> {
             S::Return(None) => {
                 if let (Some(seen), 0) = (&mut self.seen, self.collecting) {
                     seen.returns.push(Ty::Unit);
+                    seen.returned.push(None);
                 }
                 vec![Stmt::Return(None)]
             }
@@ -2883,9 +3146,22 @@ impl<'a> Lowerer<'a> {
                 // its value's type (a frame's columns) is none of the
                 // function's
                 let failure_only = matches!(e, A::Ident(v) if self.failed.contains(v)) && x.ty().is_result();
-                if let (Some(seen), 0) = (&mut self.seen, self.collecting) {
+                // (a call of the function itself answers what the function
+                // answers, and says nothing of it: `countdown[n - 1]` on its
+                // last line beside a bare `return` had left the answer
+                // unknown, and compiled `return;` did not build; Rosetta
+                // Code, AVL tree)
+                let recursion = matches!(e, A::Call { callee, .. } if matches!(callee.as_ref(), A::Ident(f) if *f == self.current_fn || self.ctx.specializations.get(f).is_some_and(|v| v.iter().any(|(_, c)| *c == self.current_fn))));
+                if let (Some(seen), 0, false) = (&mut self.seen, self.collecting, recursion) {
                     // (a column with its cells' kind, as a variable keeps it)
                     seen.returns.push(if failure_only { Ty::Result(Box::new(Ty::Unknown)) } else { kept(&x) });
+                    // (a failure handed on hands back no local: its payload
+                    // is not the answer — `return delta` of a failed read had
+                    // joined a list of ints into a list of records, linked)
+                    seen.returned.push(match e {
+                        A::Ident(v) if !failure_only => Some(v.clone()),
+                        _ => None,
+                    });
                 }
                 // a function answers one kind: a return of another kind than
                 // the returns before it answered is refused, naming both
@@ -2956,6 +3232,35 @@ impl<'a> Lowerer<'a> {
                     None
                 };
                 let list = list_item.is_some();
+                // (a literal list of numbers returned where the function
+                // answers a list of numbers that can fail or grow: the
+                // literal is that list, its numbers as written, the width
+                // pass growing them where the items grow — it had stayed a
+                // tensor beside `return [a, a]` of `a = int[text]`, and the
+                // lowered program disagreed with itself; Rosetta Code,
+                // Honeycombs)
+                let held_item = if self.pass == Pass::Final {
+                    self.ctx.functions.get(&self.current_fn).and_then(|sig| match sig.return_type.payload() {
+                        Ty::List(i) if matches!(i.as_ref(), Ty::Big | Ty::Result(_)) && matches!(i.payload(), Ty::Int | Ty::Float | Ty::Big) => Some(i.as_ref().clone()),
+                        _ => None,
+                    })
+                } else {
+                    None
+                };
+                let x = match (held_item, x) {
+                    (Some(item), Expr::ListLit(items, Ty::Tensor(_, d))) if d.as_ref().is_none_or(|d| d.len() <= 1) => {
+                        let floats = matches!(item.payload(), Ty::Float);
+                        let items = items
+                            .into_iter()
+                            .map(|i| match i.ty() {
+                                Ty::Int if floats => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(i), ty: Ty::Float },
+                                _ => i,
+                            })
+                            .collect();
+                        Expr::ListLit(items, Ty::List(Box::new(item)))
+                    }
+                    (_, x) => x,
+                };
                 let mut x = if tensor && !x.ty().is_result() && matches!(x.ty(), Ty::List(item) if matches!(item.payload(), Ty::Int | Ty::Float)) {
                     let ty = Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&x.ty()));
                     Expr::Convert { how: Convert::ToTensor, expr: Box::new(x), ty }
@@ -2970,6 +3275,33 @@ impl<'a> Lowerer<'a> {
                 } else {
                     x
                 };
+                // (a list of plain items returned where the function answers
+                // a list whose items can fail is that list, each item the
+                // success it is; one that can fail is returned as its
+                // failure where it failed — the compiled return had
+                // rewrapped a success's list as an empty one, a wrong
+                // answer; Rosetta Code, Weiler-Atherton polygon clipping)
+                let answers = self.ctx.functions.get(&self.current_fn).map(|s| s.return_type.payload().clone());
+                if self.pass == Pass::Final
+                    && let Some(Ty::List(item)) = &answers
+                    && item.is_result()
+                    && matches!(x.ty().payload(), Ty::List(i) if !i.is_result() && i.as_ref() == item.payload())
+                {
+                    if x.ty().is_result() {
+                        let t = self.fresh();
+                        let ty = x.ty();
+                        self.pre.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: x });
+                        if let Some(scope) = self.scopes.last_mut() {
+                            scope.insert(t.clone());
+                        }
+                        let failed = Expr::Unary { op: "not".to_string(), expr: Box::new(Expr::Meta { base: Box::new(Expr::Local(t.clone(), ty.clone())), which: Meta::Ok }), ty: Ty::Bool };
+                        self.pre.push(Stmt::If { cond: failed, then: vec![Stmt::Return(Some(Expr::Local(t.clone(), ty.clone())))], els: None });
+                        let known = Expr::Convert { how: Convert::Known, expr: Box::new(Expr::Local(t, ty.clone())), ty: ty.payload().clone() };
+                        x = fallible_items(known, item);
+                    } else {
+                        x = fallible_items(x, item);
+                    }
+                }
                 // a handler's value goes to nobody: a helper it returns is
                 // called for what it writes, as a statement's is
                 if self.at == Where::In(FnKind::Handler) {
@@ -3087,11 +3419,33 @@ impl<'a> Lowerer<'a> {
                     vec![Stmt::Do(x)]
                 }
             }
-            S::FnDecl { name, .. } => return Err(format!("lowering: a function ('{}') declared inside a body", name)),
-            S::StructDecl { name, .. } => return Err(format!("lowering: a struct ('{}') declared inside a body", name)),
-            S::Derive { name, .. } => return Err(format!("lowering: a derivation ('{}') inside a body", name)),
-            S::TestBlock { .. } => return Err("lowering: a test block inside a body".into()),
-            S::Use { path, .. } => return Err(format!("lowering: use '{}' inside a body", path)),
+            // (a declaration inside a body is refused where it is written,
+            // with where it goes: it had stopped the lowering with no line,
+            // in words that read as Crow's own fault; Rosetta Code, Nested
+            // function, Inner classes)
+            S::FnDecl { name, .. } => {
+                self.refuse(format!(
+                    "'{}' is a function declared inside a body — functions are declared at the top of the file, and a function sees its parameters, not the body's variables: move it out and hand it what it reads",
+                    crate::lower::shown(name)
+                ));
+                vec![]
+            }
+            S::StructDecl { name, .. } => {
+                self.refuse(format!("'{}' is a record declared inside a body — records are declared at the top of the file: move it out", crate::lower::shown(name)));
+                vec![]
+            }
+            S::Derive { name, .. } => {
+                self.refuse(format!("'{}' is a derivation declared inside a body — derivations are declared at the top of the file: move it out", crate::lower::shown(name)));
+                vec![]
+            }
+            S::TestBlock { .. } => {
+                self.refuse("a test block is written at the top of the file, not inside a body: move it out".to_string());
+                vec![]
+            }
+            S::Use { path, .. } => {
+                self.refuse(format!("`use {}` is written at the top of the file, not inside a body: move it there", path));
+                vec![]
+            }
         })
     }
 
@@ -3236,6 +3590,50 @@ impl<'a> Lowerer<'a> {
     /// reading into a value (Vijay, 2026-10-01). `xs[int[ch]]` had typed
     /// the item as able to fail where both backends stopped, and the
     /// compiled program did not build.
+    /// An item of a local list nothing is put into — `g[0]` of `g = []`,
+    /// or of a collecting loop whose last line is a `for` statement, which
+    /// collects nothing — where its kind decides (an operator's side): the
+    /// list is always empty, and the item has no kind to compute with.
+    /// Refused, naming the list (the interpreter had stopped at the index,
+    /// and the compiled program had not built; Rosetta Code, Inventory
+    /// sequence). A parameter's list is its callers' to type.
+    fn kindless_item(&mut self, x: &Expr) {
+        if self.pass != Pass::Final {
+            return;
+        }
+        let mut e = x;
+        while let Expr::Convert { how: Convert::Unwrap | Convert::Known, expr, .. } = e {
+            e = expr;
+        }
+        let Expr::Index { base, .. } = e else { return };
+        let mut root = base.as_ref();
+        while let Expr::Index { base, .. } = root {
+            root = base.as_ref();
+        }
+        let mut t = root.ty().payload().clone();
+        if !matches!(t, Ty::List(_)) {
+            return;
+        }
+        while let Ty::List(i) = t {
+            t = i.payload().clone();
+        }
+        let Some(name) = local_named(root) else { return };
+        let param = self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(p, _)| *p == name));
+        if t != Ty::Unknown || param {
+            return;
+        }
+        // (a list pushed onto is given items, of a kind not known yet where
+        // the function's parameters are not typed — a part checked alone,
+        // a function no call types: refused there, `ch = push[ch, t *
+        // secs]` had stopped every program importing the part)
+        let grown = self.grown.iter().any(|g| g.contains(&name));
+        let untyped = self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(_, t)| t.has_unknown()));
+        if grown || untyped {
+            return;
+        }
+        self.refuse(format!("'{}' is never given an item, so its items have no kind to compute with", crate::lower::shown(&name)));
+    }
+
     fn decided_index(&mut self, i: Expr) -> Expr {
         if self.in_fact_default || !i.ty().is_result() || matches!(i.ty().payload(), Ty::Fn(..) | Ty::Unknown) {
             return i;
@@ -3423,16 +3821,13 @@ impl<'a> Lowerer<'a> {
             }
             // (ints held as a list assigned to a variable holding a list of
             // floats — `t = [1.0, 2.0]`, then `t = range[3]` — are floats,
-            // as one int assigned to a float variable is)
-            (Some(var @ Ty::List(item)), Ty::List(e)) if matches!(item.as_ref(), Ty::Float) && *e == Ty::Int => {
-                let ty = as_held(var, failing);
-                Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(expr), ty }
-            }
-            // (and a map of ints held as one of floats — written a float
-            // later, `b['a'] = 2.5` — is one of floats from its declaration:
-            // it had been declared a map of ints, and not built — crow check
-            // --self)
-            (Some(var @ Ty::Map(_, item)), Ty::Map(_, e)) if matches!(item.as_ref(), Ty::Float) && *e == Ty::Int => {
+            // as one int assigned to a float variable is; and a map of ints
+            // held as one of floats — written a float later, `b['a'] = 2.5` —
+            // is one of floats from its declaration: it had been declared a
+            // map of ints, and not built — crow check --self; at any depth: a
+            // grid of ints one of whose numbers is written a float, `g[0][0]
+            // = 2.5`, holds rows of floats — Rosetta Code, Abelian sandpile)
+            (Some(var @ (Ty::List(_) | Ty::Map(..))), given) if crate::ir::floats_of_ints(var, &given, false) => {
                 let ty = as_held(var, failing);
                 Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(expr), ty }
             }
@@ -3597,7 +3992,22 @@ impl<'a> Lowerer<'a> {
             let existing = self.ctx.vars.get(name).cloned().unwrap_or(Ty::Unknown);
             crate::type_infer::settle::settle(&existing, ty.clone(), self.ctx.body_assigned.is_some())
         };
-        self.ctx.vars.insert(name.to_string(), settled);
+        self.ctx.vars.insert(name.to_string(), settled.clone());
+        // (a holder this local was pushed onto before its items were known
+        // holds what it settles on)
+        if settled.is_concrete() {
+            let holders: Vec<String> = self.items_of.iter().filter(|(f, _, i)| *f == self.current_fn && i == name).map(|(_, h, _)| h.clone()).collect();
+            for h in holders {
+                let joined = match self.ctx.vars.get(&h) {
+                    Some(Ty::List(x)) if x.has_unknown() && x.compatible(&settled) => Some(Ty::List(Box::new(x.unify(&settled)))),
+                    Some(Ty::Map(k, x)) if x.has_unknown() && x.compatible(&settled) => Some(Ty::Map(*k, Box::new(x.unify(&settled)))),
+                    _ => None,
+                };
+                if let Some(t) = joined {
+                    self.ctx.vars.insert(h, t);
+                }
+            }
+        }
         self.rebind(name, &ty);
         if !store && !self.declared(name) {
             self.scopes.last_mut().unwrap().insert(name.to_string());
@@ -3689,11 +4099,116 @@ impl<'a> Lowerer<'a> {
 
     /// A provisional lowering's `m[k] = v` (F5): a map's values take the
     /// value's type, as inference's walk has it.
-    fn settled_entry(&mut self, object: &A, value: &Expr) {
+    fn settled_entry(&mut self, object: &A, value: &Expr, index: &Expr) {
+        // (a float written at a nested position — `g[0][0] = 2.5` into a
+        // list of lists of ints — widens the innermost items, as a list's
+        // own item does: the compiled program had not built, and the
+        // interpreter kept the float among ints; Rosetta Code, Abelian
+        // sandpile model)
+        if let A::Call { callee, args } = object
+            && args.len() == 1
+            && read(value).payload() == &Ty::Float
+        {
+            let mut depth = 2;
+            let mut root = callee.as_ref();
+            while let A::Call { callee, args } = root
+                && args.len() == 1
+            {
+                depth += 1;
+                root = callee.as_ref();
+            }
+            fn widened(t: &Ty, depth: usize) -> Option<Ty> {
+                match (t, depth) {
+                    (Ty::Int, 0) => Some(Ty::Float),
+                    (Ty::List(item), d) if d > 0 => widened(item, d - 1).map(|w| Ty::List(Box::new(w))),
+                    _ => None,
+                }
+            }
+            if let A::Ident(var) = root
+                && let Some(w) = widened(&self.ctx.ident_type(var).text(), depth)
+            {
+                self.ctx.vars.insert(var.clone(), w);
+            }
+            return;
+        }
+        // (an item written at a nested position into collections whose
+        // innermost items nothing typed yet — `m['a'] = map[]` then
+        // `m['a']['n'] = 1` — types those items, and an open map's keys, as
+        // a write one level down does: the map of empty maps had stayed one
+        // of maps of nothing known, compiled as text, and the program did
+        // not build; Rosetta Code, Random sentence from book)
+        if let A::Call { args, .. } = object
+            && args.len() == 1
+        {
+            let mut depth = 1;
+            let mut root = object;
+            while let A::Call { callee, args } = root
+                && args.len() == 1
+            {
+                root = callee.as_ref();
+                depth += 1;
+            }
+            fn filled(t: &Ty, depth: usize, leaf: &Ty, key: crate::ir::Key) -> Option<Ty> {
+                match (t, depth) {
+                    (Ty::Map(k, item), 1) if item.has_unknown() && item.compatible(leaf) => Some(Ty::Map(k.unify(key).unwrap_or(*k), Box::new(item.unify(leaf)))),
+                    (Ty::List(item), 1) if item.has_unknown() && item.compatible(leaf) => Some(Ty::List(Box::new(item.unify(leaf)))),
+                    (Ty::Map(k, inner), d) if d > 1 => filled(inner, d - 1, leaf, key).map(|i| Ty::Map(*k, Box::new(i))),
+                    (Ty::List(inner), d) if d > 1 => filled(inner, d - 1, leaf, key).map(|i| Ty::List(Box::new(i))),
+                    _ => None,
+                }
+            }
+            if let A::Ident(var) = root
+                && let Some(t) = filled(&self.ctx.ident_type(var).text(), depth, &read(value), crate::type_infer::key_kind_of(read(index).payload()))
+            {
+                self.ctx.vars.insert(var.clone(), t);
+                return;
+            }
+        }
+        // (an item written through a record's field — `s.lists[1] = xs`
+        // into a field made a list of `[]`s — types the field's items, as
+        // a local's item write does: the field had stayed a list of lists
+        // of nothing, compiled as lists of text; Rosetta Code, Christofides
+        // algorithm)
+        if let A::FieldAccess { object: record, field } = object {
+            let rec = match self.target_type(record).payload() {
+                Ty::Record(r) | Ty::OptRecord(r) => r.clone(),
+                _ => return,
+            };
+            let given = read(value).payload().clone();
+            if let Some(sig) = self.ctx.structs.get_mut(&rec)
+                && let Some((_, held)) = sig.fields.iter_mut().find(|(n, _)| n == field)
+            {
+                let typed = match &*held {
+                    Ty::List(item) if item.has_unknown() && item.compatible(&given) => Some(Ty::List(Box::new(item.unify(&given)))),
+                    Ty::Map(k, item) if item.has_unknown() && item.compatible(&given) => Some(Ty::Map(*k, Box::new(item.unify(&given)))),
+                    _ => None,
+                };
+                if let Some(t) = typed {
+                    *held = t;
+                }
+            }
+            return;
+        }
         if let A::Ident(var) = object {
             match self.ctx.ident_type(var).text() {
                 Ty::Map(key, inner) => {
-                    let joined = inner.unify(&read(value));
+                    // (a value that can fail, written into a map of plain
+                    // values, is decided where it is written — the map
+                    // holds its payload, the failure handed back or refused
+                    // (spec, Reassignment): joined, the values had become
+                    // ones that can fail, a function answering the map was
+                    // typed so, and the top level refused the map's first
+                    // line as a reassignment; Rosetta Code, Terminal
+                    // control/Coloured text)
+                    let given = read(value);
+                    let given = if !inner.is_result() && given.is_result() { given.payload().clone() } else { given };
+                    let joined = inner.unify(&given);
+                    // (an open map's first key decides its keys' kind, as
+                    // `set` decides it: `m = map[]` then `m[1] = 'one'` had
+                    // kept the map keyed by text — the interpreter stopped
+                    // and the compiled program did not build; Rosetta Code,
+                    // Achilles numbers)
+                    let key = key.unify(crate::type_infer::key_kind_of(read(index).payload())).unwrap_or(key);
                     self.ctx.vars.insert(var.clone(), Ty::Map(key, Box::new(joined)));
                 }
                 // a list of ints an item of which is written a float holds
@@ -3701,6 +4216,15 @@ impl<'a> Lowerer<'a> {
                 // been a list of ints holding a float — crow check --self)
                 Ty::List(inner) if *inner == Ty::Int && read(value).payload() == &Ty::Float => {
                     self.ctx.vars.insert(var.clone(), Ty::List(Box::new(Ty::Float)));
+                }
+                // (and so does whole numbers written down, as a vector, at
+                // the top level, whose lines are scanned one at a time: the
+                // final pass made the literal a list of ints, written by
+                // position, and the float met it unwidened — an internal
+                // error; in a function the body settles whole; Rosetta Code,
+                // Gotchas)
+                Ty::Tensor(e, d) if *e == Ty::Int && d.as_ref().is_none_or(|d| d.len() <= 1) && read(value).payload() == &Ty::Float => {
+                    self.ctx.vars.insert(var.clone(), Ty::Tensor(Box::new(Ty::Float), d));
                 }
                 _ => {}
             }
@@ -3720,6 +4244,17 @@ impl<'a> Lowerer<'a> {
             _ => return,
         };
         let given = read(value).payload().clone();
+        // (a field every constructor gave 0, none, written a record of its
+        // own kind is a record or none: typed an int by the constructors
+        // alone, `n.next = m` had not built compiled; Rosetta Code, Deepcopy)
+        if let (Ty::Record(given_rec), Some(sig)) = (&given, self.ctx.structs.get_mut(&rec))
+            && *given_rec == rec
+            && let Some((_, held)) = sig.fields.iter_mut().find(|(n, _)| n == field)
+            && *held == Ty::Int
+        {
+            *held = Ty::OptRecord(rec.clone());
+            return;
+        }
         if let Some(sig) = self.ctx.structs.get_mut(&rec)
             && let Some((_, held)) = sig.fields.iter_mut().find(|(n, _)| n == field)
             && held.has_unknown()
@@ -3730,6 +4265,20 @@ impl<'a> Lowerer<'a> {
                 *held = joined;
             }
         }
+        // (a field holds what it is given, a failed value included (spec,
+        // Structs: `b.speed.ok` asks the field), written after the record
+        // was made as where it was made: a field made plain had stayed so,
+        // `c.v.ok` was true of a failure interpreted, and the compiled
+        // program did not build; Rosetta Code, Compiler/AST interpreter)
+        if read(value).is_result()
+            && let Some(sig) = self.ctx.structs.get_mut(&rec)
+            && let Some((_, held)) = sig.fields.iter_mut().find(|(n, _)| n == field)
+            && !held.is_result()
+            && !held.has_unknown()
+            && held.compatible(&given)
+        {
+            *held = Ty::Result(Box::new(held.unify(&given)));
+        }
     }
 
     /// A provisional lowering's `return x` of a local whose type holds
@@ -3739,6 +4288,15 @@ impl<'a> Lowerer<'a> {
     fn settled_return(&mut self, e: &A) {
         let A::Ident(v) = e else { return };
         if self.is_fact(v) {
+            return;
+        }
+        // (a parameter is typed by its calls and by how the body reads it,
+        // never by what the function answers: `return points` beside
+        // `return singles[points]` had made the parameter a list of the
+        // lists `singles` answers, and its items' field reads were refused
+        // in another function; Rosetta Code, Weiler-Atherton polygon
+        // clipping)
+        if self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(p, _)| p == v)) {
             return;
         }
         let Some(held) = self.ctx.vars.get(v).cloned() else { return };
@@ -4018,7 +4576,7 @@ impl<'a> Lowerer<'a> {
                 if s.contains('`') {
                     Expr::Interp(self.interpolation(s)?)
                 } else {
-                    Expr::Const(Const::Str(s.clone()), Ty::Str)
+                    Expr::Const(Const::Str(s.replace(crate::lexer::BACKSLASH_MARK, "")), Ty::Str)
                 }
             }
             A::Ident(name) => {
@@ -4112,6 +4670,8 @@ impl<'a> Lowerer<'a> {
                     Ty::Column(cell) if !cell.has_unknown() => Ty::Column(cell),
                     _ => s.checked(x),
                 };
+                self.kindless_item(&l);
+                self.kindless_item(&r);
                 self.check_binop(op, with_cells(self, &l), with_cells(self, &r));
                 // a record or none compared with the 0 that writes none is
                 // the none test (spec, A Record or None): the 0 is typed as
@@ -4251,6 +4811,7 @@ impl<'a> Lowerer<'a> {
             }
             A::UnaryOp { op, expr } => {
                 let mut x = self.lower_expr(expr)?;
+                self.kindless_item(&x);
                 // a frame's column of bools negated is the mask it makes,
                 // negated: `not f.on` is `not (f.on eq true)`, one bool per
                 // row (it had been typed one bool — refused where a mask is
@@ -4314,7 +4875,7 @@ impl<'a> Lowerer<'a> {
                 let ty = shapes::shaped(self.ctx.unary_type(op, read(&x)), x.ty().tensor_dims().cloned());
                 Expr::Unary { op: format!("{:?}", op).to_lowercase(), expr: Box::new(x), ty }
             }
-            A::Call { callee, args } => self.call(callee, args)?,
+            A::Call { callee, args } => made_failure_answers(self.call(callee, args)?),
             // a column read by a name the program computes — `df.`name``,
             // `df.lag_`k`` — through the column read's row (found by its
             // property): the column `df.name` reads, its cells as they show
@@ -4543,7 +5104,23 @@ impl<'a> Lowerer<'a> {
                 // list of ints, which holds them as they are (a tensor had
                 // held 9007199254740993 as …992, in both modes); a matrix of
                 // them is refused, since a matrix is a tensor
-                let past = |e: &Expr| matches!(e, Expr::Const(Const::Int(v), _) if v.unsigned_abs() > 1u64 << 53);
+                // (and a numeral past 64 bits, and a power of two literals
+                // past 2^53 — `[2 ^ 65, 3]` — are whole numbers a float would
+                // round or a 64-bit int refuse: each had stopped where the
+                // literal was made; Rosetta Code, Abundant odd numbers. A
+                // computed int that grows there is known only after the
+                // lowering: push it, which keeps every digit)
+                let past = |e: &Expr| match e {
+                    Expr::Const(Const::Int(v), _) => v.unsigned_abs() > 1u64 << 53,
+                    Expr::Binary { op, l, r, .. } if op == "pow" => match (l.as_ref(), r.as_ref()) {
+                        (Expr::Const(Const::Int(b), _), Expr::Const(Const::Int(x), _)) if *x >= 0 => (*b as f64).abs().powf(*x as f64) > (1u64 << 53) as f64,
+                        _ => false,
+                    },
+                    // (a row that answers a growing int: a numeral past 64
+                    // bits is one, `__whole`)
+                    Expr::Call { target: Target::Row(row), .. } => matches!(row.ret, crate::table::Kind::Big),
+                    other => matches!(other.ty().payload(), Ty::Big),
+                };
                 let ty = match &ty {
                     Ty::Tensor(e, dims) if matches!(e.as_ref(), Ty::Int) && dims.as_ref().is_none_or(|d| d.len() <= 1) && out.iter().any(past) => Ty::List(Box::new(Ty::Int)),
                     // (whatever the outer type came out as: the row with the
@@ -4555,6 +5132,33 @@ impl<'a> Lowerer<'a> {
                         ty
                     }
                     _ => ty,
+                };
+                // (each item in the form the literal holds them: numbers held
+                // as a tensor beside numbers held as a list are the list, a
+                // list beside a matrix's rows a row, whole numbers beside
+                // floats floats — held as they came, `[ys * 2, ys]` had been
+                // an internal error, and handed to `log` it had not built
+                // compiled; Rosetta Code, Fast Fourier transform)
+                let held = match &ty {
+                    Ty::List(item) => Some((**item).clone()),
+                    Ty::Tensor(e, Some(dims)) if dims.len() >= 2 => Some(Ty::Tensor(e.clone(), Some(dims[1..].to_vec()))),
+                    _ => None,
+                };
+                let out = match held {
+                    Some(item) if !item.has_unknown() => out
+                        .into_iter()
+                        .map(|x| {
+                            let x = failure_as(x, &item);
+                            let x = held_as(x, &item);
+                            if crate::ir::floats_of_ints(&item, x.ty().payload(), false) {
+                                let ty = if x.ty().is_result() { Ty::Result(Box::new(item.clone())) } else { item.clone() };
+                                Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(x), ty }
+                            } else {
+                                x
+                            }
+                        })
+                        .collect(),
+                    _ => out,
                 };
                 Expr::ListLit(out, ty)
             }
@@ -4787,6 +5391,7 @@ impl<'a> Lowerer<'a> {
                         | Ty::Handle(_)
                         | Ty::Sparse
                         | Ty::Bytes
+                        | Ty::Unit
                 )
                 && !self.contested(&base)
                 && !of_unknown_rank(&base)
@@ -4809,6 +5414,14 @@ impl<'a> Lowerer<'a> {
                             _ => "…".to_string(),
                         };
                         self.refuse(format!("{0}.{1}[] is {1}[{0}]: a function takes its value first", of, field));
+                    }
+                    // (what a function that answers nothing gives, held for
+                    // whether it failed: indexed, the interpreter had stopped,
+                    // "not indexable", and the compiled program had not built;
+                    // Rosetta Code, Elementary cellular automaton)
+                    _ if matches!(base.ty().payload(), Ty::Unit) => {
+                        let name = local_named(&base).map(|n| format!("'{}'", n)).unwrap_or_else(|| "this".to_string());
+                        self.refuse(format!("{} holds no value — the function it came from answers nothing, only whether it failed (`.ok`) — and `[…]` reads an item of a list, a map, text or a column", name));
                     }
                     _ => {
                         let name = local_named(&base).map(|n| format!("'{}'", n)).unwrap_or_else(|| "this".to_string());
@@ -4847,8 +5460,17 @@ impl<'a> Lowerer<'a> {
             // arguments, and all answer one kind (section 7 of
             // docs/extending-crow.md: called by name, never positionally,
             // where they disagree)
-            if self.pass == Pass::Final
-                && let Ty::Fns(names) = base.ty().payload().clone()
+            // (in every pass where the members answer one known kind: typed
+            // as nothing before the final pass, a function answering the
+            // call through a group handed in had been declared as text, and
+            // the compiled program did not build; Rosetta Code, Deming's
+            // funnel)
+            if let Ty::Fns(names) = base.ty().payload().clone()
+                && (self.pass == Pass::Final || {
+                    let answers: Vec<Ty> = names.iter().filter_map(|n| self.ctx.functions.get(n).map(|s| s.return_type.clone())).collect();
+                    let first = answers.first().cloned().unwrap_or(Ty::Unknown);
+                    !answers.is_empty() && answers.windows(2).all(|w| w[0] == w[1]) && !first.has_unknown() && Self::zero_of(&first).is_some()
+                })
             {
                 let written: &[A] = args;
                 let answers: Vec<Ty> = names.iter().filter_map(|n| self.ctx.functions.get(n).map(|s| s.return_type.clone())).collect();
@@ -4868,6 +5490,19 @@ impl<'a> Lowerer<'a> {
                 let init = zero.expect("a zero of the answer's kind");
                 let out = self.dispatch(base, &names, answer, init, &|me, cand| me.lower_expr(&A::Call { callee: Box::new(A::Ident(cand.to_string())), args: written.clone() }))?;
                 return Ok(out);
+            }
+            // (before the final pass, a call through a group is a call of each
+            // member, as the dispatch will be: the spec's own `ops = [double,
+            // square]` then `ops[0][3]` had left the members typed by nothing,
+            // and the dispatch was refused; Rosetta Code, Call a function)
+            if self.pass != Pass::Final
+                && let Ty::Fns(names) = base.ty().payload().clone()
+            {
+                let written: Vec<A> = args.to_vec();
+                for cand in &names {
+                    let call = A::Call { callee: Box::new(A::Ident(cand.clone())), args: written.clone() };
+                    let _typed = self.muted(|me| me.lower_expr(&call));
+                }
             }
             if self.pass == Pass::Final
                 && let Ty::Fn(params, _) = base.ty().payload().clone()
@@ -5192,6 +5827,12 @@ impl<'a> Lowerer<'a> {
                 // — `Box[3]` beside `Box[P[…]]` had not built compiled)
                 let value = match (declared.get(i).map(|t| t.payload().clone()), value.ty().payload()) {
                     (Some(slot @ Ty::OptRecord(_)), Ty::Int) if self.pass == Pass::Final && !matches!(value, Expr::Const(Const::Int(0), _)) => self.none_of(value, &slot),
+                    // (0 written down is none, typed as the link: where the
+                    // field can also hold a failure — `left` given a record
+                    // that can fail elsewhere — it had been a success holding
+                    // the int, and the compiled program did not build; Rosetta
+                    // Code, Rational calculator)
+                    (Some(slot @ Ty::OptRecord(_)), Ty::Int) if matches!(value, Expr::Const(Const::Int(0), _)) => Expr::Const(Const::Int(0), slot),
                     _ => value,
                 };
                 let how = match (declared.get(i).map(|t| t.payload()), value.ty().payload()) {
@@ -5301,6 +5942,28 @@ impl<'a> Lowerer<'a> {
         // default, f, x]` is f[held, x], `later[f, a]` f[a] — inference
         // copies f per signature though the row's call is its only call
         // site, and the copy is chosen once the arguments are lowered)
+        // (a predicate a row decides by — `all`, `any`, `find` — answers a
+        // truth: one whose answer can fail had been read as not passing
+        // interpreted, and the compiled program had not built; refused, with
+        // the fix; Rosetta Code, Roman numerals/Encode)
+        if self.pass == Pass::Final && !self.ctx.functions.contains_key(&name) {
+            for (i, sig) in crate::table::fn_params(&name, args.len()) {
+                if sig.ret != crate::table::Kind::Bool {
+                    continue;
+                }
+                if let Some(A::Ident(f)) = args.get(i)
+                    && self.calls_fn(f)
+                    && self.ctx.functions.get(f).is_some_and(|fsig| fsig.return_type.is_result())
+                {
+                    self.refuse(format!(
+                        "{}[] decides by what {}[] answers, a truth, and {}[] answers one that can fail — decide the failure inside it (`if not v.ok`, then `return false`)",
+                        crate::lower::shown(&name),
+                        crate::lower::shown(f),
+                        crate::lower::shown(f)
+                    ));
+                }
+            }
+        }
         let row_fns: Vec<(usize, &'static crate::table::Sig)> = if self.ctx.functions.contains_key(&name) {
             Vec::new()
         } else {
@@ -5343,6 +6006,18 @@ impl<'a> Lowerer<'a> {
             if !self.ctx.functions.contains_key(&name) && is_bool_column(&x, true) && crate::table::takes_mask_at(&name, i, args.len()) {
                 x = self.lower_expr(&as_mask(a))?;
             }
+            // (a failure made in an item's place — `push[xs, error['none']]`
+            // — is a failure of what the collection before it holds: of no
+            // value, no row was picked by it, and the item handed on had
+            // been `()` compiled, which did not build)
+            if i > 0
+                && i + 1 == args.len()
+                && !self.ctx.functions.contains_key(&name)
+                && let Some(Ty::List(item) | Ty::Map(_, item)) = lowered.first().map(|f: &Expr| f.ty().payload().clone())
+                && item.is_concrete()
+            {
+                x = failure_as(x, &Ty::Result(Box::new(item.payload().clone())));
+            }
             arg_types.push(read(&x));
             // a column keeps its cells' kind into the parameter it is handed
             // to: `for x in may[f.a, …]` walked a column of nothing known,
@@ -5354,6 +6029,22 @@ impl<'a> Lowerer<'a> {
                 lowered.push(Expr::Convert { how: Convert::Unwrap, expr: Box::new(x), ty: rty.payload().clone() });
             } else {
                 lowered.push(x);
+            }
+        }
+        // (a list of whole numbers written down beside a list of ints, in
+        // one builtin's call, is a list of ints as the other is: `concat[[x],
+        // p]` had made the literal a tensor, and the answer one, against
+        // the list a sibling return made — an internal error; Rosetta Code,
+        // Determinant and permanent)
+        if !self.ctx.functions.contains_key(&name) && lowered.iter().any(|x| matches!(x.ty().payload(), Ty::List(e) if matches!(e.as_ref(), Ty::Int | Ty::Big))) {
+            for i in 0..lowered.len() {
+                let literal = matches!(args.get(i), Some(A::Array(_))) && matches!(&lowered[i], Expr::ListLit(_, Ty::Tensor(e, d)) if **e == Ty::Int && d.as_ref().is_none_or(|d| d.len() <= 1));
+                if literal && let Expr::ListLit(items, _) = std::mem::replace(&mut lowered[i], Expr::Const(Const::Int(0), Ty::Int)) {
+                    lowered[i] = Expr::ListLit(items, Ty::List(Box::new(Ty::Int)));
+                    arg_types[i] = read(&lowered[i]);
+                    full_types[i] = kept(&lowered[i]);
+                    checks[i] = self.checked(&lowered[i]);
+                }
             }
         }
         for (i, sig) in row_fns {
@@ -5557,6 +6248,7 @@ impl<'a> Lowerer<'a> {
                 let lowered = self.row_arguments(&m, &name, lowered);
                 let row = self.builtin_row(Some(&m), &name, &lowered);
                 self.retype_unknown_lists(row, &lowered);
+                self.kindless_args(row, &lowered);
                 let ty = Self::shaped_by_row(Some(&m), row, &lowered, ty, &name);
                 let lowered = Self::crow_call_args(row, lowered);
                 return Ok(Expr::Effect { name: format!("{}.{}", m, name), row, args: lowered, ty, answered: true, propagates });
@@ -5564,6 +6256,7 @@ impl<'a> Lowerer<'a> {
             let lowered = self.row_arguments(&m, &name, lowered);
             let row = self.builtin_row(Some(&m), &name, &lowered);
             self.retype_unknown_lists(row, &lowered);
+            self.kindless_args(row, &lowered);
             let ty = Self::typed_by_row(ty, row);
             let ty = Self::shaped_by_row(Some(&m), row, &lowered, ty, &name);
             let lowered = Self::crow_call_args(row, lowered);
@@ -5633,6 +6326,41 @@ impl<'a> Lowerer<'a> {
                             && !(whole(&held) && whole(&given))
                             && !held.compatible(&as_inferred(&given))
                     });
+                    // (and a function handed where another call hands one
+                    // answering another kind: the one parameter cannot
+                    // read both answers — it had been typed by one, and
+                    // the call handing the other did not build compiled;
+                    // Rosetta Code, Monads/List monad)
+                    let answers = |t: &Ty| match t {
+                        Ty::Fn(_, r) if r.is_concrete() => Some(r.payload().clone()),
+                        _ => None,
+                    };
+                    // (a member of a list of functions is its name, called
+                    // through the list's dispatch: where another call hands a
+                    // function itself, the parameter is that function's, and
+                    // the member had reached it as text — an internal error;
+                    // Rosetta Code, Deming's funnel)
+                    if let Some((i, _)) = params.iter().zip(lowered.iter()).enumerate().find(|(_, (p, x))| matches!(p, Ty::Fn(..)) && matches!(x.ty().payload(), Ty::Fns(_))) {
+                        self.refuse(format!(
+                            "`{0}`'s '{1}' is a function another call hands by name, and this is a member of a list of functions — hand the function by name (`{0}[double, …]`), or call the member where it is (`fs[i][x]`)",
+                            crate::lower::shown(&name),
+                            names.get(i).cloned().unwrap_or_default()
+                        ));
+                    }
+                    let fn_misfit = params.iter().zip(lowered.iter()).enumerate().find(|(_, (p, x))| matches!((answers(p), answers(&x.ty())), (Some(a), Some(b)) if !a.compatible(&b)));
+                    if misfit.is_none()
+                        && let Some((i, (p, x))) = fn_misfit
+                    {
+                        let words = |t: &Ty| answers(t).map(|a| crate::table::Arg::of_type(&a).words()).unwrap_or_default();
+                        let msg = format!(
+                            "`{0}` takes a function, so one `{0}` serves every call, and its '{1}' answers {2} here where another call's answers {3} — a function taking a function is not copied per kind (spec, Specialization): write one for each kind",
+                            crate::lower::shown(&name),
+                            names.get(i).cloned().unwrap_or_default(),
+                            words(&x.ty()),
+                            words(p)
+                        );
+                        self.refuse(msg);
+                    }
                     if let Some((i, (p, x))) = misfit {
                         let words = |t: &Ty| crate::table::Arg::of_type(t.payload()).words();
                         let msg = format!(
@@ -5649,6 +6377,11 @@ impl<'a> Lowerer<'a> {
                 for (i, x) in lowered.into_iter().enumerate() {
                     handed.push(match (params.get(i), x.ty()) {
                         (Some(Ty::Float), Ty::Int) => Expr::Convert { how: Convert::IntToFloat, expr: Box::new(x), ty: Ty::Float },
+                        // (a map of ints where the parameter holds floats —
+                        // a map of floats handed at another call — is a map of
+                        // floats; Rosetta Code, Runtime evaluation/In an
+                        // environment)
+                        (Some(p @ Ty::Map(_, pe)), Ty::Map(_, e)) if **pe == Ty::Float && *e == Ty::Int => Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(x), ty: (p).clone() },
                         (Some(p @ Ty::List(_)), Ty::Tensor(..)) => Expr::Convert { how: Convert::ToList, expr: Box::new(x), ty: (p).clone() },
                         // (a list of ints where the parameter holds floats —
                         // a vector handed at another call — is a list of
@@ -5711,6 +6444,7 @@ impl<'a> Lowerer<'a> {
             };
             let row = self.builtin_row(None, &name, &lowered);
             self.retype_unknown_lists(row, &lowered);
+            self.kindless_args(row, &lowered);
             let lowered = Self::concrete_empties(&name, row, lowered);
             let ty = Self::shaped_by_row(None, row, &lowered, ty, &name);
             let lowered = Self::crow_call_args(row, lowered);
@@ -5741,6 +6475,20 @@ impl<'a> Lowerer<'a> {
                     ));
                 }
             }
+            // (whole numbers written down beside a list of ints are that
+            // list's kind: `concat[[1], xs]` of growing ints had been joined
+            // as a tensor — the digits past 2^53 lost compiled, a stop
+            // interpreted; Rosetta Code, Write float arrays to a text file)
+            let ty = match (name.as_str(), lowered.first(), lowered.get(1).map(|x| x.ty())) {
+                ("concat", Some(Expr::ListLit(items, Ty::Tensor(e, d))), Some(second))
+                    if **e == Ty::Int && d.as_ref().is_none_or(|d| d.len() <= 1) && matches!(second.payload(), Ty::List(i) if matches!(i.payload(), Ty::Int | Ty::Big)) =>
+                {
+                    lowered[0] = Expr::ListLit(items.clone(), Ty::List(Box::new(Ty::Int)));
+                    let list = second.payload().clone();
+                    if ty.is_result() { Ty::Result(Box::new(list)) } else { list }
+                }
+                _ => ty,
+            };
             // a list of numbers is held as a list or as a tensor: `concat`
             // joins them in the first's form, so the second is converted
             if name == "concat" && lowered.len() >= 2 {
@@ -5762,6 +6510,26 @@ impl<'a> Lowerer<'a> {
                     lowered.insert(1, Expr::Convert { how, expr: Box::new(second), ty: converted });
                 }
             }
+            // (lists whose items differ only in whether they can fail are
+            // joined as lists of items that can fail, the plain one's items
+            // each the success it is: `concat[[f[x]], ['b']]` had joined a
+            // list of text that can fail with one of text, and the compiled
+            // program did not build; Rosetta Code, Facial detection)
+            if name == "concat" && lowered.len() >= 2 {
+                let fallible = lowered.iter().find_map(|x| match x.ty() {
+                    Ty::List(i) if i.is_result() => Some((*i).clone()),
+                    _ => None,
+                });
+                if let Some(item) = fallible {
+                    lowered = lowered
+                        .into_iter()
+                        .map(|x| match x.ty() {
+                            Ty::List(i) if !i.is_result() && i.as_ref() == item.payload() => fallible_items(x, &item),
+                            _ => x,
+                        })
+                        .collect();
+                }
+            }
             let lowered = self.core_row_arguments(&name, lowered);
             // the collection's form is the answer's (`held_as` converted the
             // item or the value to it): a tensor set into a map of lists
@@ -5769,8 +6537,26 @@ impl<'a> Lowerer<'a> {
             // list of rows (the answer had been in the join's form, which
             // the variable's declaration then disagreed with)
             let ty = in_holders_form(&name, &lowered, ty);
+            // (a local pushed before its items are known — `groups =
+            // push[groups, group]` while `group` is still `[]` — makes the
+            // holder's items what the local settles on: met in order, the
+            // holder had stayed a list of lists of nothing known, compiled
+            // as lists of text; Rosetta Code, Brilliant numbers)
+            if self.pass == Pass::Settle
+                && matches!(name.as_str(), "push" | "set")
+                && let (Some(Expr::Local(holder, _) | Expr::Move(holder, _)), Some(Expr::Local(item, t) | Expr::Move(item, t))) = (lowered.first(), lowered.last())
+                && lowered.len() >= 2
+                && t.has_unknown()
+                && holder != item
+            {
+                let link = (self.current_fn.clone(), holder.clone(), item.clone());
+                if !self.items_of.contains(&link) {
+                    self.items_of.push(link);
+                }
+            }
             let row = self.builtin_row(None, &name, &lowered);
         self.retype_unknown_lists(row, &lowered);
+        self.kindless_args(row, &lowered);
             // (a row answering a tensor answers one, whatever the call's rule
             // read from a list given it: `concat[xs, ys, 0]` of lists joins
             // their tensors — typed a list, the compiled program had not
@@ -5825,6 +6611,7 @@ impl<'a> Lowerer<'a> {
         };
         let row = self.builtin_row(None, &name, &lowered);
         self.retype_unknown_lists(row, &lowered);
+        self.kindless_args(row, &lowered);
         let ty = Self::typed_by_row(ty, row);
         let lowered = Self::concrete_empties(&name, row, lowered);
         let ty = Self::answered_as_empties(ty, row, &lowered);
@@ -6010,6 +6797,29 @@ impl<'a> Lowerer<'a> {
     /// text and not built (crow check --self; parity 322). A parameter
     /// settles in the scan, which the rounds read again; a local and a
     /// field in every provisional pass, as a field written does.
+    /// An item of a list nothing is put into, handed where a row takes a
+    /// number, text or a truth (`max[g[0], 1]`): its kind is none to compute
+    /// with, refused as an operator's side is (`kindless_item`); a row that
+    /// shows any value (`log`) reaches the index, which stops (Rosetta Code,
+    /// Longest common subsequence).
+    fn kindless_args(&mut self, row: Option<&'static crate::table::Row>, lowered: &[Expr]) {
+        use crate::table::Kind;
+        // (no row resolved: the item's lack of a kind is why — `max` has no
+        // row for it)
+        let Some(row) = row else {
+            for x in lowered {
+                self.kindless_item(x);
+            }
+            return;
+        };
+        let Some(kinds) = crate::table::kinds_of(row.params, lowered.len()) else { return };
+        for (k, x) in kinds.iter().zip(lowered) {
+            if matches!(k, Kind::Int | Kind::Whole | Kind::Float | Kind::Bool | Kind::Str) {
+                self.kindless_item(x);
+            }
+        }
+    }
+
     fn retype_unknown_lists(&mut self, row: Option<&'static crate::table::Row>, lowered: &[Expr]) {
         let Some(row) = row else { return };
         if self.pass == Pass::Final {
@@ -6027,6 +6837,15 @@ impl<'a> Lowerer<'a> {
             .collect();
         for (i, (k, x)) in kinds.iter().zip(lowered).enumerate() {
             if !matches!(read(x).payload(), Ty::List(e) if **e == Ty::Unknown) {
+                continue;
+            }
+            // (`join`'s list takes text, numbers and bools as they show: it
+            // says nothing of the items — at the top level a list met it
+            // before the push that typed it, and the int pushed was refused,
+            // `its items are text`; a list nothing else types is text where
+            // the compiled program holds it; Rosetta Code, Generator/
+            // Exponential)
+            if *k == crate::table::Kind::Words {
                 continue;
             }
             let Some(item) = listed_item(*k) else { continue };
@@ -6449,9 +7268,10 @@ impl<'a> Lowerer<'a> {
         if core_too && !crate::table::has_core_rows(name) {
             return;
         }
-        let kinds: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
+        let types: Vec<Ty> = lowered.iter().map(read).collect();
+        let kinds: Vec<crate::table::Arg> = types.iter().map(crate::table::Arg::of_type).collect();
         let modules: Vec<&str> = if core_too { vec!["", m] } else { vec![m] };
-        if let Some(e) = crate::table::refusal(&modules, name, &kinds) {
+        if let Some(e) = crate::table::refusal_typed(&modules, name, &kinds, &types) {
             self.refuse(e);
         }
     }
@@ -6664,6 +7484,29 @@ impl<'a> Lowerer<'a> {
         fn ints(t: &Ty) -> bool {
             matches!(t.payload(), Ty::List(e) | Ty::Map(_, e) | Ty::Tensor(e, _) if **e == Ty::Int)
         }
+        // (whole numbers written down and pushed as a list's row are a list
+        // of ints, as whole numbers written down and grown are: held as a
+        // vector, the first row had made the list's rows vectors, and every
+        // later row of ints was held as floats — a silent wrong answer past
+        // 2^53, past 64 bits a stop or a clamp; Rosetta Code, Lah numbers)
+        let mut ty = ty;
+        if row.id == "core.push"
+            && args.len() == 2
+            && matches!(args[0].ty().payload(), Ty::List(i) if matches!(i.as_ref(), Ty::Unknown) || matches!(i.as_ref(), Ty::List(e) if matches!(e.as_ref(), Ty::Int | Ty::Big)))
+            && let Expr::ListLit(items, Ty::Tensor(e, d)) = &args[1]
+            && **e == Ty::Int
+            && d.as_ref().is_none_or(|d| d.len() <= 1)
+        {
+            args[1] = Expr::ListLit(items.clone(), Ty::List(Box::new(Ty::Int)));
+            let rows_of = |t: &Ty| match t {
+                Ty::List(i) if matches!(i.as_ref(), Ty::Tensor(..)) => Ty::List(Box::new(Ty::List(Box::new(Ty::Int)))),
+                other => other.clone(),
+            };
+            ty = match &ty {
+                Ty::Result(inner) => Ty::Result(Box::new(rows_of(inner))),
+                other => rows_of(other),
+            };
+        }
         fn floats(t: &Ty) -> bool {
             matches!(t.payload(), Ty::List(e) | Ty::Map(_, e) | Ty::Tensor(e, _) if **e == Ty::Float)
         }
@@ -6702,6 +7545,27 @@ impl<'a> Lowerer<'a> {
         if args.len() > item && ints(&args[0].ty()) && matches!(args[item].ty().payload(), Ty::Float) {
             widen(&mut args, 0);
             return (args, of_floats(ty));
+        }
+        // (a holder of ints given to a holder of holders of floats — a
+        // grid's row of ints pushed into a grid one of whose numbers was
+        // written a float — holds floats as the grid's rows do: the
+        // compiled program had pushed a Vec<i64> into a Vec<Vec<f64>>;
+        // Rosetta Code, Abelian sandpile)
+        let held = match args.first().map(|a| a.ty()) {
+            Some(Ty::List(e) | Ty::Map(_, e)) => Some(*e),
+            Some(Ty::Result(inner)) => match *inner {
+                Ty::List(e) | Ty::Map(_, e) => Some(*e),
+                _ => None,
+            },
+            _ => None,
+        };
+        if args.len() > item
+            && let Some(held) = held
+            && crate::ir::floats_of_ints(&held, args[item].ty().payload(), false)
+        {
+            let x = std::mem::replace(&mut args[item], Expr::Const(Const::Int(0), Ty::Int));
+            let ty = if x.ty().is_result() { Ty::Result(Box::new(held)) } else { held };
+            args[item] = Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(x), ty };
         }
         (args, ty)
     }
@@ -6806,6 +7670,11 @@ impl<'a> Lowerer<'a> {
         let mut text = String::new();
         let mut i = 0;
         while i < chars.len() {
+            if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == crate::lexer::BACKSLASH_MARK {
+                text.push('\\');
+                i += 2;
+                continue;
+            }
             if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '`' {
                 text.push('`');
                 i += 2;
@@ -6832,26 +7701,34 @@ impl<'a> Lowerer<'a> {
                     }
                     i += 1;
                 }
+                // (the interpolation is read on its own, so what its reading
+                // refuses is placed at the string's line, not at the
+                // fragment's first: a bracket closing nothing in a string on
+                // line 20 had been shown on line 1; Rosetta Code, Unicode
+                // strings)
+                let above = chars[..start].iter().filter(|c| **c == '\n').count();
+                let line = self.v.line;
+                let placed = |e: String| in_string_at(e, line, above);
                 if i >= chars.len() {
-                    return Err("unterminated interpolation — close it with ` or write \\` for a literal backtick".to_string());
+                    return Err(placed("unterminated interpolation — close it with ` or write \\` for a literal backtick".to_string()));
                 }
                 let src: String = chars[start..i].iter().collect();
                 i += 1;
                 if src.trim().is_empty() {
-                    return Err("empty interpolation — backticks must contain an expression".to_string());
+                    return Err(placed("empty interpolation — backticks must contain an expression".to_string()));
                 }
                 if !text.is_empty() {
                     pieces.push(Piece::Text(std::mem::take(&mut text)));
                 }
                 let mut lexer = crate::lexer::Lexer::new(&src);
-                let tokens = lexer.tokenize()?;
-                let mut parser = crate::parser::Parser::new(tokens);
-                let stmts = parser.parse()?;
+                let tokens = lexer.tokenize().map_err(placed)?;
+                let mut parser = crate::parser::Parser::for_fragment(tokens);
+                let stmts = parser.parse().map_err(placed)?;
                 let stmts = crate::lower::lower_fragment(&stmts).unwrap_or(stmts);
                 let expr = stmts.iter().find_map(|st| if let S::ExprStmt(e) = st { Some(e.clone()) } else { None });
                 match expr {
                     Some(e) => pieces.push(Piece::Expr(self.lower_expr(&e)?)),
-                    None => return Err(format!("interpolation is not an expression: `{}`", src)),
+                    None => return Err(placed(format!("interpolation is not an expression: `{}`", src))),
                 }
             } else {
                 text.push(chars[i]);
@@ -6863,6 +7740,33 @@ impl<'a> Lowerer<'a> {
         }
         Ok(pieces)
     }
+}
+
+/// A refusal of an interpolation's text, read on its own (its lines count
+/// from 1), placed at the line of the string that holds it: the statement's
+/// line, the string's line breaks before the backtick, and the fragment's
+/// own. The fragment's column is not the source's, so the message keeps
+/// what it quotes to point with.
+fn in_string_at(e: String, line: usize, above: usize) -> String {
+    if line == 0 {
+        return e;
+    }
+    let (inner, message) = match e.strip_prefix("line ") {
+        Some(after) => {
+            let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let tail = &after[digits.len()..];
+            let tail = match tail.strip_prefix(", col ") {
+                Some(c) => &c[c.chars().take_while(|c| c.is_ascii_digit()).count()..],
+                None => tail,
+            };
+            match (digits.parse::<usize>(), tail.strip_prefix(": ")) {
+                (Ok(n), Some(m)) => (n.saturating_sub(1), m.to_string()),
+                _ => (0, e.clone()),
+            }
+        }
+        None => (0, e.clone()),
+    };
+    format!("line {}: {}", line + above + inner, message)
 }
 
 // ── inference by lowering (F5) ───────────────────────────────────────
@@ -7137,6 +8041,29 @@ fn settled_yield(expr: Expr, declared: &Ty) -> Expr {
                     *lt = (**item).clone();
                 }
             }
+            // (and a local yielded — `none = []` then `none` — is declared
+            // as the items are: it had stayed a list of nothing known,
+            // compiled as one of text; Rosetta Code, Hopcroft-Karp)
+            if let (Ty::List(item), Some(Stmt::Do(Expr::Local(v, t) | Expr::Move(v, t)))) = (declared, body.iter_mut().rev().find(|s| !matches!(s, Stmt::Line(_))))
+                && t.has_unknown()
+                && t.compatible(item)
+            {
+                *t = (**item).clone();
+                let v = v.clone();
+                for s in body.iter_mut() {
+                    if let Stmt::Let { var, ty, expr } = s
+                        && *var == v
+                        && ty.has_unknown()
+                    {
+                        *ty = (**item).clone();
+                        match expr {
+                            Expr::ListLit(items, lt) if items.is_empty() => *lt = (**item).clone(),
+                            Expr::MapLit(pairs, lt) if pairs.is_empty() => *lt = (**item).clone(),
+                            _ => {}
+                        }
+                    }
+                }
+            }
             Expr::ForExpr { var, iter, body, ty: declared.clone(), parallel }
         }
         other => other,
@@ -7150,19 +8077,133 @@ fn settled_yield(expr: Expr, declared: &Ty) -> Expr {
 /// variable or a record's field takes them (`map[a = [1, 2], c = []]` had
 /// stopped the interpreter at the tensor — `expected a list, got array` —
 /// and the compiled program had not built).
+/// Numbers held as a tensor, as the list of `item` a place holds: whole
+/// numbers written down are that list as they are written — never made
+/// floats and back (`list([n])` had held 2^53 + 1 as 2^53: Rosetta Code,
+/// Lah numbers) — and any other tensor is converted where it is handed.
+fn listed(value: Expr, item: Ty) -> Expr {
+    match value {
+        Expr::ListLit(items, Ty::Tensor(e, d)) if *e == Ty::Int && item == Ty::Int && d.as_ref().is_none_or(|d| d.len() <= 1) => Expr::ListLit(items, Ty::List(Box::new(Ty::Int))),
+        other => {
+            let ty = Ty::List(Box::new(item));
+            let ty = if other.ty().is_result() { Ty::Result(Box::new(ty)) } else { ty };
+            Expr::Convert { how: Convert::ToList, expr: Box::new(other), ty }
+        }
+    }
+}
+
+/// A failure made where it is held (`error[…]`, a form answering a
+/// failure of no value) is a failure of what the place holds: an item of a
+/// list whose items can fail. Typed as no value, it had been an item of
+/// another kind than the list's, and the lowered program disagreed with
+/// itself (Rosetta Code, Monads/Maybe monad).
+fn failure_as(value: Expr, item: &Ty) -> Expr {
+    match value {
+        Expr::Call { target: Target::Runtime(name), args, ty, propagates } if made_failure_named(&name, &ty) && item.is_result() && !matches!(item.payload(), Ty::Unit | Ty::Unknown) => {
+            Expr::Call { target: Target::Runtime(name), args, ty: item.clone(), propagates }
+        }
+        other => other,
+    }
+}
+
+/// Whether a call of `name` typed `ty` is a failure made where it is
+/// written: a core form answering a failure of no value.
+fn made_failure_named(name: &str, ty: &Ty) -> bool {
+    matches!(ty, Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit | Ty::Unknown)) && crate::table::rows_named(name).any(|r| r.path == crate::table::IN_FORM && r.module.is_empty())
+}
+
+/// A call handed a failure made in its argument (`encode[error['why']]`)
+/// answers that failure (spec, Auto-Propagation): its value of no kind had
+/// been handed on compiled — `!` where the row takes a value — and the
+/// program did not build, where the interpreter answered the failure.
+/// Folded where every other argument is quiet, so nothing beside it is
+/// lost.
+fn made_failure_answers(x: Expr) -> Expr {
+    let (args, ty) = match &x {
+        Expr::Call { args, ty, propagates: true, .. } | Expr::Effect { args, ty, propagates: true, .. } => (args, ty),
+        _ => return x,
+    };
+    if matches!(ty.payload(), Ty::Unit) {
+        return x;
+    }
+    let made = |a: &Expr| matches!(a, Expr::Convert { how: Convert::Unwrap, expr, .. } if matches!(expr.as_ref(), Expr::Call { target: Target::Runtime(n), ty, .. } if made_failure_named(n, ty)));
+    let Some(i) = args.iter().position(made) else { return x };
+    if args.iter().enumerate().any(|(j, a)| j != i && !crate::ir::quiet(a)) {
+        return x;
+    }
+    // (the failure the call answers: of its kind, where the call was typed
+    // as never failing — a row that shows any value)
+    let ty = Ty::Result(Box::new(ty.payload().clone()));
+    match args[i].clone() {
+        Expr::Convert { expr, .. } => match *expr {
+            Expr::Call { target, args, propagates, .. } => Expr::Call { target, args, ty, propagates },
+            other => other,
+        },
+        other => other,
+    }
+}
+
 fn held_as(value: Expr, item: &Ty) -> Expr {
     let failing = value.ty().is_result();
     let wrap = |t: Ty| if failing { Ty::Result(Box::new(t)) } else { t };
     match (item.payload(), value.ty().payload().clone()) {
-        (Ty::List(e), Ty::Tensor(..)) if matches!(e.payload(), Ty::Int | Ty::Float) => {
-            let ty = wrap(Ty::List(Box::new(e.payload().clone())));
-            Expr::Convert { how: Convert::ToList, expr: Box::new(value), ty }
-        }
+        (Ty::List(e), Ty::Tensor(..)) if matches!(e.payload(), Ty::Int | Ty::Float) => listed(value, e.payload().clone()),
         (Ty::Tensor(..), Ty::List(e)) if matches!(e.payload(), Ty::Int | Ty::Float | Ty::Unknown) => {
             let ty = wrap(Ty::Tensor(Box::new(Ty::Float), shapes::stacked_dims(&value.ty())));
             Expr::Convert { how: Convert::ToTensor, expr: Box::new(value), ty }
         }
+        // (a list whose items hold their numbers the other way — lists of
+        // numbers where vectors are held, vectors where lists are — each
+        // item converted by a collecting loop: a list of lists pushed onto
+        // a list holding lists of vectors had been an internal error;
+        // Rosetta Code, Numbers with equal rises and falls)
+        (Ty::List(want), Ty::List(have)) if !failing && forms_differ(&want, &have) => {
+            let var = held_name();
+            let one = Expr::Local(var.clone(), (*have).clone());
+            let each = match (want.as_ref(), have.as_ref()) {
+                // (a list of whole numbers is a vector of whole numbers)
+                (Ty::Tensor(_, d), Ty::List(e)) => {
+                    let ty = Ty::Tensor(Box::new(e.payload().clone()), d.clone().or(Some(vec![None])));
+                    Expr::Convert { how: Convert::ToTensor, expr: Box::new(one), ty }
+                }
+                _ => held_as(one, &want),
+            };
+            let ty = Ty::List(Box::new(each.ty()));
+            Expr::ForExpr { var, iter: Box::new(value), body: vec![Stmt::Do(each)], ty, parallel: false }
+        }
         _ => value,
+    }
+}
+
+/// A plain list where a list whose items can fail is held: each item the
+/// success it is — a literal holds plain items as such, any other list is
+/// walked by a collecting loop, whose plain rounds the backends hold as
+/// successes.
+fn fallible_items(value: Expr, item: &Ty) -> Expr {
+    match value {
+        Expr::ListLit(items, _) => Expr::ListLit(items, Ty::List(Box::new(item.clone()))),
+        other => {
+            let var = held_name();
+            let one = Expr::Local(var.clone(), item.payload().clone());
+            Expr::ForExpr { var, iter: Box::new(other), body: vec![Stmt::Do(one)], ty: Ty::List(Box::new(item.clone())), parallel: false }
+        }
+    }
+}
+
+/// A hidden name for a converting loop's item, one per loop.
+fn held_name() -> String {
+    static HELD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    format!("_held{}", HELD.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Whether two item types hold numbers two ways at some depth: a list of
+/// numbers against a vector.
+fn forms_differ(want: &Ty, have: &Ty) -> bool {
+    let vector = |d: &Option<crate::type_infer::Dims>| d.as_ref().is_none_or(|d| d.len() == 1);
+    match (want, have) {
+        (Ty::Tensor(_, d), Ty::List(e)) | (Ty::List(e), Ty::Tensor(_, d)) => matches!(e.as_ref(), Ty::Int | Ty::Float) && vector(d),
+        (Ty::List(a), Ty::List(b)) => forms_differ(a, b),
+        _ => false,
     }
 }
 
@@ -7179,11 +8220,17 @@ fn in_holders_form(name: &str, lowered: &[Expr], ty: Ty) -> Ty {
         (Ty::Map(_, h), Ty::Map(_, a)) | (Ty::List(h), Ty::List(a)) => (h.as_ref().clone(), a.as_ref().clone()),
         _ => return ty,
     };
-    let item = match (held.payload(), answered.payload()) {
-        (Ty::Tensor(e, d), Ty::List(a)) if matches!(a.payload(), Ty::Int | Ty::Float | Ty::Unknown) => Ty::Tensor(e.clone(), d.clone()),
-        (Ty::List(h), Ty::Tensor(..)) if matches!(h.payload(), Ty::Int | Ty::Float) => Ty::List(h.clone()),
-        _ => return ty,
-    };
+    fn holders(held: &Ty, answered: &Ty) -> Option<Ty> {
+        match (held.payload(), answered.payload()) {
+            (Ty::Tensor(e, d), Ty::List(a)) if matches!(a.payload(), Ty::Int | Ty::Float | Ty::Unknown) => Some(Ty::Tensor(e.clone(), d.clone())),
+            (Ty::List(h), Ty::Tensor(..)) if matches!(h.payload(), Ty::Int | Ty::Float) => Some(Ty::List(h.clone())),
+            // (at any depth: a list of lists of numbers where the items are
+            // lists of vectors)
+            (Ty::List(h), Ty::List(a)) => holders(h, a).map(|i| Ty::List(Box::new(i))),
+            _ => None,
+        }
+    }
+    let Some(item) = holders(&held, &answered) else { return ty };
     let inner = match holder {
         Ty::Map(k, _) => Ty::Map(k, Box::new(item)),
         _ => Ty::List(Box::new(item)),
@@ -7206,6 +8253,10 @@ fn declared_as(first: &Ty, settled: Option<&Ty>) -> Ty {
     // ints from the declaration (type_infer::settle)
     if crate::type_infer::settle::is_ints(first) && matches!(settled, Some(Ty::List(item)) if matches!(item.as_ref(), Ty::Int)) {
         return Ty::List(Box::new(Ty::Int));
+    }
+    // (and rows of them, a list of lists of ints)
+    if crate::type_infer::settle::is_int_rows(first) && matches!(settled, Some(t) if crate::type_infer::settle::is_int_lists(t)) {
+        return Ty::List(Box::new(Ty::List(Box::new(Ty::Int))));
     }
     // a variable that settles on a record or none — first 0, the empty
     // sentinel, or a record, and the other later — holds a record or none
@@ -7285,8 +8336,13 @@ fn bare_return(body: &[Stmt], mut line: usize) -> Option<usize> {
 /// value (an implicit return of nothing does not), is an `if` whose every
 /// arm ends answered, or is a `while true` that only a `return` leaves.
 fn ends_answered(body: &[Stmt]) -> bool {
+    // (a body ending where the program does — `halt[…]` — needs no answer
+    // there: it had been refused as able to end without one; Rosetta Code,
+    // Sequence: smallest number greater than previous term with exactly n
+    // divisors)
     match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
-        Some(Stmt::Return(Some(e))) => e.ty() != Ty::Unit,
+        Some(Stmt::Return(Some(e))) => e.ty() != Ty::Unit || crate::ir::ends_program(e),
+        Some(Stmt::Do(e)) => crate::ir::ends_program(e),
         Some(Stmt::If { then, els: Some(els), .. }) => ends_answered(then) && ends_answered(els),
         Some(Stmt::While { cond: Expr::Const(Const::Bool(true), _), body }) => !breaks(body),
         _ => false,
@@ -7488,6 +8544,20 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
     if *NO_MOVES.get_or_init(|| std::env::var("CROW_NO_MOVES").is_ok_and(|v| !v.is_empty() && v != "0")) {
         return;
     }
+    let mut leaving: HashSet<String> = defined_in(block);
+    if let Some(a) = allowed {
+        leaving.extend(a.iter().cloned());
+    }
+    place_moves_leaving(block, live_after, allowed, &leaving);
+}
+
+/// `place_moves_in`, where `leaving` are the names a `return` may move:
+/// what the outermost block may, however deep the return lies — a loop's
+/// body moves nothing defined outside it, since the body repeats, but a
+/// return leaves the function and nothing reads the name again (`return
+/// m` inside a `while` had copied the record it handed back, at every
+/// call; Rosetta Code, Universal lambda machine).
+fn place_moves_leaving(block: &mut Block, live_after: &HashSet<String>, allowed: Option<&HashSet<String>>, leaving: &HashSet<String>) {
     let defined: HashSet<String> = defined_in(block);
     let mut allowed_set: HashSet<String> = defined.clone();
     if let Some(a) = allowed {
@@ -7509,6 +8579,23 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
     // the block's last statement (its value, or the end that frees them),
     // nor after one that leaves.
     let last = block.iter().rposition(|s| !matches!(s, Stmt::Line(_)));
+    // `x = f[x, …]` whose call can fail is lowered `let _t = f[x, …]`,
+    // `propagate _t (into x)`, `x = unwrap move _t`: x is assigned anew
+    // after the call on its good path and read by no one after a failure
+    // the assignment refuses, so the call takes x as `x = f[x]` does, in a
+    // loop too (a list grown by a call handed a value that can fail beside
+    // it had been copied at every call; Rosetta Code, Universal lambda
+    // machine)
+    let reassigned: HashMap<usize, String> = (0..block.len())
+        .filter_map(|at| {
+            let Stmt::Let { var: t, .. } = &block[at] else { return None };
+            let mut next = block[at + 1..].iter().filter(|s| !matches!(s, Stmt::Line(_)));
+            let Some(Stmt::Propagate { values, at: Decision::Assign(x) }) = next.next() else { return None };
+            let Some(Stmt::Set { var, expr: Expr::Convert { how: Convert::Unwrap, expr: taken, .. } }) = next.next() else { return None };
+            let takes_t = matches!(taken.as_ref(), Expr::Move(v, _) | Expr::Local(v, _) if v == t);
+            (values.len() == 1 && values[0] == *t && var == x && takes_t).then(|| (at, x.clone()))
+        })
+        .collect();
     let mut frees: Vec<(usize, String)> = Vec::new();
     for (at, s) in block.iter_mut().enumerate().rev() {
         // a return leaves the function: nothing after it is read on its path
@@ -7523,9 +8610,9 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
         match s {
             Stmt::If { then, els, .. } => {
                 let after = live.clone();
-                place_moves_in(then, &after, Some(&allowed_set));
+                place_moves_leaving(then, &after, Some(&allowed_set), leaving);
                 if let Some(e) = els {
-                    place_moves_in(e, &after, Some(&allowed_set));
+                    place_moves_leaving(e, &after, Some(&allowed_set), leaving);
                 }
             }
             Stmt::While { cond, body } => {
@@ -7539,9 +8626,9 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
                 // (and the condition is read again after every round)
                 expr_reads(cond, &mut after);
                 let inner_allowed = defined_in(body);
-                place_moves_in(body, &after, Some(&inner_allowed));
+                place_moves_leaving(body, &after, Some(&inner_allowed), leaving);
             }
-            Stmt::For { var, body, .. } => {
+            Stmt::For { var, iter, body, .. } => {
                 let mut body_reads = HashSet::new();
                 for b in body.iter() {
                     stmt_reads(b, &mut body_reads);
@@ -7552,7 +8639,13 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
                 after.remove(var);
                 let mut inner_allowed = defined_in(body);
                 inner_allowed.insert(var.clone());
-                place_moves_in(body, &after, Some(&inner_allowed));
+                // (what the loop walks is lent to it for the whole loop: a
+                // return inside does not move it — `return push[rs, r]` of
+                // a loop over `rs` moved the list while its item was read)
+                let mut walked = HashSet::new();
+                expr_reads(iter, &mut walked);
+                let inner_leaving: HashSet<String> = leaving.difference(&walked).cloned().collect();
+                place_moves_leaving(body, &after, Some(&inner_allowed), &inner_leaving);
             }
             _ => {}
         }
@@ -7600,6 +8693,16 @@ fn place_moves_in(block: &mut Block, live_after: &HashSet<String>, allowed: Opti
                     stmt_reads(b, &mut l);
                 }
                 (l, allowed_set.clone())
+            }
+            // (a return leaves: what the function may move, it moves)
+            Stmt::Return(_) => (live.clone(), allowed_set.union(leaving).cloned().collect()),
+            Stmt::Let { .. } if reassigned.contains_key(&at) => {
+                let x = &reassigned[&at];
+                let mut l = live.clone();
+                l.remove(x);
+                let mut a = allowed_set.clone();
+                a.insert(x.clone());
+                (l, a)
             }
             _ => (live.clone(), allowed_set.clone()),
         };
@@ -8012,6 +9115,49 @@ fn expr_reads(e: &Expr, out: &mut HashSet<String>) {
     }
 }
 
+
+/// The variables a block binds to a list written down and grows with
+/// `push` or writes by position — `v = [...]`, then `v = push[v, …]` or
+/// `v[i] = …`, anywhere in it, nested blocks included: a list of whole
+/// numbers written down for one is a list of ints, as a tensor's float
+/// would round what is pushed or written past 2^53. A parameter is no such
+/// variable: its kind is its callers'.
+/// What a block's statements grow by `push`, the block read whole.
+fn top_grown(stmts: &[S]) -> HashSet<String> {
+    let mut grown = HashSet::new();
+    grown_by_push(stmts, &mut grown);
+    grown
+}
+
+fn grown_by_push(stmts: &[S], out: &mut HashSet<String>) {
+    fn walk(stmts: &[S], grown: &mut HashSet<String>, written: &mut HashSet<String>) {
+        for s in stmts {
+            match s {
+                S::Assign { name, value: A::Array(_) } => {
+                    written.insert(name.clone());
+                }
+                S::Assign { name, value: A::Call { callee, args } } if matches!(callee.as_ref(), A::Ident(f) if f == "push") && matches!(args.first(), Some(A::Ident(v)) if v == name) => {
+                    grown.insert(name.clone());
+                }
+                S::IndexAssign { object: A::Ident(v), .. } => {
+                    grown.insert(v.clone());
+                }
+                S::If { then_body, else_body, .. } => {
+                    walk(then_body, grown, written);
+                    if let Some(e) = else_body {
+                        walk(e, grown, written);
+                    }
+                }
+                S::For { body, .. } | S::While { body, .. } => walk(body, grown, written),
+                _ => {}
+            }
+        }
+    }
+    let (mut grown, mut written) = (HashSet::new(), HashSet::new());
+    walk(stmts, &mut grown, &mut written);
+    out.extend(grown.intersection(&written).cloned());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -8203,6 +9349,47 @@ if r.ok
         assert!(ir.contains("for x in move xs yield"), "the second loop's walk is its last read: {}", ir);
     }
 
+    /// A `return` inside a loop moves what the function may move: nothing
+    /// reads the name after it, though the body's next round would — the
+    /// record handed back from inside a `while` had been copied at every
+    /// call (Rosetta Code, Universal lambda machine: 41.8 s compiled
+    /// against 1.1 s interpreted); a name the body reads again still does
+    /// not move in it
+    #[test]
+    fn a_return_inside_a_loop_moves_what_it_hands_back() {
+        let ir = ir_of("struct M [term, head]
+fn run[m, c]
+    k = 0
+    while true
+        if k lt 10
+            m.term = push[m.term, k + c]
+            k = k + 1
+        else
+            m.head = len[m.term]
+            return m
+fn drive[n]
+    m = M[[], 0]
+    r = 0
+    while r lt n
+        m = run[m, r]
+        r = r + 1
+    return m.head
+log[drive[3]]
+");
+        assert!(ir.contains("return move m"), "{}", ir);
+        assert!(ir.contains("m.term = core.push(m.term"), "{}", ir);
+    }
+
+    /// `xs = grow[xs, n]` whose call can fail (n can) takes `xs` as the
+    /// call that cannot fail does, in a loop too: the good path assigns it
+    /// anew and a failure leaves the function (a list grown by such calls
+    /// had been copied at every call: 40,000 calls 5.2 s interpreted)
+    #[test]
+    fn a_call_that_can_fail_takes_the_variable_it_reassigns() {
+        let ir = ir_of("fn grow[xs, n]\n    xs = push[xs, n]\n    return xs\nfn many[k]\n    n = int[str[k]]\n    xs = []\n    r = 0\n    while r lt 10\n        xs = grow[xs, n]\n        r = r + 1\n    return len[xs]\nlog[many[1]]\n");
+        assert!(ir.contains("call grow(move xs, unwrap n)"), "{}", ir);
+    }
+
     /// A counter stepped both ways in a loop, its step down under the
     /// condition that it is not 0, is held in 64 bits: the narrowed write
     /// had been taken as no sum, its range joined the other step's drift
@@ -8317,8 +9504,9 @@ if r.ok
     #[test]
     fn a_collecting_loop_moves_its_list_into_push() {
         let ir = ir_of("xs = [1]\ni = 0\nwhile i lt 3\n    xs = push[xs, i]\n    i = i + 1\nlog[xs]\n");
-        // (a numeric literal is a tensor: the IR names the row that grows one)
-        assert!(ir.contains("xs = core.push_number(move xs, i)"), "{}", ir);
+        // (whole numbers written down and grown are a list of ints: the IR
+        // names the list's row)
+        assert!(ir.contains("xs = core.push(move xs, i)"), "{}", ir);
         assert!(ir.contains("log!held(move xs)"), "{}", ir);
         assert!(ir.contains("i = proven((i add 1))"), "{}", ir);
     }

@@ -1,0 +1,49 @@
+--- Rosetta Code: Currying
+--- https://rosettacode.org/wiki/Currying
+--- Crow has no closures or lambdas, so a curried function is written as a compiler
+--- writes a closure (defunctionalization): a record holding the function and the
+--- argument it has been given, applied to the next argument by `call`.
+--- History: closures were left out of Crow from its first design (the spec's "No
+--- Lambdas or Closures": a captured variable is a dependency the parallel `for`
+--- cannot see), so currying never became a feature; it is spelled with a record.
+
+struct Curried [f, first]
+
+--- curry :: ((a, b) -> c) -> a -> (b -> c)
+fn curry[f, a]
+    return Curried[f, a]
+
+--- the curried function, given its first argument, applied to its second
+fn call[c, b]
+    f = c.f
+    return f[c.first, b]
+
+--- uncurry :: (a -> (b -> c)) -> ((a, b) -> c)
+fn uncurry[curried, a, b]
+    return call[curried[a], b]
+
+fn add[a, b]
+    return a + b
+
+fn mul[a, b]
+    return a * b
+
+--- a function curried by hand: it takes n and answers "add n"
+fn adder[n]
+    return Curried[add, n]
+
+log['plain:     add[2, 7] = `add[2, 7]`, mul[3, 7] = `mul[3, 7]`']
+
+add2 = curry[add, 2]
+log['curried:   call[curry[add, 2], 7] = `call[add2, 7]`']
+
+added = for x in range[1, 6]
+    call[add2, x]
+log['mapped:    add 2 to each of 1..5 = `added`']
+
+log['uncurried: uncurry[adder, 2, 7] = `uncurry[adder, 2, 7]`']
+
+partials = [curry[add, 2], curry[add, 100], curry[mul, 3], adder[-1]]
+names = ['add 2', 'add 100', 'times 3', 'add -1']
+for i in range[len[partials]]
+    log['`names[i]` applied to 10 = `call[partials[i], 10]`']

@@ -1,0 +1,18 @@
+a = (1 (2 (3 (4 (5 (6 (7 8)))))))
+b = (1 ((2 3) (4 (5 ((6 7) 8)))))
+c = (((((((1 2) 3) 4) 5) 6) 7) 8)
+x = (1 (2 (3 (4 (5 (6 (7 (8 9))))))))
+y = (0 (2 (3 (4 (5 (6 (7 8)))))))
+z = (1 (2 ((4 3) (5 (6 (7 8))))))
+
+a and a: the same fringe (read 8 leaves of a, 8 leaves of a)
+a and b: the same fringe (read 8 leaves of a, 8 leaves of b)
+a and c: the same fringe (read 8 leaves of a, 8 leaves of c)
+a and x: different, the first fringe ends after 8 leaves (read 8 leaves of a, 9 leaves of x)
+a and y: different, leaf 1 is 1 against 0 (read 1 leaf of a, 1 leaf of y)
+a and z: different, leaf 3 is 3 against 4 (read 3 leaves of a, 3 leaves of z)
+
+big = the leaves 0 .. 99999, as even a tree as can be
+other = ((0 1) T), T holding the leaves 3 .. 100000 as evenly
+big and other: different, leaf 3 is 2 against 3 (read 3 leaves of big, 3 leaves of other)
+big and big again: the same fringe (read 100000 leaves of big, 100000 leaves of big again)

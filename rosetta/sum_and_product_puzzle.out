@@ -1,0 +1,5 @@
+Candidates, 2 ≤ X < Y and X + Y ≤ 100: 2352
+After S's first line: 145 pairs, with the sums 11 17 23 27 29 35 37 41 47 53
+After P's line: 86 pairs
+After S's second line: (4, 13)
+X = 4, Y = 13 (S knew the sum 17, P the product 52)

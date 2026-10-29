@@ -1,0 +1,166 @@
+--- Rosetta Code: Smallest number k such that k+2^m is composite for all m less than k
+--- https://rosettacode.org/wiki/Smallest_number_k_such_that_k+2^m_is_composite_for_all_m_less_than_k
+--- Only odd k need trying (an even k + 2^m is even), and k = 1 has no m to try and is
+--- left out, as OEIS A033919 leaves it. For each k the m below k are looked at in
+--- order, in windows of 64: a prime q below 2,000 divides k + 2^m exactly when 2^m is
+--- -k modulo q, which, 2's powers going round modulo q, happens for m in steps of the
+--- order of 2 modulo q from the first such m (read from a table of 2's powers modulo
+--- each q). The m no small prime rules out get a Fermat test to base 3 on the growing
+--- int k + 2^m, which proves a composite; a number that passes is confirmed by strong
+--- tests to the first thirteen primes (certain below 3.3 x 10^24, beyond that a probable
+--- prime) and rules k out. The first five, to 5,101, take a few seconds a mode.
+
+struct Member [k, sieved, tested]
+
+fn primes_below[n]
+    composite = for i in range[n]
+        false
+    found = []
+    for i in range[2, n]
+        if not composite[i]
+            found = push[found, i]
+            j = i * i
+            while j lt n
+                composite[j] = true
+                j = j + i
+    return found
+
+--- for an odd prime q, the place of each residue in the round of 2's powers modulo q:
+--- the least j >= 0 with 2^j = r (mod q), or -1 where 2's powers never reach r
+fn powers_of_two_mod[q]
+    place = for r in range[q]
+        -1
+    x = 1
+    j = 0
+    while place[x] lt 0
+        place[x] = j
+        x = 2 * x % q
+        j = j + 1
+    return place
+
+--- the order of 2 modulo the odd prime q: how many doublings bring 1 back to 1
+fn order_of_two[q]
+    x = 2 % q
+    steps = 1
+    while x ne 1
+        x = 2 * x % q
+        steps = steps + 1
+    return steps
+
+--- the bits of e, most significant first
+fn bits_of[e]
+    bits = []
+    while e gt 0
+        bits = push[bits, e % 2]
+        e = e / 2
+    return reverse[bits]
+
+--- a^e mod m, left to right over e's bits, a small
+fn power_mod[a, e, m]
+    x = 1
+    for bit in bits_of[e]
+        x = x * x % m
+        if bit eq 1
+            x = x * a % m
+    return x
+
+--- the strong probable prime test of the odd n > 3 to base a
+fn strong[n, a]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    x = power_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return true
+    r = 1
+    while r lt s
+        x = x * x % n
+        if x eq n - 1
+            return true
+        r = r + 1
+    return false
+
+fn confirmed_prime[n]
+    for a in [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41]
+        if n % a eq 0
+            return n eq a
+    return all_strong[n]
+
+fn all_strong[n]
+    for a in [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41]
+        if not strong[n, a]
+            return false
+    return true
+
+--- k with every k + 2^m composite for m from 1 to k - 1, as a Member that says how many
+--- of them a small prime divided and how many a Fermat test showed composite; a
+--- Member with k = 0 where some k + 2^m is prime
+fn member[k, qs, places, orders]
+    --- for each small prime that divides some k + 2^m: the first such m >= 1, and the
+    --- step to the next
+    firsts = []
+    steps = []
+    for i in range[len[qs]]
+        q = qs[i]
+        j = places[i][(q - k % q) % q]
+        if j gte 0
+            if j eq 0
+                j = orders[i]
+            firsts = push[firsts, j]
+            steps = push[steps, orders[i]]
+    sieved = 0
+    tested = 0
+    lo = 1
+    while lo lt k
+        hi = min[lo + 64, k]
+        ruled = for m in range[lo, hi]
+            false
+        for i in range[len[firsts]]
+            m = firsts[i]
+            if m lt lo
+                m = m + (lo - m + steps[i] - 1) / steps[i] * steps[i]
+            while m lt hi
+                ruled[m - lo] = true
+                m = m + steps[i]
+        for m in range[lo, hi]
+            if ruled[m - lo]
+                sieved = sieved + 1
+        m = lo
+        while m lt hi
+            if not ruled[m - lo]
+                n = k + 2 ^ m
+                tested = tested + 1
+                if power_mod[3, n - 1, n] eq 1 and confirmed_prime[n]
+                    return Member[0, sieved, tested]
+            m = m + 1
+        lo = hi
+    return Member[k, sieved, tested]
+
+--- whether some k + 2^m is one of the small primes, which rules k out: the sieve in
+--- member would count such a number as divided by itself
+fn small_prime_hit[k, qs]
+    m = 1
+    while m lt k and k + 2 ^ m lt 2000
+        if k + 2 ^ m in qs
+            return true
+        m = m + 1
+    return false
+
+qs = slice[primes_below[2000], 1, 1000]
+places = for q in qs
+    powers_of_two_mod[q]
+orders = for q in qs
+    order_of_two[q]
+found = []
+k = 1
+while len[found] lt 5
+    k = k + 2
+    if not small_prime_hit[k, qs]
+        result = member[k, qs, places, orders]
+        if result.k gt 0
+            found = push[found, result]
+log['The first 5 odd k > 1 with k + 2^m composite for every m from 1 to k - 1:']
+for f in found
+    log['`f.k`: of the `f.k - 1` numbers `f.k` + 2^m, `f.sieved` have a prime factor below 2,000 and the other `f.tested` fail a Fermat test to base 3']

@@ -1,0 +1,23 @@
+--- rows of whole numbers written down and grown by `push` are a list of
+--- lists of ints in every pass: met alone at the top level, the literal had
+--- been a matrix the push made one of floats, and the program was refused
+--- as a reassignment, or the lowered program disagreed with itself
+--- (Rosetta Code, Topswops)
+
+decks = [[2, 4, 1, 3]]
+decks = push[decks, range[4]]
+log[decks]
+
+cards = [2, 4, 1, 3]
+more = [cards]
+d = range[4]
+while len[more] lt 3
+    more = push[more, d]
+log[more]
+
+fn grown_of[cards]
+    held = [cards]
+    held = push[held, range[2]]
+    return held
+
+log[grown_of[[9, 8, 7, 6]]]

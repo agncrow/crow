@@ -1,0 +1,119 @@
+--- Rosetta Code: Sine wave
+--- https://rosettacode.org/wiki/Sine_wave
+--- Five seconds of a 440 Hz sine wave, written as a WAV file, sine_wave.wav, in the
+--- current directory: PCM, one channel, 8 bits a sample, 32,000 samples a second.
+--- Crow has no sound device, so a program cannot play a sound itself: given the
+--- argument play, it hands the file to the system's player (afplay on macOS, aplay on
+--- Linux) through shell. And a program writes files as text, whose characters past
+--- 127 take two bytes each in UTF-8, so every byte of the file is kept below 128: the
+--- samples swing about 64 (8-bit PCM's silence is 128, and a constant offset is not
+--- heard), starting and ending at 127 with the swing faded in and out over 20 ms so
+--- there is no click, and 32,000 samples a second for five seconds makes every number
+--- in the header one whose bytes are below 128 too. The file is read back and checked,
+--- and removed at the end unless the program is given the argument keep.
+
+use math, bits
+
+--- the n low bytes of v, little-endian, as characters; a byte of 128 or more cannot
+--- be written as one character
+fn little[v, n]
+    chars = []
+    rest = v
+    for i in range[n]
+        b = rest % 256
+        if b gte 128
+            halt['the byte `b` of `v` cannot be written as one byte of text']
+        chars = push[chars, char[b]]
+        rest = rest / 256
+    return join[chars, '']
+
+--- the int the n bytes of text at place `at` spell, little-endian
+fn read_little[text, at, n]
+    v = 0
+    for i in range[n]
+        v = v + code[text[at + i]] * 256 ^ i
+    return v
+
+--- how far the swing has grown at sample i: 0 at the ends, 1 after `ramp` samples,
+--- along a raised cosine
+fn envelope[i, count, ramp]
+    edge = min[i, count - 1 - i]
+    if edge gte ramp
+        return 1.0
+    return (1.0 - cos[pi * edge / ramp]) / 2.0
+
+--- sample i: 127 - 63 f (1 - sin θ), which is 64 + 63 sin θ where the swing f is 1
+fn sample[i, hz, rate, count, ramp]
+    theta = 2.0 * pi * hz * i / rate
+    f = envelope[i, count, ramp]
+    return round[127.0 - 63.0 * f * (1.0 - sin[theta])]
+
+fn wav[hz, seconds, rate]
+    count = seconds * rate
+    ramp = rate / 50
+    samples = for i in range[count]
+        char[sample[i, hz, rate, count, ramp]]
+    data = join[samples, '']
+    format = concat[[little[1, 2], little[1, 2], little[rate, 4], little[rate, 4], little[1, 2], little[8, 2]]]
+    size = little[36 + count, 4]
+    sizes = little[16, 4]
+    length = little[count, 4]
+    return 'RIFF`size`WAVEfmt `sizes``format`data`length``data`'
+
+--- a row of cells as text, without the blanks after its last mark
+fn row_text[cells]
+    last = len[cells] - 1
+    while last gte 0 and cells[last] eq ' '
+        last = last - 1
+    return join[slice[cells, 0, last + 1], '']
+
+--- `count` samples of the file from sample `first` on, every `every`-th one, as rows
+--- of text, the loudest at the top
+fn picture[wave, first, count, every, rows]
+    levels = for c in range[count / every]
+        code[wave[44 + first + c * every]]
+    lines = for r in range[rows]
+        cells = for level in levels
+            if (127 - level) * rows / 128 eq r
+                '*'
+            else
+                ' '
+        row_text[cells]
+    return lines
+
+hz = 440
+seconds = 5
+rate = 32000
+saved = write['sine_wave.wav', wav[hz, seconds, rate]]
+if not saved.ok
+    halt['sine_wave.wav could not be written: `saved.reason`']
+
+back = read['sine_wave.wav']
+if not back.ok
+    halt['sine_wave.wav could not be read back: `back.reason`']
+log['sine_wave.wav, `len[back]` bytes, read back:']
+chunk = slice[back, 0, 4]
+form = slice[back, 8, 12]
+log['  `chunk` of `read_little[back, 4, 4]` bytes, `form`']
+channels = read_little[back, 22, 2]
+per_second = read_little[back, 24, 4]
+depth = read_little[back, 34, 2]
+log['  format `read_little[back, 20, 2]` (PCM), `channels` channel, `per_second` samples a second, `depth` bits a sample']
+count = read_little[back, 40, 4]
+log['  `count` samples: `count / per_second` seconds of a `hz` Hz sine']
+log['']
+log['Two periods of the wave, a second in (every other sample):']
+for line in picture[back, rate, 2 * rate / hz, 2, 16]
+    log[line]
+
+given = args[]
+if 'play' in given
+    log['']
+    log['Playing sine_wave.wav ...']
+    played = shell['afplay sine_wave.wav || aplay -q sine_wave.wav']
+    if played.status ne 0
+        log['The sound could not be played: neither afplay nor aplay played it.']
+if 'keep' not in given
+    removed = rm['sine_wave.wav']
+    if not removed.ok
+        halt['sine_wave.wav could not be removed: `removed.reason`']

@@ -1,0 +1,24 @@
+--- Rosetta Code: File extension is in extensions list
+--- https://rosettacode.org/wiki/File_extension_is_in_extensions_list
+--- A name has an extension when, both in lower case, the name ends with a dot and the
+--- extension. This does the extra credit: an extension may hold dots, and tar.bz2
+--- is matched at the end of MyData_v1.0.tar.bz2 by the same rule.
+
+fn has_extension[name, extensions]
+    lowered = lower[name]
+    for ext in extensions
+        if ends[lowered, '.`lower[ext]`']
+            return true
+    return false
+
+fn check[names, extensions]
+    listed = join[extensions, ', ']
+    log['Extensions: `listed`']
+    for name in names
+        log['  `fmt[name, width = 20]` `has_extension[name, extensions]`']
+
+extensions = ['zip', 'rar', '7z', 'gz', 'archive', 'A##']
+names = ['MyData.a##', 'MyData.tar.Gz', 'MyData.gzip', 'MyData.7z.backup', 'MyData...', 'MyData']
+check[names, extensions]
+log['']
+check[concat[names, ['MyData_v1.0.tar.bz2', 'MyData_v1.0.bz2']], push[extensions, 'tar.bz2']]

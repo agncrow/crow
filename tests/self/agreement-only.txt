@@ -17,6 +17,8 @@ core.round_decimal_places	no reference yet: add its answer to tests/self/referen
 core.shell	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 core.sleep	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 display.fmt	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
+display.fmt_decimal	a decimal laid out with every option fmt has: held to every digit by parity 335 and 347; no reference models the layout yet
+display.fmt_fraction	a fraction laid out with every option fmt has: held by parity 335 and 347; no reference models the layout yet
 display.log	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 doc.chapters	Markdown rendered: no reference renderer
 doc.document	Markdown rendered: no reference renderer
@@ -131,7 +133,6 @@ magpie.sync	the module's tests flush a log written without the flush; the refere
 magpie.tail	the module's tests and the book hold it to the rows written while it waits; the reference script models no log
 magpie.tail.pending_at	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 magpie.tail.pending_rows	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.atan2	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.bandpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.bessel	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.complex	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only

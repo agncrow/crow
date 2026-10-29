@@ -1,0 +1,69 @@
+--- Rosetta Code: Best shuffle
+--- https://rosettacode.org/wiki/Best_shuffle
+--- The positions are lined up character by character, the most frequent
+--- character's first, and each position takes the character m places further
+--- along that line (m the largest count). No character lands on its own kind
+--- unless one kind fills more than half the word, and then exactly 2m - n do,
+--- the fewest possible. Groups and positions are lined up in a seeded random
+--- order, so the shuffle is one of many best ones, the same on every run.
+
+use math
+
+fn shuffled[xs]
+    --- Fisher–Yates: each place from the end takes an item not yet placed
+    i = len[xs] - 1
+    while i gt 0
+        j = rand[i + 1]
+        t = xs[i]
+        xs[i] = xs[j]
+        xs[j] = t
+        i = i - 1
+    return xs
+
+fn positions_by_character[chars]
+    at = map[]
+    for i in range[len[chars]]
+        c = chars[i]
+        if c in at
+            at = set[at, c, push[at[c], i]]
+        else
+            at = set[at, c, [i]]
+    return at
+
+fn best_shuffle[word]
+    chars = split[word, '']
+    n = len[chars]
+    at = positions_by_character[chars]
+    groups = shuffled[keys[at]]
+    biggest = 0
+    for k in range[len[groups]]
+        if len[at[groups[k]]] gt len[at[groups[biggest]]]
+            biggest = k
+    m = len[at[groups[biggest]]]
+    first = groups[biggest]
+    groups[biggest] = groups[0]
+    groups[0] = first
+    line = []
+    for c in groups
+        line = concat[line, shuffled[at[c]]]
+    result = chars
+    for i in range[n]
+        result[line[i]] = chars[line[(i + m) % n]]
+    return join[result, '']
+
+fn unmoved[a, b]
+    --- how many positions hold the same character in both
+    xs = split[a, '']
+    ys = split[b, '']
+    count = 0
+    for i in range[len[xs]]
+        if xs[i] eq ys[i]
+            count = count + 1
+    return count
+
+seed[2026]
+words = ['abracadabra', 'seesaw', 'elk', 'grrrrrr', 'up', 'a']
+extra = ['tree', 'antidisestablishmentarianism', 'hounddogs', 'aardvarks are ant eaters', 'immediately', 'abba']
+for word in concat[words, extra]
+    shuffle = best_shuffle[word]
+    log['`word`, `shuffle`, (`unmoved[word, shuffle]`)']

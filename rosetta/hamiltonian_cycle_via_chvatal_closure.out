@@ -1,0 +1,92 @@
+== K5 less the edge 0-1 ==
+Original graph degrees:
+ deg(0) = 3
+ deg(1) = 3
+ deg(2) = 4
+ deg(3) = 4
+ deg(4) = 4
+
+After Chvátal closure:
+  0: 1 2 3 4
+  1: 0 2 3 4
+  2: 0 1 3 4
+  3: 0 1 2 4
+  4: 0 1 2 3
+Edges added, in order: 0-1
+
+Closure is complete ⇒ graph is Hamiltonian (by Bondy–Chvátal).
+Found Hamiltonian cycle in original graph:
+0 → 2 → 1 → 3 → 4 → 0
+
+== A graph whose closure grows in a cascade ==
+Original graph degrees:
+ deg(0) = 4
+ deg(1) = 3
+ deg(2) = 3
+ deg(3) = 2
+ deg(4) = 2
+ deg(5) = 2
+
+After Chvátal closure:
+  0: 1 2 3 4 5
+  1: 0 2 3 4 5
+  2: 0 1 3 4 5
+  3: 0 1 2 4 5
+  4: 0 1 2 3 5
+  5: 0 1 2 3 4
+Edges added, in order: 0-5, 1-5, 1-4, 2-4, 2-3, 3-4, 3-5
+
+Closure is complete ⇒ graph is Hamiltonian (by Bondy–Chvátal).
+Found Hamiltonian cycle in original graph:
+0 → 3 → 1 → 2 → 5 → 4 → 0
+
+== The cycle C6 ==
+Original graph degrees:
+ deg(0) = 2
+ deg(1) = 2
+ deg(2) = 2
+ deg(3) = 2
+ deg(4) = 2
+ deg(5) = 2
+
+After Chvátal closure:
+  0: 1 5
+  1: 0 2
+  2: 1 3
+  3: 2 4
+  4: 3 5
+  5: 0 4
+Edges added: none
+
+Closure is not complete ⇒ no guarantee of Hamiltonian cycle.
+(A backtracking search finds one all the same: 0 → 1 → 2 → 3 → 4 → 5 → 0)
+
+== The Petersen graph ==
+Original graph degrees:
+ deg(0) = 3
+ deg(1) = 3
+ deg(2) = 3
+ deg(3) = 3
+ deg(4) = 3
+ deg(5) = 3
+ deg(6) = 3
+ deg(7) = 3
+ deg(8) = 3
+ deg(9) = 3
+
+After Chvátal closure:
+  0: 1 4 5
+  1: 0 2 6
+  2: 1 3 7
+  3: 2 4 8
+  4: 0 3 9
+  5: 0 7 8
+  6: 1 8 9
+  7: 2 5 9
+  8: 3 5 6
+  9: 4 6 7
+Edges added: none
+
+Closure is not complete ⇒ no guarantee of Hamiltonian cycle.
+(A backtracking search finds none: the graph is not Hamiltonian.)
+

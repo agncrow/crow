@@ -1,0 +1,92 @@
+--- Rosetta Code: Quoting constructs
+--- https://rosettacode.org/wiki/Quoting_constructs
+--- Every quoting construct Crow has, each shown with what it prints. Text has
+--- one quote, the single quote; inside it backticks hold code (interpolation)
+--- and everything else is inert. Other data is written as literals (numbers,
+--- truths, lists, maps, records) or read from text by a function (json,
+--- decimal, moment, float): there is no second string syntax, no raw string or
+--- here-document, no character literal, and no quoting of code.
+
+use bits
+
+struct Point [x, y]
+
+--- 1. Text has one quote. A double-quoted "text" is refused with a message
+---    naming the single quote, so no program mixes two styles.
+log['plain text in single quotes']
+
+--- 2. Six escapes, each a backslash and one character: \' \\ \` \t \n \r.
+log['a quote \', a backslash \\, a backtick \`, a tab \t| and a line break\nhere']
+
+--- A backslash before any other character is kept as written, so a regular
+--- expression is written as it is, its backslashes not doubled.
+log['\d+ is written as typed']
+log[matches['Route 66', '\d+']]
+
+--- 3. Interpolation: backticks in a string hold any expression, shown as log
+---    shows its value. Outside the backticks a string is inert: braces, dollar
+---    and percent signs and double quotes are just characters.
+name = 'Crow'
+n = 7
+log['`name` has `len[name]` letters, and `n` squared is `n * n`']
+log['inert: {name} ${name} $name %s #{name} "name"']
+--- the code between backticks is still inside the string, so a quote there is
+--- escaped too
+log['shouted: `upper[\'quiet\']`']
+
+--- 4. A string may run across lines: each line break is part of the text, and
+---    nothing is trimmed.
+verse = 'Once upon a midnight dreary,
+    while I pondered, weak and weary'
+log[verse]
+
+--- 5. Text is Unicode, of any length; len counts characters, not bytes.
+word = 'naïve café ✓'
+log['`word` has `len[word]` characters']
+
+--- 6. JSON, HTML, SQL and regular expressions go into a string as they are,
+---    since only a quote, a backtick and a backslash mean anything there.
+doc = json['{"name": "crow", "tags": ["fast", "small"], "year": 2026}']
+log['`doc.name`, `doc.tags[1]`, `doc.year`']
+log['<a href="https://rosettacode.org/">Rosetta Code</a>']
+log['SELECT name FROM birds WHERE kind = \'crow\'']
+--- and back: encode writes a value as JSON text, str as log shows it
+log[encode[map[say = 'it\'s', tags = '"a" and \\']]]
+log[str[map[a = [1, 2]]]]
+
+--- 7. Numbers are literals: an int has as many digits as it is written with,
+---    a float a point with digits on both sides. There is no exponent, hex,
+---    octal or underscore form, and a minus is an operator: text in any other
+---    form is read as a number by float or int.
+log[123456789012345678901234567890 * 10]
+log[2 ^ 100]
+log[3.25]
+log[-0.5]
+log[float['6.02e23']]
+log[int['-42'] + 1]
+
+--- 8. Exact numbers and moments are made by name, from text or from ints.
+log[decimal['0.10'] + decimal['0.20']]
+log[fraction[1, 3] + fraction[1, 6]]
+log[moment['2026-07-14T13:30:00Z'] + 3600]
+
+--- 9. Truths, lists, matrices, maps and records are literals. A list holds one
+---    kind, and a nested literal of numbers is a matrix, so its rows are of one
+---    length (lists of other lengths are built with push); a map holds values
+---    of one kind, its keys names, quoted text or ints; a record holds any.
+log[true and not false]
+log[[1, 2, 3]]
+log[[[1, 2], [3, 4]]]
+log[[['a'], ['b', 'c']]]
+log[map[crow = 3, 'two words' = 4]]
+log[map[1 = 'one', 2 = 'two']]
+log[Point[3, 4]]
+
+--- 10. There is no character type: a character is text of length one, its
+---     code read with code and made with char (use bits).
+a = code['A']
+quote = char[39]
+log['A is code `a`, and code 39 is the quote `quote`']
+
+--- 11. A comment starts with three dashes and ends with its line; there is no
+---     block comment, and nothing in a comment is read.

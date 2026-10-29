@@ -1,0 +1,28 @@
+--- Rosetta Code: Last Friday of each month
+--- https://rosettacode.org/wiki/Last_Friday_of_each_month
+--- The last day of a month is the day before the first of the next; from it, step
+--- back to the weekday wanted (Friday is 5, Monday 1) by the days between them.
+--- The year is the first command-line argument, 2012 (the task's example) when
+--- none is given.
+
+fn last_day[year, month]
+    if month eq 12
+        return moment[year + 1, 1, 1] - 86400
+    return moment[year, month + 1, 1] - 86400
+
+fn last_weekday[year, month, weekday]
+    last = last_day[year, month]
+    return last - 86400 * ((last.weekday - weekday + 7) % 7)
+
+fn year_given[]
+    given = args[]
+    if len[given] eq 0
+        return 2012
+    return int[given[0]]
+
+year = year_given[]
+if year.ok
+    for month in range[1, 13]
+        log[fmt[last_weekday[year, month, 5], style = 'date']]
+else
+    log['No year: `year.reason`']

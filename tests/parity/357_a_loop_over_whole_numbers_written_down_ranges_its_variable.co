@@ -1,0 +1,14 @@
+--- a loop over whole numbers written down — a literal, or a variable a
+--- literal made — ranges its variable by them: the variable had had no
+--- range, read as any 64-bit int, so arithmetic on it overflowed compiled
+--- where it grows, and a function handed it took a 64-bit parameter
+fn cube[x]
+    return x * x * x
+
+for a in [2, 3]
+    log[a * a * a * 1000000000 * 1000000000]
+for a in [2, 3 ^ 30]
+    log[cube[a]]
+xs = [5, 7]
+for a in xs
+    log[a * a * a * 1000000000 * 1000000000]

@@ -1,0 +1,72 @@
+--- Rosetta Code: Modular arithmetic
+--- https://rosettacode.org/wiki/Modular_arithmetic
+--- Crow has no operator overloading (an operator means one thing for every value
+--- of a kind), so the ring's operations are named functions, as in the Go entry:
+--- an element is a record of its value and its modulus, modulus 0 standing for the
+--- integers themselves, and f is written with add, mul and power alone, so the same
+--- f runs on the integers and on every ring of integers modulo m.
+
+struct Modular [value, modulus]
+
+--- v's representative in 0 .. m-1 (v itself for the integers)
+fn reduced[v, m]
+    if m eq 0
+        return v
+    r = v % m
+    if r lt 0
+        r = r + m
+    return r
+
+--- the element v of the integers modulo m
+fn element[v, m]
+    return Modular[reduced[v, m], m]
+
+--- the integer v as a ring element
+fn integer[v]
+    return element[v, 0]
+
+fn add[a, b]
+    if a.modulus ne b.modulus
+        halt['add: elements of two different rings']
+    return element[a.value + b.value, a.modulus]
+
+fn mul[a, b]
+    if a.modulus ne b.modulus
+        halt['mul: elements of two different rings']
+    return element[a.value * b.value, a.modulus]
+
+--- the 1 of the ring a lies in
+fn one_like[a]
+    return element[1, a.modulus]
+
+--- a to the power n (a count) by repeated squaring, with mul alone
+fn power[a, n]
+    result = one_like[a]
+    base = a
+    k = n
+    while k gt 0
+        if k % 2 eq 1
+            result = mul[result, base]
+        k = k / 2
+        if k gt 0
+            base = mul[base, base]
+    return result
+
+fn shown[a]
+    if a.modulus eq 0
+        return str[a.value]
+    return '`a.value` (mod `a.modulus`)'
+
+--- the task's function, agnostic about its argument's ring: f(x) = x^100 + x + 1
+fn f[x]
+    return add[add[power[x, 100], x], one_like[x]]
+
+log['f(x) = x^100 + x + 1']
+log['']
+whole = f[integer[10]]
+log['over the integers, f(10) = `shown[whole]`']
+log['over the integers modulo 13, f(10) = `shown[f[element[10, 13]]]`']
+log['']
+log['the same f in other rings, beside f(10) computed over the integers and then reduced:']
+for m in [2, 7, 13, 101, 1000000007]
+    log['  modulo `m`: f(10) = `shown[f[element[10, m]]]`, f(10) % `m` = `reduced[whole.value, m]`']

@@ -1,0 +1,96 @@
+--- Rosetta Code: Cocke–Younger–Kasami (CYK) Algorithm
+--- https://rosettacode.org/wiki/Cocke–Younger–Kasami_(CYK)_Algorithm
+--- The table is built a row at a time: row l holds, for each start i, the
+--- non-terminals that produce the l words from i. A word's cell comes from the
+--- rules A -> a, a longer span's from the rules A -> B C over every split. A
+--- sentence the start symbol produces is shown with a parse read back from the table.
+
+struct Rule [head, body]
+
+--- NP -> Det Nom, Nom -> AP Nom | book | orange | man, AP -> Adv A | heavy | orange | tall,
+--- Det -> a, Adv -> very | extremely, A -> heavy | orange | tall | muscular
+fn noun_phrases[]
+    return [
+        Rule['NP', ['Det', 'Nom']],
+        Rule['Nom', ['AP', 'Nom']], Rule['Nom', ['book']], Rule['Nom', ['orange']], Rule['Nom', ['man']],
+        Rule['AP', ['Adv', 'A']], Rule['AP', ['heavy']], Rule['AP', ['orange']], Rule['AP', ['tall']],
+        Rule['Det', ['a']],
+        Rule['Adv', ['very']], Rule['Adv', ['extremely']],
+        Rule['A', ['heavy']], Rule['A', ['orange']], Rule['A', ['tall']], Rule['A', ['muscular']]
+    ]
+
+--- the non-terminals with a rule A -> word
+fn producing_word[grammar, word]
+    heads = []
+    for r in grammar
+        if len[r.body] eq 1 and r.body[0] eq word and r.head not in heads
+            heads = push[heads, r.head]
+    return heads
+
+--- the non-terminals with a rule A -> B C where B produces the first k of the
+--- l words from i and C the rest, for some k
+fn producing_span[grammar, table, i, l]
+    heads = []
+    for k in range[1, l]
+        left = table[k - 1][i]
+        right = table[l - k - 1][i + k]
+        for r in grammar
+            if len[r.body] eq 2 and r.body[0] in left and r.body[1] in right and r.head not in heads
+                heads = push[heads, r.head]
+    return heads
+
+--- table[l - 1][i]: the non-terminals that produce the l words from i
+fn cyk_table[grammar, words]
+    n = len[words]
+    first = for w in words
+        producing_word[grammar, w]
+    table = [first]
+    for l in range[2, n + 1]
+        row = for i in range[n - l + 1]
+            producing_span[grammar, table, i, l]
+        table = push[table, row]
+    return table
+
+--- a parse of the l words from i as `symbol`, which the table says produces them
+fn parse[grammar, table, words, symbol, i, l]
+    if l eq 1
+        return '(`symbol` `words[i]`)'
+    k = 1
+    while k lt l
+        left = table[k - 1][i]
+        right = table[l - k - 1][i + k]
+        j = 0
+        while j lt len[grammar]
+            r = grammar[j]
+            if r.head eq symbol and len[r.body] eq 2 and r.body[0] in left and r.body[1] in right
+                b = parse[grammar, table, words, r.body[0], i, k]
+                c = parse[grammar, table, words, r.body[1], i + k, l - k]
+                return '(`symbol` `b` `c`)'
+            j = j + 1
+        k = k + 1
+    return ''
+
+fn show_table[table]
+    for l in range[len[table]]
+        cells = for cell in table[l]
+            inside = join[cell, ',']
+            fmt['{`inside`}', width = 12]
+        line = trim[join[cells, '']]
+        log['  `l + 1`  `line`']
+
+grammar = noun_phrases[]
+example = split['a very heavy orange book', ' ']
+log['The table for "a very heavy orange book", a row per length of span:']
+show_table[cyk_table[grammar, example]]
+log['']
+
+sentences = ['a very heavy orange book', 'a very heavy orange', 'a heavy orange', 'a heavy', 'orange', 'very heavy orange', 'a tall man', 'a extremely muscular man', 'a muscular man']
+for s in sentences
+    words = split[s, ' ']
+    table = cyk_table[grammar, words]
+    n = len[words]
+    accepted = 'NP' in table[n - 1][0]
+    log['`s` => `accepted`']
+    if accepted
+        tree = parse[grammar, table, words, 'NP', 0, n]
+        log['    `tree`']

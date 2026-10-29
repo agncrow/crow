@@ -1,0 +1,102 @@
+--- Rosetta Code: Particle fountain
+--- https://rosettacode.org/wiki/Particle_fountain
+--- 3,000 drops leave a nozzle, 60 a tick until all are out, each with a velocity drawn
+--- about the fountain's own (Box-Muller normal draws, seeded, so every run is the same):
+--- mostly upward, each a little off. A tick (1/25 s) moves every drop and lets gravity
+--- slow it; a drop that falls back below the nozzle leaves it again with a fresh
+--- velocity, so 3,000 are in the air from then on. Crow opens no window, so the fountain
+--- is drawn in characters, each cell shaded by how many drops are in it (. : + * # @):
+--- the saved run prints four frames, as the jet rises, spreads, lands and settles. Run
+--- with the argument `live` and it plays in the terminal for 12 seconds, 25 frames a
+--- second, each frame drawn over the last by ANSI codes.
+
+use math
+use bits
+
+struct Drop [x, y, vx, vy]
+
+--- a standard normal draw (Box-Muller)
+fn gauss[]
+    u = 1.0 - rand[]
+    v = rand[]
+    return sqrt[-2.0 * ln[u]] * cos[2.0 * pi * v]
+
+--- a drop leaving the nozzle: about 30 rows a second up, spread 5 columns a second sideways
+fn launched[]
+    return Drop[0.0, 0.0, 5.0 * gauss[], 30.0 + 1.5 * gauss[]]
+
+--- one tick of `dt` seconds under gravity `g`; a drop back at the nozzle leaves it again
+fn moved[d, dt, g]
+    y = d.y + d.vy * dt
+    if y lt 0.0
+        return launched[]
+    return Drop[d.x + d.vx * dt, y, d.vx, d.vy - g * dt]
+
+--- the drops after a tick, `rate` more of the `most` launched while the fountain fills
+fn tick[drops, rate, most]
+    moved_drops = for d in drops
+        moved[d, 0.04, 30.0]
+    fresh = for i in range[min[rate, most - len[drops]]]
+        launched[]
+    return concat[moved_drops, fresh]
+
+fn shade[n]
+    if n eq 0
+        return ' '
+    if n eq 1
+        return '.'
+    if n lte 3
+        return ':'
+    if n lte 7
+        return '+'
+    if n lte 15
+        return '*'
+    if n lte 31
+        return '#'
+    return '@'
+
+--- the drops in characters, `height` rows of air over the basin, the nozzle mid-way
+fn drawn[drops, width, height]
+    counts = for i in range[width * height]
+        0
+    middle = width / 2
+    for d in drops
+        r = height - 1 - floor[d.y]
+        c = middle + round[d.x]
+        if r gte 0 and c gte 0 and c lt width
+            k = r * width + c
+            counts[k] = counts[k] + 1
+    cells = for n in counts
+        shade[n]
+    lines = for r in range[height]
+        join[slice[cells, r * width, (r + 1) * width], '']
+    left = repeat['~', middle]
+    right = repeat['~', width - middle - 1]
+    return join[push[lines, '`left`^`right`'], '\n']
+
+seed[2026]
+width = 79
+height = 22
+drops = []
+if 'live' in args[]
+    esc = char[27]
+    log['`esc`[2J']
+    start = now[]
+    for t in range[300]
+        drops = tick[drops, 60, 3000]
+        picture = drawn[drops, width, height]
+        log['`esc`[H`picture`']
+        wait = (t + 1) * 0.04 - (now[] - start)
+        if wait gt 0.0
+            sleep[wait]
+else
+    shown_at = [10, 25, 50, 250]
+    t = 0
+    while t lt 250
+        t = t + 1
+        drops = tick[drops, 60, 3000]
+        if t in shown_at
+            seconds = fmt[t * 0.04, decimals = 2]
+            log['t = `seconds` s, `len[drops]` drops in the air']
+            log[drawn[drops, width, height]]
+            log['']

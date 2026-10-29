@@ -1,0 +1,21 @@
+--- Rosetta Code: Averages/Mean angle
+--- https://rosettacode.org/wiki/Averages/Mean_angle
+--- Each angle is a point on the unit circle; the mean angle is the direction of
+--- their sum, atan2 of the sines' sum and the cosines' sum, back in degrees.
+--- (atan2 is element-wise over tensors, so the two sums go in as one-item lists.)
+
+use math
+
+--- the mean of angles given in degrees, in degrees
+fn mean_angle[degrees]
+    radians = tensor[degrees] * pi / 180
+    direction = atan2[[sum[sin[radians]]], [sum[cos[radians]]]]
+    return direction[0] * 180 / pi
+
+--- lists of different lengths: a nested literal of numbers would be a matrix
+samples = []
+samples = push[samples, [350, 10]]
+samples = push[samples, [90, 180, 270, 360]]
+samples = push[samples, [10, 20, 30]]
+for angles in samples
+    log['The mean angle of `angles` is `fmt[mean_angle[angles], decimals = 4]` degrees']

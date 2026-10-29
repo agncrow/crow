@@ -1,0 +1,13 @@
+base:
+    color  "yellow"
+    name   "Rocket Skates"
+    price  12.75
+update:
+    color  "red"
+    price  15.25
+    year   1974
+merged:
+    color  "red"
+    name   "Rocket Skates"
+    price  15.25
+    year   1974

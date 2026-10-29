@@ -1,0 +1,20 @@
+The examples:
+(empty)               OK
+[]                    OK
+[][]                  OK
+[[][]]                OK
+][                    NOT OK
+][][                  NOT OK
+[]][[]                NOT OK
+
+Generated, N = 0 to 9:
+(empty)               OK
+][                    NOT OK
+][][                  NOT OK
+]][[[]                NOT OK
+[[][[]]]              OK
+[[]]]][[][            NOT OK
+[[]]]][[[]][          NOT OK
+[][][][]]][[][        NOT OK
+[[[[][[]]][]][]]      OK
+][[[][[][[[]]]]]][    NOT OK

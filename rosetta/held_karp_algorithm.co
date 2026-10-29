@@ -1,0 +1,91 @@
+--- Rosetta Code: Held–Karp algorithm
+--- https://rosettacode.org/wiki/Held–Karp_algorithm
+--- The dynamic program over subsets: a set of cities is an int's bits (city 0
+--- always in it), and cost[visited * n + j] is the cheapest path from city 0
+--- through the set visited ending at j (-1 while none is known), with the city
+--- before j kept to rebuild the tour. The task's 4 cities, then the 15 of p01
+--- from John Burkardt's TSP data sets (people.sc.fsu.edu/~jburkardt/datasets/tsp),
+--- whose shortest tour is known to be 291.
+
+use bits
+
+struct Tour [cost, cities]
+
+fn held_karp[dist]
+    n = len[dist]
+    full = shift[1, n]
+    cost = for i in range[full * n]
+        -1
+    before = for i in range[full * n]
+        -1
+    cost[n] = 0
+    --- the sets that hold city 0 are the odd ones
+    visited = 1
+    while visited lt full
+        j = 1
+        while j lt n
+            if bitand[visited, shift[1, j]] ne 0
+                rest = bitxor[visited, shift[1, j]]
+                k = 0
+                while k lt n
+                    reached = cost[rest * n + k]
+                    if reached gte 0 and bitand[rest, shift[1, k]] ne 0
+                        c = reached + dist[k][j]
+                        best = cost[visited * n + j]
+                        if best lt 0 or c lt best
+                            cost[visited * n + j] = c
+                            before[visited * n + j] = k
+                    k = k + 1
+            j = j + 1
+        visited = visited + 2
+    --- close the tour back to city 0
+    everyone = full - 1
+    total = -1
+    last = 0
+    j = 1
+    while j lt n
+        c = cost[everyone * n + j] + dist[j][0]
+        if total lt 0 or c lt total
+            total = c
+            last = j
+        j = j + 1
+    --- walk back through the cities before
+    path = [0]
+    visited = everyone
+    city = last
+    while city ne 0
+        path = push[path, city]
+        k = before[visited * n + city]
+        visited = bitxor[visited, shift[1, city]]
+        city = k
+    path = push[path, 0]
+    return Tour[total, reverse[path]]
+
+fn report[name, dist]
+    tour = held_karp[dist]
+    stops = for c in tour.cities
+        str[c]
+    route = join[stops, ' → ']
+    log['`name`: minimum tour cost `tour.cost`']
+    log['  tour: `route`']
+
+report['The task\'s 4 cities', [[0, 2, 9, 10], [1, 0, 6, 4], [15, 7, 0, 8], [6, 3, 12, 0]]]
+
+p01 = [
+    [0, 29, 82, 46, 68, 52, 72, 42, 51, 55, 29, 74, 23, 72, 46],
+    [29, 0, 55, 46, 42, 43, 43, 23, 23, 31, 41, 51, 11, 52, 21],
+    [82, 55, 0, 68, 46, 55, 23, 43, 41, 29, 79, 21, 64, 31, 51],
+    [46, 46, 68, 0, 82, 15, 72, 31, 62, 42, 21, 51, 51, 43, 64],
+    [68, 42, 46, 82, 0, 74, 23, 52, 21, 46, 82, 58, 46, 65, 23],
+    [52, 43, 55, 15, 74, 0, 61, 23, 55, 31, 33, 37, 51, 29, 59],
+    [72, 43, 23, 72, 23, 61, 0, 42, 23, 31, 77, 37, 51, 46, 33],
+    [42, 23, 43, 31, 52, 23, 42, 0, 33, 15, 37, 33, 33, 31, 37],
+    [51, 23, 41, 62, 21, 55, 23, 33, 0, 29, 62, 46, 29, 51, 11],
+    [55, 31, 29, 42, 46, 31, 31, 15, 29, 0, 51, 21, 41, 23, 37],
+    [29, 41, 79, 21, 82, 33, 77, 37, 62, 51, 0, 65, 42, 59, 61],
+    [74, 51, 21, 51, 58, 37, 37, 33, 46, 21, 65, 0, 61, 11, 55],
+    [23, 11, 64, 51, 46, 51, 51, 33, 29, 41, 42, 61, 0, 62, 23],
+    [72, 52, 31, 43, 65, 29, 46, 31, 51, 23, 59, 11, 62, 0, 59],
+    [46, 21, 51, 64, 23, 59, 33, 37, 11, 37, 61, 55, 23, 59, 0]
+]
+report['p01, 15 cities', p01]

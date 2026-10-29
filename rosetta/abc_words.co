@@ -1,0 +1,24 @@
+--- Rosetta Code: ABC words
+--- https://rosettacode.org/wiki/ABC_words
+--- Where a letter first appears is the length of the text before it (the
+--- word's length when it is not there): an ABC word has its first a, first b
+--- and first c in that order, all three inside the word.
+
+fn first_at[word, letter]
+    return len[split[word, letter][0]]
+
+fn is_abc_word[word]
+    a = first_at[word, 'a']
+    b = first_at[word, 'b']
+    c = first_at[word, 'c']
+    return a lt b and b lt c and c lt len[word]
+
+words = split[read['unixdict.txt'], '\n']
+abc_words = for w in words
+    if w ne '' and is_abc_word[w]
+        w
+log['The ABC words of unixdict.txt, by the first a, b and c of each:']
+n = 0
+for w in abc_words
+    n = n + 1
+    log['`fmt[n, width = 2]`: `w`']

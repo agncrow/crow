@@ -1,0 +1,30 @@
+--- Rosetta Code: Empty string
+--- https://rosettacode.org/wiki/Empty_string
+--- The empty string is ''. Text is no truth value (`if s` is refused before the
+--- program runs), so emptiness is asked by comparing with '' or by its length.
+
+fn describe[s]
+    if s eq ''
+        log['\'`s`\' is empty']
+    else
+        log['\'`s`\' is not empty']
+
+--- Assign an empty string to a variable.
+s = ''
+log['s holds \'`s`\', of length `len[s]`']
+
+--- Check that a string is empty.
+if s eq ''
+    log['s is empty (compared with \'\')']
+if len[s] eq 0
+    log['s is empty (its length is 0)']
+
+--- Check that a string is not empty.
+t = 'crow'
+if t ne ''
+    log['t is not empty (compared with \'\')']
+if len[t] gt 0
+    log['t is not empty (its length is `len[t]`)']
+
+for text in ['', ' ', 'a', s, t]
+    describe[text]

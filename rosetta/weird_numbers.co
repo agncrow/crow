@@ -1,0 +1,75 @@
+--- Rosetta Code: Weird numbers
+--- https://rosettacode.org/wiki/Weird_numbers
+--- A number is weird when its proper divisors add up to more than it (abundant) but
+--- no set of them adds up to it exactly (not semiperfect). The sums a set of the
+--- divisors can make are kept as the bits of one growing int: bit s is set when some
+--- set adds up to s, and each divisor d adds the sets that take it, the int shifted
+--- d places. The two examples of the task are shown first.
+
+use bits
+
+--- the proper divisors of n, in increasing order
+fn divisors[n]
+    small = []
+    large = []
+    d = 1
+    while d * d lte n
+        if n % d eq 0
+            small = push[small, d]
+            if d * d ne n and d ne 1
+                large = push[large, n / d]
+        d = d + 1
+    return concat[small, reverse[large]]
+
+fn total[numbers]
+    sum = 0
+    for x in numbers
+        sum = sum + x
+    return sum
+
+--- whether some of the numbers add up to n
+fn reachable[numbers, n]
+    sums = 1
+    for d in numbers
+        sums = bitor[sums, shift[sums, d]]
+    return bitand[shift[sums, 0 - n], 1] eq 1
+
+fn weird[n]
+    divs = divisors[n]
+    return total[divs] gt n and not reachable[divs, n]
+
+--- one set of the numbers adding up to n, the largest numbers tried first
+fn some_set[numbers, n]
+    picked = []
+    left = n
+    i = len[numbers] - 1
+    while i gte 0 and left gt 0
+        if numbers[i] lte left and reachable[slice[numbers, 0, i], left - numbers[i]]
+            picked = push[picked, numbers[i]]
+            left = left - numbers[i]
+        i = i - 1
+    return picked
+
+fn plus[numbers]
+    shown = for x in numbers
+        '`x`'
+    return join[shown, ' + ']
+
+for n in [12, 70]
+    divs = divisors[n]
+    log['`n`: proper divisors `str[divs]`, adding up to `total[divs]`']
+    if reachable[divs, n]
+        log['    semiperfect, so not weird: `plus[some_set[divs, n]]` = `n`']
+    else
+        log['    no set of them adds up to `n`: weird']
+log['']
+found = []
+n = 2
+while len[found] lt 25
+    if weird[n]
+        found = push[found, n]
+    n = n + 1
+shown = for x in found
+    '`x`'
+log['The first 25 weird numbers:']
+log[join[shown, ' ']]

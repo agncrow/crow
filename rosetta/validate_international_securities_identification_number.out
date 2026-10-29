@@ -1,0 +1,9 @@
+US0378331005  valid: 30280378331005 passes the Luhn test
+US0373831005  not valid: 30280373831005 fails the Luhn test
+U50378331005  not valid: its format is not an ISIN's
+US03378331005 not valid: its format is not an ISIN's
+AU0000XVGZA3  valid: 1030000033311635103 passes the Luhn test
+AU0000VXGZA3  valid: 1030000031331635103 passes the Luhn test
+FR0000988040  valid: 15270000988040 passes the Luhn test
+
+is_isin of the seven: [true, false, false, false, true, true, true]

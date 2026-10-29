@@ -1,0 +1,46 @@
+--- Rosetta Code: Jaro similarity
+--- https://rosettacode.org/wiki/Jaro_similarity
+--- Each character of the first string takes the first unmatched equal character
+--- of the second within the match distance; the matched characters, read in
+--- order in each string, disagree at the half-transpositions.
+
+fn jaro[s, t]
+    a = split[s, '']
+    b = split[t, '']
+    if len[a] eq 0 and len[b] eq 0
+        return 1.0
+    --- how far apart two matching characters may be (at least 0, so a string
+    --- of one character matches itself)
+    reach = max[0, max[len[a], len[b]] / 2 - 1]
+    a_matched = for c in a
+        false
+    b_matched = for c in b
+        false
+    matched = 0
+    for i in range[len[a]]
+        j = max[0, i - reach]
+        last = min[i + reach + 1, len[b]]
+        while j lt last
+            if not b_matched[j] and a[i] eq b[j]
+                a_matched[i] = true
+                b_matched[j] = true
+                matched = matched + 1
+                break
+            j = j + 1
+    if matched eq 0
+        return 0.0
+    halves = 0
+    k = 0
+    for i in range[len[a]]
+        if a_matched[i]
+            while not b_matched[k]
+                k = k + 1
+            if a[i] ne b[k]
+                halves = halves + 1
+            k = k + 1
+    m = float[matched]
+    return (m / float[len[a]] + m / float[len[b]] + (m - float[halves] / 2.0) / m) / 3.0
+
+pairs = [['MARTHA', 'MARHTA'], ['DIXON', 'DICKSONX'], ['JELLYFISH', 'SMELLYFISH'], ['DWAYNE', 'DUANE']]
+for p in pairs
+    log['jaro[\'`p[0]`\', \'`p[1]`\'] = `fmt[jaro[p[0], p[1]], decimals = 10]`']

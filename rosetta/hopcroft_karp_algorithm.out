@@ -1,0 +1,19 @@
+Running tests...
+Test 1: result = 1, expected = 1
+Test 2: result = 2, expected = 2
+Test 3: result = 3, expected = 3
+Test 4: result = 0, expected = 0
+All tests passed!
+
+A graph of m = 4 and n = 4 vertices, with 6 edges:
+  (1, 1)
+  (1, 3)
+  (2, 3)
+  (3, 4)
+  (4, 3)
+  (4, 2)
+Maximum matching size is 4: (1, 1) (2, 3) (3, 4) (4, 2)
+
+A seeded random graph of 2000 + 2000 vertices and 6000 edges:
+  Hopcroft-Karp matches 1874 pairs
+  plain augmenting paths, one at a time, match 1874

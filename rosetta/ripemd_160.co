@@ -1,0 +1,176 @@
+--- Rosetta Code: RIPEMD-160
+--- https://rosettacode.org/wiki/RIPEMD-160
+--- RIPEMD-160 as Dobbertin, Bosselaers and Preneel define it: the message's UTF-8
+--- bytes padded as MD4 pads them (a one bit, zeros, then the length in bits as 64
+--- bits, low byte first), each block of sixteen 32-bit words read low byte first
+--- and run through two parallel lines of five rounds of sixteen steps, and the two
+--- lines' registers folded into the five chaining words. A sum is cut to 32 bits
+--- with bitand; a rotation is two shifts (use bits). Checked against every test
+--- vector of the RIPEMD-160 page (a million a's included: ~6 s interpreted) and a
+--- text that is not ASCII, whose digest Python's hashlib gives.
+
+use bits
+
+struct Line [words, shifts, constants]
+
+fn mask[]
+    return 4294967295
+
+--- The 32-bit word that eight hex digits write.
+fn hex_word[text]
+    n = 0
+    for c in split[lower[text], '']
+        d = code[c] - 48
+        if d gt 9
+            d = d - 39
+        n = n * 16 + d
+    return bitand[n, mask[]]
+
+fn hex_words[text]
+    found = for word in split[text, ' ']
+        hex_word[word]
+    return found
+
+--- The left line: which word each step reads, how far it rotates, each round's constant.
+fn left_line[]
+    words = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+        7, 4, 13, 1, 10, 6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8,
+        3, 10, 14, 4, 9, 15, 8, 1, 2, 7, 0, 6, 13, 11, 5, 12,
+        1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2,
+        4, 0, 5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13]
+    shifts = [11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8,
+        7, 6, 8, 13, 11, 9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12,
+        11, 13, 6, 7, 14, 9, 13, 15, 14, 8, 13, 6, 5, 12, 7, 5,
+        11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6, 5, 12,
+        9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6]
+    return Line[words, shifts, hex_words['00000000 5a827999 6ed9eba1 8f1bbcdc a953fd4e']]
+
+fn right_line[]
+    words = [5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12,
+        6, 11, 3, 7, 0, 13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2,
+        15, 5, 1, 3, 7, 14, 6, 9, 11, 8, 12, 2, 10, 0, 4, 13,
+        8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10, 14,
+        12, 15, 10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11]
+    shifts = [8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6,
+        9, 13, 15, 7, 12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11,
+        9, 7, 15, 11, 8, 6, 6, 14, 12, 13, 5, 14, 13, 13, 7, 5,
+        15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12, 5, 15, 8,
+        8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11]
+    return Line[words, shifts, hex_words['50a28be6 5c4dd124 6d703ef3 7a6d76e9 00000000']]
+
+fn complement[x]
+    return bitxor[x, mask[]]
+
+--- The bit function of step j, five of them, one a round.
+fn mix[j, x, y, z]
+    if j lt 16
+        return bitxor[bitxor[x, y], z]
+    if j lt 32
+        return bitor[bitand[x, y], bitand[complement[x], z]]
+    if j lt 48
+        return bitxor[bitor[x, complement[y]], z]
+    if j lt 64
+        return bitor[bitand[x, z], bitand[y, complement[z]]]
+    return bitxor[x, bitor[y, complement[z]]]
+
+--- x's 32 bits turned n places to the left (n taken mod 32, so every shift is
+--- known to stay within 64 bits).
+fn rotate[x, n]
+    k = bitand[n, 31]
+    return bitand[bitor[shift[x, k], shift[x, k - 32]], mask[]]
+
+--- One block of sixteen words through both lines, from the chaining words h.
+fn compress[h, x, left, right]
+    a, b, c, d, e = h[0], h[1], h[2], h[3], h[4]
+    ar, br, cr, dr, er = h[0], h[1], h[2], h[3], h[4]
+    j = 0
+    while j lt 80
+        sum = bitand[a + mix[j, b, c, d] + x[left.words[j]] + left.constants[j / 16], mask[]]
+        t = bitand[rotate[sum, left.shifts[j]] + e, mask[]]
+        a, b, c, d, e = e, t, b, rotate[c, 10], d
+        sum = bitand[ar + mix[79 - j, br, cr, dr] + x[right.words[j]] + right.constants[j / 16], mask[]]
+        t = bitand[rotate[sum, right.shifts[j]] + er, mask[]]
+        ar, br, cr, dr, er = er, t, br, rotate[cr, 10], dr
+        j = j + 1
+    return [bitand[h[1] + c + dr, mask[]], bitand[h[2] + d + er, mask[]], bitand[h[3] + e + ar, mask[]], bitand[h[4] + a + br, mask[]], bitand[h[0] + b + cr, mask[]]]
+
+--- A text's UTF-8 bytes.
+fn utf8[text]
+    bytes = []
+    for ch in split[text, '']
+        n = code[ch]
+        if n lt 128
+            bytes = push[bytes, n]
+        else if n lt 2048
+            bytes = push[bytes, 192 + shift[n, -6]]
+            bytes = push[bytes, 128 + bitand[n, 63]]
+        else if n lt 65536
+            bytes = push[bytes, 224 + shift[n, -12]]
+            bytes = push[bytes, 128 + bitand[shift[n, -6], 63]]
+            bytes = push[bytes, 128 + bitand[n, 63]]
+        else
+            bytes = push[bytes, 240 + shift[n, -18]]
+            bytes = push[bytes, 128 + bitand[shift[n, -12], 63]]
+            bytes = push[bytes, 128 + bitand[shift[n, -6], 63]]
+            bytes = push[bytes, 128 + bitand[n, 63]]
+    return bytes
+
+--- The bytes padded to a whole number of 64-byte blocks: 128, zeros to 56 bytes
+--- past a block's start, then the message's length in bits, low byte first.
+fn padded[bytes]
+    out = push[bytes, 128]
+    while len[out] % 64 ne 56
+        out = push[out, 0]
+    length = 8 * len[bytes]
+    for i in range[8]
+        out = push[out, bitand[shift[length, -8 * i], 255]]
+    return out
+
+fn hex_byte[n]
+    digits = '0123456789abcdef'
+    return '`digits[n / 16]``digits[n % 16]`'
+
+fn ripemd160[text]
+    left = left_line[]
+    right = right_line[]
+    bytes = padded[utf8[text]]
+    h = hex_words['67452301 efcdab89 98badcfe 10325476 c3d2e1f0']
+    start = 0
+    while start lt len[bytes]
+        --- a while, not a collecting for: a for of 16 rounds run 15,625 times is slow
+        x = []
+        k = start
+        while k lt start + 64
+            x = push[x, bytes[k] + 256 * bytes[k + 1] + 65536 * bytes[k + 2] + 16777216 * bytes[k + 3]]
+            k = k + 4
+        h = compress[h, x, left, right]
+        start = start + 64
+    pieces = for w in h
+        low_first = for i in range[4]
+            hex_byte[bitand[shift[w, -8 * i], 255]]
+        join[low_first, '']
+    return join[pieces, '']
+
+struct Check [shown, message, digest]
+
+fn checks[]
+    return [Check['""', '', '9c1185a5c5e9fc54612808977ee8f548b2258d31'],
+        Check['"a"', 'a', '0bdc9d2d256b3ee9daae347be6f4dc835a467ffe'],
+        Check['"abc"', 'abc', '8eb208f7e05d987a9b044a8e98c6b087f15a0bfc'],
+        Check['"message digest"', 'message digest', '5d0689ef49d2fae572b881b123a85ffa21595f36'],
+        Check['"a...z"', 'abcdefghijklmnopqrstuvwxyz', 'f71c27109c692c1b56bbdceb5b9d2865b3708dbc'],
+        Check['"abcdbcde...nopq"', 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq', '12a053384a9c0c88e405a06c27dcf49ada62eb2b'],
+        Check['"A...Za...z0...9"', 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', 'b0e20b6e3116640286ed3a87a5713079b21f5189'],
+        Check['8 times "1234567890"', repeat['1234567890', 8], '9b752e45573d4b39f4dbd3323cab82bf63326bfb'],
+        Check['a million times "a"', repeat['a', 1000000], '52783243c1697bdbe16d37f97f68f08325dc1528'],
+        Check['"Grüße, Ελλάδα — 日本 🐦"', 'Grüße, Ελλάδα — 日本 🐦', '8730b5cb97c1d3cc024773c1c8c7e816991e7b38']]
+
+log['RIPEMD-160("Rosetta Code") = `ripemd160[\'Rosetta Code\']`']
+log['']
+log['Test vectors:']
+for check in checks[]
+    digest = ripemd160[check.message]
+    verdict = 'MISMATCH'
+    if digest eq check.digest
+        verdict = 'ok'
+    log['`digest`  `verdict`  `check.shown`']

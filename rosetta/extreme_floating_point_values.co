@@ -1,0 +1,93 @@
+--- Rosetta Code: Extreme floating point values
+--- https://rosettacode.org/wiki/Extreme_floating_point_values
+--- Crow's floats are IEEE 754 doubles, and a float divided by zero is an infinity, not a stop.
+--- The extreme values are computed from ordinary ones, then entered directly (-0.0, and math's
+--- inf and nan), and used in arithmetic. A float prints as Rust prints it: positionally, with
+--- the shortest digits that read back as it, which `exponent_form` rewrites as d.ddd…e±n.
+
+use math
+
+fn exponent_form[x]
+    --- the positional text of a positive float as digits and a power of ten: 5e-324
+    pieces = split[str[x], '.']
+    whole = pieces[0]
+    after = ''
+    if len[pieces] gt 1
+        after = pieces[1]
+    digits = split['`whole``after`', '']
+    first = 0
+    while first lt len[digits] and digits[first] eq '0'
+        first = first + 1
+    if first eq len[digits]
+        return '0e0'
+    last = len[digits] - 1
+    while digits[last] eq '0'
+        last = last - 1
+    rest = join[slice[digits, first + 1, last + 1], '']
+    mantissa = digits[first]
+    if rest ne ''
+        mantissa = '`mantissa`.`rest`'
+    return '`mantissa`e`len[whole] - 1 - first`'
+
+fn show[label, value]
+    shown = fmt[label, width = 30]
+    log['`shown` `value`']
+
+log['Computed from ordinary floats:']
+negative_zero = 0.0 * -1.0
+positive_infinity = 1.0 / 0.0
+negative_infinity = -1.0 / 0.0
+not_a_number = 0.0 / 0.0
+largest = (2.0 - 2.0 ^ -52) * 2.0 ^ 1023
+smallest_normal = 2.0 ^ -1022
+smallest = 2.0 ^ -1074
+epsilon = 2.0 ^ -52
+show['0.0 * -1.0', negative_zero]
+show['-1.0 / (largest * 2.0)', -1.0 / (largest * 2.0)]
+show['1.0 / 0.0', positive_infinity]
+show['largest * 2.0', largest * 2.0]
+show['-1.0 / 0.0', negative_infinity]
+show['0.0 / 0.0', not_a_number]
+show['sqrt[-1.0]', sqrt[-1.0]]
+show['largest: (2 - 2^-52) * 2^1023', exponent_form[largest]]
+show['smallest normal: 2^-1022', exponent_form[smallest_normal]]
+show['smallest subnormal: 2^-1074', exponent_form[smallest]]
+show['epsilon: 2^-52', exponent_form[epsilon]]
+
+log['']
+log['Entered directly:']
+show['-0.0', -0.0]
+show['inf (use math)', inf]
+show['-inf', -inf]
+show['nan (use math)', nan]
+
+log['']
+log['Arithmetic:']
+show['inf + 1.0', positive_infinity + 1.0]
+show['inf + inf', positive_infinity + positive_infinity]
+show['inf - inf', positive_infinity - positive_infinity]
+show['inf * -1.0', positive_infinity * -1.0]
+show['inf * 0.0', positive_infinity * 0.0]
+show['1.0 / inf', 1.0 / positive_infinity]
+show['-1.0 / inf', -1.0 / positive_infinity]
+show['1.0 / -0.0', 1.0 / negative_zero]
+show['-0.0 + 0.0', negative_zero + 0.0]
+show['-0.0 * -0.0', negative_zero * negative_zero]
+show['abs[-0.0]', abs[negative_zero]]
+show['nan + 1.0', not_a_number + 1.0]
+show['nan * 0.0', not_a_number * 0.0]
+show['min[nan, 1.0]', min[not_a_number, 1.0]]
+show['smallest subnormal / 2.0', smallest / 2.0]
+show['largest + 1.0 eq largest', largest + 1.0 eq largest]
+show['1.0 + epsilon gt 1.0', 1.0 + epsilon gt 1.0]
+show['1.0 + epsilon / 2.0 eq 1.0', 1.0 + epsilon / 2.0 eq 1.0]
+
+log['']
+log['Comparisons:']
+show['-0.0 eq 0.0', negative_zero eq 0.0]
+show['inf gt largest', positive_infinity gt largest]
+show['-inf lt -largest', negative_infinity lt -largest]
+show['nan eq nan', not_a_number eq not_a_number]
+show['nan ne nan', not_a_number ne not_a_number]
+show['nan lt 1.0', not_a_number lt 1.0]
+show['nan gte 1.0', not_a_number gte 1.0]

@@ -1,0 +1,24 @@
+--- Rosetta Code: Square but not cube
+--- https://rosettacode.org/wiki/Square_but_not_cube
+--- Walk the squares in turn beside the cubes, keeping the least cube not below each
+--- square (two rising sequences merged, all in whole numbers): a square that meets its
+--- cube is both, and is marked; the walk ends when 30 squares were not cubes, and on
+--- the way it meets the first three that are both (1, 64 and 729).
+
+fn squares_and_cubes[wanted]
+    shown = 0
+    n = 1
+    root = 1
+    while shown lt wanted
+        square = n * n
+        while root * root * root lt square
+            root = root + 1
+        line = '`fmt[n, width = 2]`^2 = `fmt[square, width = 4]`'
+        if root * root * root eq square
+            log['`line` = `root`^3, a square and a cube']
+        else
+            log[line]
+            shown = shown + 1
+        n = n + 1
+
+squares_and_cubes[30]

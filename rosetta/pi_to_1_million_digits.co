@@ -1,0 +1,73 @@
+--- Rosetta Code: Pi to 1 million digits
+--- https://rosettacode.org/wiki/Pi_to_1_million_digits
+--- The Chudnovsky series, its terms summed by binary splitting in ints that grow: each
+--- term adds about 14 digits, and a run of terms folds into three ints P, Q, T, so that
+--- pi = 426880 sqrt(10005) Q / T. The square root is an int too, sqrt(10005) times a power
+--- of ten, found by Newton's method, each round doubling the places the round below it
+--- knew. The whole million ("3." and 999,999 places, ten more computed and cut off) takes
+--- a few seconds in either mode. Shown: the first and last 50 places and how often each
+--- digit occurs; with the argument time (crow run pi_to_1_million_digits.co time), how
+--- long the calculation took, the extra credit (left out by default, so every run prints
+--- the same).
+
+struct Split [p, q, t]
+
+--- Terms a to b - 1 of the series as P, Q and T (binary splitting).
+fn split_terms[a, b]
+    if b - a eq 1
+        p = 1
+        q = 1
+        if a gt 0
+            p = (6 * a - 5) * (2 * a - 1) * (6 * a - 1)
+            q = a * a * a * 10939058860032000
+        t = p * (13591409 + 545140134 * a)
+        if a % 2 eq 1
+            t = -t
+        return Split[p, q, t]
+    m = (a + b) / 2
+    left = split_terms[a, m]
+    right = split_terms[m, b]
+    Split[left.p * right.p, left.q * right.q, right.q * left.t + left.p * right.t]
+
+--- The whole part of sqrt(c) * 10^d: the root to half the places (and a few more), one
+--- step of Newton's method, then the last unit settled.
+fn root_places[c, d]
+    n = c * 10 ^ (2 * d)
+    x = 0
+    if d lte 8
+        x = int[sqrt[float[n]]]
+    else
+        h = d / 2 + 4
+        x = root_places[c, h] * 10 ^ (d - h)
+        x = (x + n / x) / 2
+    while x * x gt n
+        x = x - 1
+    while (x + 1) * (x + 1) lte n
+        x = x + 1
+    x
+
+--- pi to the given places after the point, as its digits ('31415…').
+fn pi_digits[places]
+    guard = 10
+    s = split_terms[0, places / 14 + 2]
+    root = root_places[10005, places + guard]
+    whole = 426880 * root * s.q / s.t
+    slice[str[whole], 0, places + 1]
+
+given = args[]
+places = 999999
+started = now[]
+digits = pi_digits[places]
+took = now[] - started
+first = slice[digits, 1, 51]
+last = slice[digits, len[digits] - 50, len[digits]]
+log['pi to `fmt[places, commas = true]` places, `fmt[len[digits], commas = true]` digits:']
+log['3.`first` ...']
+log['  ... `last`']
+log['']
+log['How often each digit occurs:']
+for d in range[10]
+    log['  `d`: `occurs[digits, str[d]]`']
+if 'time' in given
+    log['']
+    log['Calculated in `fmt[took, decimals = 2]` seconds.']

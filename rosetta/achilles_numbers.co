@@ -1,0 +1,84 @@
+--- Rosetta Code: Achilles numbers
+--- https://rosettacode.org/wiki/Achilles_numbers
+--- Every powerful number is a^2 * b^3: generate those up to a million, then drop
+--- the perfect powers m^k; a strong one's totient is in the same set.
+
+fn powerful_upto[limit]
+    found = map[]
+    b = 1
+    while b * b * b lte limit
+        cube = b * b * b
+        a = 1
+        while a * a * cube lte limit
+            found = set[found, a * a * cube, true]
+            a = a + 1
+        b = b + 1
+    return keys[found]
+
+fn perfect_powers_upto[limit]
+    found = map[]
+    m = 2
+    while m * m lte limit
+        p = m * m
+        while p lte limit
+            found = set[found, p, true]
+            p = p * m
+        m = m + 1
+    return found
+
+fn achilles_upto[limit]
+    perfect = perfect_powers_upto[limit]
+    imperfect = for n in powerful_upto[limit]
+        if n gt 1 and n not in perfect
+            n
+    return imperfect
+
+fn totient[n]
+    result = n
+    rest = n
+    p = 2
+    while p * p lte rest
+        if rest % p eq 0
+            while rest % p eq 0
+                rest = rest / p
+            result = result - result / p
+        p = p + 1
+    if rest gt 1
+        result = result - result / rest
+    return result
+
+fn count_between[xs, lo, hi]
+    inside = for x in xs
+        if x gte lo and x lt hi
+            x
+    return len[inside]
+
+fn show_rows[xs, per_row, width]
+    i = 0
+    while i lt len[xs]
+        cells = for x in slice[xs, i, i + per_row]
+            fmt[x, width = width, commas = true]
+        log[join[cells, '']]
+        i = i + per_row
+
+limit = 1000000
+achilles = achilles_upto[limit]
+is_achilles = map[]
+for n in achilles
+    is_achilles = set[is_achilles, n, true]
+
+log['First 50 Achilles numbers:']
+show_rows[slice[achilles, 0, 50], 10, 8]
+
+strong = for n in achilles
+    if totient[n] in is_achilles
+        n
+log['']
+log['First 30 strong Achilles numbers:']
+show_rows[slice[strong, 0, 30], 10, 9]
+
+log['']
+log['Number of Achilles numbers with:']
+for digits in range[2, 7]
+    count = count_between[achilles, 10 ^ (digits - 1), 10 ^ digits]
+    log['`digits` digits: `count`']

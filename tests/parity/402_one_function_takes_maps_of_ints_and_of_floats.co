@@ -1,0 +1,15 @@
+--- one function called with a map of ints and a map of floats takes maps
+--- of floats, the map of ints converted where it is handed: it had been
+--- typed by the second call alone, and the first call's map disagreed with
+--- the lowered program (Rosetta Code, Runtime evaluation/In an
+--- environment)
+
+fn show[m]
+    log[m]
+
+fn total[m]
+    return m['x'] + 1
+
+show[map[x = 3]]
+show[map[x = 0.5]]
+log[total[map[x = 2]], total[map[x = 1.5]]]

@@ -1,0 +1,3 @@
+j94_a_top_level_name_read_before_its_value.co:7:5: 'n' is read before it is given a value — it is given one further down: give it its value before this line
+  7 │ log[n]
+    │     ^

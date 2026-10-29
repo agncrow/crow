@@ -1,0 +1,46 @@
+--- Rosetta Code: Read a specific line from a file
+--- https://rosettacode.org/wiki/Read_a_specific_line_from_a_file
+--- Crow has no special way to reach one line: io's lines reads a file's lines
+--- (a block at a time; a final line break ends the last line, and \r\n is a
+--- line break too), and the seventh is item 6. A file of fewer than seven
+--- lines, an empty seventh line and one too long to keep (past 10,000
+--- characters here) are each an error value saying so, as is a file that
+--- cannot be read. The files are made here and removed at the end, and the
+--- seventh word of unixdict.txt is read too.
+
+use io
+
+--- the seventh line of a file, or why there is none to keep
+fn seventh_line[path]
+    text_lines = lines[path]
+    if not text_lines.ok
+        return error[text_lines.reason, 'io']
+    if len[text_lines] lt 7
+        return error['has only `len[text_lines]` lines', 'short']
+    line = text_lines[6]
+    if line eq ''
+        return error['its seventh line is empty', 'empty']
+    if len[line] gt 10000
+        return error['its seventh line holds `len[line]` characters, too many to keep', 'big']
+    return line
+
+days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+    'Sunday', 'and Monday again']
+_kept = write['days.txt', '`join[days, \'\n\']`\n']
+_kept = write['short.txt', 'one\ntwo\nthree\nfour\nfive\nsix\n']
+_kept = write['gap.txt', 'one\n\ntwo\n\nthree\n\n\nfour\n']
+wide = repeat['x', 20000]
+_kept = write['wide.txt', '1\n2\n3\n4\n5\n6\n`wide`\n8\n']
+_kept = write['crlf.txt', 'a\r\nb\r\nc\r\nd\r\ne\r\nf\r\nseventh, after \\r\\n line ends\r\n']
+_kept = write['unended.txt', '1\n2\n3\n4\n5\n6\nseven with no line break after it']
+
+made = ['days.txt', 'short.txt', 'gap.txt', 'wide.txt', 'crlf.txt', 'unended.txt']
+for path in concat[made, ['missing.txt', 'unixdict.txt']]
+    line7 = seventh_line[path]
+    if line7.ok
+        log['`path`: line 7 is \'`line7`\'']
+    else
+        log['`path`: `line7.reason`']
+
+for path in made
+    _gone = rm[path]

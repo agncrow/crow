@@ -1,0 +1,26 @@
+--- Rosetta Code: Unix/ls
+--- https://rosettacode.org/wiki/Unix/ls
+--- ls[path] answers a folder's entries, sorted; ls['.'] is the current folder. A program
+--- does not change its current folder, and the current folder's entries change from run
+--- to run, so this one makes the task's example under it (foo, holding bar, holding 1, 2,
+--- a and b), lists foo and foo/bar as ls run in each would, and removes foo again.
+
+fn list_folder[path]
+    for name in ls[path]
+        log[name]
+
+if exists['foo']
+    rm['foo']
+mkdir['foo/bar']
+for name in ['b', '2', 'a', '1']
+    write['foo/bar/`name`', '']
+
+log['In foo:']
+list_folder['foo']
+log['']
+log['In foo/bar:']
+list_folder['foo/bar']
+
+rm['foo']
+log['']
+log['foo is removed: `not exists[\'foo\']`']

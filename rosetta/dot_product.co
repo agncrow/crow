@@ -1,0 +1,31 @@
+--- Rosetta Code: Dot product
+--- https://rosettacode.org/wiki/Dot_product
+--- Written out: the lengths checked (an error value when they differ), the
+--- matching terms multiplied and the products summed. Then the same with math's
+--- `dot`, which takes vectors of any length.
+
+use math
+
+fn dot_product[a, b]
+    if len[a] ne len[b]
+        return error['the vectors differ in length: `len[a]` and `len[b]`', 'size']
+    total = 0
+    for i in range[len[a]]
+        total = total + a[i] * b[i]
+    return total
+
+fn show[a, b]
+    p = dot_product[a, b]
+    if p.ok
+        log['`a` . `b` = `p`']
+    else
+        log['`a` . `b`: `p.reason`']
+
+show[[1, 3, -5], [4, -2, -1]]
+show[[1, 2, 3, 4, 5, 6], [6, 5, 4, 3, 2, 1]]
+show[[0.5, 1.5, -2.5], [2.0, 4.0, 0.25]]
+show[[1, 3, -5], [4, -2]]
+
+a = [1, 3, -5]
+b = [4, -2, -1]
+log['with math\'s dot: `a` . `b` = `dot[a, b]`']

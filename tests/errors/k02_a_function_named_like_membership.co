@@ -1,0 +1,6 @@
+--- a function named `contains` or `has` could never be called: those are
+--- how `x in xs` asks, and a call of either is refused — so the function
+--- is refused where it is named (Rosetta Code, Set of real numbers)
+
+fn contains[a, x]
+    return x gt a

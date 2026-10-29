@@ -1,0 +1,201 @@
+--- Rosetta Code: Honeycombs
+--- https://rosettacode.org/wiki/Honeycombs
+--- A picture in characters: Crow has no window, widgets or pointing device, so
+--- the honeycomb is drawn as text and a hexagon is chosen by typing the letter
+--- it carries (the letters of one line are chosen in turn). Where a window
+--- would recolour a chosen hexagon, it is filled here: # by player one, + by
+--- player two. Odd columns sit half a hexagon lower. One or two players, and
+--- any number of columns and of hexagons in a column, up to 26 hexagons. The
+--- letters are drawn by a seeded random generator, so every run is the same.
+
+use math
+
+struct Game [columns, per_column, letters, chosen_by, chosen, players, player]
+
+fn random_letters[n]
+    --- a Fisher-Yates shuffle of the alphabet, stopped after n places:
+    --- n distinct capital letters in a random order
+    letters = split['ABCDEFGHIJKLMNOPQRSTUVWXYZ', '']
+    i = 0
+    while i lt n
+        j = rand[i, 25]
+        held = letters[i]
+        letters[i] = letters[j]
+        letters[j] = held
+        i = i + 1
+    return slice[letters, 0, n]
+
+fn place_of[letters, key]
+    --- the hexagon carrying the letter, or -1 when none does
+    i = 0
+    while i lt len[letters]
+        if letters[i] eq key
+            return i
+        i = i + 1
+    return -1
+
+fn hexagon[canvas, x, y, letter, fill]
+    --- one hexagon whose box (nine columns, five rows) has its top left at (x, y)
+    for i in range[2, 7]
+        canvas[y][x + i] = '_'
+        canvas[y + 1][x + i] = fill
+        canvas[y + 4][x + i] = '_'
+    for i in range[1, 8]
+        canvas[y + 2][x + i] = fill
+        canvas[y + 3][x + i] = fill
+    canvas[y + 1][x + 1] = '/'
+    canvas[y + 1][x + 7] = '\\'
+    canvas[y + 2][x] = '/'
+    canvas[y + 2][x + 8] = '\\'
+    canvas[y + 3][x] = '\\'
+    canvas[y + 3][x + 8] = '/'
+    canvas[y + 4][x + 1] = '\\'
+    canvas[y + 4][x + 7] = '/'
+    canvas[y + 2][x + 3] = ' '
+    canvas[y + 2][x + 4] = letter
+    canvas[y + 2][x + 5] = ' '
+    return canvas
+
+fn fill_of[player]
+    if player eq 1
+        return '#'
+    if player eq 2
+        return '+'
+    return ' '
+
+fn drawing[game]
+    --- the honeycomb as lines of text; hexagon i is row i % per_column of
+    --- column i / per_column, and a column shares its edges with its neighbours
+    height = 4 * game.per_column + 1
+    if game.columns gt 1
+        height = height + 2
+    width = 7 * game.columns + 2
+    canvas = for y in range[height]
+        row = for x in range[width]
+            ' '
+        row
+    for i in range[len[game.letters]]
+        column = i / game.per_column
+        row = i % game.per_column
+        x = 7 * column
+        y = 4 * row + 2 * (column % 2)
+        fill = fill_of[game.chosen_by[i]]
+        canvas = hexagon[canvas, x, y, game.letters[i], fill]
+    lines = for cells in canvas
+        sub[join[cells, ''], ' +$', '']
+    return lines
+
+fn show[game]
+    log['']
+    for line in drawing[game]
+        log[line]
+    log['']
+
+fn prompt[game]
+    if game.players eq 1
+        return 'Choose a letter: '
+    return 'Player `game.player`, choose a letter: '
+
+fn press[game, key]
+    --- a key pressed: the hexagon carrying its letter is chosen, if it is not yet
+    i = place_of[game.letters, key]
+    if i lt 0
+        log['No hexagon carries `key`.']
+        return game
+    if game.chosen_by[i] ne 0
+        log['`key` is chosen already.']
+        return game
+    --- the selected letter is determined: record it, and colour (fill) its hexagon
+    game.chosen = push[game.chosen, key]
+    game.chosen_by[i] = game.player
+    if game.players eq 1
+        log['You chose `key`.']
+    else
+        log['Player `game.player` chose `key`.']
+        game.player = 3 - game.player
+    return game
+
+fn summary[game]
+    order = join[game.chosen, ' ']
+    log['Every hexagon is chosen. The letters, in the order chosen: `order`']
+    if game.players eq 2
+        for player in [1, 2]
+            mine = for key in game.chosen
+                if game.chosen_by[place_of[game.letters, key]] eq player
+                    key
+            letters = join[mine, ' ']
+            log['Player `player` chose `letters`']
+    last = game.chosen[-1]
+    log['The last letter chosen was `last`.']
+
+fn play[players, columns, per_column]
+    --- one game; false when the input ends before it does
+    n = columns * per_column
+    chosen_by = for i in range[n]
+        0
+    game = Game[columns, per_column, random_letters[n], chosen_by, [], players, 1]
+    show[game]
+    while len[game.chosen] lt n
+        line = input[prompt[game]]
+        if not line.ok
+            log['']
+            log['The input ended with `n - len[game.chosen]` hexagons left.']
+            return false
+        before = len[game.chosen]
+        for key in split[upper[line], '']
+            if key ne ' '
+                game = press[game, key]
+        if len[game.chosen] gt before
+            show[game]
+    summary[game]
+    return true
+
+fn ask_players[]
+    --- 1 or 2, or 0 when the input ends
+    while true
+        line = input['Players, 1 or 2 (Enter for 1): ']
+        if not line.ok
+            return 0
+        text = trim[line]
+        if text eq '' or text eq '1'
+            return 1
+        if text eq '2'
+            return 2
+        log['Type 1 or 2.']
+    return 0
+
+fn ask_size[]
+    --- [columns, hexagons in a column], or [] when the input ends
+    while true
+        line = input['Columns, and hexagons in a column (Enter for 5 4): ']
+        if not line.ok
+            return []
+        text = trim[line]
+        if text eq ''
+            text = '5 4'
+        parts = split[sub[text, ' +', ' '], ' ']
+        if len[parts] eq 2
+            columns = int[parts[0]]
+            per_column = int[parts[1]]
+            if columns.ok and per_column.ok
+                if columns gte 1 and per_column gte 1 and columns * per_column lte 26
+                    return [columns, per_column]
+        log['Two whole numbers, each at least 1, for at most 26 hexagons.']
+    return []
+
+seed[2026]
+log['Honeycombs: choose every hexagon by typing the letter it carries.']
+playing = true
+while playing
+    players = ask_players[]
+    size = []
+    if players gt 0
+        size = ask_size[]
+    if len[size] eq 2
+        playing = play[players, size[0], size[1]]
+    else
+        playing = false
+    if playing
+        line = input['Another game? (y/n): ']
+        playing = line.ok and lower[trim[line]] eq 'y'
+log['Goodbye.']

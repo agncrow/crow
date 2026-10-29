@@ -1,0 +1,59 @@
+--- Rosetta Code: Hofstadter Figure-Figure sequences
+--- https://rosettacode.org/wiki/Hofstadter_Figure-Figure_sequences
+--- One walk up the numbers makes both sequences: as soon as S(k) is known, R(k+1) is
+--- R(k) + S(k); every number the walk meets that is not a term of R is the next term
+--- of S. A number met before S(k) is known lies below R(k+1), so the walk never has
+--- to wait. ffr[n] and ffs[n] walk from the start as far as n needs, with no maximum:
+--- about n steps each, since S's terms grow like n and R's are made by sums.
+
+struct Figures [r, s]
+
+--- R and S from their start, until R has r_count terms and S has s_count.
+fn figures[r_count, s_count]
+    r = [1]
+    s = []
+    m = 1
+    j = 0
+    while len[r] lt r_count or len[s] lt s_count
+        k = len[r]
+        if len[s] gte k
+            r = push[r, r[k - 1] + s[k - 1]]
+        else
+            m = m + 1
+            while j lt k and r[j] lt m
+                j = j + 1
+            if j eq k or r[j] ne m
+                s = push[s, m]
+    return Figures[r, s]
+
+fn ffr[n]
+    return figures[n, 0].r[n - 1]
+
+fn ffs[n]
+    return figures[0, n].s[n - 1]
+
+fn listed[numbers]
+    texts = for x in numbers
+        str[x]
+    return join[texts, ', ']
+
+first_r = for n in range[1, 11]
+    ffr[n]
+log['R(1) to R(10): `listed[first_r]`']
+log['As the task says: `first_r eq [1, 3, 7, 12, 18, 26, 35, 45, 56, 69]`']
+
+first_s = for n in range[1, 11]
+    ffs[n]
+log['S(1) to S(10): `listed[first_s]`']
+log['']
+
+rs = for n in range[1, 41]
+    ffr[n]
+ss = for n in range[1, 961]
+    ffs[n]
+together = sort[concat[rs, ss]]
+log['ffr[1..40] and ffs[1..960] hold every integer from 1 to 1000 exactly once: `together eq range[1, 1001]`']
+log['']
+
+big = 1000000
+log['No maximum: ffr[`big`] = `ffr[big]`, ffs[`big`] = `ffs[big]`']

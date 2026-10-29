@@ -1,0 +1,36 @@
+--- Rosetta Code: Padovan n-step number sequences
+--- https://rosettacode.org/wiki/Padovan_n-step_number_sequences
+--- The n-step sequence starts with the first n + 1 terms of the (n - 1)-step one
+--- (1, 1, 1 for n = 2), and each later term is the sum of the n terms that end two
+--- places back: R(n, x) = R(n, x - 2) + R(n, x - 3) + ... + R(n, x - n - 1).
+
+fn next_term[terms, n]
+    --- the sum of the n terms before the last one
+    k = len[terms]
+    total = 0
+    for i in range[k - n - 1, k - 1]
+        total = total + terms[i]
+    return total
+
+fn padovan_n_step[max_n, t]
+    --- the first t terms of each of the 2- to max_n-step sequences, one list each
+    length = max[t, max_n + 1]
+    sequences = []
+    start = [1, 1, 1]
+    for n in range[2, max_n + 1]
+        terms = slice[start, 0, n + 1]
+        while len[terms] lt length
+            terms = push[terms, next_term[terms, n]]
+        sequences = push[sequences, slice[terms, 0, t]]
+        start = terms
+    return sequences
+
+t = 15
+log['The first `t` terms of the Padovan 2- to 8-step sequences:']
+n = 2
+for terms in padovan_n_step[8, t]
+    cells = for v in terms
+        fmt[v, width = 4]
+    line = join[cells, '']
+    log['`fmt[n, width = 2]`:`line` ...']
+    n = n + 1

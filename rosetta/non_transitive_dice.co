@@ -1,0 +1,92 @@
+--- Rosetta Code: Non-transitive dice
+--- https://rosettacode.org/wiki/Non-transitive_dice
+--- Every four-faced die with faces from 1 to 4, each written once with its faces in
+--- rising order (35 dice). Two dice are compared by counting the face pairs each one
+--- wins. Chains are grown from each die, one die at a time and only to a die the last
+--- one loses to; a chain of the length asked is kept when its first die beats its last.
+--- Every rotation of a chain is a chain too, so each loop shows as many times as it
+--- has dice.
+
+--- Every die of sides faces from low to high, its faces in rising order.
+fn dice_from[low, high, sides]
+    found = []
+    for v in range[low, high + 1]
+        if sides eq 1
+            found = push[found, [v]]
+        else
+            for rest in dice_from[v, high, sides - 1]
+                found = push[found, concat[[v], rest]]
+    return found
+
+--- How many of the face pairs a wins against b.
+fn wins[a, b]
+    n = 0
+    for x in a
+        for y in b
+            if x gt y
+                n = n + 1
+    return n
+
+--- For each die b: above zero when a beats b, below when b beats a, zero for even.
+fn compared_with[a, dice]
+    row = for b in dice
+        wins[a, b] - wins[b, a]
+    return row
+
+fn named[die]
+    faces = for f in die
+        str[f]
+    return join[faces, '']
+
+--- Every chain that starts as chain does, each die losing to the next, length long,
+--- whose first die beats its last.
+fn closed_chains[chain, order, length]
+    last = chain[-1]
+    found = []
+    if len[chain] eq length
+        if order[chain[0]][last] gt 0
+            found = push[found, chain]
+        return found
+    for d in range[len[order]]
+        if order[last][d] lt 0 and d not in chain
+            found = concat[found, closed_chains[push[chain, d], order, length]]
+    return found
+
+fn show_chain[chain, dice]
+    names = for i in chain
+        named[dice[i]]
+    steps = for k in range[len[chain] - 1]
+        '`names[k]` < `names[k + 1]` (`wins[dice[chain[k]], dice[chain[k + 1]]]` to `wins[dice[chain[k + 1]], dice[chain[k]]]`)'
+    first = dice[chain[0]]
+    last = dice[chain[-1]]
+    log['    `join[steps, \', \']`, yet `names[0]` > `names[-1]` (`wins[first, last]` to `wins[last, first]`)']
+
+fn show_example[x, y]
+    log['Example 1: X has faces `named[x]`, Y has faces `named[y]`']
+    log['    X   Y   winner']
+    for a in x
+        for b in y
+            winner = '-'
+            if a gt b
+                winner = 'X'
+            if b gt a
+                winner = 'Y'
+            log['    `a`   `b`   `winner`']
+    log['    total wins: X = `wins[x, y]`, Y = `wins[y, x]`, so X = Y']
+    log['']
+
+show_example[[1, 3, 6], [2, 3, 4]]
+
+dice = dice_from[1, 4, 4]
+order = for a in dice
+    compared_with[a, dice]
+log['`len[dice]` four-faced dice with faces from 1 to 4 (each die shown by its faces).']
+log['A rotation of a non-transitive list is one too: each loop shows once per die in it.']
+for length in [3, 4]
+    chains = []
+    for start in range[len[dice]]
+        chains = concat[chains, closed_chains[[start], order, length]]
+    log['']
+    log['Ordered lists of `length` non-transitive dice, each losing to the next and the first beating the last: `len[chains]`']
+    for chain in chains
+        show_chain[chain, dice]

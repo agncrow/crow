@@ -1,0 +1,48 @@
+--- Rosetta Code: Soloway's recurring rainfall
+--- https://rosettacode.org/wiki/Soloway's_recurring_rainfall
+--- Whole numbers are read from standard input, one a line, until 99999, and their
+--- average is printed as a floating-point number. A line that is no whole number (a
+--- decimal, a word, an empty line) is skipped with a message, and the end of the input
+--- ends the reading as 99999 does. Rainfall can be negative, and an int grows without
+--- limit, so the total cannot overflow however many readings there are; the average is
+--- the float nearest the exact one.
+
+--- a float as text with its point, as 4.0 rather than 4
+fn float_text[x]
+    text = str[x]
+    if '.' in text or 'inf' in text or 'NaN' in text
+        return text
+    return '`text`.0'
+
+fn rainfall[]
+    total = 0
+    count = 0
+    while true
+        line = input[]
+        if not line.ok
+            log['The input ended before 99999.']
+            break
+        text = trim[line]
+        if text eq ''
+            log['An empty line: skipped.']
+            continue
+        value = int[text]
+        if not value.ok
+            log['\'`text`\' is not a whole number: skipped.']
+            continue
+        if value eq 99999
+            break
+        total = total + value
+        count = count + 1
+    if count eq 0
+        log['No readings, so no average.']
+    else
+        --- the exact average, then the float nearest it
+        average = float_text[float[fraction[total, count]]]
+        readings = 'readings'
+        if count eq 1
+            readings = 'reading'
+        log['`count` `readings`, average rainfall `average`']
+
+log['Rainfall readings, whole numbers one a line; 99999 ends them.']
+rainfall[]

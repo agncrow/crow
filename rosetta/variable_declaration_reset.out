@@ -1,0 +1,7 @@
+A for loop, prev made before it:
+2
+5
+A while loop, last made before it:
+2
+5
+Collected without a carried variable: [2, 5]

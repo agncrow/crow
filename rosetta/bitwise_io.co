@@ -1,0 +1,110 @@
+--- Rosetta Code: Bitwise IO
+--- https://rosettacode.org/wiki/Bitwise_IO
+--- A bit writer gathers bits, most significant first, into whole bytes and pads the
+--- last with zeros; a reader takes any number of bits from any bit position. The
+--- byte stream is a list of byte values in memory, shown in hex: a Crow program
+--- writes text to files, not arbitrary bytes. The test crunches ASCII to 7 bits.
+
+use bits
+
+struct BitWriter [data, pending, count]
+
+fn writer[]
+    --- No bytes written, no bits pending.
+    return BitWriter[[], 0, 0]
+
+fn write_bits[w, value, n]
+    --- The low n bits of value appended, most significant first.
+    data = w.data
+    pending = w.pending
+    count = w.count
+    i = n - 1
+    while i gte 0
+        pending = pending * 2 + bitand[shift[value, -i], 1]
+        count = count + 1
+        if count eq 8
+            data = push[data, pending]
+            pending = 0
+            count = 0
+        i = i - 1
+    return BitWriter[data, pending, count]
+
+fn flushed[w]
+    --- The bytes written, the bits still pending padded with zeros into a last byte.
+    if w.count eq 0
+        return w.data
+    return push[w.data, shift[w.pending, 8 - w.count]]
+
+fn read_bits[data, at, n]
+    --- The n bits from bit position at, most significant first, as a number.
+    value = 0
+    for i in range[at, at + n]
+        value = value * 2 + bitand[shift[data[i / 8], i % 8 - 7], 1]
+    return value
+
+fn from_binary[text]
+    value = 0
+    for c in split[text, '']
+        value = value * 2 + int[c]
+    return value
+
+fn binary[value, n]
+    digits = for i in range[n]
+        str[bitand[shift[value, i - n + 1], 1]]
+    return join[digits, '']
+
+fn hex[data]
+    digits = '0123456789ABCDEF'
+    pairs = for b in data
+        '`digits[b / 16]``digits[b % 16]`'
+    return join[pairs, ' ']
+
+fn crunch[text]
+    --- Each ASCII character as its seven low bits.
+    w = writer[]
+    for c in split[text, '']
+        w = write_bits[w, code[c], 7]
+    return flushed[w]
+
+fn decrunch[data]
+    --- Seven bits a character, until the bits run out; a code of 0 is padding.
+    chars = []
+    at = 0
+    while at + 7 lte 8 * len[data]
+        c = read_bits[data, at, 7]
+        if c ne 0
+            chars = push[chars, char[c]]
+        at = at + 7
+    return join[chars, '']
+
+--- The task's example: 13 bits come out as two bytes, the last padded.
+w = write_bits[writer[], from_binary['0101011101010'], 13]
+data = flushed[w]
+log['The bits 0101011101010 written: `hex[data]`']
+log['Read back: `binary[read_bits[data, 0, 13], 13]`']
+log['']
+
+--- Words of mixed widths, as LZW writes them, read back at the same widths.
+widths = [3, 9, 1, 12, 9]
+words = [5, 300, 1, 4000, 511]
+w = writer[]
+for i in range[len[words]]
+    w = write_bits[w, words[i], widths[i]]
+data = flushed[w]
+at = 0
+back = []
+for n in widths
+    back = push[back, read_bits[data, at, n]]
+    at = at + n
+log['Words `words` at widths `widths`: `hex[data]`']
+log['Read back: `back`']
+log['']
+
+--- The test: ASCII crunched to seven bits a character, then decrunched.
+text = 'This is an example of ASCII text crunched to seven bits a character.'
+packed = crunch[text]
+log['Text (`len[text]` bytes): `text`']
+log['Crunched to `len[packed]` bytes: `hex[packed]`']
+unpacked = decrunch[packed]
+log['Decrunched: `unpacked`']
+log['Same text: `unpacked eq text`']

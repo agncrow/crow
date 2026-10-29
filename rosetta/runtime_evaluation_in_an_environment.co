@@ -1,0 +1,55 @@
+--- Rosetta Code: Runtime evaluation/In an environment
+--- https://rosettacode.org/wiki/Runtime_evaluation/In_an_environment
+--- Crow has no eval inside a running program (see Runtime evaluation), but its
+--- platform's REPL, the crow command, runs program text in a session of its
+--- own, reached through shell. That session is the environment: each binding is
+--- a statement run in it first (x = 3), then the program text goes in as it
+--- was given, untouched, and the value its last line shows is the result. A
+--- fresh session per evaluation, so x is no variable of this program, and any
+--- set of bindings chosen at run time (a map of names to values) is bound alike.
+--- The command is crow, or the one the CROW variable names.
+
+fn command[]
+    env['CROW', 'crow']
+
+--- the value the program's last line shows, run with these bindings
+fn evaluated[program, bindings]
+    statements = for name in keys[bindings]
+        '`name` = `encode[bindings[name]]`'
+    session = join[push[statements, program], '\n']
+    path = 'runtime_evaluation_session.txt'
+    kept = write[path, '`session`\n']
+    r = shell['`command[]` < `path`']
+    gone = rm[path]
+    if trim[r.stderr] ne ''
+        return error[trim[r.stderr], 'eval']
+    lines = split[trim[r.stdout], '\n']
+    lines[-1]
+
+--- the second value less the first: exactly where both are whole numbers
+fn difference[first, second]
+    a = int[first]
+    b = int[second]
+    if a.ok and b.ok
+        return str[b - a]
+    str[float[second] - float[first]]
+
+fn show[program, before, after]
+    log['program:']
+    for line in split[program, '\n']
+        log['    `line`']
+    first = evaluated[program, before]
+    second = evaluated[program, after]
+    log['with `before`: `first`']
+    log['with `after`: `second`']
+    log['difference: `difference[first, second]`']
+    log['']
+
+show['2 ^ x', map[x = 3], map[x = 5]]
+show['3 * x + y', map[x = 3, y = 1], map[x = 5, y = 2]]
+show['fn poly[t]\n    3 * t * t - 2 * t + 1\npoly[x]', map[x = 1], map[x = 4]]
+show['use math\nexp[x]', map[x = 0], map[x = 1]]
+
+--- a program the session refuses is an error value, as any failure is
+bad = evaluated['2 ^ z', map[x = 1]]
+log['2 ^ z with x = 1: `bad.reason`']

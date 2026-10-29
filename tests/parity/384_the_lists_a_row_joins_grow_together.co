@@ -1,0 +1,11 @@
+--- the lists a row joins hold one kind: `concat` of a range and a list of
+--- growing ints grows the range's items too — handed on as 64-bit ints,
+--- the compiled program had not built (Rosetta Code, Christofides
+--- algorithm)
+
+xs = []
+xs = push[xs, 2 ^ 70]
+log[concat[range[2], xs]]
+log[concat[xs, range[2]]]
+ys = concat[xs, [1, 2]]
+log[ys, len[ys]]

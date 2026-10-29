@@ -1,0 +1,4 @@
+The task's 4 cities: minimum tour cost 21
+  tour: 0 → 2 → 3 → 1 → 0
+p01, 15 cities: minimum tour cost 291
+  tour: 0 → 12 → 1 → 14 → 8 → 4 → 6 → 2 → 11 → 13 → 9 → 7 → 5 → 3 → 10 → 0

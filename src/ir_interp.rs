@@ -268,6 +268,23 @@ fn unwrapped(e: &Expr) -> &Expr {
     }
 }
 
+/// A holder of ints as one of floats, at any depth (`Convert::IntsToFloats`;
+/// an error stays as it is): a list's items, a map's values, a list of lists'
+/// lists. (An int-keyed map had been left as it was.)
+fn floats_held(v: CrowValue) -> CrowValue {
+    if !v.is_ok() {
+        return v;
+    }
+    match &v.value {
+        Value::Int(n) => CrowValue::ok(Value::Float(*n as f64)),
+        Value::Big(n) => CrowValue::ok(Value::Float(n.to_f64().value())),
+        Value::Array(items) => CrowValue::ok(Value::Array(items.iter().map(|i| floats_held(i.clone())).collect::<Vec<_>>().into())),
+        Value::Map(m) => CrowValue::ok(Value::map(m.iter().map(|(k, i)| (k.clone(), floats_held(i.clone()))).collect())),
+        Value::IntMap(m) => CrowValue::ok(Value::int_map(m.iter().map(|(k, i)| (*k, floats_held(i.clone()))).collect())),
+        _ => v,
+    }
+}
+
 fn placeholder(cell: CrowValue, ty: &Ty) -> CrowValue {
     match (cell.is_ok() || cell.kind() != "missing", ty) {
         (true, _) => cell,
@@ -1112,8 +1129,13 @@ impl IrInterp {
                 }
             }
             Stmt::While { cond, body } => self.walker_loop(|me| {
+                // (the condition is the `while` line's, every round: a stop
+                // in it had been placed on the body's last line, where the
+                // compiled program and the prepared form name the `while`)
+                let at = me.line;
                 loop {
                     me.check_cancel()?;
+                    me.line = at;
                     let c = me.eval(cond)?;
                     if c.is_error() {
                         return me.refuse(c, &Decision::Branch);
@@ -1361,23 +1383,7 @@ impl IrInterp {
                     Convert::ToDecimal | Convert::ToFraction => v,
                     Convert::ToSmall(who) => crate::ops::small_value(v, *who)?,
                     // a holder of ints as one of floats (an error stays)
-                    Convert::IntsToFloats => match &v.value {
-                        Value::Array(items) if v.is_ok() => CrowValue::ok(Value::Array(
-                            items.iter().map(|i| match &i.value {
-                                Value::Int(n) if i.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
-                                Value::Big(n) if i.is_ok() => CrowValue::ok(Value::Float(n.to_f64().value())),
-                                _ => i.clone(),
-                            }).collect::<Vec<_>>().into(),
-                        )),
-                        Value::Map(m) if v.is_ok() => CrowValue::ok(Value::map(
-                            m.iter().map(|(k, i)| (k.clone(), match &i.value {
-                                Value::Int(n) if i.is_ok() => CrowValue::ok(Value::Float(*n as f64)),
-                                Value::Big(n) if i.is_ok() => CrowValue::ok(Value::Float(n.to_f64().value())),
-                                _ => i.clone(),
-                            })).collect(),
-                        )),
-                        _ => v,
-                    },
+                    Convert::IntsToFloats => floats_held(v),
                     // a tensor's numbers as a list's items, ints where the
                     // list holds ints
                     Convert::ToList => match &v.value {
@@ -1443,6 +1449,11 @@ impl IrInterp {
                                     }
                                     Value::Int(n) => data.push(n as f64),
                                     Value::Float(x) => data.push(x),
+                                    // an int past 64 bits is its nearest float, as
+                                    // `float[n]` and the compiled program read it
+                                    // (it had been "a list of int is not a list of
+                                    // numbers"; Rosetta Code, CSV data manipulation)
+                                    Value::Big(ref b) => data.push(crow_runtime::int::Int::Big(b.clone()).to_f64()),
                                     Value::Bool(_) if column => return Err(crow_runtime::stops::not_numbers("bools")),
                                     // a mask where numbers are taken: true 1, false 0
                                     Value::Bool(b) => data.push(if b { 1.0 } else { 0.0 }),
@@ -1764,7 +1775,7 @@ impl IrInterp {
     /// Auto-Propagation), the place untouched.
     fn grown_in_place(&mut self, var: &str, path: &[PathStep], expr: &Expr) -> Result<bool, String> {
         let Expr::Call { target: Target::Row(row), args, .. } = expr else { return Ok(false) };
-        if !row.takes_in_place() || args.is_empty() {
+        if !row.grows_in_place() || args.is_empty() {
             return Ok(false);
         }
         let mut idx = Vec::new();
@@ -4087,6 +4098,16 @@ fn set_path(root: &mut Value, path: &[PathStep], idx: &[CrowValue], new: CrowVal
                     Value::Str(k) => {
                         crate::builtins::check_map_homogeneous(m, &new)?;
                         std::sync::Arc::make_mut(m).insert(k.clone(), new);
+                        Ok(())
+                    }
+                    // an open map takes its first key's kind, as `set` does
+                    // (`m = map[]`, then `m[1] = 'one'`, had stopped here
+                    // while the compiled program wrote the key; Rosetta Code,
+                    // Achilles numbers)
+                    Value::Int(n) if m.is_empty() => {
+                        let mut first = std::collections::BTreeMap::new();
+                        first.insert(*n, new);
+                        *cur = Value::int_map(first);
                         Ok(())
                     }
                     Value::Int(n) => Err(format!("the map's keys are text, not ints: {}", n)),

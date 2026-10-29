@@ -1,0 +1,45 @@
+--- Rosetta Code: Old lady swallowed a fly
+--- https://rosettacode.org/wiki/Old_lady_swallowed_a_fly
+--- Each animal is a record: its name, the line it gets when she swallows it, and
+--- the line that comes back each time it is caught (the spider's alone). A verse
+--- is the new animal, then the chain of catches back down to the fly.
+
+struct Animal [name, remark, echo]
+
+fn animals[]
+    return [
+        Animal['fly', '', ''],
+        Animal['spider', 'It wriggled and jiggled and tickled inside her.', 'That wriggled and jiggled and tickled inside her.'],
+        Animal['bird', 'How absurd, to swallow a bird.', ''],
+        Animal['cat', 'Imagine that, she swallowed a cat.', ''],
+        Animal['dog', 'What a hog, to swallow a dog.', ''],
+        Animal['goat', 'She just opened her throat and swallowed a goat.', ''],
+        Animal['cow', 'I don\'t know how she swallowed a cow.', ''],
+        Animal['horse', 'She\'s dead, of course!', '']
+    ]
+
+--- the lines of the verse in which she swallows the n-th animal
+fn verse[cast, n]
+    lines = ['There was an old lady who swallowed a `cast[n].name`.']
+    if n gt 0
+        lines = push[lines, cast[n].remark]
+    if n eq len[cast] - 1
+        return lines
+    k = n
+    while k gt 0
+        hunter = cast[k].name
+        prey = cast[k - 1]
+        if prey.echo eq ''
+            lines = push[lines, 'She swallowed the `hunter` to catch the `prey.name`.']
+        else
+            lines = push[lines, 'She swallowed the `hunter` to catch the `prey.name`,']
+            lines = push[lines, prey.echo]
+        k = k - 1
+    push[lines, 'I don\'t know why she swallowed a fly, perhaps she\'ll die.']
+
+cast = animals[]
+for n in range[len[cast]]
+    for line in verse[cast, n]
+        log[line]
+    if n lt len[cast] - 1
+        log['']

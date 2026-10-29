@@ -1,0 +1,209 @@
+--- Rosetta Code: Random number generator (included)
+--- https://rosettacode.org/wiki/Random_number_generator_(included)
+--- Crow's draws come from ChaCha12, the StdRng of Rust's rand crate. The
+--- program says so, then shows it: a ChaCha12 written here in Crow, keyed as
+--- seed[n] keys it, makes exactly the numbers rand draws.
+
+use math
+use bits
+
+--- 32-bit words are ints from 0 to 2^32 - 1
+fn add32[a, b]
+    return (a + b) % 4294967296
+
+fn rotl32[x, n]
+    return bitand[bitor[shift[x, n], shift[x, n - 32]], 4294967295]
+
+fn rotr32[x, n]
+    return bitand[bitor[shift[x, -n], shift[x, 32 - n]], 4294967295]
+
+fn hex32[w]
+    digits = split['0123456789abcdef', '']
+    text = ''
+    for i in range[8]
+        text = '`digits[w % 16]``text`'
+        w = w / 16
+    return text
+
+struct Step [state, word]
+
+--- one step of PCG32 (XSH RR) as seed_from_u64 takes it: the 64-bit state is
+--- advanced first, and the word is made from the new state
+fn pcg32[state]
+    s = (state * 6364136223846793005 + 11634580027462260723) % 18446744073709551616
+    xorshifted = shift[bitxor[shift[s, -18], s], -27] % 4294967296
+    return Step[s, rotr32[xorshifted, shift[s, -59]]]
+
+--- the key seed[n] gives: eight PCG32 words from n's 64 bits (a negative n
+--- read as the unsigned number of its bits, as seed reads it)
+fn key_of[n]
+    state = bitand[n, 18446744073709551615]
+    words = []
+    for i in range[8]
+        step = pcg32[state]
+        state = step.state
+        words = push[words, step.word]
+    return words
+
+fn quarter[s, a, b, c, d]
+    s[a] = add32[s[a], s[b]]
+    s[d] = rotl32[bitxor[s[d], s[a]], 16]
+    s[c] = add32[s[c], s[d]]
+    s[b] = rotl32[bitxor[s[b], s[c]], 12]
+    s[a] = add32[s[a], s[b]]
+    s[d] = rotl32[bitxor[s[d], s[a]], 8]
+    s[c] = add32[s[c], s[d]]
+    s[b] = rotl32[bitxor[s[b], s[c]], 7]
+    return s
+
+--- one block of the keystream: the words 'expand 32-byte k', the key, the
+--- block counter (low word first) and the stream 0, mixed by 6 double rounds
+--- (12 rounds) and added to themselves
+fn chacha12_block[key, counter]
+    constants = [1634760805, 857760878, 2036477234, 1797285236]
+    place = [counter % 4294967296, counter / 4294967296, 0, 0]
+    start = concat[concat[constants, key], place]
+    s = start
+    for double in range[6]
+        s = quarter[s, 0, 4, 8, 12]
+        s = quarter[s, 1, 5, 9, 13]
+        s = quarter[s, 2, 6, 10, 14]
+        s = quarter[s, 3, 7, 11, 15]
+        s = quarter[s, 0, 5, 10, 15]
+        s = quarter[s, 1, 6, 11, 12]
+        s = quarter[s, 2, 7, 8, 13]
+        s = quarter[s, 3, 4, 9, 14]
+    block = for i in range[16]
+        add32[s[i], start[i]]
+    return block
+
+--- the generator's first count 64-bit outputs: the keystream's words in
+--- pairs, the first of each pair the low half
+fn outputs[key, count]
+    words = []
+    counter = 0
+    while len[words] lt 2 * count
+        words = concat[words, chacha12_block[key, counter]]
+        counter = counter + 1
+    out = for i in range[count]
+        words[2 * i] + words[2 * i + 1] * 4294967296
+    return out
+
+--- rand[]: the top 53 bits of an output over 2^53
+fn unit_float[out]
+    return float[shift[out, -11]] / 9007199254740992.0
+
+struct Drawn [value, next]
+
+--- an int from lo to hi by Canon's method, from the output at position at: the
+--- high 64 bits of output times range; where the low 64 bits are within range
+--- of 2^64, the next output's high part may carry into them, and is asked
+fn canon[outs, at, lo, hi]
+    span = hi - lo + 1
+    product = outs[at] * span
+    result = product / 18446744073709551616
+    low = product % 18446744073709551616
+    if low gt 18446744073709551616 - span
+        carry = outs[at + 1] * span / 18446744073709551616
+        if low + carry gte 18446744073709551616
+            result = result + 1
+        return Drawn[lo + result, at + 2]
+    return Drawn[lo + result, at + 1]
+
+struct Ints [values, used, next]
+
+--- count draws as rand[lo, hi] makes them, from position at; used holds how
+--- many outputs each draw took
+fn draw_ints[outs, at, lo, hi, count]
+    drawn = []
+    used = []
+    for i in range[count]
+        d = canon[outs, at, lo, hi]
+        drawn = push[drawn, d.value]
+        used = push[used, d.next - at]
+        at = d.next
+    return Ints[drawn, used, at]
+
+fn row[call, drawn, mine]
+    return '`fmt[call, width = 27]``fmt[drawn, width = 21]``mine`'
+
+statement = [
+    'Crow has one random number generator behind rand[], rand[n], rand[a, b]',
+    'and math\'s random tensors, shuffles and samples: ChaCha12, the ChaCha',
+    'stream cipher of D. J. Bernstein run with 12 rounds, which is the StdRng of',
+    'Rust\'s rand crate (0.10). It is a cryptographically secure generator',
+    '(CSPRNG): a 256-bit key, a 64-bit block counter and a 64-bit stream number',
+    'make each 64-byte block of the keystream, and the draws read it in order.',
+    '',
+    '- seed[n] spreads n\'s 64 bits into the 256-bit key with PCG32 (rand_core\'s',
+    '  seed_from_u64); the counter and the stream start at 0. A seeded program',
+    '  draws the same numbers on every run, interpreted or compiled (rand does',
+    '  not promise StdRng\'s algorithm for ever, so a later Crow may differ).',
+    '- Unseeded, each draw is made by a ChaCha12 keyed afresh from rand\'s thread',
+    '  generator: ChaCha12 again, keyed by the operating system (getrandom) and',
+    '  rekeyed after every 64 KiB it gives.',
+    '- rand[] takes the next 64 bits and keeps the top 53: k / 2^53, in [0, 1).',
+    '- rand[n] and rand[a, b] take the high 64 bits of the next 64 bits times',
+    '  the range (Canon\'s method), and a second 64 bits where a carry from them',
+    '  could reach the high half.',
+    '',
+    'ChaCha: https://en.wikipedia.org/wiki/Salsa20#ChaCha_variant',
+    'PCG: https://en.wikipedia.org/wiki/Permuted_congruential_generator',
+    'Others: https://en.wikipedia.org/wiki/List_of_random_number_generators']
+for line in statement
+    log[line]
+
+--- the seed: 2026, or one given on the command line
+n = 2026
+given = args[]
+if len[given] gt 0
+    n = int[given[0]]
+seed[n]
+floats = for i in range[8]
+    rand[]
+dice = for i in range[10]
+    rand[1, 6]
+large = for i in range[5]
+    rand[1000000000000]
+huge = for i in range[6]
+    rand[9223372036854775807]
+
+key = key_of[n]
+hexes = for w in key
+    hex32[w]
+shown_key = join[hexes, ' ']
+outs = outputs[key, 48]
+my_floats = for i in range[8]
+    unit_float[outs[i]]
+my_dice = draw_ints[outs, 8, 1, 6, 10]
+my_large = draw_ints[outs, my_dice.next, 0, 999999999999, 5]
+my_huge = draw_ints[outs, my_large.next, 0, 9223372036854775806, 6]
+
+log['']
+log['Checked: seed[`n`] keys ChaCha12 with these eight words, PCG32\'s from `n`:']
+log['    `shown_key`']
+log['and a ChaCha12 written here in Crow, keyed so, makes what rand draws:']
+log['']
+log[row['draw', 'rand', 'ChaCha12 here']]
+agree = 0
+for i in range[8]
+    log[row['rand[]', str[floats[i]], str[my_floats[i]]]]
+    if floats[i] eq my_floats[i]
+        agree = agree + 1
+for i in range[10]
+    log[row['rand[1, 6]', str[dice[i]], str[my_dice.values[i]]]]
+    if dice[i] eq my_dice.values[i]
+        agree = agree + 1
+for i in range[5]
+    log[row['rand[1000000000000]', str[large[i]], str[my_large.values[i]]]]
+    if large[i] eq my_large.values[i]
+        agree = agree + 1
+for i in range[6]
+    took = 'one output'
+    if my_huge.used[i] eq 2
+        took = 'two outputs'
+    log[row['rand[9223372036854775807]', str[huge[i]], '`my_huge.values[i]` (`took`)']]
+    if huge[i] eq my_huge.values[i]
+        agree = agree + 1
+log['']
+log['`agree` of 29 draws agree; they read the first `my_huge.next` outputs, in order.']

@@ -1,0 +1,39 @@
+--- Rosetta Code: Determine if a string has all the same characters
+--- https://rosettacode.org/wiki/Determine_if_a_string_has_all_the_same_characters
+--- The characters are walked left to right, stopping at the first that differs
+--- from the one before it; a string with none, the empty one included, is all
+--- one character. Characters are Unicode's, so 'é' and an emoji count as one.
+
+use bits
+
+--- n in lower-case hexadecimal
+fn hex[n]
+    digits = '0123456789abcdef'
+    text = digits[n % 16]
+    rest = n / 16
+    while rest gt 0
+        text = '`digits[rest % 16]``text`'
+        rest = rest / 16
+    return text
+
+--- where the first character that differs from the one before it is, or -1
+fn first_change[chars]
+    i = 1
+    while i lt len[chars]
+        if chars[i] ne chars[i - 1]
+            return i
+        i = i + 1
+    return -1
+
+fn analyze[s]
+    chars = split[s, '']
+    log['\'`s`\' has a length of `len[chars]`:']
+    at = first_change[chars]
+    if at lt 0
+        log['    all its characters are the same']
+    else
+        c = chars[at]
+        log['    not all its characters are the same: \'`c`\' (0x`hex[code[c]]`) differs, at position `at + 1`']
+
+for s in ['', '   ', '2', '333', '.55', 'tttTTT', '4444 444k', 'pépé', '🐶🐶🐺🐶', '🎄🎄🎄🎄']
+    analyze[s]

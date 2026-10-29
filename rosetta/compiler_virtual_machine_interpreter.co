@@ -1,0 +1,159 @@
+--- Rosetta Code: Compiler/virtual machine interpreter
+--- https://rosettacode.org/wiki/Compiler/virtual_machine_interpreter
+--- Reads the code generator's listing from standard input: the header, the string
+--- pool (its escapes turned into the characters they stand for), then one
+--- instruction a line, kept as an opcode and an operand, a jump's operand being the
+--- position of the instruction at its target. The machine runs them over a stack of
+--- words with a stack pointer. Words are Crow ints, which do not wrap at 32 bits.
+--- What the program prints is logged a line at a time, as each line ends.
+use bits
+
+--- the program: the size of its data, its strings, and its instructions
+struct Program [datasize, pool, ops, operands]
+
+--- the instructions by name, in the order of their numbers
+fn names[]
+    return ['fetch', 'store', 'push', 'add', 'sub', 'mul', 'div', 'mod', 'lt', 'gt', 'le', 'ge', 'eq', 'ne', 'and', 'or', 'neg', 'not', 'jmp', 'jz', 'prtc', 'prts', 'prti', 'halt']
+
+--- a string of the pool as it prints: quotes off, \n a newline, \\ a backslash
+fn unescaped[text]
+    chars = split[slice[trim[text], 1, -1], '']
+    out = []
+    i = 0
+    while i lt len[chars]
+        c = chars[i]
+        if c eq '\\' and i + 1 lt len[chars]
+            i = i + 1
+            if chars[i] eq 'n'
+                c = '\n'
+            else
+                c = chars[i]
+        out = push[out, c]
+        i = i + 1
+    return join[out, '']
+
+fn load[]
+    header = find[input[], 'Datasize:\s*([0-9]+)\s+Strings:\s*([0-9]+)']
+    if not header.ok
+        return error['the listing does not start with its sizes', 'vm']
+    pool = []
+    for k in range[int[header.groups[2]]]
+        pool = push[pool, unescaped[input[]]]
+    codes = map[names[], range[len[names[]]]]
+    ops = []
+    operands = []
+    addresses = []
+    line = input[]
+    while line.ok
+        m = find[line, '^\s*([0-9]+)\s+([a-z]+)\s*(.*)$']
+        if m.ok
+            if m.groups[2] not in codes
+                return error['unknown instruction \'`m.groups[2]`\' at `m.groups[1]`', 'vm']
+            numbers = for n in split[sub[m.groups[3], '[^-0-9]+', ' '], ' ']
+                if n ne ''
+                    int[n]
+            arg = 0
+            if len[numbers] gt 0
+                arg = numbers[-1]
+            addresses = push[addresses, int[m.groups[1]]]
+            ops = push[ops, codes[m.groups[2]]]
+            operands = push[operands, arg]
+        line = input[]
+    --- a jump's target as the position of the instruction there
+    at = map[addresses, range[len[addresses]]]
+    for k in range[len[ops]]
+        if ops[k] eq 18 or ops[k] eq 19
+            operands[k] = at[operands[k]]
+    return Program[int[header.groups[1]], pool, ops, operands]
+
+--- what is left of a line once the text printed to it is logged up to its last newline
+fn printed[pending, text]
+    lines = split['`pending``text`', '\n']
+    for k in range[len[lines] - 1]
+        log[lines[k]]
+    return lines[-1]
+
+fn run[p]
+    ops = p.ops
+    operands = p.operands
+    data = for k in range[p.datasize]
+        0
+    stack = for k in range[1000]
+        0
+    sp = 0
+    pc = 0
+    pending = ''
+    while true
+        op = ops[pc]
+        arg = operands[pc]
+        pc = pc + 1
+        if op lt 3
+            if op eq 0
+                stack[sp] = data[arg]
+                sp = sp + 1
+            else if op eq 1
+                sp = sp - 1
+                data[arg] = stack[sp]
+            else
+                stack[sp] = arg
+                sp = sp + 1
+        else if op lt 16
+            sp = sp - 1
+            a = stack[sp - 1]
+            b = stack[sp]
+            value = 0
+            if op eq 3
+                value = a + b
+            else if op eq 4
+                value = a - b
+            else if op eq 5
+                value = a * b
+            else if op eq 6
+                value = a / b
+            else if op eq 7
+                value = a % b
+            else if op eq 8
+                value = int[a lt b]
+            else if op eq 9
+                value = int[a gt b]
+            else if op eq 10
+                value = int[a lte b]
+            else if op eq 11
+                value = int[a gte b]
+            else if op eq 12
+                value = int[a eq b]
+            else if op eq 13
+                value = int[a ne b]
+            else if op eq 14
+                value = int[a ne 0 and b ne 0]
+            else
+                value = int[a ne 0 or b ne 0]
+            stack[sp - 1] = value
+        else if op eq 16
+            stack[sp - 1] = -stack[sp - 1]
+        else if op eq 17
+            stack[sp - 1] = int[stack[sp - 1] eq 0]
+        else if op eq 18
+            pc = arg
+        else if op eq 19
+            sp = sp - 1
+            if stack[sp] eq 0
+                pc = arg
+        else if op eq 23
+            break
+        else
+            sp = sp - 1
+            if op eq 20
+                pending = printed[pending, char[stack[sp]]]
+            else if op eq 21
+                pending = printed[pending, p.pool[stack[sp]]]
+            else
+                pending = printed[pending, str[stack[sp]]]
+    if pending ne ''
+        log[pending]
+
+program = load[]
+if program.ok
+    run[program]
+else
+    log['error: `program.reason`']

@@ -1,0 +1,118 @@
+--- Rosetta Code: Same fringe
+--- https://rosettacode.org/wiki/Same_fringe
+--- Two binary trees are walked in lock step, a leaf of each at a time, and the
+--- walk stops at the first pair of leaves that differ, or where one fringe ends
+--- before the other: neither fringe is collected. Crow has no generators, so a
+--- walk is its state, the subtrees still to visit on a stack (only downward
+--- links are followed), and a step answers the next leaf and the stack after
+--- it. Trees are written as text, (left right) for a node and a number for a
+--- leaf.
+
+--- a node; a leaf has 0 for both links, and its value
+struct Node [value, left, right]
+
+fn leaf[v]
+    Node[v, 0, 0]
+
+fn joined[l, r]
+    Node[0, l, r]
+
+--- a tree read from tokens at a place, and the place after it
+struct Parsed [tree, at]
+
+fn parse_at[tokens, at]
+    if tokens[at] eq '('
+        left = parse_at[tokens, at + 1]
+        right = parse_at[tokens, left.at]
+        return Parsed[joined[left.tree, right.tree], right.at + 1]
+    Parsed[leaf[int[tokens[at]]], at + 1]
+
+fn tree_of[text]
+    spaced = replace[replace[text, '(', ' ( '], ')', ' ) ']
+    tokens = for t in split[spaced, ' ']
+        if t ne ''
+            t
+    parse_at[tokens, 0].tree
+
+--- the next leaf of a walk: whether there is one, its value, the walk after it
+struct Step [found, value, rest]
+
+--- the node a link holds, made again: pushing the link itself onto the stack
+--- does not build compiled (findings/same_fringe-1.co)
+fn opened[t]
+    Node[t.value, t.left, t.right]
+
+fn next_leaf[stack]
+    s = stack
+    while len[s] gt 0
+        t = s[-1]
+        s = pop[s]
+        if t.left eq 0 and t.right eq 0
+            return Step[true, t.value, s]
+        if t.right ne 0
+            s = push[s, opened[t.right]]
+        if t.left ne 0
+            s = push[s, opened[t.left]]
+    Step[false, 0, s]
+
+--- what the lock-step walk found: whether the fringes are the same, where they
+--- part, and how many leaves it read from each tree
+struct Verdict [same, note, read_a, read_b]
+
+fn same_fringe[a, b]
+    walk_a = [a]
+    walk_b = [b]
+    matched = 0
+    while true
+        x = next_leaf[walk_a]
+        y = next_leaf[walk_b]
+        if not x.found and not y.found
+            return Verdict[true, '', matched, matched]
+        if not x.found
+            return Verdict[false, 'the first fringe ends after `matched` leaves', matched, matched + 1]
+        if not y.found
+            return Verdict[false, 'the second fringe ends after `matched` leaves', matched + 1, matched]
+        if x.value ne y.value
+            return Verdict[false, 'leaf `matched + 1` is `x.value` against `y.value`', matched + 1, matched + 1]
+        matched = matched + 1
+        walk_a = x.rest
+        walk_b = y.rest
+    Verdict[false, '', matched, matched]
+
+fn leaves_text[n]
+    if n eq 1
+        return '1 leaf'
+    '`n` leaves'
+
+--- a tree of the leaves lo .. hi - 1, as even as can be
+fn balanced[lo, hi]
+    if hi - lo eq 1
+        return leaf[lo]
+    middle = (lo + hi) / 2
+    joined[balanced[lo, middle], balanced[middle, hi]]
+
+fn compare[name_a, a, name_b, b]
+    v = same_fringe[a, b]
+    work = 'read `leaves_text[v.read_a]` of `name_a`, `leaves_text[v.read_b]` of `name_b`'
+    if v.same
+        log['`name_a` and `name_b`: the same fringe (`work`)']
+    else
+        log['`name_a` and `name_b`: different, `v.note` (`work`)']
+
+texts = map[a = '(1 (2 (3 (4 (5 (6 (7 8)))))))', b = '(1 ((2 3) (4 (5 ((6 7) 8)))))', c = '(((((((1 2) 3) 4) 5) 6) 7) 8)', x = '(1 (2 (3 (4 (5 (6 (7 (8 9))))))))', y = '(0 (2 (3 (4 (5 (6 (7 8)))))))', z = '(1 (2 ((4 3) (5 (6 (7 8))))))']
+names = ['a', 'b', 'c', 'x', 'y', 'z']
+for name in names
+    log['`name` = `texts[name]`']
+log['']
+for name in names
+    compare['a', tree_of[texts['a']], name, tree_of[texts[name]]]
+log['']
+
+--- a hundred thousand leaves either side, differing at the third: three
+--- leaves of each are read
+big = balanced[0, 100000]
+other = joined[joined[leaf[0], leaf[1]], balanced[3, 100001]]
+log['big = the leaves 0 .. 99999, as even a tree as can be']
+log['other = ((0 1) T), T holding the leaves 3 .. 100000 as evenly']
+compare['big', big, 'other', other]
+compare['big', big, 'big again', balanced[0, 100000]]

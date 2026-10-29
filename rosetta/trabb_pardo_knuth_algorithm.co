@@ -1,0 +1,39 @@
+--- Rosetta Code: Trabb Pardo–Knuth algorithm
+--- https://rosettacode.org/wiki/Trabb_Pardo–Knuth_algorithm
+--- Eleven numbers are read from standard input, one or more a line (a word
+--- that is no number is said so and left out), then taken in reverse order:
+--- f(x) = sqrt(|x|) + 5x^3 is shown for each, or an alert where it passes
+--- 400, and the alert does not stop the items after it.
+
+fn f[x]
+    sqrt[abs[x]] + 5.0 * x ^ 3
+
+--- the numbers on a line, and a note for each word that is none
+fn read_numbers[line, numbers, wanted]
+    found = numbers
+    words = split[replace[trim[line], '\t', ' '], ' ']
+    for word in words
+        if word ne '' and len[found] lt wanted
+            x = float[word]
+            if x.ok
+                found = push[found, x]
+            else
+                log['\'`word`\' is not a number: left out.']
+    found
+
+fn ask[wanted]
+    log['Enter `wanted` numbers, one or more a line:']
+    numbers = []
+    while len[numbers] lt wanted
+        line = input[]
+        if not line.ok
+            halt['the input ended after `len[numbers]` of the `wanted` numbers']
+        numbers = read_numbers[line, numbers, wanted]
+    numbers
+
+for x in reverse[ask[11]]
+    y = f[x]
+    if y gt 400
+        log['f(`x`) is too large: alert!']
+    else
+        log['f(`x`) = `y`']

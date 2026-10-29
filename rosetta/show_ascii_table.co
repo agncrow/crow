@@ -1,0 +1,26 @@
+--- Rosetta Code: Show ASCII table
+--- https://rosettacode.org/wiki/Show_ASCII_table
+--- The codes 32 to 127 in sixteen rows of six columns, each column sixteen codes
+--- on from the one before; char[] of use bits gives the character of a code, and
+--- the space and DEL, which show nothing, are named.
+
+use bits
+
+fn name_of[n]
+    if n eq 32
+        return 'Spc'
+    if n eq 127
+        return 'Del'
+    return char[n]
+
+--- a line without the blanks at its end
+fn trimmed_right[line]
+    kept = line
+    while ends[kept, ' ']
+        kept = slice[kept, 0, len[kept] - 1]
+    return kept
+
+for row in range[16]
+    cells = for n in range[32 + row, 128, 16]
+        '`fmt[n, width = 3]` : `fmt[name_of[n], width = 3]`'
+    log[trimmed_right[join[cells, '']]]

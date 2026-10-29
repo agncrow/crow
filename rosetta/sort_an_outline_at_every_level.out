@@ -1,0 +1,180 @@
+An outline indented by 4 spaces:
+zeta
+    beta
+    gamma
+        lambda
+        kappa
+        mu
+    delta
+alpha
+    theta
+    iota
+    epsilon
+
+Sorted ascending:
+alpha
+    epsilon
+    iota
+    theta
+zeta
+    beta
+    delta
+    gamma
+        kappa
+        lambda
+        mu
+
+Sorted descending:
+zeta
+    gamma
+        mu
+        lambda
+        kappa
+    delta
+    beta
+alpha
+    theta
+    iota
+    epsilon
+
+----------------------------------------
+The same indented by tabs:
+zeta
+	gamma
+		mu
+		lambda
+		kappa
+	delta
+	beta
+alpha
+	theta
+	iota
+	epsilon
+
+Sorted ascending:
+alpha
+	epsilon
+	iota
+	theta
+zeta
+	beta
+	delta
+	gamma
+		kappa
+		lambda
+		mu
+
+Sorted descending:
+zeta
+	gamma
+		mu
+		lambda
+		kappa
+	delta
+	beta
+alpha
+	theta
+	iota
+	epsilon
+
+----------------------------------------
+An outline of tabs among spaces:
+alpha
+    epsilon
+	iota
+    theta
+zeta
+    beta
+    delta
+    gamma
+    	kappa
+        lambda
+        mu
+
+Not sorted, the indentation is unclear:
+line 3 ("\tiota"): indented with tabs where the outline is indented with spaces
+line 9 ("    \tkappa"): indented with tabs and spaces mixed
+
+----------------------------------------
+An outline of uneven indents:
+zeta
+    beta
+   gamma
+        lambda
+         kappa
+        mu
+    delta
+alpha
+    theta
+    iota
+    epsilon
+
+Not sorted, the indentation is unclear:
+line 3 ("   gamma"): an indent of 3 spaces, in an outline whose unit is 4
+line 5 ("         kappa"): an indent of 9 spaces, in an outline whose unit is 4
+
+----------------------------------------
+Extra: an outline indented by 2 spaces:
+fruit
+  cherry
+  apple
+    granny smith
+    fuji
+    gala
+  fig
+nuts
+  walnut
+  pecan
+  almond
+
+Sorted ascending:
+fruit
+  apple
+    fuji
+    gala
+    granny smith
+  cherry
+  fig
+nuts
+  almond
+  pecan
+  walnut
+
+Sorted descending:
+nuts
+  walnut
+  pecan
+  almond
+fruit
+  fig
+  cherry
+  apple
+    granny smith
+    gala
+    fuji
+
+----------------------------------------
+The same sorted shorter first:
+nuts
+  pecan
+  almond
+  walnut
+fruit
+  fig
+  apple
+    fuji
+    gala
+    granny smith
+  cherry
+
+----------------------------------------
+Extra: an outline that skips a level:
+fruit
+  apple
+      fuji
+  fig
+
+Not sorted, the indentation is unclear:
+line 3 ("      fuji"): more than one level below the line before it
+
+----------------------------------------

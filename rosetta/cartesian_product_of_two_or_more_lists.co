@@ -1,0 +1,88 @@
+--- Rosetta Code: Cartesian product of two or more lists
+--- https://rosettacode.org/wiki/Cartesian_product_of_two_or_more_lists
+--- A product's tuples are numbered 0 … n-1 in order, the last list varying
+--- fastest: tuple i is i written in the mixed radix of the lists' lengths, so
+--- a product is one collecting loop, and an empty list makes it empty. The
+--- n-ary examples are read from the task's own notation (a literal list of
+--- lists of different lengths would be refused: nested numbers are a matrix).
+
+fn product[xs, ys]
+    pairs = for i in range[len[xs] * len[ys]]
+        [xs[i / len[ys]], ys[i % len[ys]]]
+    return pairs
+
+--- the i-th tuple: its item from list k is digit k of i, in the radix of the
+--- lists' lengths (a digit's place is the product of the later lengths)
+fn tuple_at[lists, i]
+    picks = for k in range[len[lists]]
+        place = 1
+        for xs in slice[lists, k + 1, len[lists]]
+            place = place * len[xs]
+        lists[k][(i / place) % len[lists[k]]]
+    return picks
+
+fn nary_product[lists]
+    count = 1
+    for xs in lists
+        count = count * len[xs]
+    tuples = for i in range[count]
+        tuple_at[lists, i]
+    return tuples
+
+--- '{1, 2} × {} × {3}' as its lists: [[1, 2], [], [3]]
+fn parse_sets[text]
+    sets = []
+    for part in split[text, ' × ']
+        inner = replace[replace[part, '{', ''], '}', '']
+        items = []
+        if inner ne ''
+            for s in split[inner, ', ']
+                items = push[items, int[s]]
+        sets = push[sets, items]
+    return sets
+
+fn enclosed[items, open, close]
+    texts = for x in items
+        str[x]
+    inside = join[texts, ', ']
+    return '`open``inside``close`'
+
+--- tuples' texts as a set, four to a line when there are more
+fn set_text[texts]
+    if len[texts] lte 4
+        inside = join[texts, ', ']
+        return '{`inside`}'
+    lines = for i in range[0, len[texts], 4]
+        row = join[slice[texts, i, i + 4], ', ']
+        '    `row`'
+    body = join[lines, ',\n']
+    return '{\n`body`\n}'
+
+fn show_product[xs, ys]
+    left = enclosed[xs, '{', '}']
+    right = enclosed[ys, '{', '}']
+    pairs = for pair in product[xs, ys]
+        enclosed[pair, '(', ')']
+    shown = set_text[pairs]
+    log['`left` × `right` = `shown`']
+
+fn show_nary_product[text]
+    lists = parse_sets[text]
+    sets = for xs in lists
+        enclosed[xs, '{', '}']
+    factors = join[sets, ' × ']
+    tuples = for t in nary_product[lists]
+        enclosed[t, '(', ')']
+    shown = set_text[tuples]
+    log['`factors` = `shown`']
+
+show_product[[1, 2], [3, 4]]
+show_product[[3, 4], [1, 2]]
+show_product[[1, 2], []]
+show_product[[], [1, 2]]
+
+log['']
+log['The n-ary product:']
+show_nary_product['{1776, 1789} × {7, 12} × {4, 14, 23} × {0, 1}']
+show_nary_product['{1, 2, 3} × {30} × {500, 100}']
+show_nary_product['{1, 2, 3} × {} × {500, 100}']

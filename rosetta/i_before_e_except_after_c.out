@@ -1,0 +1,9 @@
+Counting the words of unixdict.txt:
+  I before E when not preceded by C: 465 words for, 213 against, a ratio of 2.2: plausible
+  E before I when preceded by C: 13 words for, 24 against, a ratio of 0.5: implausible, and contra-indicated
+  So "I before E except after C" is implausible.
+
+Weighting the words of the British National Corpus by their frequencies:
+  I before E when not preceded by C: 8192 per million words for, 4826 against, a ratio of 1.7: implausible
+  E before I when preceded by C: 327 per million words for, 994 against, a ratio of 0.3: implausible, and contra-indicated
+  So "I before E except after C" is implausible.

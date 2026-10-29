@@ -1,0 +1,18 @@
+--- Rosetta Code: Check output device is a terminal
+--- https://rosettacode.org/wiki/Check_output_device_is_a_terminal
+--- Crow has no isatty of its own, so the program asks the system: the shell that
+--- `shell` starts is this program's child ($PPID), the file behind the program's
+--- descriptor is named by /proc on Linux and by lsof on macOS, and `test -t`
+--- says whether that file, opened as the shell's own input, is a terminal.
+
+fn is_terminal[fd]
+    --- Whether descriptor `fd` (1 is the standard output) of this program is a terminal.
+    proc = '/proc/$PPID/fd/`fd`'
+    named = 'lsof -a -p $PPID -d `fd` -Fn 2>/dev/null | sed -n s/^n//p'
+    r = shell['if [ -e `proc` ]; then f=`proc`; else f=$(`named`); fi; [ -n "$f" ] && [ -t 0 ] < "$f"']
+    return r.status eq 0
+
+if is_terminal[1]
+    log['The output device is a terminal.']
+else
+    log['The output device is not a terminal.']

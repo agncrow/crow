@@ -1,0 +1,102 @@
+The diagram, trimmed:
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+|                      ID                       |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+|QR|   Opcode  |AA|TC|RD|RA|   Z    |   RCODE   |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+|                    QDCOUNT                    |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+|                    ANCOUNT                    |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+|                    NSCOUNT                    |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+|                    ARCOUNT                    |
++--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+Field     Bits  Start  End
+ID          16      0   15
+QR           1     16   16
+Opcode       4     17   20
+AA           1     21   21
+TC           1     22   22
+RD           1     23   23
+RA           1     24   24
+Z            3     25   27
+RCODE        4     28   31
+QDCOUNT     16     32   47
+ANCOUNT     16     48   63
+NSCOUNT     16     64   79
+ARCOUNT     16     80   95
+
+A header in hexadecimal: 78477bbf5496e12e1bf169a4
+Its bits: 011110000100011101111011101111110101010010010110111000010010111000011011111100010110100110100100
+
+Field     Bits              Value
+ID        0111100001000111  30791
+QR        0                 0
+Opcode    1111              15
+AA        0                 0
+TC        1                 1
+RD        1                 1
+RA        1                 1
+Z         011               3
+RCODE     1111              15
+QDCOUNT   0101010010010110  21654
+ANCOUNT   1110000100101110  57646
+NSCOUNT   0001101111110001  7153
+ARCOUNT   0110100110100100  27044
+
+Stored back from those values: 78477bbf5496e12e1bf169a4
+A query (ID 4660, RD set, one question): 123401000001000000000000
+Refused: RCODE is 4 bits, too few for 16; the diagram has no field QD; a header of this diagram is 96 bits, not 32
+
+Diagrams refused, and why:
+
+
+  -> the diagram is empty
+
++--+--+--+
+|A |B |C |
++--+--+--+
+  -> a diagram is 8, 16, 32 or 64 bits wide, not 3
+
++--+--+--+--++-+--+--+--+
+|  A  |   B    |   C    |
++--+--+--+--+--+--+--+--+
+  -> line 1 is no border: +--+--+--+--++-+--+--+--+
+
++--+--+--+--+--+--+--+--+
+|  A  |   B    |   C    |
++--+--+--+--+--+--+--+--+--+
+  -> line 3 is not the border
+
++--+--+--+--+--+--+--+--+
+|  A   |   B    |   C   |
++--+--+--+--+--+--+--+--+
+  -> line 2: the field A ends between two bits
+
++--+--+--+--+--+--+--+--+
+|  A  |     |     C     |
++--+--+--+--+--+--+--+--+
+  -> line 2: a field has no name
+
++--+--+--+--+--+--+--+--+
+|    A B    |     C     |
++--+--+--+--+--+--+--+--+
+  -> line 2: A B is no field name
+
++--+--+--+--+--+--+--+--+
+|  A  |    B   |    C  |
++--+--+--+--+--+--+--+--+
+  -> line 2 is no row of 8 bits between bars
+
++--+--+--+--+--+--+--+--+
+|  A  |   B    |   C    |
+  -> line 2: the last row has no border under it
+
++--+--+--+--+--+--+--+--+
+|     A     |     B     |
++--+--+--+--+--+--+--+--+
+|     C     |     A     |
++--+--+--+--+--+--+--+--+
+  -> the field A is named twice

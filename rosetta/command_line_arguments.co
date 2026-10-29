@@ -1,0 +1,13 @@
+--- Rosetta Code: Command-line arguments
+--- https://rosettacode.org/wiki/Command-line_arguments
+--- args[] is the list of the arguments written after the program, each as text,
+--- the program's own name not among them. Run it with arguments as
+---     crow run command_line_arguments.co -c "alpha beta" -h "gamma"
+--- (crow run -i interprets it; crow build makes a program that takes them the
+--- same way: ./command_line_arguments -c "alpha beta" -h "gamma").
+
+given = args[]
+log['number of arguments: `len[given]`']
+log['args[] = `str[given]`']
+for i in range[len[given]]
+    log['argument `i + 1`: `given[i]`']

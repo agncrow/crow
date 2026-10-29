@@ -1,0 +1,9 @@
+Terms 1 to 20 of the Calkin-Wilf sequence:
+1, 1/2, 2, 1/3, 3/2, 2/3, 3, 1/4, 4/3, 3/5, 5/2, 2/5, 5/3, 3/4, 4, 1/5, 5/4, 4/7, 7/3, 3/8
+
+9/4 has the continued fraction [2; 3, 1], binary 100011: it is term 35
+and the term the runs of 100011 give back is 9/4
+the 35th term computed one by one is 9/4
+
+83116/51639 has the continued fraction [1; 1, 1, 1, 1, 3, 1, 1, 2, 2, 4, 1, 2, 1, 1, 1, 3], binary 111010110111100110100010101: it is term 123,456,789
+and the term the runs of 111010110111100110100010101 give back is 83116/51639

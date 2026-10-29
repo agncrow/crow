@@ -1,0 +1,19 @@
+--- `concat` of a list whose items can fail (text made of a value that can
+--- fail) and a plain list joins them as items that can fail, each plain
+--- item the success it is — written down or held in a variable: compiled,
+--- the two lists had been handed as they were, and the program did not
+--- build (Rosetta Code, Facial detection in a photo)
+
+fn named[t]
+    if t eq ''
+        return error['no name']
+    return t
+
+name = named['crow']
+lines = concat[['a `name`'], ['b']]
+log[join[lines, ' ']]
+
+plain = ['p', 'q']
+more = concat[[named['z']], plain]
+log[more]
+log[concat[[named['']], plain][0].ok]

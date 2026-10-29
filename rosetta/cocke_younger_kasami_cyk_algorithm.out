@@ -1,0 +1,21 @@
+The table for "a very heavy orange book", a row per length of span:
+  1  {Det}       {Adv}       {AP,A}      {Nom,AP,A}  {Nom}
+  2  {}          {AP}        {Nom}       {Nom}
+  3  {}          {Nom}       {Nom}
+  4  {NP}        {Nom}
+  5  {NP}
+
+a very heavy orange book => true
+    (NP (Det a) (Nom (AP (Adv very) (A heavy)) (Nom (AP orange) (Nom book))))
+a very heavy orange => true
+    (NP (Det a) (Nom (AP (Adv very) (A heavy)) (Nom orange)))
+a heavy orange => true
+    (NP (Det a) (Nom (AP heavy) (Nom orange)))
+a heavy => false
+orange => false
+very heavy orange => false
+a tall man => true
+    (NP (Det a) (Nom (AP tall) (Nom man)))
+a extremely muscular man => true
+    (NP (Det a) (Nom (AP (Adv extremely) (A muscular)) (Nom man)))
+a muscular man => false

@@ -1,0 +1,24 @@
+--- a local handed back before the line that types its items — `return
+--- xs` of `xs = []` inside a `while true`, the push after it — answers
+--- what the local settles on: typed where the return was met, the answer
+--- had been a list of nothing known, compiled as text, and the program
+--- did not build (Rosetta Code, Piprimes)
+
+fn grow[bound]
+    xs = []
+    n = 0
+    while true
+        if n gte bound
+            return xs
+        xs = push[xs, n]
+        n = n + 1
+
+fn names[k]
+    out = []
+    while true
+        if len[out] eq k
+            return out
+        out = push[out, 'n`len[out]`']
+
+log[grow[3]]
+log[names[2]]

@@ -1,0 +1,24 @@
+--- a value that can fail written by position inside a function is decided
+--- as an assignment to a variable is: the function hands the error back,
+--- and its answer says it can fail — the write had halted the whole
+--- program, `cannot assign an error value to 'xs'`
+fn maybe[n]
+    if n lt 0
+        return error['negative', 'x']
+    return n
+
+fn put[xs, n]
+    xs[0] = maybe[n]
+    return xs
+
+fn tally[n]
+    m = map[a = 0]
+    m['a'] = maybe[n]
+    return m['a']
+
+log[put[[1, 2], 5]]
+b = put[[1, 2], -1]
+log[b.ok]
+log[b.reason]
+log[tally[3]]
+log[tally[-3].ok]

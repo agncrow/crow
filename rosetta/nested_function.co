@@ -1,0 +1,24 @@
+--- Rosetta Code: Nested function
+--- https://rosettacode.org/wiki/Nested_function
+--- Crow has no nested functions and no closures: a function is declared at the top
+--- level and sees only its parameters, so an inner function can neither read the outer
+--- one's separator nor change its counter. The honest form hands both in and the new
+--- count back: make_item answers the item and the next count as a record, and
+--- make_list keeps the count it is handed for the next item.
+
+struct Made [text, counter]
+
+--- One item: its number, the separator and its text, and the count after it.
+fn make_item[separator, counter, item]
+    return Made['`counter``separator``item`', counter + 1]
+
+fn make_list[separator]
+    counter = 1
+    lines = []
+    for item in ['first', 'second', 'third']
+        made = make_item[separator, counter, item]
+        lines = push[lines, made.text]
+        counter = made.counter
+    return join[lines, '\n']
+
+log[make_list['. ']]

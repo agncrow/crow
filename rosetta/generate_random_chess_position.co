@@ -1,0 +1,100 @@
+--- Rosetta Code: Generate random chess position
+--- https://rosettacode.org/wiki/Generate_random_chess_position
+--- The kings first, on squares that do not touch; then up to 15 more pieces a side, each
+--- a random kind on a random empty square, a pawn never on its promotion rank. White is to
+--- move, so a position leaving the black king in check is drawn again. Seeded.
+
+use math
+
+--- the piece on row r (0 is the eighth rank), column c, or '' off the board
+fn at[board, r, c]
+    if r lt 0 or r gt 7 or c lt 0 or c gt 7
+        return ''
+    return board[8 * r + c]
+
+--- the first piece met from (r, c) stepping (dr, dc), or '' at the edge
+fn first_piece[board, r, c, dr, dc]
+    y = r + dr
+    x = c + dc
+    while at[board, y, x] eq '.'
+        y = y + dr
+        x = x + dc
+    return at[board, y, x]
+
+--- whether a white piece attacks square (r, c)
+fn attacked[board, r, c]
+    if at[board, r + 1, c - 1] eq 'P' or at[board, r + 1, c + 1] eq 'P'
+        return true
+    for step in [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]]
+        if at[board, r + step[0], c + step[1]] eq 'N'
+            return true
+    for step in [[0, 1], [0, -1], [1, 0], [-1, 0]]
+        if first_piece[board, r, c, step[0], step[1]] in ['R', 'Q']
+            return true
+    for step in [[1, 1], [1, -1], [-1, 1], [-1, -1]]
+        if first_piece[board, r, c, step[0], step[1]] in ['B', 'Q']
+            return true
+    return false
+
+--- a random empty square
+fn empty_square[board]
+    square = rand[64]
+    while board[square] ne '.'
+        square = rand[64]
+    return square
+
+--- count random pieces of a side added to the board
+fn place[board, count, kinds, pawn, promotion_row]
+    placed = 0
+    while placed lt count
+        piece = kinds[rand[len[kinds]]]
+        square = empty_square[board]
+        if piece ne pawn or square / 8 ne promotion_row
+            board[square] = piece
+            placed = placed + 1
+    return board
+
+--- a position: a list of 64 squares, the eighth rank first, '.' for an empty one
+fn position[]
+    while true
+        board = split[repeat['.', 64], '']
+        white_king = rand[64]
+        black_king = rand[64]
+        apart = max[abs[white_king / 8 - black_king / 8], abs[white_king % 8 - black_king % 8]]
+        if apart gt 1
+            board[white_king] = 'K'
+            board[black_king] = 'k'
+            board = place[board, rand[16], ['Q', 'R', 'B', 'N', 'P'], 'P', 0]
+            board = place[board, rand[16], ['q', 'r', 'b', 'n', 'p'], 'p', 7]
+            if not attacked[board, black_king / 8, black_king % 8]
+                return board
+
+--- the position in Forsyth-Edwards Notation, white to move
+fn fen[board]
+    ranks = for r in range[8]
+        text = ''
+        empty = 0
+        for c in range[8]
+            piece = board[8 * r + c]
+            if piece eq '.'
+                empty = empty + 1
+            else
+                if empty gt 0
+                    text = '`text``empty`'
+                    empty = 0
+                text = '`text``piece`'
+        if empty gt 0
+            text = '`text``empty`'
+        text
+    placement = join[ranks, '/']
+    return '`placement` w - - 0 1'
+
+seed[2026]
+for n in range[5]
+    board = position[]
+    log[fen[board]]
+    for r in range[8]
+        squares = join[slice[board, 8 * r, 8 * r + 8], ' ']
+        log['  `8 - r`  `squares`']
+    log['     a b c d e f g h']
+    log['']

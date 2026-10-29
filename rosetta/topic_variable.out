@@ -1,0 +1,22 @@
+Crow has no topic variable. The nearest idioms:
+
+then hands a value on unnamed, as the next call's first argument:
+  3 then square = 9
+  3 then sqrt = 1.7320508075688772
+  3 then square then sqrt = 3
+
+A chain written as lines names the value so far by the variable it assigns:
+  t = 3, then t * t (t is 3 there), then t + sqrt[t] (t is 9 there): t = 12
+  u = 3, then u + (u then sqrt): u = 4.732050807568877
+
+A loop's variable is the current item:
+  x = 3: its square 9, its square root 1.7320508075688772
+  x = 4: its square 16, its square root 2
+  a collecting loop, the item named once: roots of 1, 4, 9 = [1, 2, 3]
+
+Nested loops: the inner x hides the outer x, which is back after the inner loop:
+  outer x = 1; the inner loop's x took [10, 20]; after it, x = 1
+  outer x = 2; the inner loop's x took [10, 20]; after it, x = 2
+
+A function sees only its parameters: the current item reaches it as an argument,
+  as in square[x] for x in 1, 2, 3 = [1, 4, 9]

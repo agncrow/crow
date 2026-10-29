@@ -3,6 +3,10 @@
 use super::program::call_name;
 use super::*;
 
+/// A function's success where it answers nothing and can fail: the value
+/// a bare `return` and a body's end hand back.
+const UNIT_OK: &str = "CrowResult { ok: true, value: (), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }";
+
 impl Emitter {
     /// The derivations a block reads directly (inside text too).
     pub(crate) fn derivations_read(block: &[Stmt]) -> BTreeSet<String> {
@@ -230,6 +234,17 @@ impl Emitter {
         }
 
         self.emit_block(&body);
+        // (a function that can fail and answers nothing, ending on a
+        // statement that is no return — an `if`, a loop — answers its
+        // success there: it had ended on `()`, and did not build, E0308;
+        // Rosetta Code, 15 puzzle game)
+        if !is_reactive_handler
+            && !is_live_handle
+            && matches!(&ret_ty, Ty::Result(inner) if **inner == Ty::Unit)
+            && !matches!(last.map(|i| &body[i]), Some(Stmt::Return(_)))
+        {
+            self.line(UNIT_OK);
+        }
 
         self.facts_in_state = saved_facts;
         if let Some(lines) = self.reactive_epilogue.take() {
@@ -594,7 +609,14 @@ impl Emitter {
                         self.line(l);
                     }
                 }
-                self.line("return;");
+                // (a function that can fail and answers nothing answers its
+                // success: `return;` there had not built, E0069; Rosetta
+                // Code, 15 puzzle game)
+                if !self.returns_unit && matches!(self.cur_ret.as_ref(), Some(Ty::Result(inner)) if **inner == Ty::Unit) {
+                    self.line(&format!("return {};", UNIT_OK));
+                } else {
+                    self.line("return;");
+                }
             }
             Stmt::Break => self.line("break;"),
             Stmt::Continue => self.line("continue;"),
@@ -882,7 +904,10 @@ impl Emitter {
         // and a field read is copied out of its record — `m[k] = c.whole`
         // of a loop's borrowed record had moved the field out, E0507,
         // parity 318)
-        let copied = (matches!(expr, Expr::Local(..)) && matches!(as_inferred(&self.tt(expr)), Ty::Big | Ty::Decimal | Ty::Fraction)) || matches!(expr, Expr::Field { .. });
+        // (any local the IR reads again: a text written into a list, then
+        // read, had been moved by the write, E0382; Rosetta Code, Best
+        // shuffle)
+        let copied = matches!(expr, Expr::Local(..) | Expr::Field { .. });
         let mut val = if copied { self.owned_expr(expr) } else { self.expr(expr) };
         if in_facts {
             self.line("{");
@@ -1024,6 +1049,12 @@ impl Emitter {
                             val, idx, obj, self.line_now()
                         ));
                     }
+                    // (an item of no known kind is an item of a list nothing
+                    // was put into: finding it stops the program, as the
+                    // interpreter stops, before the write — printed as a
+                    // list's write, `g[0][0] = 1` of `g = []` had not built;
+                    // Rosetta Code, Abelian sandpile model)
+                    Ty::Unknown => self.line_after(&found, &format!("{{ let _v = {}; let _ = _v; crow_stop({}, \"an item of no known kind is written by position\".to_string()); }}", val, self.line_now())),
                     _ => self.line_after(&found, &format!("{{ let _v = {}; let _i = {}; let _idx = {}; {}[_idx] = _v; }}", val, idx, self.index_at("_i", &format!("{}.len()", obj)), obj)),
                 }
             }
@@ -1102,7 +1133,7 @@ impl Emitter {
             return false;
         }
         let first_ty = Self::inner(&self.tt(first));
-        if !matches!(first_ty, Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes) {
+        if !matches!(first_ty, Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes | Ty::Tensor(..)) {
             return false;
         }
         let (found, obj, ty) = self.path_prefix(var.to_string(), root_ty, &path[..path.len() - 1]);
@@ -1166,8 +1197,25 @@ impl Emitter {
             self.line("return;");
             return;
         }
-        let text = self.owned_expr(e);
-        let ety = self.tt(e);
+        // (a call after which the program does not go on — `halt[…]` as a
+        // body's last line — is made, and nothing is answered: the
+        // function's type is never reached)
+        if crate::ir::ends_program(e) && !self.returns_unit {
+            let text = self.expr(e);
+            self.line(&format!("{};", text));
+            self.line("unreachable!(\"the program ended\");");
+            return;
+        }
+        let mut text = self.owned_expr(e);
+        let mut ety = self.tt(e);
+        // (a view's node returned by a function that answers markup is its
+        // HTML, as one held where markup is held: `return cell[s]` of a
+        // view had handed the node where text was answered, and the
+        // program did not build; Rosetta Code, CSV to HTML translation)
+        if !self.in_view() && self.makes_node(e) && self.cur_ret.as_ref().is_some_and(|t| matches!(t.payload(), Ty::Markup | Ty::Str)) {
+            text = format!("({}).to_html()", text);
+            ety = Ty::Markup;
+        }
         // a record returned where the function answers a record or none (a
         // tree's child, 0 where there is none): wrapped, as a constructor
         // wraps it into such a field; 0 is none
@@ -1276,6 +1324,16 @@ impl Emitter {
     }
 
     fn emit_for(&mut self, var: &str, iter: &Expr, body: &[Stmt], parallel: bool) {
+        // (a body that writes the loop's variable writes its own copy of
+        // the round's item, bound anew each round as the spec's Scope has
+        // it: `for i in range[3]` / `i = i * 10` had not built, E0384 —
+        // Rosetta Code, Euclid–Mullin sequence)
+        let written = Self::mutated_in(body).contains(var);
+        let rebound = |e: &mut Self, copy: bool| {
+            if written {
+                e.line(&format!("let mut {} = {}{};", var, var, if copy { "" } else { ".clone()" }));
+            }
+        };
         // `for i in range[n]` and `range[a, b]`: a counted loop, no list
         // built — the compiled fannkuch spent two thirds of its time building
         // one per permutation (a stepped range keeps its list)
@@ -1296,6 +1354,7 @@ impl Emitter {
                 self.line(&format!("crow_runtime::cores::run(|| ({}..{}).into_par_iter().for_each(|{}| {{", lo, hi, var));
                 self.indent += 1;
                 self.declare(var, Ty::Int);
+                rebound(self, true);
                 self.closure_depth += 1;
                 self.emit_block(body);
                 self.closure_depth -= 1;
@@ -1305,6 +1364,7 @@ impl Emitter {
                 self.line(&format!("for {} in {}..{} {{", var, lo, hi));
                 self.indent += 1;
                 self.declare(var, Ty::Int);
+                rebound(self, true);
                 self.emit_block(body);
                 self.indent -= 1;
                 self.line("}");
@@ -1315,6 +1375,18 @@ impl Emitter {
         let iter_str = self.expr(iter);
         let iter_ty = self.tt(iter);
         let (actual, elem) = self.loop_items(iter_str, &iter_ty, iter);
+        // (a body that assigns what the loop walks walks the value as the
+        // loop began, as the interpreter does: lent to the loop, the list
+        // could not be assigned in it, E0506 — `for w in ws` / `ws =
+        // grow[ws, w]`; Rosetta Code, Universal lambda machine)
+        let mut root = iter;
+        while let Expr::Field { base, .. } | Expr::Index { base, .. } | Expr::Convert { expr: base, .. } = root {
+            root = base;
+        }
+        let actual = match root {
+            Expr::Local(v, _) if Self::mutated_in(body).contains(v) => format!("({}).clone()", actual),
+            _ => actual,
+        };
         let is_copy = Self::is_copy_type(&elem);
         // in parallel as the lowering decided, on the cores `cpu[…]` allows
         // where the loop starts (a traced copy runs its loops in order: one
@@ -1331,7 +1403,8 @@ impl Emitter {
             self.needs_crow_runtime = true;
             self.line(&format!("crow_runtime::cores::run(|| {}.par_iter(){}.for_each({} {{", actual, each, param));
             self.indent += 1;
-            if is_copy || text {
+            if is_copy || text || written {
+                rebound(self, is_copy || text);
                 self.declare(var, elem);
             } else {
                 self.declare_borrowed(var, elem);
@@ -1346,7 +1419,8 @@ impl Emitter {
             let each = if text { ".cloned()" } else { "" };
             self.line(&format!("for {} in {}.iter(){} {{", param, actual, each));
             self.indent += 1;
-            if is_copy || text {
+            if is_copy || text || written {
+                rebound(self, is_copy || text);
                 self.declare(var, elem);
             } else {
                 self.declare_borrowed(var, elem);

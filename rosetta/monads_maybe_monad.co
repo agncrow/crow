@@ -1,0 +1,75 @@
+--- Rosetta Code: Monads/Maybe monad
+--- https://rosettacode.org/wiki/Monads/Maybe_monad
+--- Crow's error values are its Maybe: a value that has not failed is Just that
+--- value, and an error value, error[reason, kind], is Nothing — one that says why.
+--- unit is the value itself. bind is the pipe `then` (or any call): a call never
+--- hands a failed value to a function — the failure is the call's answer and the
+--- function does not run — so `m then f then g` is m >>= f >>= g, and no bind is
+--- written by hand. A Maybe's .ok says which it is.
+
+--- unit (return): a value is the Maybe that holds it
+fn unit[x]
+    return x
+
+--- Int -> Maybe Int, as in the Python entry
+fn plus_one[n]
+    return unit[n + 1]
+
+--- Int -> Maybe String, as in the Python entry
+fn currency[n]
+    return unit['$`n`.00']
+
+--- Int -> Maybe Int: half of an even number; an odd one has no whole half
+fn half[n]
+    if n % 2 ne 0
+        return error['`n` is odd', 'nothing']
+    return unit[n / 2]
+
+--- Int -> Maybe String: the Roman numeral of 1 to 3999; other numbers have none
+fn roman[n]
+    if n lt 1 or n gt 3999
+        return error['no Roman numeral for `n`', 'nothing']
+    worths = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+    marks = ['M', 'CM', 'D', 'CD', 'C', 'XC', 'L', 'XL', 'X', 'IX', 'V', 'IV', 'I']
+    numeral = ''
+    rest = n
+    i = 0
+    while rest gt 0
+        while rest gte worths[i]
+            numeral = '`numeral``marks[i]`'
+            rest = rest - worths[i]
+        i = i + 1
+    return unit[numeral]
+
+--- half, saying when it runs
+fn announced_half[n]
+    log['    (half runs on `n`)']
+    return half[n]
+
+log['Read as ints (Maybe Int), then >>= plus_one >>= currency:']
+for s in ['1', '99', 'x', '4']
+    m = int[s]
+    r = m then plus_one then currency
+    if r.ok
+        log['  `s` -> Just `m` -> Just `r`']
+    else
+        log['  `s` -> Nothing (`r.reason`)']
+
+log['']
+log['unit[n] >>= half >>= roman:']
+for n in [3998, 7, 0, 10000, 2024]
+    r = unit[n] then half then roman
+    if r.ok
+        log['  `n` -> Just `r`']
+    else
+        log['  `n` -> Nothing (`r.reason`)']
+
+log['']
+log['A function after Nothing does not run (announced_half says when it runs):']
+for s in ['12', 'twelve']
+    log['  `s` >>= announced_half:']
+    r = int[s] then announced_half
+    if r.ok
+        log['    Just `r`']
+    else
+        log['    Nothing (`r.reason`)']

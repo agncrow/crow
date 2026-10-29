@@ -563,8 +563,26 @@ pub enum Convert {
     ToTensor,
     ToList,
     /// A list or a map of ints as one of floats: a holder handed a float
-    /// holds floats from then on (spec §1).
+    /// holds floats from then on (spec §1). At any depth: a list of lists
+    /// of ints is a list of lists of floats (`floats_of_ints`).
     IntsToFloats,
+}
+
+/// Whether `given` holds ints where `held` holds floats, at the same depth
+/// — a list or a map of them, of lists of them, … — the shape
+/// `Convert::IntsToFloats` converts. `open` lets items of no known kind
+/// pass as ints (what the verifier accepts of an empty literal). A grid's
+/// row of ints pushed into a grid one of whose numbers was written a float
+/// had been pushed as it was: the compiled program did not build.
+pub fn floats_of_ints(held: &Ty, given: &Ty, open: bool) -> bool {
+    match (held, given) {
+        (Ty::List(h), Ty::List(g)) | (Ty::Map(_, h), Ty::Map(_, g)) | (Ty::Tensor(h, _), Ty::Tensor(g, _)) => match (h.as_ref(), g.as_ref()) {
+            (Ty::Float, Ty::Int | Ty::Big) => true,
+            (Ty::Float, Ty::Unknown) => open,
+            (h, g) => floats_of_ints(h, g, open),
+        },
+        _ => false,
+    }
 }
 
 /// What took a growing int where 64 bits are taken (`Convert::ToSmall`):
@@ -1144,6 +1162,12 @@ pub fn short_circuits(l: &Expr, r: &Expr) -> bool {
 /// the emitter reads to bind a call's arguments in their order, and the
 /// lowering to run an operator's left side ahead of the right side's
 /// statements (a narrowing to 64 bits can stop, so it is not quiet).
+/// A call after which the program does not go on (`halt`, `exit`: its
+/// row's `Prop::Ends`): a body may end on it without its answer.
+pub fn ends_program(e: &Expr) -> bool {
+    matches!(e, Expr::Call { target: Target::Row(row), .. } | Expr::Effect { row: Some(row), .. } if row.props.contains(&crate::table::Prop::Ends))
+}
+
 pub fn quiet(e: &Expr) -> bool {
     match e {
         Expr::Const(..) | Expr::Local(..) | Expr::Move(..) | Expr::Load(..) | Expr::Derived(..) | Expr::Constant(..) | Expr::FnRef(..) => true,

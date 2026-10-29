@@ -1,0 +1,142 @@
+--- Rosetta Code: Voronoi diagram
+--- https://rosettacode.org/wiki/Voronoi_diagram
+--- Twelve sites drawn at random (seeded, so the same every run) in a 600 x 400
+--- field. Each site's cell is made exactly: the field's rectangle cut by the half-plane
+--- on the site's side of its perpendicular bisector with every other site (a convex
+--- polygon, cut as Sutherland-Hodgman cuts). The cells are written as an SVG,
+--- voronoi_diagram.svg in the current directory, each filled with its site's colour
+--- (removed at the end unless the program is given the argument keep), and their
+--- areas are shown, adding up to the field's. The diagram is also drawn in characters,
+--- each cell of the screen marked with the letter of its nearest site, the site
+--- itself in capitals.
+
+use math
+
+struct Point [x, y]
+
+struct Site [at, name, colour]
+
+--- the part of the polygon on a's side of the bisector of a and b
+fn cut[polygon, a, b]
+    dx = b.x - a.x
+    dy = b.y - a.y
+    mx = (a.x + b.x) / 2.0
+    my = (a.y + b.y) / 2.0
+    kept = []
+    n = len[polygon]
+    for k in range[n]
+        p = polygon[k]
+        q = polygon[(k + 1) % n]
+        fp = (p.x - mx) * dx + (p.y - my) * dy
+        fq = (q.x - mx) * dx + (q.y - my) * dy
+        if fp lte 0.0
+            kept = push[kept, p]
+        if (fp lt 0.0 and fq gt 0.0) or (fp gt 0.0 and fq lt 0.0)
+            t = fp / (fp - fq)
+            kept = push[kept, Point[p.x + t * (q.x - p.x), p.y + t * (q.y - p.y)]]
+    return kept
+
+--- the cell of site i: every point of the field no farther from it than from any other
+fn cell[sites, i, width, height]
+    polygon = [Point[0.0, 0.0], Point[width, 0.0], Point[width, height], Point[0.0, height]]
+    for j in range[len[sites]]
+        if j ne i and len[polygon] gt 0
+            polygon = cut[polygon, sites[i].at, sites[j].at]
+    return polygon
+
+--- a polygon's area by the shoelace formula
+fn area[polygon]
+    twice = 0.0
+    n = len[polygon]
+    for k in range[n]
+        p = polygon[k]
+        q = polygon[(k + 1) % n]
+        twice = twice + p.x * q.y - q.x * p.y
+    return abs[twice] / 2.0
+
+fn random_sites[count, width, height]
+    letters = split['abcdefghijklmnopqrstuvwxyz', '']
+    sites = []
+    for i in range[count]
+        at = Point[round[rand[] * width * 10.0] / 10.0, round[rand[] * height * 10.0] / 10.0]
+        red = 64 + rand[160]
+        green = 64 + rand[160]
+        blue = 64 + rand[160]
+        sites = push[sites, Site[at, letters[i], 'rgb(`red`,`green`,`blue`)']]
+    return sites
+
+fn tenths[value]
+    return fmt[value, decimals = 1]
+
+fn svg[sites, cells, width, height]
+    parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="`width`" height="`height`" font-family="sans-serif" font-size="14">']
+    for i in range[len[sites]]
+        corners = for p in cells[i]
+            '`tenths[p.x]`,`tenths[p.y]`'
+        points = join[corners, ' ']
+        parts = push[parts, '<polygon points="`points`" fill="`sites[i].colour`" stroke="white" stroke-width="1.5"/>']
+    for s in sites
+        parts = push[parts, '<circle cx="`tenths[s.at.x]`" cy="`tenths[s.at.y]`" r="3" fill="black"/>']
+        --- a name goes above its site, or below one too near the top to show it
+        y = s.at.y - 5.0
+        if y lt 15.0
+            y = s.at.y + 17.0
+        parts = push[parts, '<text x="`tenths[s.at.x + 5.0]`" y="`tenths[y]`">`upper[s.name]`</text>']
+    parts = push[parts, '</svg>']
+    text = join[parts, '\n']
+    return '`text`\n'
+
+--- the field in characters: a column is width / columns wide and a row twice that
+--- high, as a screen's characters are; each shows the letter of its nearest site
+fn picture[sites, width, height, columns, rows]
+    lines = for r in range[rows]
+        y = (r + 0.5) * height / rows
+        marks = for c in range[columns]
+            x = (c + 0.5) * width / columns
+            nearest = 0
+            best = 0.0
+            for i in range[len[sites]]
+                dx = sites[i].at.x - x
+                dy = sites[i].at.y - y
+                d = dx * dx + dy * dy
+                if i eq 0 or d lt best
+                    best = d
+                    nearest = i
+            sites[nearest].name
+        marks
+    for s in sites
+        c = int[s.at.x * columns / width]
+        r = int[s.at.y * rows / height]
+        lines[r][c] = upper[s.name]
+    shown = for marks in lines
+        join[marks, '']
+    return shown
+
+width = 600.0
+height = 400.0
+seed[7]
+sites = random_sites[12, width, height]
+cells = for i in range[len[sites]]
+    cell[sites, i, width, height]
+
+log['Sites, each with the corners and the area of its cell:']
+total = 0.0
+for i in range[len[sites]]
+    s = sites[i]
+    a = area[cells[i]]
+    total = total + a
+    log['  `upper[s.name]` at (`tenths[s.at.x]`, `tenths[s.at.y]`): `len[cells[i]]` corners, area `fmt[a, decimals = 1]`']
+log['The cells cover `fmt[total, decimals = 1]` of the field\'s `fmt[width * height, decimals = 1]`.']
+log['']
+written = write['voronoi_diagram.svg', svg[sites, cells, width, height]]
+if not written.ok
+    halt['voronoi_diagram.svg could not be written: `written.reason`']
+log['voronoi_diagram.svg: the twelve cells, each in its site\'s colour']
+log['']
+for line in picture[sites, width, height, 78, 26]
+    log[line]
+given = args[]
+if 'keep' not in given
+    removed = rm['voronoi_diagram.svg']
+    if not removed.ok
+        halt['voronoi_diagram.svg could not be removed: `removed.reason`']

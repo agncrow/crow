@@ -1,0 +1,16 @@
+Perimeter format equality checks:
+  Q (8, 1, 3) and R (1, 3, 8): the same perimeter
+  U (18, 8, 14, 10, 12, 17, 19) and V (8, 14, 10, 12, 17, 19, 18): the same perimeter
+Two more: Q reversed, and U with two vertices swapped:
+  Q (8, 1, 3) and Q reversed (3, 1, 8): the same perimeter
+  U (18, 8, 14, 10, 12, 17, 19) and W (18, 8, 14, 12, 10, 17, 19): different perimeters
+
+Edge to perimeter format translations:
+  E: {(1, 11), (7, 11), (1, 7)}
+     -> (1, 7, 11)
+  F: {(11, 23), (1, 17), (17, 23), (1, 11)}
+     -> (1, 11, 23, 17)
+  G: {(8, 14), (17, 19), (10, 12), (10, 14), (12, 17), (8, 18), (18, 19)}
+     -> (8, 14, 10, 12, 17, 19, 18)
+  H: {(1, 3), (9, 11), (3, 11), (1, 11)}
+     -> no face: these edges do not go round one polygon

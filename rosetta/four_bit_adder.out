@@ -1,0 +1,10 @@
+0101 + 0011 = 1000, carry 0    ( 5 +  3 =  8)
+1111 + 0001 = 0000, carry 1    (15 +  1 = 16)
+1010 + 0101 = 1111, carry 0    (10 +  5 = 15)
+1001 + 1101 = 0110, carry 1    ( 9 + 13 = 22)
+0111 + 0111 = 1110, carry 0    ( 7 +  7 = 14)
+1100 + 0110 = 0010, carry 1    (12 +  6 = 18)
+0000 + 0000 = 0000, carry 0    ( 0 +  0 =  0)
+1111 + 1111 = 1110, carry 1    (15 + 15 = 30)
+
+All 256 sums of two four-bit numbers checked against integer addition: 0 wrong.

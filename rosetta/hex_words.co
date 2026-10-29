@@ -1,0 +1,77 @@
+--- Rosetta Code: Hex words
+--- https://rosettacode.org/wiki/Hex_words
+--- A hex word spells a number in base 16 with the letters a to f alone. The words of
+--- four letters or more are sorted by digital root (ties in dictionary order), then
+--- those of four distinct letters or more by their value, largest first: a value
+--- written back in hex is its word again.
+use bits
+
+fn is_hex_letter[c]
+    return c in 'abcdef'
+
+fn is_hex_word[word]
+    return len[word] gte 4 and all[split[word, ''], is_hex_letter]
+
+--- The word read as a hexadecimal number.
+fn value[word]
+    n = 0
+    for c in split[word, '']
+        n = n * 16 + code[c] - code['a'] + 10
+    return n
+
+fn hex_of[n]
+    digits = '0123456789abcdef'
+    letters = []
+    while n gt 0
+        letters = push[letters, digits[n % 16]]
+        n = n / 16
+    return join[reverse[letters], '']
+
+--- The digital root: the sum of the digits, taken again until one digit is left.
+fn digital_root[n]
+    while n gt 9
+        total = 0
+        while n gt 0
+            total = total + n % 10
+            n = n / 10
+        n = total
+    return n
+
+fn distinct_letters[word]
+    present = for c in split['abcdef', '']
+        if c in word
+            c
+    return len[present]
+
+fn row[word]
+    n = value[word]
+    return '`fmt[word, width = 8]``fmt[n, width = 10]``fmt[digital_root[n], width = 6]`'
+
+fn table[words]
+    log['word         value  root']
+    for word in words
+        log[row[word]]
+
+lines = split[read['unixdict.txt'], '\n']
+words = for line in lines
+    if is_hex_word[trim[line]]
+        trim[line]
+
+--- A root is one digit, so text sorts by root first, then by the word.
+tagged = for w in words
+    '`digital_root[value[w]]``w`'
+first = for key in sort[tagged]
+    slice[key, 1, len[key]]
+log['Hex words of four letters or more, by digital root:']
+table[first]
+log['`len[first]` words.']
+log['']
+
+many = for w in words
+    if distinct_letters[w] gte 4
+        value[w]
+largest_first = for n in reverse[sort[many]]
+    hex_of[n]
+log['Those of four distinct letters or more, by value, largest first:']
+table[largest_first]
+log['`len[largest_first]` words.']

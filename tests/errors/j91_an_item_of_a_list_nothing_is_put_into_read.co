@@ -1,0 +1,6 @@
+--- an item of a list nothing is put into, read: refused before the
+--- program runs, naming the list — the interpreter had stopped at the
+--- index, and the compiled program had read it as text
+g = []
+log[len[g]]
+log[g[0][0]]

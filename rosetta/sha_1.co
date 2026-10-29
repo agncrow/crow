@@ -1,0 +1,143 @@
+--- Rosetta Code: SHA-1
+--- https://rosettacode.org/wiki/SHA-1
+--- SHA-1 written out as FIPS 180-1 defines it, with use bits: the message is the
+--- text's octets (its UTF-8 bytes, made from the character codes), padded with a
+--- one bit, zeros and its length in bits to a whole number of 64-byte blocks; each
+--- block is stretched to eighty 32-bit words and mixed into five words of state in
+--- eighty rounds. A word is an int kept below 2^32 by a bitand after every sum and
+--- rotation. The digests are checked against Python's hashlib.
+
+use bits
+
+--- an int from hexadecimal digits, so the constants read as the standard writes them
+fn from_hex[digits]
+    places = map[split['0123456789abcdef', ''], range[16]]
+    value = 0
+    for c in split[lower[digits], '']
+        value = value * 16 + places[c]
+    return value
+
+--- a 32-bit word as eight hexadecimal digits
+fn hex8[x]
+    digits = split['0123456789abcdef', '']
+    shown = for i in range[8]
+        digits[bitand[shift[x, 4 * i - 28], 15]]
+    return join[shown, '']
+
+--- the octets of a text: each character's code written in UTF-8
+fn utf8[written]
+    out = []
+    for c in split[written, '']
+        n = code[c]
+        if n lt 128
+            out = push[out, n]
+        else if n lt 2048
+            out = push[out, bitor[192, shift[n, -6]]]
+            out = push[out, bitor[128, bitand[n, 63]]]
+        else if n lt 65536
+            out = push[out, bitor[224, shift[n, -12]]]
+            out = push[out, bitor[128, bitand[shift[n, -6], 63]]]
+            out = push[out, bitor[128, bitand[n, 63]]]
+        else
+            out = push[out, bitor[240, shift[n, -18]]]
+            out = push[out, bitor[128, bitand[shift[n, -12], 63]]]
+            out = push[out, bitor[128, bitand[shift[n, -6], 63]]]
+            out = push[out, bitor[128, bitand[n, 63]]]
+    return out
+
+--- a 32-bit word rotated left by c places (4294967295 is 2^32 - 1)
+fn rotl[x, c]
+    return bitand[bitor[shift[x, c], shift[x, c - 32]], 4294967295]
+
+fn sha1[octets]
+    mask = from_hex['ffffffff']
+    length = len[octets] * 8
+    message = push[octets, 128]
+    while len[message] % 64 ne 56
+        message = push[message, 0]
+    for i in range[8]
+        message = push[message, bitand[shift[length, 8 * i - 56], 255]]
+    h0 = from_hex['67452301']
+    h1 = from_hex['efcdab89']
+    h2 = from_hex['98badcfe']
+    h3 = from_hex['10325476']
+    h4 = from_hex['c3d2e1f0']
+    k0 = from_hex['5a827999']
+    k1 = from_hex['6ed9eba1']
+    k2 = from_hex['8f1bbcdc']
+    k3 = from_hex['ca62c1d6']
+    start = 0
+    while start lt len[message]
+        w = []
+        p = start
+        while p lt start + 64
+            w = push[w, bitor[bitor[shift[message[p], 24], shift[message[p + 1], 16]], bitor[shift[message[p + 2], 8], message[p + 3]]]]
+            p = p + 4
+        t = 16
+        while t lt 80
+            w = push[w, rotl[bitxor[bitxor[w[t - 3], w[t - 8]], bitxor[w[t - 14], w[t - 16]]], 1]]
+            t = t + 1
+        a = h0
+        b = h1
+        c = h2
+        d = h3
+        e = h4
+        t = 0
+        while t lt 80
+            f = 0
+            k = 0
+            if t lt 20
+                f = bitor[bitand[b, c], bitand[bitxor[b, mask], d]]
+                k = k0
+            else if t lt 40
+                f = bitxor[bitxor[b, c], d]
+                k = k1
+            else if t lt 60
+                f = bitor[bitor[bitand[b, c], bitand[b, d]], bitand[c, d]]
+                k = k2
+            else
+                f = bitxor[bitxor[b, c], d]
+                k = k3
+            mixed = bitand[rotl[a, 5] + f + e + k + w[t], mask]
+            e = d
+            d = c
+            c = rotl[b, 30]
+            b = a
+            a = mixed
+            t = t + 1
+        h0 = bitand[h0 + a, mask]
+        h1 = bitand[h1 + b, mask]
+        h2 = bitand[h2 + c, mask]
+        h3 = bitand[h3 + d, mask]
+        h4 = bitand[h4 + e, mask]
+        start = start + 64
+    words = for h in [h0, h1, h2, h3, h4]
+        hex8[h]
+    return join[words, '']
+
+--- the digest of a text, beside the one Python's hashlib gives for it
+fn check[label, written, expected]
+    digest = sha1[utf8[written]]
+    verdict = 'differs from hashlib'
+    if digest eq expected
+        verdict = 'as hashlib'
+    log['`digest`  `verdict`  `label`']
+
+log['SHA-1 of the task\'s string:']
+task_digest = sha1[utf8['Rosetta Code']]
+log['Rosetta Code -> `task_digest`']
+log['']
+log['Test vectors (FIPS 180-1 and others), each against Python\'s hashlib.sha1:']
+check['\'Rosetta Code\'', 'Rosetta Code', '48c98f7e5a6e736d790ab740dfc3f51a61abe2b5']
+check['the empty string', '', 'da39a3ee5e6b4b0d3255bfef95601890afd80709']
+check['\'abc\'', 'abc', 'a9993e364706816aba3e25717850c26c9cd0d89d']
+check['\'abcdbcde...nopq\', 56 octets: the length takes a second block', 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq', '84983e441c3bd26ebaae4aa1f95129e5e54670f1']
+check['\'abcdefghbcdefghi...nopqrstu\', 112 octets', 'abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu', 'a49b2446a02c645bf419f995b67091253a04a259']
+check['the quick brown fox ... dog', 'The quick brown fox jumps over the lazy dog', '2fd4e1c67a2d28fced849ee1bb76e7391b93eb12']
+check['the quick brown fox ... cog', 'The quick brown fox jumps over the lazy cog', 'de9f2c7fd25e1b3afad3e85a0bd17d9b100db4b3']
+check['55 a\'s: the padding just fits', repeat['a', 55], 'c1c8bbdc22796e28c0e15163d20899b65621d65a']
+check['56 a\'s: it does not', repeat['a', 56], 'c2db330f6083854c99d4b5bfb6e8f29f201be699']
+check['64 a\'s: one whole block', repeat['a', 64], '0098ba824b5c16427bd7a1122a5a442a25ec644d']
+check['Größe – 日本語 – 🐦, 30 octets of UTF-8', 'Größe – 日本語 – 🐦', '9df1cedabd04ac74932d9507b3ce096ff292985c']
+check['10,000 a\'s', repeat['a', 10000], 'a080cbda64850abb7b7f67ee875ba068074ff6fe']
+check['a million a\'s', repeat['a', 1000000], '34aa973cd4c4daa4f61eeb2bdbad27316534016f']

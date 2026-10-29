@@ -1,0 +1,67 @@
+--- Rosetta Code: Test integerness
+--- https://rosettacode.org/wiki/Test_integerness
+--- Crow's numbers: ints (whole numbers of any size), floats, decimals (exact base
+--- ten), fractions (exact ratios) and math's complex numbers (a real part over an
+--- imaginary one). A number is whole when it is finite and its distance from the
+--- nearest whole number, round[x], is zero; within a tolerance, when that distance
+--- is no more than it. One function serves every kind but the complex: an int is
+--- always whole, a float exactly when it holds a whole number (every float from
+--- 2^53 up does), a decimal when its places past the point are zeros, a fraction
+--- when its bottom is 1. NaN and the infinities are not whole. A complex number is
+--- whole when its real part is and its imaginary part is zero (or, with a
+--- tolerance, no further from zero than it). Limitations: a float cannot hold what
+--- its text rounds away (24.999999999999999999 read as a float is 25.0, and
+--- whole; read as a decimal it is not), and a decimal's or a fraction's distance is
+--- held to a tolerance as the nearest float (the exact test never rounds).
+
+use math
+
+--- whether x is a whole number, or within `tolerance` of one (0.0 asks for exactly)
+fn is_whole[x, tolerance]
+    if x - x ne 0
+        return false
+    off = abs[x - round[x]]
+    if off eq 0
+        return true
+    return tolerance gt 0.0 and float[off] lte tolerance
+
+fn is_whole_complex[c, tolerance]
+    return is_whole[real[c][0], tolerance] and abs[imag[c][0]] lte tolerance
+
+--- 'a+bi' or 'a-bi' as math's complex number
+fn complex_of[written]
+    chars = split[slice[written, 0, len[written] - 1], '']
+    k = len[chars] - 1
+    while k gt 0 and chars[k] ne '+' and chars[k] ne '-'
+        k = k - 1
+    re = float[join[slice[chars, 0, k], '']]
+    im = float[join[slice[chars, k, len[chars]], '']]
+    return complex[re, im]
+
+--- the number written, read as a number of its kind, tested
+fn whole_as[kind, written, tolerance]
+    if kind eq 'int'
+        return is_whole[int[written], tolerance]
+    if kind eq 'decimal'
+        return is_whole[decimal[written], tolerance]
+    if kind eq 'float'
+        return is_whole[float[written], tolerance]
+    if kind eq 'fraction'
+        parts = split[written, '/']
+        return is_whole[fraction[int[parts[0]], int[parts[1]]], tolerance]
+    return is_whole_complex[complex_of[written], tolerance]
+
+--- the task's cases, then others for the kinds it does not name
+cases = [
+    ['decimal', '25.000000'], ['decimal', '24.999999'], ['decimal', '25.000100'],
+    ['float', '-2.1e120'], ['float', '-5e-2'], ['float', 'NaN'], ['float', 'inf'],
+    ['complex', '5.0+0.0i'], ['complex', '5-5i'],
+    ['int', '-1267650600228229401496703205376'], ['float', '0.9999999998'],
+    ['float', '24.999999999999999999'], ['decimal', '24.999999999999999999'],
+    ['fraction', '10/2'], ['fraction', '-7/3'], ['fraction', '999999/1000000'],
+    ['complex', '-3.0+0.000001i']]
+log['kind      value                              exact  tolerance = 0.00001']
+for c in cases
+    exact = whole_as[c[0], c[1], 0.0]
+    near = whole_as[c[0], c[1], 0.00001]
+    log['`fmt[c[0], width = 10]``fmt[c[1], width = 35]``fmt[str[exact], width = 7]``near`']

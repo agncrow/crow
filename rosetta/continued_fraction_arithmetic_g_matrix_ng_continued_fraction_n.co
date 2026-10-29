@@ -1,0 +1,154 @@
+--- Rosetta Code: Continued fraction/Arithmetic/G(matrix ng, continued fraction n)
+--- https://rosettacode.org/wiki/Continued_fraction/Arithmetic/G(matrix_ng,_continued_fraction_n)
+--- A baby NG [a1 a; b1 b] turns the continued fraction of x into that of
+--- (a1·x + a)/(b1·x + b), taking in a term of x only when the next term of its
+--- answer is not yet settled. Crow has no generators: a continued fraction is
+--- a record of its first terms and a period repeated forever, and a chain of
+--- NGs, each reading what the one before gives out, is pulled a term at a time.
+
+struct NG [a1, a, b1, b]
+struct Terms [head, period]
+struct Chain [ngs, at, source]
+struct Pulled [more, term, chain]
+
+--- the floor of a / b, as the terms of a continued fraction are taken
+fn floor_div[a, b]
+    q = a / b
+    if q * b ne a and (a lt 0) ne (b lt 0)
+        return q - 1
+    return q
+
+--- x = t + 1/x': the NG takes in the term t
+fn ingress[g, t]
+    return NG[g.a + g.a1 * t, g.a1, g.b + g.b1 * t, g.b1]
+
+--- x has no more terms: it is infinite from here
+fn ingress_infinity[g]
+    return NG[g.a1, g.a1, g.b1, g.b1]
+
+--- z = t + 1/z': the NG gives out the term t
+fn egress[g, t]
+    return NG[g.b1, g.b, g.a1 - g.b1 * t, g.a - g.b * t]
+
+fn is_done[g]
+    return g.b1 eq 0 and g.b eq 0
+
+--- the next term is settled when both ends of the answer's range agree on it
+fn settled[g]
+    return g.b ne 0 and g.b1 ne 0 and floor_div[g.a, g.b] eq floor_div[g.a1, g.b1]
+
+--- the NG of outer applied after inner: their matrices' product
+fn compose[outer, inner]
+    a1 = outer.a1 * inner.a1 + outer.a * inner.b1
+    a = outer.a1 * inner.a + outer.a * inner.b
+    b1 = outer.b1 * inner.a1 + outer.b * inner.b1
+    b = outer.b1 * inner.a + outer.b * inner.b
+    return NG[a1, a, b1, b]
+
+--- the continued fraction of the rational n/d: it ends
+fn of_rational[n, d]
+    head = []
+    while d ne 0
+        t = floor_div[n, d]
+        head = push[head, t]
+        n, d = d, n - t * d
+    return Terms[head, []]
+
+--- the i-th term of a continued fraction, or an error value past its end
+fn term_at[cf, i]
+    if i lt len[cf.head]
+        return cf.head[i]
+    if len[cf.period] eq 0
+        return error['no more terms', 'end']
+    return cf.period[(i - len[cf.head]) % len[cf.period]]
+
+--- the next term given out by NG k of the chain (NG -1 is the source), and
+--- the chain after it
+fn pull[c, k]
+    if k lt 0
+        t = term_at[c.source, c.at]
+        if not t.ok
+            return Pulled[false, 0, c]
+        c.at = c.at + 1
+        return Pulled[true, t, c]
+    g = c.ngs[k]
+    while not settled[g] and not is_done[g]
+        p = pull[c, k - 1]
+        c = p.chain
+        if p.more
+            g = ingress[g, p.term]
+        else
+            g = ingress_infinity[g]
+    if is_done[g]
+        c.ngs[k] = g
+        return Pulled[false, 0, c]
+    t = floor_div[g.a1, g.b1]
+    c.ngs[k] = egress[g, t]
+    return Pulled[true, t, c]
+
+--- the first terms the chain's last NG gives out, at most `most` of them
+fn first_terms[c, most]
+    out = []
+    more = true
+    while more and len[out] lt most
+        p = pull[c, len[c.ngs] - 1]
+        c = p.chain
+        more = p.more
+        if more
+            out = push[out, p.term]
+    return out
+
+--- the exact value of a continued fraction's terms
+fn value_of[terms]
+    v = fraction[terms[-1]]
+    i = len[terms] - 2
+    while i gte 0
+        v = terms[i] + 1 / v
+        i = i - 1
+    return v
+
+--- [a0; a1, a2, …], with … where the terms were cut short
+fn shown[terms, cut]
+    if len[terms] eq 1
+        return '[`terms[0]`]'
+    rest = for t in slice[terms, 1, len[terms]]
+        str[t]
+    tail = join[rest, ', ']
+    if cut
+        tail = '`tail`, …'
+    return '[`terms[0]`; `tail`]'
+
+--- an NG applied to the rational n/d: its terms, and their value against the exact one
+fn show_rational[label, g, n, d]
+    terms = first_terms[Chain[[g], 0, of_rational[n, d]], 100]
+    x = fraction[n, d]
+    exact = (g.a1 * x + g.a) / (g.b1 * x + g.b)
+    value = value_of[terms]
+    check = 'the exact answer'
+    if value ne exact
+        check = 'but the exact answer is `exact`'
+    log['`fmt[label, width = 22]`-> `shown[terms, false]` = `value`, `check`']
+
+--- a chain of NGs applied to a fraction that never ends: its first 20 terms
+fn show_endless[label, ngs, cf, expected]
+    terms = first_terms[Chain[ngs, 0, cf], 21]
+    cut = slice[terms, 0, 20]
+    near = fmt[float[value_of[cut]], decimals = 12]
+    pad = repeat[' ', 24]
+    log['`fmt[label, width = 22]`-> `shown[cut, len[terms] gt 20]`']
+    log['`pad`≈ `near` (directly: `fmt[expected, decimals = 12]`)']
+
+show_rational['[1;5,2] + 1/2', NG[2, 1, 0, 2], 13, 11]
+show_rational['[3;7] + 1/2', NG[2, 1, 0, 2], 22, 7]
+show_rational['[3;7] divided by 4', NG[1, 0, 0, 4], 22, 7]
+
+sqrt2 = Terms[[1], [2]]
+identity = NG[1, 0, 0, 1]
+reciprocal = NG[0, 1, 1, 0]
+plus_one_halved = NG[1, 1, 0, 2]
+log['']
+show_endless['√2', [identity], sqrt2, sqrt[2.0]]
+show_endless['1/√2', [reciprocal], sqrt2, 1.0 / sqrt[2.0]]
+show_endless['(1 + 1/√2)/2', [reciprocal, plus_one_halved], sqrt2, (1.0 + 1.0 / sqrt[2.0]) / 2.0]
+both = compose[plus_one_halved, reciprocal]
+show_endless['as one NG [`both.a1` `both.a`; `both.b1` `both.b`]', [both], sqrt2, (1.0 + 1.0 / sqrt[2.0]) / 2.0]

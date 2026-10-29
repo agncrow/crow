@@ -1,0 +1,93 @@
+--- Rosetta Code: Abelian sandpile model
+--- https://rosettacode.org/wiki/Abelian_sandpile_model
+--- A square grid is one list of heights, row after row. A pile of four or more
+--- topples: it keeps its height mod 4 and sends a quarter of the rest to each
+--- neighbour (what falls past the edge is lost), sweep after sweep until all
+--- piles are stable. The task's three examples are shown as digits, a pile of
+--- 2^10 grains as digits too, and a pile of 2^14 grains is written as a
+--- grey-level image, sandpile.pgm (plain PGM), into the current directory.
+
+fn empty_grid[n]
+    cells = for i in range[n * n]
+        0
+    return cells
+
+fn stabilize[cells, n]
+    unstable = true
+    while unstable
+        unstable = false
+        i = 0
+        while i lt n * n
+            v = cells[i]
+            if v gte 4
+                unstable = true
+                q = v / 4
+                cells[i] = v % 4
+                r = i / n
+                c = i % n
+                if r gt 0
+                    cells[i - n] = cells[i - n] + q
+                if r lt n - 1
+                    cells[i + n] = cells[i + n] + q
+                if c gt 0
+                    cells[i - 1] = cells[i - 1] + q
+                if c lt n - 1
+                    cells[i + 1] = cells[i + 1] + q
+            i = i + 1
+    return cells
+
+--- a grid of side n with a pile of the given height at its centre
+fn centre_pile[n, height]
+    cells = empty_grid[n]
+    cells[(n / 2) * n + n / 2] = height
+    return cells
+
+--- the grid's rows as text, every height padded to the widest
+fn grid_lines[cells, n]
+    width = 1
+    for v in cells
+        width = max[width, len[str[v]]]
+    lines = for r in range[n]
+        row = for c in range[n]
+            fmt[cells[r * n + c], width = width]
+        join[row, ' ']
+    return lines
+
+fn show_before_after[n, height]
+    before = grid_lines[centre_pile[n, height], n]
+    after = grid_lines[stabilize[centre_pile[n, height], n], n]
+    for r in range[n]
+        arrow = '   '
+        if r eq n / 2
+            arrow = '-> '
+        log['`before[r]`  `arrow``after[r]`']
+    log['']
+
+--- the grid as a plain PGM image: four grey levels, a height each
+fn write_pgm[path, cells, n]
+    lines = for r in range[n]
+        row = for c in range[n]
+            str[cells[r * n + c]]
+        join[row, ' ']
+    body = join[lines, '\n']
+    return write[path, 'P2\n`n` `n`\n3\n`body`\n']
+
+for height in [4, 6, 16]
+    show_before_after[5, height]
+
+grains = 2 ^ 10
+side = 27
+pile = stabilize[centre_pile[side, grains], side]
+log['`grains` grains on a `side` x `side` grid, stable:']
+for line in grid_lines[pile, side]
+    log[line]
+
+grains = 2 ^ 14
+side = 101
+pile = stabilize[centre_pile[side, grains], side]
+kept = 0
+for v in pile
+    kept = kept + v
+written = write_pgm['sandpile.pgm', pile, side]
+log['']
+log['`grains` grains on a `side` x `side` grid: `kept` stay on it; the stable pile is in sandpile.pgm']

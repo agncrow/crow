@@ -1,0 +1,64 @@
+--- Rosetta Code: Decorate-sort-undecorate idiom
+--- https://rosettacode.org/wiki/Decorate-sort-undecorate_idiom
+--- Each word is decorated once with its key (a record of the word and its key),
+--- the records are put in the order a stable argsort gives their keys, and the
+--- words are read back out. The key function is handed in by name (bonus 1);
+--- the Schwartzian form composes the three steps and names no list (bonus 2).
+
+use math
+
+struct Decorated [word, key]
+
+--- each word paired with its key: the key is computed once per word
+fn decorate[words, key]
+    pairs = for w in words
+        Decorated[w, key[w]]
+    return pairs
+
+--- the pairs in the order of their keys; argsort keeps equal keys as they were
+fn sort_by_key[pairs]
+    ks = for p in pairs
+        p.key
+    ordered = for i in argsort[ks]
+        pairs[i]
+    return ordered
+
+fn undecorate[pairs]
+    words = for p in pairs
+        p.word
+    return words
+
+--- the Schwartzian transform: decorate, sort, undecorate, composed
+fn schwartzian[words, key]
+    return undecorate[sort_by_key[decorate[words, key]]]
+
+fn length[word]
+    len[word]
+
+fn vowels[word]
+    n = 0
+    for c in split[lower[word], '']
+        if c in 'aeiou'
+            n = n + 1
+    n
+
+fn shown[pairs]
+    parts = for p in pairs
+        '{`p.word`, `p.key`}'
+    return join[parts, ', ']
+
+words = split['Rosetta Code is a programming chrestomathy site', ' ']
+
+--- the idiom step by step, each list named
+decorated = decorate[words, length]
+ordered = sort_by_key[decorated]
+undecorated = undecorate[ordered]
+log['Words:       `words`']
+log['Decorated:   `shown[decorated]`']
+log['Sorted:      `shown[ordered]`']
+log['Undecorated: `undecorated`']
+log['']
+
+--- the same with no named list, and the key as a callback
+log['Schwartzian transform by length: `schwartzian[words, length]`']
+log['Schwartzian transform by vowels: `schwartzian[words, vowels]`']

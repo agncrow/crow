@@ -1,0 +1,47 @@
+--- Rosetta Code: Dice game probabilities
+--- https://rosettacode.org/wiki/Dice_game_probabilities
+--- Count the ways each total can be rolled, one die at a time (a convolution), then weigh
+--- every pair of totals: the chances come out as exact fractions, shown beside their floats.
+
+struct Odds [win, draw, loss]
+
+--- ways[t] is the number of rolls of `dice` dice with faces 1 to `faces` totalling t
+fn ways[faces, dice]
+    counts = [1]
+    for d in range[dice]
+        grown = for t in range[len[counts] + faces]
+            0
+        for t in range[len[counts]]
+            for face in range[1, faces + 1]
+                grown[t + face] = grown[t + face] + counts[t]
+        counts = grown
+    return counts
+
+fn odds[faces1, dice1, faces2, dice2]
+    a = ways[faces1, dice1]
+    b = ways[faces2, dice2]
+    win = 0
+    draw = 0
+    loss = 0
+    for i in range[len[a]]
+        for j in range[len[b]]
+            w = a[i] * b[j]
+            if i gt j
+                win = win + w
+            else if i eq j
+                draw = draw + w
+            else
+                loss = loss + w
+    rolls = faces1 ^ dice1 * faces2 ^ dice2
+    return Odds[fraction[win, rolls], fraction[draw, rolls], fraction[loss, rolls]]
+
+fn report[faces1, dice1, faces2, dice2]
+    o = odds[faces1, dice1, faces2, dice2]
+    log['The first player rolls `dice1` dice of `faces1` faces, the second `dice2` dice of `faces2` faces:']
+    log['    the first player wins:  `float[o.win]` (`o.win`)']
+    log['    a draw:                 `float[o.draw]` (`o.draw`)']
+    log['    the second player wins: `float[o.loss]` (`o.loss`)']
+
+report[4, 9, 6, 6]
+log['']
+report[10, 5, 7, 6]

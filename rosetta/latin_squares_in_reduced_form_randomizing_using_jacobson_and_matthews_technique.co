@@ -1,0 +1,243 @@
+--- Rosetta Code: Latin Squares in reduced form/Randomizing using Jacobson and Matthews' technique
+--- https://rosettacode.org/wiki/Latin_Squares_in_reduced_form/Randomizing_using_Jacobson_and_Matthews%27_technique
+--- A square of order n is its incidence cube: cell (x, y, z) is 1 where row x,
+--- column y holds z. Jacobson and Matthews move from a cell holding 0 by adding 1
+--- and -1 around a box of eight cells; where that leaves a -1 (an improper cube),
+--- they move again from it, until the cube is a square again. The cube is not
+--- held whole: each line through it keeps the one or two places along it that
+--- hold 1, and the -1 cell is kept apart, so a move costs the same at order 256
+--- as at order 4. Draws are seeded. Part 4 takes about 4 s interpreted and 0.2 s
+--- built by crow build here; it prints what it found rather than the time.
+
+use math
+
+fn line_at[n, t, a, b]
+    --- the two slots of line (a, b) of table t: table 0 keeps for (x, y) the z
+    --- that hold 1, table 1 for (y, z) the x, table 2 for (z, x) the y
+    return 2 * ((t * n + a) * n + b)
+
+fn cube_of[square, n]
+    --- the lines of the three tables, then the -1 cell's x, y and z (-1 while
+    --- the cube is a square) and the count of steps taken
+    lines = for i in range[6 * n * n + 4]
+        -1
+    lines[6 * n * n + 3] = 0
+    for x in range[n]
+        for y in range[n]
+            z = square[x * n + y]
+            lines[line_at[n, 0, x, y]] = z
+            lines[line_at[n, 1, y, z]] = x
+            lines[line_at[n, 2, z, x]] = y
+    return lines
+
+fn steps_taken[cube, n]
+    return cube[6 * n * n + 3]
+
+fn square_of[cube, n]
+    square = for p in range[n * n]
+        cube[line_at[n, 0, p / n, p % n]]
+    return square
+
+fn one_of[lines, p]
+    --- the place that holds 1 on a line: of two (a line through the -1 cell), either
+    if lines[p + 1] eq -1
+        return lines[p]
+    return lines[p + rand[2]]
+
+fn changed[lines, n, x, y, z, by]
+    --- cell (x, y, z) changed by 1 or -1. It lies on three lines, one of each
+    --- table: (x, y) holding z, (y, z) holding x and (z, x) holding y
+    bad = 6 * n * n
+    if by gt 0 and lines[bad] eq x and lines[bad + 1] eq y and lines[bad + 2] eq z
+        --- the -1 cell becomes 0
+        lines[bad] = -1
+        return lines
+    p = line_at[n, 0, x, y]
+    if by lt 0 and lines[p] ne z and lines[p + 1] ne z
+        --- a 0 becomes the -1 cell
+        lines[bad] = x
+        lines[bad + 1] = y
+        lines[bad + 2] = z
+        return lines
+    a, b, v = x, y, z
+    for t in range[3]
+        p = line_at[n, t, a, b]
+        if by gt 0
+            if lines[p] eq -1
+                lines[p] = v
+            else
+                lines[p + 1] = v
+        else if lines[p] eq v
+            lines[p] = lines[p + 1]
+            lines[p + 1] = -1
+        else
+            lines[p + 1] = -1
+        a, b, v = b, v, a
+    return lines
+
+fn shuffled[lines, n]
+    --- one Jacobson-Matthews move, from a square to a square
+    bad = 6 * n * n
+    x = rand[n]
+    y = rand[n]
+    --- a symbol other than the one at (x, y): its cell holds 0
+    z = rand[n - 1]
+    if z gte lines[line_at[n, 0, x, y]]
+        z = z + 1
+    going = true
+    while going
+        i = one_of[lines, line_at[n, 1, y, z]]
+        j = one_of[lines, line_at[n, 2, z, x]]
+        k = one_of[lines, line_at[n, 0, x, y]]
+        lines = changed[lines, n, x, y, z, 1]
+        lines = changed[lines, n, x, j, k, 1]
+        lines = changed[lines, n, i, y, k, 1]
+        lines = changed[lines, n, i, j, z, 1]
+        lines = changed[lines, n, x, y, k, -1]
+        lines = changed[lines, n, x, j, z, -1]
+        lines = changed[lines, n, i, y, z, -1]
+        lines = changed[lines, n, i, j, k, -1]
+        lines[bad + 3] = lines[bad + 3] + 1
+        if lines[bad] eq -1
+            going = false
+        else
+            x, y, z = lines[bad], lines[bad + 1], lines[bad + 2]
+    return lines
+
+fn reduced_key[lines, n]
+    --- the square reduced (its columns in the order of row 0's symbols, its rows
+    --- in the order of the first column's), read row by row as a number in base n
+    first = lines[line_at[n, 2, 0, 0]]
+    key = 0
+    r = 0
+    while r lt n
+        row = lines[line_at[n, 1, first, r]]
+        c = 0
+        while c lt n
+            column = lines[line_at[n, 2, c, 0]]
+            key = key * n + lines[line_at[n, 0, row, column]]
+            c = c + 1
+        r = r + 1
+    return key
+
+fn key_of[square, n]
+    key = 0
+    for v in square
+        key = key * n + v
+    return key
+
+fn tally[cube, n, count]
+    --- how often each reduced square comes out of count moves, by its key
+    counts = map[]
+    for turn in range[count]
+        cube = shuffled[cube, n]
+        key = reduced_key[cube, n]
+        if key in counts
+            counts = set[counts, key, counts[key] + 1]
+        else
+            counts = set[counts, key, 1]
+    return counts
+
+fn cyclic[n]
+    square = for p in range[n * n]
+        (p / n + p % n) % n
+    return square
+
+fn is_latin[square, n]
+    for x in range[n]
+        row = for y in range[n]
+            square[x * n + y]
+        column = for y in range[n]
+            square[y * n + x]
+        if sort[row] ne range[n] or sort[column] ne range[n]
+            return false
+    return true
+
+fn show[square, n]
+    for x in range[n]
+        cells = for y in range[n]
+            fmt[square[x * n + y] + 1, width = 2]
+        log[join[cells, ' ']]
+
+fn fill[square, n, cell]
+    --- every reduced square that completes these cells, row by row
+    if cell eq n * n
+        return [square]
+    r = cell / n
+    c = cell % n
+    if r eq 0 or c eq 0
+        return fill[square, n, cell + 1]
+    found = []
+    for v in range[n]
+        clash = false
+        for y in range[c]
+            if square[r * n + y] eq v
+                clash = true
+        for x in range[r]
+            if square[x * n + c] eq v
+                clash = true
+        if not clash
+            next = square
+            next[cell] = v
+            found = concat[found, fill[next, n, cell + 1]]
+    return found
+
+fn reduced_squares[n]
+    start = for p in range[n * n]
+        -1
+    for i in range[n]
+        start[i] = i
+        start[i * n] = i
+    return fill[start, n, 0]
+
+seed[2026]
+
+log['PART 1: 10,000 latin squares of order 4 in reduced form:']
+log['']
+x0 = [0, 1, 2, 3, 1, 0, 3, 2, 2, 3, 0, 1, 3, 2, 1, 0]
+counts4 = tally[cube_of[x0, 4], 4, 10000]
+for square in reduced_squares[4]
+    show[square, 4]
+    log['Occurs `counts4[key_of[square, 4]]` times']
+    log['']
+
+log['PART 2: 10,000 latin squares of order 5 in reduced form:']
+log['']
+counts5 = tally[cube_of[cyclic[5], 5], 5, 10000]
+all56 = reduced_squares[5]
+cells = []
+for g in range[len[all56]]
+    key = key_of[all56[g], 5]
+    times = 0
+    if key in counts5
+        times = counts5[key]
+    cells = push[cells, '`fmt[g + 1, width = 2]`: `fmt[times, width = 3]`']
+for row in range[7]
+    log[join[slice[cells, row * 8, row * 8 + 8], ', ']]
+log['Reduced squares of order 5 produced: `len[keys[counts5]]` of `len[all56]`']
+log['']
+
+log['PART 3: 750 latin squares of order 42, showing the last one:']
+log['']
+cube42 = cube_of[cyclic[42], 42]
+for turn in range[750]
+    cube42 = shuffled[cube42, 42]
+last42 = square_of[cube42, 42]
+show[last42, 42]
+log['A latin square: `is_latin[last42, 42]`']
+log['']
+
+log['PART 4: 1000 latin squares of order 256:']
+log['']
+first = cyclic[256]
+cube256 = cube_of[first, 256]
+for turn in range[1000]
+    cube256 = shuffled[cube256, 256]
+last = square_of[cube256, 256]
+moved = 0
+for p in range[256 * 256]
+    if last[p] ne first[p]
+        moved = moved + 1
+log['The last is a latin square: `is_latin[last, 256]`']
+log['Steps the 1000 moves took: `steps_taken[cube256, 256]` (a move ends at its first proper cube)']
+log['Cells that differ from the cyclic square it started from: `moved` of 65536']

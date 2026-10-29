@@ -1,0 +1,60 @@
+--- Rosetta Code: Modified random distribution
+--- https://rosettacode.org/wiki/Modified_random_distribution
+--- Rejection sampling: a uniform draw x is kept when a second draw falls below
+--- modifier[x]; the modifier is handed to the generator by name, so any other
+--- modifier works too. The draws are seeded, so every run prints the same counts.
+--- Beside each bin's count is the count the modifier predicts (its integral over
+--- the bin, by the midpoint rule, over its integral on 0..1).
+
+use math
+
+--- V-shaped: 1 at 0, 0 at 0.5, 1 again at 1
+fn modifier[x]
+    if x lt 0.5
+        return 2.0 * (0.5 - x)
+    return 2.0 * (x - 0.5)
+
+--- a number in 0..1, drawn as often as modifier says
+fn modified_random[m]
+    x = rand[]
+    while rand[] gte m[x]
+        x = rand[]
+    return x
+
+--- the integral of m from a to b by the midpoint rule
+fn integral[m, a, b, steps]
+    h = (b - a) / float[steps]
+    total = 0.0
+    i = 0
+    while i lt steps
+        total = total + m[a + (float[i] + 0.5) * h]
+        i = i + 1
+    return total * h
+
+seed[2026]
+
+n = 50000
+bins = 20
+counts = for b in range[bins]
+    0
+i = 0
+while i lt n
+    x = modified_random[modifier]
+    b = int[x * float[bins]]
+    counts[b] = counts[b] + 1
+    i = i + 1
+
+whole = integral[modifier, 0.0, 1.0, 1000]
+most = 0
+for c in counts
+    most = max[most, c]
+
+log['`fmt[n, commas = true]` numbers in `bins` bins (each # is about `most / 50` numbers):']
+log['']
+log['   bin           count  expected']
+for b in range[bins]
+    lo = float[b] / float[bins]
+    hi = float[b + 1] / float[bins]
+    expected = round[float[n] * integral[modifier, lo, hi, 100] / whole]
+    bar = repeat['#', round[50.0 * float[counts[b]] / float[most]]]
+    log['  `fmt[lo, decimals = 2]` - `fmt[hi, decimals = 2]`  `fmt[counts[b], width = 6]`  `fmt[expected, width = 6]`  `bar`']

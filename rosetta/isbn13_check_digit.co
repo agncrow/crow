@@ -1,0 +1,21 @@
+--- Rosetta Code: ISBN13 check digit
+--- https://rosettacode.org/wiki/ISBN13_check_digit
+--- With its hyphens and spaces taken out, a code must be thirteen digits whose
+--- sum, every other digit counted three times, is a multiple of ten.
+
+fn is_isbn13[code]
+    plain = replace[replace[code, '-', ''], ' ', '']
+    if not matches[plain, '^[0-9]{13}$']
+        return false
+    total = 0
+    for i in range[13]
+        total = total + int[plain[i]] * (1 + 2 * (i % 2))
+    return total % 10 eq 0
+
+--- the task's four, then one written with spaces and one a digit short
+codes = ['978-0596528126', '978-0596528120', '978-1788399081', '978-1788399083', '978 1 86197 876 9', '978-0-306-4061']
+for code in codes
+    verdict = 'bad'
+    if is_isbn13[code]
+        verdict = 'good'
+    log['`code`: `verdict`']

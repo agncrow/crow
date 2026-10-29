@@ -1,0 +1,14 @@
+--- Rosetta Code: Get system command output
+--- https://rosettacode.org/wiki/Get_system_command_output
+--- shell runs a command through sh and answers a record of its exit status, its standard
+--- output and its standard error (each without its last line break); the output's lines
+--- go into a list. The commands print the same thing on every run.
+
+r = shell['printf "%s\\n" pear apple fig banana | sort']
+lines = split[r.stdout, '\n']
+log['sort answered status `r.status` and `len[lines]` lines:']
+for i in range[len[lines]]
+    log['    `i`: `lines[i]`']
+
+failed = shell['echo "no such fruit" >&2; exit 3']
+log['a command that fails: status `failed.status`, standard error `failed.stderr`']

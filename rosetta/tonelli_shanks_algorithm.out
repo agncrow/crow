@@ -1,0 +1,16 @@
+n = 10, p = 13
+    roots: 7 and 6 (squared, each is n modulo p: true)
+n = 56, p = 101
+    roots: 37 and 64 (squared, each is n modulo p: true)
+n = 1030, p = 10009
+    roots: 1632 and 8377 (squared, each is n modulo p: true)
+n = 1032, p = 10009
+    no roots: 1032 is not a square modulo 10009
+n = 44402, p = 100049
+    roots: 30468 and 69581 (squared, each is n modulo p: true)
+n = 665820697, p = 1000000009
+    roots: 378633312 and 621366697 (squared, each is n modulo p: true)
+n = 881398088036, p = 1000000000039
+    roots: 791399408049 and 208600591990 (squared, each is n modulo p: true)
+n = 41660815127637347468140745042827704103445750172002, p = 100000000000000000000000000000000000000000000000577
+    roots: 32102985369940620849741983987300038903725266634508 and 67897014630059379150258016012699961096274733366069 (squared, each is n modulo p: true)

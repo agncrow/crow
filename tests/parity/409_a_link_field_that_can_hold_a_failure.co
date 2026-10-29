@@ -1,0 +1,14 @@
+--- a record-or-none field that can also hold a failure (given a record a
+--- call that can fail made): 0 written down is none, a record is linked, a
+--- failure stays one — the 0 had been held as an int, and the compiled
+--- program did not build (Rosetta Code, Rational calculator)
+
+struct Node [value, left]
+
+fn leaf[q]
+    return Node[q, 0]
+
+tree = Node[1, leaf[int['2']]]
+log[tree.left.value]
+bad = Node[1, leaf[int['x']]]
+log[bad.left.ok]

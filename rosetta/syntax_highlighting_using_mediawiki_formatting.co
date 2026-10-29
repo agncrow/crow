@@ -1,0 +1,100 @@
+--- Rosetta Code: Syntax highlighting using Mediawiki formatting
+--- https://rosettacode.org/wiki/Syntax_highlighting_using_Mediawiki_formatting
+--- A Crow source as MediaWiki markup: the words Crow keeps for itself in bold,
+--- comments (three dashes to the end of the line) in italics, strings (which may
+--- run over several lines) as they are, and the quote, ampersand, less-than and
+--- greater-than written as entities; every line, a blank one too, starts with a
+--- space. Crow's calls nest in square brackets, and two opening ones in a row
+--- would read as a wiki link, so the first of such a pair is written &#91; too.
+--- The file is the first argument; with none the program reads its own source,
+--- by its path in the repository (it runs from a work directory).
+
+fn keywords[]
+    return ['and', 'break', 'continue', 'derive', 'else', 'eq', 'false', 'fn', 'for', 'gt', 'gte', 'if', 'in', 'lt', 'lte', 'ne', 'not', 'or', 'return', 'struct', 'test', 'then', 'true', 'use', 'view', 'while']
+
+fn entities[text]
+    t = replace[text, '&', '&amp;']
+    t = replace[t, '\'', '&apos;']
+    t = replace[t, '<', '&lt;']
+    return replace[t, '>', '&gt;']
+
+fn is_word_char[c]
+    return (c gte 'a' and c lte 'z') or (c gte 'A' and c lte 'Z') or (c gte '0' and c lte '9') or c eq '_'
+
+--- where the string opening at `start` ends: past its closing quote, a backslash
+--- taking the character after it with it
+fn string_end[chars, start]
+    j = start + 1
+    while j lt len[chars] and chars[j] ne '\''
+        if chars[j] eq '\\'
+            j = j + 1
+        j = j + 1
+    return min[j + 1, len[chars]]
+
+--- where a comment ends: at the line break, or at the end of the source
+fn line_end[chars, start]
+    j = start
+    while j lt len[chars] and chars[j] ne '\n'
+        j = j + 1
+    return j
+
+--- where a word ends: past its last letter, digit or underscore
+fn word_end[chars, start]
+    j = start
+    while j lt len[chars] and is_word_char[chars[j]]
+        j = j + 1
+    return j
+
+fn opens_comment[chars, i]
+    return join[slice[chars, i, i + 3], ''] eq '---'
+
+fn opens_link[chars, i]
+    return chars[i] eq '[' and i + 1 lt len[chars] and chars[i + 1] eq '['
+
+--- the source as one marked-up text, a piece at a time
+fn marked_up[source, reserved]
+    chars = split[source, '']
+    pieces = []
+    i = 0
+    while i lt len[chars]
+        c = chars[i]
+        j = i + 1
+        piece = entities[c]
+        if c eq '\''
+            j = string_end[chars, i]
+            piece = entities[join[slice[chars, i, j], '']]
+        else if c eq '-' and opens_comment[chars, i]
+            j = line_end[chars, i]
+            comment = entities[join[slice[chars, i, j], '']]
+            piece = '\'\'`comment`\'\''
+        else if is_word_char[c]
+            j = word_end[chars, i]
+            word = join[slice[chars, i, j], '']
+            piece = word
+            if word in reserved
+                piece = '\'\'\'`word`\'\'\''
+        else if opens_link[chars, i]
+            piece = '&#91;'
+        pieces = push[pieces, piece]
+        i = j
+    return join[pieces, '']
+
+--- every line led by a space, so the wiki shows the whole source as one block
+fn wiki_lines[source, reserved]
+    lines = split[marked_up[source, reserved], '\n']
+    if len[lines] gt 0 and lines[-1] eq ''
+        lines = pop[lines]
+    shown = for line in lines
+        ' `line`'
+    return shown
+
+given = args[]
+path = '/Users/vijay/code/rust_projects/crow/rosetta/syntax_highlighting_using_mediawiki_formatting.co'
+if len[given] gt 0
+    path = given[0]
+source = read[path]
+if source.ok
+    for line in wiki_lines[source, keywords[]]
+        log[line]
+else
+    log['cannot read `path`: `source.reason`']

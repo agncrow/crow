@@ -1,0 +1,26 @@
+Example 1: X has faces 136, Y has faces 234
+    X   Y   winner
+    1   2   Y
+    1   3   Y
+    1   4   Y
+    3   2   X
+    3   3   -
+    3   4   Y
+    6   2   X
+    6   3   X
+    6   4   X
+    total wins: X = 4, Y = 4, so X = Y
+
+35 four-faced dice with faces from 1 to 4 (each die shown by its faces).
+A rotation of a non-transitive list is one too: each loop shows once per die in it.
+
+Ordered lists of 3 non-transitive dice, each losing to the next and the first beating the last: 3
+    1144 < 2224 (6 to 8), 2224 < 1333 (7 to 9), yet 1144 > 1333 (8 to 6)
+    1333 < 1144 (6 to 8), 1144 < 2224 (6 to 8), yet 1333 > 2224 (9 to 7)
+    2224 < 1333 (7 to 9), 1333 < 1144 (6 to 8), yet 2224 > 1144 (8 to 6)
+
+Ordered lists of 4 non-transitive dice, each losing to the next and the first beating the last: 4
+    1144 < 2224 (6 to 8), 2224 < 2233 (4 to 6), 2233 < 1333 (4 to 6), yet 1144 > 1333 (8 to 6)
+    1333 < 1144 (6 to 8), 1144 < 2224 (6 to 8), 2224 < 2233 (4 to 6), yet 1333 > 2233 (6 to 4)
+    2224 < 2233 (4 to 6), 2233 < 1333 (4 to 6), 1333 < 1144 (6 to 8), yet 2224 > 1144 (8 to 6)
+    2233 < 1333 (4 to 6), 1333 < 1144 (6 to 8), 1144 < 2224 (6 to 8), yet 2233 > 2224 (6 to 4)

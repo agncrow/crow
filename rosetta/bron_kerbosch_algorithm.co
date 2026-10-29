@@ -1,0 +1,80 @@
+--- Rosetta Code: Bron–Kerbosch algorithm
+--- https://rosettacode.org/wiki/Bron–Kerbosch_algorithm
+--- The graph is a map from each vertex to its neighbours, and R, P and X are lists of
+--- vertices. With pivoting: the pivot is the vertex of P and X with the most neighbours,
+--- and only the vertices of P that are not its neighbours start a branch.
+
+--- the graph with the edge from a to b added, once
+fn joined[g, a, b]
+    if a not in g
+        return set[g, a, [b]]
+    if b in g[a]
+        return g
+    return set[g, a, push[g[a], b]]
+
+--- every vertex's neighbours, each edge taken both ways
+fn graph_of[edges]
+    g = map[]
+    for e in edges
+        g = joined[g, e[0], e[1]]
+        g = joined[g, e[1], e[0]]
+    return g
+
+--- the items of xs that ys holds too
+fn common[xs, ys]
+    both = for x in xs
+        if x in ys
+            x
+    return both
+
+fn without[xs, v]
+    kept = for x in xs
+        if x ne v
+            x
+    return kept
+
+--- the vertex of vs with the most neighbours, the first of them on a tie
+fn pivot_of[g, vs]
+    best = vs[0]
+    for v in vs
+        if len[g[v]] gt len[g[best]]
+            best = v
+    return best
+
+--- the maximal cliques of more than two vertices that hold every vertex of r, some of p
+--- and none of x, each as its vertices in order joined by commas
+fn bron_kerbosch[g, r, p, x]
+    if len[p] eq 0 and len[x] eq 0
+        if len[r] gt 2
+            return [join[sort[r], ', ']]
+        return []
+    pivot = pivot_of[g, concat[p, x]]
+    candidates = for v in p
+        if v not in g[pivot]
+            v
+    found = []
+    for v in candidates
+        found = concat[found, bron_kerbosch[g, push[r, v], common[p, g[v]], common[x, g[v]]]]
+        p = without[p, v]
+        x = push[x, v]
+    return found
+
+fn show[edges]
+    g = graph_of[edges]
+    for clique in sort[bron_kerbosch[g, [], keys[g], []]]
+        log[clique]
+
+--- the task's graph: every edge is listed both ways
+task = [
+    ['a', 'b'], ['b', 'a'], ['a', 'c'], ['c', 'a'], ['b', 'c'], ['c', 'b'],
+    ['d', 'e'], ['e', 'd'], ['d', 'f'], ['f', 'd'], ['e', 'f'], ['f', 'e']
+]
+show[task]
+
+--- cliques that share vertices: a, b, c, d whole, three triangles, and g with h only a pair
+overlapping = [
+    ['a', 'b'], ['a', 'c'], ['a', 'd'], ['b', 'c'], ['b', 'd'], ['c', 'd'], ['c', 'e'],
+    ['d', 'e'], ['e', 'f'], ['e', 'g'], ['f', 'g'], ['g', 'h'], ['h', 'i'], ['h', 'j'], ['i', 'j']
+]
+log['']
+show[overlapping]

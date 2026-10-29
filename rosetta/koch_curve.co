@@ -1,0 +1,126 @@
+--- Rosetta Code: Koch curve
+--- https://rosettacode.org/wiki/Koch_curve
+--- Drawn two ways. In characters: a turtle walks the curve one segment at a
+--- time, each direction a multiple of 60 degrees, and leaves _ / or \ in the cell
+--- it crosses (an east or west step is two cells of _, a slanted step one cell up
+--- or down). As an SVG: the snowflake of level 4 as a polygon, written to
+--- koch_curve.svg in the current directory (the last line removes it again:
+--- leave that line out to keep the picture). Each level replaces a segment of
+--- direction d by four: d, d + 60, d - 60, d.
+
+use math
+
+--- the directions of the curve's segments, in sixths of a turn
+fn koch[level, heading]
+    turns = [heading % 6]
+    for l in range[level]
+        finer = []
+        for d in turns
+            finer = concat[finer, [d, (d + 1) % 6, (d + 5) % 6, d]]
+        turns = finer
+    return turns
+
+--- the snowflake: three curves round a triangle, clockwise, bumps outward
+fn snowflake[level]
+    return concat[concat[koch[level, 0], koch[level, 4]], koch[level, 2]]
+
+struct Mark [col, row, mark]
+
+--- the cells the turtle crosses, from (0, 0) at the corner of four cells
+fn marks[turns]
+    x = 0
+    y = 0
+    drawn = []
+    for d in turns
+        if d eq 0
+            drawn = push[push[drawn, Mark[x, y, '_']], Mark[x + 1, y, '_']]
+            x = x + 2
+        else if d eq 3
+            drawn = push[push[drawn, Mark[x - 1, y, '_']], Mark[x - 2, y, '_']]
+            x = x - 2
+        else if d eq 1
+            drawn = push[drawn, Mark[x, y, '/']]
+            x = x + 1
+            y = y + 1
+        else if d eq 4
+            drawn = push[drawn, Mark[x - 1, y - 1, '/']]
+            x = x - 1
+            y = y - 1
+        else if d eq 2
+            drawn = push[drawn, Mark[x - 1, y, '\\']]
+            x = x - 1
+            y = y + 1
+        else
+            drawn = push[drawn, Mark[x, y - 1, '\\']]
+            x = x + 1
+            y = y - 1
+    return drawn
+
+--- the marks as lines of text, the top row first, blanks after the last mark cut
+fn picture[drawn]
+    cols = for m in drawn
+        m.col
+    rows = for m in drawn
+        m.row
+    --- math's min and max answer floats: the cells are counted in ints
+    left = int[min[cols]]
+    bottom = int[min[rows]]
+    width = int[max[cols]] - left + 1
+    height = int[max[rows]] - bottom + 1
+    cells = for i in range[width * height]
+        ' '
+    --- a slash crosses its whole cell and a _ only the cell's floor: where the
+    --- two meet in one cell, the slash is drawn
+    for m in drawn
+        at = (m.row - bottom) * width + m.col - left
+        if m.mark ne '_' or cells[at] eq ' '
+            cells[at] = m.mark
+    lines = []
+    r = height - 1
+    while r gte 0
+        line = trim_end[join[slice[cells, r * width, (r + 1) * width], '']]
+        lines = push[lines, line]
+        r = r - 1
+    return lines
+
+fn trim_end[text]
+    return sub[text, ' +$', '']
+
+--- the turtle's path as points of an SVG polygon, one segment `side` long
+fn svg[turns, side]
+    x = 0.0
+    y = 0.0
+    xs = [x]
+    ys = [y]
+    for d in turns
+        x = x + side * cos[d * pi / 3]
+        y = y - side * sin[d * pi / 3]
+        xs = push[xs, x]
+        ys = push[ys, y]
+    left = min[xs] - 10.0
+    top = min[ys] - 10.0
+    width = fmt[max[xs] - left + 10.0, decimals = 0]
+    height = fmt[max[ys] - top + 10.0, decimals = 0]
+    pairs = for i in range[len[xs]]
+        '`fmt[xs[i] - left, decimals = 2]`,`fmt[ys[i] - top, decimals = 2]`'
+    path = join[pairs, ' ']
+    head = '<svg xmlns="http://www.w3.org/2000/svg" width="`width`" height="`height`">'
+    background = '<rect width="100%" height="100%" fill="white"/>'
+    shape = '<polygon points="`path`" fill="lightblue" stroke="navy" stroke-width="1"/>'
+    return '`head`\n`background`\n`shape`\n</svg>\n'
+
+for level in range[1, 4]
+    log['The Koch curve of level `level`:']
+    for line in picture[marks[koch[level, 0]]]
+        log[line]
+    log['']
+
+log['The Koch snowflake of level 3:']
+for line in picture[marks[snowflake[3]]]
+    log[line]
+log['']
+
+flake = snowflake[4]
+written = write['koch_curve.svg', svg[flake, 6.0]]
+log['The snowflake of level 4, `len[flake]` segments, written to koch_curve.svg: `written.ok`']
+_gone = rm['koch_curve.svg']

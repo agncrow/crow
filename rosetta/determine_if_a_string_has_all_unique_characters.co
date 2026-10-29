@@ -1,0 +1,45 @@
+--- Rosetta Code: Determine if a string has all unique characters
+--- https://rosettacode.org/wiki/Determine_if_a_string_has_all_unique_characters
+--- Each character, left to right, is looked for again further on; the first one
+--- found again is reported with both positions. Characters are Unicode's, so
+--- 'é' and an emoji count as one.
+
+use bits
+
+--- n in lower-case hexadecimal
+fn hex[n]
+    digits = '0123456789abcdef'
+    text = digits[n % 16]
+    rest = n / 16
+    while rest gt 0
+        text = '`digits[rest % 16]``text`'
+        rest = rest / 16
+    return text
+
+--- the positions of the first character that occurs again, and of its repeat;
+--- empty where every character is unique
+fn first_duplicate[chars]
+    i = 0
+    while i lt len[chars]
+        j = i + 1
+        while j lt len[chars]
+            if chars[j] eq chars[i]
+                return [i, j]
+            j = j + 1
+        i = i + 1
+    return []
+
+fn analyze[s]
+    chars = split[s, '']
+    log['\'`s`\' has a length of `len[chars]`:']
+    pair = first_duplicate[chars]
+    if len[pair] eq 0
+        log['    all its characters are unique']
+    else
+        c = chars[pair[0]]
+        log['    not all its characters are unique: \'`c`\' (0x`hex[code[c]]`) is at positions `pair[0] + 1` and `pair[1] + 1`']
+
+tests = ['', '.', 'abcABC', 'XYZ ZYX', '1234567890ABCDEFGHIJKLMN0PQRSTUVWXYZ']
+extras = ['01234567890ABCDEFGHIJKLMN0PQRSTUVWXYZ0X', 'hétérogénéité', '🎆🎃🎇🎈', '😍😀🙌💃😍🙌', '🐠🐟🐡🦈🐬🐳🐋🐡']
+for s in concat[tests, extras]
+    analyze[s]

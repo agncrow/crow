@@ -1,0 +1,334 @@
+--- Rosetta Code: Wavelet matrix
+--- https://rosettacode.org/wiki/Wavelet_matrix
+--- The matrix of a sequence over [0, sigma) has ceil(log2 sigma) levels, from the
+--- highest bit down. A level holds the bit of every number of the sequence as it
+--- stands at that level, packed 32 to a word, with the ones before each word (so rank
+--- is a lookup and one bit count) and its count of zeros; the numbers then go on
+--- stably reordered, those whose bit was 0 first. On it: access, rank, select, the
+--- k-th smallest of a range (quantile), the count of a range's values in [a, b), and
+--- a range's previous and next values. Shown on a short sequence level by level, on
+--- the reference entries' example (their five quantile queries over ranks of
+--- [3374, 956, 2114, 3415, 3437]: 956, 2114, 3415, 3374, 3415), and checked against
+--- a plain search on a seeded random sequence of 1,000 numbers.
+
+use bits
+use math
+
+--- one level: its bits packed 32 to a word, the ones before each word, its count of
+--- zeros and of bits
+struct Level [words, before, zeros, size]
+
+struct Wavelet [height, levels, size]
+
+fn packed[flags]
+    n = len[flags]
+    words = []
+    before = [0]
+    w = 0
+    while w * 32 lte n
+        word = 0
+        k = 0
+        while k lt 32 and w * 32 + k lt n
+            if flags[w * 32 + k] eq 1
+                word = bitor[word, shift[1, k]]
+            k = k + 1
+        words = push[words, word]
+        before = push[before, before[w] + bitcount[word]]
+        w = w + 1
+    return Level[words, before, n - before[len[before] - 1], n]
+
+fn bit_at[level, i]
+    return bitand[shift[level.words[i / 32], 0 - i % 32], 1]
+
+--- the ones among the level's first i bits
+fn ones_before[level, i]
+    w = i / 32
+    return level.before[w] + bitcount[bitand[level.words[w], shift[1, i % 32] - 1]]
+
+fn zeros_before[level, i]
+    return i - ones_before[level, i]
+
+--- bit b of v, counting from the lowest
+fn bit_of[v, b]
+    return bitand[shift[v, 0 - b], 1]
+
+fn wavelet[numbers, sigma]
+    height = 1
+    while shift[1, height] lt sigma
+        height = height + 1
+    levels = []
+    current = numbers
+    j = 0
+    while j lt height
+        b = height - 1 - j
+        flags = for v in current
+            bit_of[v, b]
+        levels = push[levels, packed[flags]]
+        low = for v in current
+            if bit_of[v, b] eq 0
+                v
+        high = for v in current
+            if bit_of[v, b] eq 1
+                v
+        current = concat[low, high]
+        j = j + 1
+    return Wavelet[height, levels, len[numbers]]
+
+--- the number at position i
+fn access[wm, i]
+    value = 0
+    j = 0
+    while j lt wm.height
+        level = wm.levels[j]
+        b = bit_at[level, i]
+        value = value * 2 + b
+        if b eq 0
+            i = zeros_before[level, i]
+        else
+            i = level.zeros + ones_before[level, i]
+        j = j + 1
+    return value
+
+--- how many times v occurs among the first i numbers
+fn rank_of[wm, v, i]
+    p = 0
+    j = 0
+    while j lt wm.height
+        level = wm.levels[j]
+        if bit_of[v, wm.height - 1 - j] eq 1
+            p = level.zeros + ones_before[level, p]
+            i = level.zeros + ones_before[level, i]
+        else
+            p = zeros_before[level, p]
+            i = zeros_before[level, i]
+        j = j + 1
+    return i - p
+
+--- the position of the (m + 1)-th bit b of a level: the least t whose first t + 1
+--- bits hold m + 1 of them
+fn nth_bit[level, b, m]
+    lo = 0
+    hi = level.size - 1
+    while lo lt hi
+        mid = (lo + hi) / 2
+        seen = ones_before[level, mid + 1]
+        if b eq 0
+            seen = mid + 1 - seen
+        if seen gt m
+            hi = mid
+        else
+            lo = mid + 1
+    return lo
+
+--- the position of the k-th v (k from 1), or -1 where there are fewer: down the
+--- levels to where the v's lie together, then back up
+fn select[wm, v, k]
+    if k lt 1 or rank_of[wm, v, wm.size] lt k
+        return -1
+    p = 0
+    j = 0
+    while j lt wm.height
+        level = wm.levels[j]
+        if bit_of[v, wm.height - 1 - j] eq 1
+            p = level.zeros + ones_before[level, p]
+        else
+            p = zeros_before[level, p]
+        j = j + 1
+    p = p + k - 1
+    j = wm.height - 1
+    while j gte 0
+        level = wm.levels[j]
+        if bit_of[v, wm.height - 1 - j] eq 1
+            p = nth_bit[level, 1, p - level.zeros]
+        else
+            p = nth_bit[level, 0, p]
+        j = j - 1
+    return p
+
+--- the k-th smallest number (k from 0) among positions l to r - 1
+fn quantile[wm, k, l, r]
+    value = 0
+    j = 0
+    while j lt wm.height
+        level = wm.levels[j]
+        zeros = zeros_before[level, r] - zeros_before[level, l]
+        if k lt zeros
+            l = zeros_before[level, l]
+            r = zeros_before[level, r]
+            value = value * 2
+        else
+            l = level.zeros + ones_before[level, l]
+            r = level.zeros + ones_before[level, r]
+            k = k - zeros
+            value = value * 2 + 1
+        j = j + 1
+    return value
+
+--- how many numbers among positions l to r - 1 are less than x
+fn count_below[wm, l, r, x]
+    if x lte 0
+        return 0
+    if x gte shift[1, wm.height]
+        return r - l
+    count = 0
+    j = 0
+    while j lt wm.height
+        level = wm.levels[j]
+        if bit_of[x, wm.height - 1 - j] eq 1
+            count = count + zeros_before[level, r] - zeros_before[level, l]
+            l = level.zeros + ones_before[level, l]
+            r = level.zeros + ones_before[level, r]
+        else
+            l = zeros_before[level, l]
+            r = zeros_before[level, r]
+        j = j + 1
+    return count
+
+--- how many numbers among positions l to r - 1 are at least a and less than b
+fn range_count[wm, l, r, a, b]
+    return count_below[wm, l, r, b] - count_below[wm, l, r, a]
+
+--- the greatest number below x among positions l to r - 1, or -1
+fn previous_value[wm, l, r, x]
+    c = count_below[wm, l, r, x]
+    if c eq 0
+        return -1
+    return quantile[wm, c - 1, l, r]
+
+--- the least number not below x among positions l to r - 1, or -1
+fn next_value[wm, l, r, x]
+    c = count_below[wm, l, r, x]
+    if c eq r - l
+        return -1
+    return quantile[wm, c, l, r]
+
+fn spaced[numbers]
+    shown = for n in numbers
+        '`n`'
+    return join[shown, ' ']
+
+fn shown_or_none[n]
+    if n lt 0
+        return 'none'
+    return '`n`'
+
+--- the plain answers, for the check
+fn plain_rank[s, v, i]
+    count = 0
+    for x in slice[s, 0, i]
+        if x eq v
+            count = count + 1
+    return count
+
+fn plain_select[s, v, k]
+    seen = 0
+    i = 0
+    while i lt len[s]
+        if s[i] eq v
+            seen = seen + 1
+            if seen eq k
+                return i
+        i = i + 1
+    return -1
+
+fn plain_quantile[s, k, l, r]
+    return sort[slice[s, l, r]][k]
+
+fn plain_range_count[s, l, r, a, b]
+    count = 0
+    for x in slice[s, l, r]
+        if x gte a and x lt b
+            count = count + 1
+    return count
+
+fn plain_previous[s, l, r, x]
+    best = -1
+    for y in slice[s, l, r]
+        if y lt x
+            best = max[best, y]
+    return best
+
+fn plain_next[s, l, r, x]
+    best = -1
+    for y in slice[s, l, r]
+        if y gte x and (best eq -1 or y lt best)
+            best = y
+    return best
+
+fn answer[question, value]
+    log['  `fmt[question, width = 40]``value`']
+
+--- the short sequence, level by level, and a query of each kind
+fn show_small[]
+    s = [5, 4, 5, 5, 2, 1, 5, 6, 1, 3, 5, 0]
+    wm = wavelet[s, 7]
+    log['S = `spaced[s]`, sigma 7: `wm.height` levels']
+    for j in range[wm.height]
+        level = wm.levels[j]
+        flags = for i in range[wm.size]
+            bit_at[level, i]
+        log['  level `j` (bit `wm.height - 1 - j`): `spaced[flags]`   zeros `level.zeros`']
+    back = for i in range[wm.size]
+        access[wm, i]
+    answer['access, every position', spaced[back]]
+    answer['rank, the 5s in S[0, 8)', '`rank_of[wm, 5, 8]`']
+    answer['select, the 4th 5', 'position `select[wm, 5, 4]`']
+    answer['select, the 3rd 1', shown_or_none[select[wm, 1, 3]]]
+    answer['quantile, the 3rd smallest of S[2, 9)', '`quantile[wm, 2, 2, 9]`']
+    answer['range count, 2 to 4 in S[0, 12)', '`range_count[wm, 0, 12, 2, 5]`']
+    answer['previous value, below 5 in S[0, 5)', shown_or_none[previous_value[wm, 0, 5, 5]]]
+    answer['next value, from 3 in S[4, 9)', shown_or_none[next_value[wm, 4, 9, 3]]]
+    answer['next value, from 7 in S[0, 12)', shown_or_none[next_value[wm, 0, 12, 7]]]
+
+--- the reference entries' example: the numbers ranked, then the k-th smallest of
+--- positions l to r, counted from 1
+fn show_reference[]
+    a = [3374, 956, 2114, 3415, 3437]
+    distinct = sort[a]
+    ranks = for x in a
+        plain_select[distinct, x, 1]
+    wm = wavelet[ranks, len[distinct]]
+    log['The reference entries\' example, [3374, 956, 2114, 3415, 3437], queries (l, r, k):']
+    queries = [[2, 2, 1], [3, 4, 1], [4, 5, 1], [1, 2, 2], [4, 4, 1]]
+    for q in queries
+        log['  (`q[0]`, `q[1]`, `q[2]`): `distinct[quantile[wm, q[2] - 1, q[0] - 1, q[1]]]`']
+
+--- every query against the plain answer, on a seeded random sequence
+fn check[n, sigma, rounds]
+    s = for i in range[n]
+        rand[sigma]
+    wm = wavelet[s, sigma]
+    wrong = 0
+    for i in range[n]
+        if access[wm, i] ne s[i]
+            wrong = wrong + 1
+    t = 0
+    while t lt rounds
+        l = rand[n]
+        r = l + 1 + rand[n - l]
+        v = rand[sigma]
+        a = rand[sigma + 1]
+        b = a + rand[sigma + 1 - a]
+        k = rand[r - l]
+        m = 1 + rand[3]
+        if rank_of[wm, v, r] ne plain_rank[s, v, r]
+            wrong = wrong + 1
+        if select[wm, v, m] ne plain_select[s, v, m]
+            wrong = wrong + 1
+        if quantile[wm, k, l, r] ne plain_quantile[s, k, l, r]
+            wrong = wrong + 1
+        if range_count[wm, l, r, a, b] ne plain_range_count[s, l, r, a, b]
+            wrong = wrong + 1
+        if previous_value[wm, l, r, v] ne plain_previous[s, l, r, v]
+            wrong = wrong + 1
+        if next_value[wm, l, r, v] ne plain_next[s, l, r, v]
+            wrong = wrong + 1
+        t = t + 1
+    log['A random sequence of `fmt[n, commas = true]` numbers below `sigma` (`wm.height` levels): every access, and `rounds` random queries of each other kind, checked against a plain search: `wrong` wrong']
+
+show_small[]
+log['']
+show_reference[]
+log['']
+seed[11]
+check[1000, 1000, 1000]

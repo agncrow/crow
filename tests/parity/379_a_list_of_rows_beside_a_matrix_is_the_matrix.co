@@ -1,0 +1,20 @@
+--- a function handed a matrix by one call and a list of rows by another
+--- reads each as numbers: the two joined had been a tensor of lists, which
+--- no value is, and a cell read through it was refused as a tensor
+--- (Rosetta Code, Determinant and permanent)
+
+fn product[m, p]
+    r = 1
+    for i in range[len[p]]
+        r = r * m[i][p[i]]
+    r
+
+fn product_of_all[m]
+    product[m, range[len[m]]]
+
+ones = for k in range[2]
+    row = for c in range[2]
+        1
+    row
+log[product_of_all[[[1, 2], [3, 4]]]]
+log[product_of_all[ones]]

@@ -1,0 +1,205 @@
+--- Rosetta Code: Bitcoin/public point to address
+--- https://rosettacode.org/wiki/Bitcoin/public_point_to_address
+--- The point's 65 bytes (a 4, then X and Y) are hashed by SHA-256 and then by
+--- RIPEMD-160, both written here over lists of byte values; a version byte and the
+--- first four bytes of a double SHA-256 frame the digest, and base 58 writes the 25.
+--- Extra credit: a point is refused unless it lies on secp256k1, y^2 = x^3 + 7 mod p.
+
+use bits
+
+fn hex_number[text]
+    n = 0
+    for c in split[text, '']
+        k = code[c]
+        if k gte 97
+            n = n * 16 + k - 87
+        else
+            n = n * 16 + k - 48
+    return n
+
+fn hex_words[text]
+    words = for w in split[text, ' ']
+        hex_number[w]
+    return words
+
+fn word32[x]
+    return bitand[x, 4294967295]
+
+--- SHA-256 (FIPS 180-4)
+
+fn rotr[x, n]
+    return bitor[shift[x, -n], bitand[shift[x, 32 - n], 4294967295]]
+
+fn xor3[a, b, c]
+    return bitxor[bitxor[a, b], c]
+
+fn padded[message]
+    out = push[message, 128]
+    while len[out] % 64 ne 56
+        out = push[out, 0]
+    length = len[message] * 8
+    for i in range[8]
+        out = push[out, bitand[shift[length, -8 * (7 - i)], 255]]
+    return out
+
+fn schedule[data, at]
+    w = for t in range[16]
+        i = at + 4 * t
+        bitor[bitor[shift[data[i], 24], shift[data[i + 1], 16]], bitor[shift[data[i + 2], 8], data[i + 3]]]
+    t = 16
+    while t lt 64
+        s0 = xor3[rotr[w[t - 15], 7], rotr[w[t - 15], 18], shift[w[t - 15], -3]]
+        s1 = xor3[rotr[w[t - 2], 17], rotr[w[t - 2], 19], shift[w[t - 2], -10]]
+        w = push[w, word32[w[t - 16] + s0 + w[t - 7] + s1]]
+        t = t + 1
+    return w
+
+fn compress[h, w, k]
+    a, b, c, d, e, f, g, hh = h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]
+    t = 0
+    while t lt 64
+        s1 = xor3[rotr[e, 6], rotr[e, 11], rotr[e, 25]]
+        pick = bitxor[bitand[e, f], bitand[bitxor[e, 4294967295], g]]
+        t1 = hh + s1 + pick + k[t] + w[t]
+        s0 = xor3[rotr[a, 2], rotr[a, 13], rotr[a, 22]]
+        majority = xor3[bitand[a, b], bitand[a, c], bitand[b, c]]
+        t2 = s0 + majority
+        hh, g, f, e, d, c, b, a = g, f, e, word32[d + t1], c, b, a, word32[t1 + t2]
+        t = t + 1
+    after = [a, b, c, d, e, f, g, hh]
+    sums = for i in range[8]
+        word32[h[i] + after[i]]
+    return sums
+
+fn sha256[message]
+    k = hex_words['428a2f98 71374491 b5c0fbcf e9b5dba5 3956c25b 59f111f1 923f82a4 ab1c5ed5 d807aa98 12835b01 243185be 550c7dc3 72be5d74 80deb1fe 9bdc06a7 c19bf174 e49b69c1 efbe4786 0fc19dc6 240ca1cc 2de92c6f 4a7484aa 5cb0a9dc 76f988da 983e5152 a831c66d b00327c8 bf597fc7 c6e00bf3 d5a79147 06ca6351 14292967 27b70a85 2e1b2138 4d2c6dfc 53380d13 650a7354 766a0abb 81c2c92e 92722c85 a2bfe8a1 a81a664b c24b8b70 c76c51a3 d192e819 d6990624 f40e3585 106aa070 19a4c116 1e376c08 2748774c 34b0bcb5 391c0cb3 4ed8aa4a 5b9cca4f 682e6ff3 748f82ee 78a5636f 84c87814 8cc70208 90befffa a4506ceb bef9a3f7 c67178f2']
+    h = hex_words['6a09e667 bb67ae85 3c6ef372 a54ff53a 510e527f 9b05688c 1f83d9ab 5be0cd19']
+    data = padded[message]
+    at = 0
+    while at lt len[data]
+        h = compress[h, schedule[data, at], k]
+        at = at + 64
+    digest = []
+    for word in h
+        for i in range[4]
+            digest = push[digest, bitand[shift[word, -8 * (3 - i)], 255]]
+    return digest
+
+--- RIPEMD-160 (Dobbertin, Bosselaers and Preneel)
+
+fn numbers[text]
+    words = for w in split[text, ' ']
+        int[w]
+    return words
+
+fn rotl[x, n]
+    return bitor[bitand[shift[x, n], 4294967295], shift[x, n - 32]]
+
+fn bitnot[x]
+    return bitxor[x, 4294967295]
+
+fn mixed[j, x, y, z]
+    --- The boolean function of RIPEMD-160's round j / 16.
+    if j lt 16
+        return bitxor[bitxor[x, y], z]
+    if j lt 32
+        return bitor[bitand[x, y], bitand[bitnot[x], z]]
+    if j lt 48
+        return bitxor[bitor[x, bitnot[y]], z]
+    if j lt 64
+        return bitor[bitand[x, z], bitand[y, bitnot[z]]]
+    return bitxor[x, bitor[y, bitnot[z]]]
+
+fn padded_le[message]
+    --- MD4-style padding: a 1 bit, zeros, then the bit length, little-endian.
+    out = push[message, 128]
+    while len[out] % 64 ne 56
+        out = push[out, 0]
+    length = len[message] * 8
+    for i in range[8]
+        out = push[out, bitand[shift[length, -8 * i], 255]]
+    return out
+
+fn words_le[data, at]
+    words = for t in range[16]
+        i = at + 4 * t
+        bitor[bitor[data[i], shift[data[i + 1], 8]], bitor[shift[data[i + 2], 16], shift[data[i + 3], 24]]]
+    return words
+
+fn ripemd_block[h, x]
+    r = numbers['0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 7 4 13 1 10 6 15 3 12 0 9 5 2 14 11 8 3 10 14 4 9 15 8 1 2 7 0 6 13 11 5 12 1 9 11 10 0 8 12 4 13 3 7 15 14 5 6 2 4 0 5 9 7 12 2 10 14 1 3 8 11 6 15 13']
+    rr = numbers['5 14 7 0 9 2 11 4 13 6 15 8 1 10 3 12 6 11 3 7 0 13 5 10 14 15 8 12 4 9 1 2 15 5 1 3 7 14 6 9 11 8 12 2 10 0 4 13 8 6 4 1 3 11 15 0 5 12 2 13 9 7 10 14 12 15 10 4 1 5 8 7 6 2 13 14 0 3 9 11']
+    s = numbers['11 14 15 12 5 8 7 9 11 13 14 15 6 7 9 8 7 6 8 13 11 9 7 15 7 12 15 9 11 7 13 12 11 13 6 7 14 9 13 15 14 8 13 6 5 12 7 5 11 12 14 15 14 15 9 8 9 14 5 6 8 6 5 12 9 15 5 11 6 8 13 12 5 12 13 14 11 8 5 6']
+    ss = numbers['8 9 9 11 13 15 15 5 7 7 8 11 14 14 12 6 9 13 15 7 12 8 9 11 7 7 12 7 6 15 13 11 9 7 15 11 8 6 6 14 12 13 5 14 13 13 7 5 15 5 8 11 14 14 6 14 6 9 12 9 12 5 15 8 8 5 12 9 12 5 14 6 8 13 6 5 15 13 11 11']
+    k = hex_words['00000000 5a827999 6ed9eba1 8f1bbcdc a953fd4e']
+    kk = hex_words['50a28be6 5c4dd124 6d703ef3 7a6d76e9 00000000']
+    a, b, c, d, e = h[0], h[1], h[2], h[3], h[4]
+    aa, bb, cc, dd, ee = h[0], h[1], h[2], h[3], h[4]
+    j = 0
+    while j lt 80
+        t = word32[rotl[word32[a + mixed[j, b, c, d] + x[r[j]] + k[j / 16]], s[j]] + e]
+        a, e, d, c, b = e, d, rotl[c, 10], b, t
+        t = word32[rotl[word32[aa + mixed[79 - j, bb, cc, dd] + x[rr[j]] + kk[j / 16]], ss[j]] + ee]
+        aa, ee, dd, cc, bb = ee, dd, rotl[cc, 10], bb, t
+        j = j + 1
+    return [word32[h[1] + c + dd], word32[h[2] + d + ee], word32[h[3] + e + aa], word32[h[4] + a + bb], word32[h[0] + b + cc]]
+
+fn ripemd160[message]
+    h = hex_words['67452301 efcdab89 98badcfe 10325476 c3d2e1f0']
+    data = padded_le[message]
+    at = 0
+    while at lt len[data]
+        h = ripemd_block[h, words_le[data, at]]
+        at = at + 64
+    digest = []
+    for word in h
+        for i in range[4]
+            digest = push[digest, bitand[shift[word, -8 * i], 255]]
+    return digest
+
+fn base58[data]
+    digits = split['123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz', '']
+    n = 0
+    for b in data
+        n = n * 256 + b
+    out = []
+    while n gt 0
+        out = push[out, digits[n % 58]]
+        n = n / 58
+    zeros = 0
+    while zeros lt len[data] and data[zeros] eq 0
+        zeros = zeros + 1
+    ones = repeat['1', zeros]
+    rest = join[reverse[out], '']
+    return '`ones``rest`'
+
+fn big_endian[n, count]
+    out = for i in range[count]
+        bitand[shift[n, -8 * (count - 1 - i)], 255]
+    return out
+
+fn on_curve[x, y]
+    p = 2 ^ 256 - 2 ^ 32 - 977
+    return (y * y - x * x * x - 7) % p eq 0
+
+fn address_of[x, y]
+    if not on_curve[x, y]
+        return error['the point is not on secp256k1', 'point']
+    point = concat[[4], concat[big_endian[x, 32], big_endian[y, 32]]]
+    payload = concat[[0], ripemd160[sha256[point]]]
+    check = slice[sha256[sha256[payload]], 0, 4]
+    return base58[concat[payload, check]]
+
+fn show[name, x_hex, y_hex]
+    address = address_of[hex_number[lower[x_hex]], hex_number[lower[y_hex]]]
+    log['`name`:']
+    log['  X = `x_hex`']
+    log['  Y = `y_hex`']
+    if address.ok
+        log['  address `address`']
+    else
+        log['  refused: `address.reason`']
+
+show['The task\'s point', '50863AD64A87AE8A2FE83C1AF1A8403CB53F53E486D8511DAD8A04887E5B2352', '2CD470243453A299FA9E77237716103ABC11A1DF38855ED6F2EE187E9C582BA6']
+show['The generator G (private key 1)', '79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798', '483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8']
+show['The task\'s point with Y one more', '50863AD64A87AE8A2FE83C1AF1A8403CB53F53E486D8511DAD8A04887E5B2352', '2CD470243453A299FA9E77237716103ABC11A1DF38855ED6F2EE187E9C582BA7']

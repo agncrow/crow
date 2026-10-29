@@ -1,0 +1,28 @@
+--- Rosetta Code: Repeat
+--- https://rosettacode.org/wiki/Repeat
+--- A procedure is handed by name, as any function is, and called the number of
+--- times asked: a loop whose body prints keeps its order. A second form applies
+--- a function n times over, each answer the next call's argument.
+
+fn run_times[procedure, n]
+    for i in range[n]
+        procedure[]
+
+fn example[]
+    log['Example']
+
+fn applied[f, n, x]
+    value = x
+    for i in range[n]
+        value = f[value]
+    return value
+
+fn double[x]
+    return 2 * x
+
+fn grow[x]
+    return 1.05 * x
+
+run_times[example, 3]
+log['double, 3 times over 1: `applied[double, 3, 1]`']
+log['times 1.05, 3 times over 100: `applied[grow, 3, 100.0]`']

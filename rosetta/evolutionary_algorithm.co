@@ -1,0 +1,65 @@
+--- Rosetta Code: Evolutionary algorithm
+--- https://rosettacode.org/wiki/Evolutionary_algorithm
+--- Dawkins's weasel: each generation copies the parent C = 100 times, every
+--- character of a copy replaced by a random one with probability rate; the
+--- fittest of the parent and its copies (the most characters where the target
+--- has them) is the next parent. The generator is seeded, so every run takes the
+--- same path; a line is shown each time the fitness rises.
+use math
+
+fn fitness[trial, target]
+    --- how many characters stand where the target has them
+    hits = for i in range[len[target]]
+        if trial[i] eq target[i]
+            1
+    return len[hits]
+
+fn random_string[charset, n]
+    chars = for i in range[n]
+        charset[rand[len[charset]]]
+    return join[chars, '']
+
+fn mutate[parent, rate, charset]
+    --- a copy of parent, each character replaced at random with chance rate
+    chars = for ch in split[parent, '']
+        if rand[] lt rate
+            charset[rand[len[charset]]]
+        else
+            ch
+    return join[chars, '']
+
+fn fittest[parent, copies, target]
+    --- the parent stays unless a copy is strictly fitter
+    best = parent
+    best_fitness = fitness[parent, target]
+    i = 0
+    while i lt len[copies]
+        f = fitness[copies[i], target]
+        if f gt best_fitness
+            best = copies[i]
+            best_fitness = f
+        i = i + 1
+    return best
+
+fn show[generation, parent, target]
+    score = fitness[parent, target]
+    log['`fmt[generation, width = 4]`  `parent`  fitness `fmt[score, width = 2]` of `len[target]`']
+
+target = 'METHINKS IT IS LIKE A WEASEL'
+charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ '
+C = 100
+rate = 0.05
+seed[1986]
+
+parent = random_string[charset, len[target]]
+generation = 0
+show[generation, parent, target]
+while parent ne target
+    copies = for k in range[C]
+        mutate[parent, rate, charset]
+    child = fittest[parent, copies, target]
+    generation = generation + 1
+    if fitness[child, target] gt fitness[parent, target]
+        show[generation, child, target]
+    parent = child
+log['Reached the target in `generation` generations.']

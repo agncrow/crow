@@ -1,0 +1,149 @@
+--- Rosetta Code: Knight's tour
+--- https://rosettacode.org/wiki/Knight's_tour
+--- Warnsdorff's rule: from each square the knight moves to the square with the
+--- fewest onward moves (ties to the lower square). The rule nearly always tours
+--- the board alone; where it would strand the knight, the next choice is tried
+--- (a depth-first search in Warnsdorff's order), so a tour is always found when
+--- one exists. The starting square is the first argument, a1 by default.
+
+use bits
+
+--- the squares a knight reaches from each square (a square is rank * size + file)
+fn jumps[size]
+    offsets = [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]]
+    graph = for s in range[size * size]
+        file = s % size
+        rank = s / size
+        targets = for o in offsets
+            f = file + o[0]
+            r = rank + o[1]
+            if f gte 0 and f lt size and r gte 0 and r lt size
+                r * size + f
+        targets
+    return graph
+
+fn name_of[square, size]
+    file = char[code['a'] + square % size]
+    return '`file``square / size + 1`'
+
+fn square_of[text, size]
+    word = lower[trim[text]]
+    if len[word] lt 2
+        return error['no square: `text`', 'input']
+    file = code[word[0]] - code['a']
+    rank = int[slice[word, 1, len[word]]]
+    if not rank.ok or file lt 0 or file gte size or rank lt 1 or rank gt size
+        return error['no square on a board of `size` by `size`: `text`', 'input']
+    return (rank - 1) * size + file
+
+--- how many moves on from square s reach squares not yet visited
+fn onward[graph, visited, s]
+    count = 0
+    for t in graph[s]
+        if not visited[t]
+            count = count + 1
+    return count
+
+--- the squares open from here, in Warnsdorff's order
+fn ranked[graph, visited, here]
+    weighed = []
+    for s in graph[here]
+        if not visited[s]
+            weighed = push[weighed, onward[graph, visited, s] * 1000 + s]
+    order = []
+    for key in sort[weighed]
+        order = push[order, key % 1000]
+    return order
+
+--- the tour that extends path, or [] where none does
+fn extend[graph, visited, path]
+    if len[path] eq len[graph]
+        return path
+    choices = ranked[graph, visited, path[-1]]
+    i = 0
+    while i lt len[choices]
+        s = choices[i]
+        seen = visited
+        seen[s] = true
+        found = extend[graph, seen, push[path, s]]
+        if len[found] gt 0
+            return found
+        i = i + 1
+    return []
+
+fn tour[graph, start]
+    visited = for s in range[len[graph]]
+        s eq start
+    return extend[graph, visited, [start]]
+
+--- a tour visits every square once, each step a knight's move
+fn is_tour[graph, path]
+    if len[path] ne len[graph]
+        return false
+    seen = for s in range[len[graph]]
+        false
+    for s in path
+        seen[s] = true
+    steps = for i in range[1, len[path]]
+        path[i] in graph[path[i - 1]]
+    return all[seen, is_true] and all[steps, is_true]
+
+fn is_true[b]
+    return b
+
+--- the board with each square's place in the tour, rank 8 at the top
+fn board[path, size]
+    places = for s in range[size * size]
+        0
+    for i in range[len[path]]
+        places[path[i]] = i + 1
+    rule = repeat['-', 3 * size + 1]
+    lines = ['  +`rule`+']
+    for r in range[size]
+        rank = size - 1 - r
+        cells = for f in range[size]
+            fmt[places[rank * size + f], width = 3]
+        row = join[cells, '']
+        lines = push[lines, '`fmt[rank + 1, width = 2]`|`row` |']
+    lines = push[lines, '  +`rule`+']
+    letters = for f in range[size]
+        '  `char[code[\'a\'] + f]`'
+    files = join[letters, '']
+    lines = push[lines, '   `files`']
+    return join[lines, '\n']
+
+fn moves_text[path, size]
+    names = for s in path
+        name_of[s, size]
+    lines = []
+    i = 0
+    while i lt len[names]
+        lines = push[lines, join[slice[names, i, i + 16], ' ']]
+        i = i + 16
+    return join[lines, '\n']
+
+given = args[]
+start_text = 'a1'
+if len[given] gt 0
+    start_text = given[0]
+graph = jumps[8]
+start = square_of[start_text, 8]
+if not start.ok
+    log[start.reason]
+else
+    path = tour[graph, start]
+    log['A knight\'s tour of the 8 x 8 board from `name_of[start, 8]`:']
+    log[moves_text[path, 8]]
+    log['']
+    log[board[path, 8]]
+    log['A tour (every square once, each step a knight\'s move): `is_tour[graph, path]`']
+
+    small = jumps[5]
+    log['']
+    log['The 5 x 5 board from c3:']
+    log[board[tour[small, square_of['c3', 5]], 5]]
+
+    toured = for s in range[64]
+        is_tour[graph, tour[graph, s]]
+    log['']
+    log['Tours found from all 64 squares of the 8 x 8 board: `all[toured, is_true]`']

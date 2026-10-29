@@ -1,0 +1,41 @@
+--- Rosetta Code: Kernighans large earthquake problem
+--- https://rosettacode.org/wiki/Kernighans_large_earthquake_problem
+--- The program is single use, so the file name is part of it: data.txt is
+--- written first (the task's three lines and a few more events), then each line
+--- is split at runs of whitespace and shown when its third field, the
+--- magnitude, is more than 6. The file is removed at the end.
+
+--- a line's fields, split at runs of spaces and tabs
+fn fields[line]
+    return split[trim[sub[line, '\s+', ' ']], ' ']
+
+--- whether a line's magnitude is more than the threshold (a line without a
+--- number in its third field is no event)
+fn is_large[line, threshold]
+    parts = fields[line]
+    if len[parts] lt 3
+        return false
+    magnitude = float[parts[2]]
+    if not magnitude.ok
+        return false
+    return magnitude gt threshold
+
+events = [
+    '8/27/1883    Krakatoa            8.8',
+    '5/18/1980    MountStHelens       7.6',
+    '3/13/2009    CostaRica           5.1',
+    '4/18/1906    SanFrancisco        7.9',
+    '8/24/2014    SouthNapa           6.0',
+    '1/17/1994\tNorthridge\t6.7',
+    '10/17/1989   LomaPrieta          6.9'
+]
+body = join[events, '\n']
+write['data.txt', '`body`\n']
+
+log['Those earthquakes with a magnitude > 6.0 are:']
+log['']
+text = read['data.txt']
+for line in split[text, '\n']
+    if is_large[line, 6.0]
+        log[line]
+_gone = rm['data.txt']

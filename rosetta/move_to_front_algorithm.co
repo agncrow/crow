@@ -1,0 +1,89 @@
+--- Rosetta Code: Move-to-front algorithm
+--- https://rosettacode.org/wiki/Move-to-front_algorithm
+--- The symbol table is a list of characters. Encoding outputs each symbol's index
+--- in the table and moves the symbol to the front; decoding outputs the symbol at
+--- each index and moves it the same way, so both sides keep the same table. A
+--- symbol outside the table, or an index past its end, answers an error value.
+
+fn symbol_table[]
+    return split['abcdefghijklmnopqrstuvwxyz', '']
+
+--- the table with its item at i moved to the front
+fn to_front[table, i]
+    return concat[[table[i]], concat[slice[table, 0, i], slice[table, i + 1, len[table]]]]
+
+fn index_of[table, c]
+    i = 0
+    while i lt len[table] and table[i] ne c
+        i = i + 1
+    if i eq len[table]
+        return error['\'`c`\' is not in the symbol table', 'mtf']
+    return i
+
+fn mtf_encode[s]
+    table = symbol_table[]
+    out = []
+    for c in split[s, '']
+        i = index_of[table, c]
+        out = push[out, i]
+        table = to_front[table, i]
+    return out
+
+fn mtf_decode[indices]
+    table = symbol_table[]
+    out = []
+    for i in indices
+        if i lt 0 or i gte len[table]
+            return error['index `i` is past the symbol table', 'mtf']
+        out = push[out, table[i]]
+        table = to_front[table, i]
+    return join[out, '']
+
+fn shown[xs]
+    parts = for x in xs
+        str[x]
+    return join[parts, ' ']
+
+--- the task's two tables for broood: what is read, the output so far, and the
+--- table the symbol is found in (before it moves)
+log['Encoding broood:']
+word = 'broood'
+table = symbol_table[]
+out = []
+for k in range[len[word]]
+    c = word[k]
+    before = slice[word, 0, k]
+    after = slice[word, k + 1, len[word]]
+    shown_table = join[table, '']
+    i = index_of[table, c]
+    out = push[out, i]
+    table = to_front[table, i]
+    so_far = shown[out]
+    log['  `before`[`c`]`after`   `fmt[so_far, width = 15]`  `shown_table`']
+
+log['Decoding 1 17 15 0 0 5:']
+code = [1, 17, 15, 0, 0, 5]
+table = symbol_table[]
+letters = []
+for k in range[len[code]]
+    i = code[k]
+    before = shown[slice[code, 0, k]]
+    after = shown[slice[code, k + 1, len[code]]]
+    shown_table = join[table, '']
+    letters = push[letters, table[i]]
+    table = to_front[table, i]
+    so_far = join[letters, '']
+    log['  `fmt[before, width = 12, align = \'right\']` [`fmt[i, width = 2]`] `fmt[after, width = 12]`   `fmt[so_far, width = 6]`  `shown_table`']
+
+log['']
+for s in ['broood', 'bananaaa', 'hiphophiphop']
+    code = mtf_encode[s]
+    back = mtf_decode[code]
+    same = 'differs'
+    if back eq s
+        same = 'the same'
+    log['`fmt[s, width = 12]` -> `fmt[shown[code], width = 30]` -> `back` (`same`)']
+
+log['']
+log['Hello: `mtf_encode[\'Hello\'].reason`']
+log['[1, 26]: `mtf_decode[[1, 26]].reason`']

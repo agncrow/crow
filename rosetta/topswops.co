@@ -1,0 +1,165 @@
+--- Rosetta Code: Topswops
+--- https://rosettacode.org/wiki/Topswops
+--- topswops(n) by its definition: every deal of n cards (each permutation in
+--- lexicographic order, made in place) played to the end, the most rounds
+--- kept. Then the same numbers found by playing the game backwards from its
+--- end, as the C entry does, which reaches n = 11 in the time the deals take
+--- for n = 10; an argument N takes that search to N (12 takes about half a
+--- minute interpreted).
+
+use bits
+
+--- the first m cards turned over, the rest as they lie
+fn turned[cards, m]
+    d = cards
+    i = 0
+    j = m - 1
+    while i lt j
+        t = d[i]
+        d[i] = d[j]
+        d[j] = t
+        i = i + 1
+        j = j - 1
+    d
+
+--- the decks a game passes through, from the deal to card 1 on top
+fn game[cards]
+    decks = []
+    d = cards
+    decks = push[decks, d]
+    while d[0] ne 1
+        d = turned[d, d[0]]
+        decks = push[decks, d]
+    decks
+
+--- the rounds a game takes, the turning written out: every deal of ten cards
+--- is played, and a call of turned a round tripled the interpreter's time
+fn swaps[cards]
+    d = cards
+    count = 0
+    while d[0] ne 1
+        i = 0
+        j = d[0] - 1
+        while i lt j
+            t = d[i]
+            d[i] = d[j]
+            d[j] = t
+            i = i + 1
+            j = j - 1
+        count = count + 1
+    count
+
+--- the deal after p in lexicographic order, or [] after the last
+fn next_deal[p]
+    n = len[p]
+    i = n - 2
+    while i gte 0 and p[i] gt p[i + 1]
+        i = i - 1
+    if i lt 0
+        return []
+    j = n - 1
+    while p[j] lt p[i]
+        j = j - 1
+    t = p[i]
+    p[i] = p[j]
+    p[j] = t
+    --- and the cards after place i in the other order
+    i = i + 1
+    j = n - 1
+    while i lt j
+        t = p[i]
+        p[i] = p[j]
+        p[j] = t
+        i = i + 1
+        j = j - 1
+    p
+
+--- the most rounds over every deal of n cards (a deal with 1 on top takes none)
+fn topswops[n]
+    deal = range[1, n + 1]
+    best = 0
+    while len[deal] gt 0
+        if deal[0] ne 1
+            best = max[best, swaps[deal]]
+        deal = next_deal[deal]
+    best
+
+--- The game backwards. Cards are numbered from 0 here, and a deck's places
+--- are -1 while open. The game ends with card 0 on top, every other place
+--- open. A round is undone at a place i holding card i, or open while card i
+--- is not yet placed: the deck before it had card i on top and its first
+--- i + 1 cards the other way round. The longest chain of undone rounds is
+--- topswops(n). `used` is the cards placed, a bit each; `last` is the last
+--- place a round can still be undone at: a place holding another card, or
+--- open while its card lies elsewhere, takes part in no round again, and then
+--- topswops of the places before it (best, by size) bounds the rounds left,
+--- which cuts every branch that cannot beat `most`, the best found so far.
+fn placed[used, card]
+    bitand[used, shift[1, card]] ne 0
+
+fn longest[deck, used, last, rounds, best, most]
+    if rounds gt most
+        most = rounds
+    while true
+        if deck[last] eq -1 and not placed[used, last]
+            break
+        if deck[last] eq last and rounds + best[last] gte most
+            break
+        if rounds + best[last] lte most
+            return most
+        last = last - 1
+        if last eq 0
+            return most
+    i = 1
+    while i lte last
+        if deck[i] eq i or (deck[i] eq -1 and not placed[used, i])
+            --- the deck before the round: card i at place i, the first i + 1
+            --- cards turned back over
+            before = deck
+            before[i] = i
+            before = turned[before, i + 1]
+            most = longest[before, bitor[used, shift[1, i]], last, rounds + 1, best, most]
+        i = i + 1
+    most
+
+--- topswops of 0 .. upto cards, each size's search bounded by the smaller ones
+fn searched[upto]
+    best = [0]
+    for n in range[1, upto + 1]
+        deck = for place in range[n]
+            -1
+        deck[0] = 0
+        best = push[best, longest[deck, 1, n - 1, 0, best, 0]]
+    best
+
+fn largest[given]
+    if len[given] eq 0
+        return 11
+    n = int[given[0]]
+    if not n.ok or n lt 1
+        halt['N is a number of cards, 1 or more: not `given[0]`']
+    n
+
+example = [2, 4, 1, 3]
+log['The game dealt `example`:']
+for d in game[example]
+    log['    `d`']
+log['`swaps[example]` swaps.']
+log['']
+
+log[' n  topswops(n)']
+by_deals = for n in range[1, 11]
+    topswops[n]
+for n in range[1, 11]
+    log['`fmt[n, width = 2]`  `fmt[by_deals[n - 1], width = 11]`']
+log['']
+
+last = largest[args[]]
+best = searched[last]
+shown = for n in range[1, last + 1]
+    str[best[n]]
+words = join[shown, ', ']
+log['The game played backwards, n = 1 to `last`: `words`']
+both = min[last, 10]
+agree = slice[best, 1, both + 1] eq slice[by_deals, 0, both]
+log['The two ways agree for n = 1 to `both`: `agree`']

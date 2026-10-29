@@ -1,0 +1,62 @@
+--- Rosetta Code: Zeckendorf number representation
+--- https://rosettacode.org/wiki/Zeckendorf_number_representation
+--- Greedy: from the largest Fibonacci number (1, 2, 3, 5, 8, …) not above n down to 1,
+--- a 1 where the number fits in what is left and a 0 where it does not. Taking the
+--- largest each time leaves less than the next one down, so no two 1s are adjacent.
+--- Ints grow, so any integer has its form; each is read back to check it.
+
+--- the distinct Fibonacci numbers 1, 2, 3, 5, … as far as the first one past n
+fn fibonacci_past[n]
+    fibs = [1, 2]
+    while fibs[-1] lte n
+        fibs = push[fibs, fibs[-1] + fibs[-2]]
+    return fibs
+
+--- the Zeckendorf form of n as its digits, the largest Fibonacci number first
+fn zeckendorf[n]
+    if n eq 0
+        return '0'
+    fibs = fibonacci_past[n]
+    digits = []
+    left = n
+    i = len[fibs] - 1
+    while i gte 0
+        if fibs[i] lte left
+            digits = push[digits, '1']
+            left = left - fibs[i]
+        else if len[digits] gt 0
+            digits = push[digits, '0']
+        i = i - 1
+    return join[digits, '']
+
+--- the number a Zeckendorf form stands for: each 1 counts its Fibonacci number
+fn from_zeckendorf[form]
+    digits = reverse[split[form, '']]
+    fibs = fibonacci_past[0]
+    while len[fibs] lt len[digits]
+        fibs = push[fibs, fibs[-1] + fibs[-2]]
+    total = 0
+    for i in range[len[digits]]
+        if digits[i] eq '1'
+            total = total + fibs[i]
+    return total
+
+log['Fibonacci digit multipliers: `reverse[slice[fibonacci_past[20], 0, -1]]`']
+for n in range[21]
+    log['`fmt[n, width = 3]`: `fmt[zeckendorf[n], width = 8, align = \'right\']`']
+
+log['']
+log['Larger numbers, each read back and checked for adjacent 1s:']
+for n in [100, 1000, 1000000, 2 ^ 64, 10 ^ 30]
+    form = zeckendorf[n]
+    back = from_zeckendorf[form]
+    ones = occurs[form, '1']
+    log['`n`: `form`']
+    log['    `len[form]` digits, `ones` ones; reads back as `back`: `back eq n`; no adjacent 1s: `\'11\' not in form`']
+
+wrong = for n in range[10001]
+    form = zeckendorf[n]
+    if from_zeckendorf[form] ne n or '11' in form
+        n
+log['']
+log['Every n from 0 to 10000 reads back exactly, with no adjacent 1s: `len[wrong] eq 0`']

@@ -1,0 +1,10 @@
+25 circles, 11 of them inside another: 14 left to measure
+
+Exactly, by the uncovered arcs: 21.5650366038564
+To ten decimals: 21.5650366039
+
+By scanlines:
+    100 strips: 21.5686702, off by 0.0036336
+   1000 strips: 21.5652279, off by 0.0001913
+  10000 strips: 21.5650456, off by 0.0000090
+ 100000 strips: 21.5650368, off by 0.0000002

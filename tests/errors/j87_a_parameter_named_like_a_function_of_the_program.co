@@ -1,0 +1,10 @@
+--- a parameter named like a function of the program's own: its index
+--- reads as the function's call (`scores[0]` had been `scores` called
+--- with 0, a silent wrong answer in both modes)
+fn scores[x]
+    return x * 2
+
+fn first[scores]
+    return scores[0]
+
+log[first[[5, 6]]]

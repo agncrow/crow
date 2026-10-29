@@ -1,0 +1,35 @@
+--- Rosetta Code: First-class functions/Use numbers analogously
+--- https://rosettacode.org/wiki/First-class_functions/Use_numbers_analogously
+--- Numbers, written down or computed, go into lists, are handed to functions and are
+--- answered by them like any value. Crow has no closures, by design (a function sees
+--- only its parameters), so what multiplier answers is what a compiler makes of a
+--- closure: a record holding n1 and n2, which `call` applies to m. The First-class
+--- functions task is the same program with functions in the lists, and its compose
+--- answers such a record too, holding two functions where this one holds two numbers.
+
+struct Multiplier [n1, n2]
+
+fn multiplier[n1, n2]
+    return Multiplier[n1, n2]
+
+--- what the multiplier made from n1 and n2 answers when called with m
+fn call[f, m]
+    return f.n1 * f.n2 * m
+
+x = 2.0
+xi = 0.5
+y = 4.0
+yi = 0.25
+z = x + y
+zi = 1.0 / (x + y)
+
+numbers = [x, y, z]
+inverses = [xi, yi, zi]
+log['numbers:  `numbers`']
+log['inverses: `inverses`']
+
+--- the multipliers are values as the numbers are: made in a loop, held in a list
+multipliers = for i in range[len[numbers]]
+    multiplier[numbers[i], inverses[i]]
+for times in multipliers
+    log['multiplier[`times.n1`, `times.n2`] called with 1 answers `call[times, 1.0]`, with 0.5 answers `call[times, 0.5]`']

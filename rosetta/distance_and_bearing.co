@@ -1,0 +1,87 @@
+--- Rosetta Code: Distance and Bearing
+--- https://rosettacode.org/wiki/Distance_and_Bearing
+--- Reads OpenFlights' airports.dat (its CSV quotes a name that holds a comma or a quote),
+--- works out each airport's great-circle distance (the haversine formula, the Earth a
+--- sphere of mean radius 6371 km) and initial bearing from the plane, and lists the 20
+--- nearest. The file is rosetta/data/airports.dat, read from the current directory.
+
+use math
+
+struct Airport [name, country, icao, latitude, longitude]
+
+--- the fields of a line of CSV (RFC 4180): split at the quotes, the pieces alternate
+--- outside and inside a quoted field; outside, a comma ends a field, and an empty piece
+--- between two quoted ones is a quote written twice
+fn fields_of[line]
+    pieces = split[line, '"']
+    fields = []
+    field = ''
+    last = len[pieces] - 1
+    for i in range[len[pieces]]
+        piece = pieces[i]
+        if i % 2 eq 1
+            field = '`field``piece`'
+        else if piece eq '' and i gt 0 and i lt last
+            field = '`field`"'
+        else
+            parts = split[piece, ',']
+            field = '`field``parts[0]`'
+            for part in slice[parts, 1, len[parts]]
+                fields = push[fields, field]
+                field = part
+    return push[fields, field]
+
+--- columns (from 1): 2 name, 4 country, 6 ICAO, 7 latitude, 8 longitude
+fn airports[path]
+    found = []
+    for line in split[read[path], '\n']
+        if line ne ''
+            f = fields_of[line]
+            found = push[found, Airport[f[1], f[3], f[5], float[f[6]], float[f[7]]]]
+    return found
+
+fn radians[angle]
+    return angle * pi / 180.0
+
+fn degrees[angle]
+    return angle * 180.0 / pi
+
+--- nautical miles along the great circle from the first point to the second
+fn distance[lat1, lon1, lat2, lon2]
+    earth_radius = 6371.0 / 1.852
+    a = sin[radians[lat2 - lat1] / 2.0] ^ 2 + cos[radians[lat1]] * cos[radians[lat2]] * sin[radians[lon2 - lon1] / 2.0] ^ 2
+    return 2.0 * earth_radius * asin[sqrt[a]]
+
+--- degrees clockwise from north to set off from the first point toward the second, from
+--- 0 up to 360 (math's atan2 takes tensors, so y and x go in as one-item lists)
+fn bearing[lat1, lon1, lat2, lon2]
+    dl = radians[lon2 - lon1]
+    y = sin[dl] * cos[radians[lat2]]
+    x = cos[radians[lat1]] * sin[radians[lat2]] - sin[radians[lat1]] * cos[radians[lat2]] * cos[dl]
+    angle = degrees[atan2[[y], [x]][0]]
+    if angle lt 0.0
+        return angle + 360.0
+    return angle
+
+fn row[name, country, icao, miles, heading]
+    a = fmt[name, width = 38]
+    b = fmt[country, width = 16]
+    c = fmt[icao, width = 6]
+    d = fmt[miles, width = 10, align = 'right']
+    e = fmt[heading, width = 9, align = 'right']
+    return '`a``b``c``d``e`'
+
+latitude = 51.514669
+longitude = 2.198581
+listed = airports['airports.dat']
+distances = for a in listed
+    distance[latitude, longitude, a.latitude, a.longitude]
+nearest = slice[argsort[distances], 0, 20]
+log['The 20 airports nearest to the plane at (`latitude`, `longitude`):']
+log['']
+log[row['Name', 'Country', 'ICAO', 'Dist (NM)', 'Bearing']]
+for i in nearest
+    a = listed[i]
+    miles = fmt[distances[i], decimals = 1]
+    heading = round[bearing[latitude, longitude, a.latitude, a.longitude]] % 360
+    log[row[a.name, a.country, a.icao, miles, '`heading`°']]

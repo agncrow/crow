@@ -1,0 +1,86 @@
+--- Rosetta Code: Rhonda numbers
+--- https://rosettacode.org/wiki/Rhonda_numbers
+--- n is a Rhonda number to base b when the product of its base-b digits is b times
+--- the sum of its prime factors, counted with repetition. The digit product comes
+--- first: only one that b divides is worth factoring n, by trial division. The first
+--- ten for every base from 2 to 36 that is not prime (task and stretch), in base 10
+--- and in the base itself.
+
+fn digit_product[n, b]
+    product = 1
+    while n gt 0
+        product = product * (n % b)
+        n = n / b
+    return product
+
+fn prime_factor_sum[n]
+    total = 0
+    d = 2
+    while d * d lte n
+        while n % d eq 0
+            total = total + d
+            n = n / d
+        d = d + 1
+    if n gt 1
+        total = total + n
+    return total
+
+fn rhonda[n, b]
+    product = digit_product[n, b]
+    return product gt 0 and product % b eq 0 and product eq b * prime_factor_sum[n]
+
+fn first_rhonda[b, count]
+    found = []
+    n = 1
+    while len[found] lt count
+        if rhonda[n, b]
+            found = push[found, n]
+        n = n + 1
+    return found
+
+fn small_prime[n]
+    if n lt 2
+        return false
+    d = 2
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 1
+    return true
+
+fn in_base[n, b]
+    digits = '0123456789abcdefghijklmnopqrstuvwxyz'
+    shown = ''
+    while n gt 0
+        shown = '`digits[n % b]``shown`'
+        n = n / b
+    return shown
+
+--- The numbers in a row, each right-aligned to the widest of either row.
+fn row[texts, width]
+    cells = for t in texts
+        fmt[t, width = width, align = 'right']
+    return join[cells, ' ']
+
+fn report[b, numbers]
+    tens = for n in numbers
+        str[n]
+    based = for n in numbers
+        in_base[n, b]
+    width = len[based[-1]]
+    if len[tens[-1]] gt width
+        width = len[tens[-1]]
+    log['First 10 Rhonda numbers to base `b`:']
+    log['  in base 10: `row[tens, width]`']
+    if b ne 10
+        label = fmt['in base `b`:', width = 11]
+        log['  `label` `row[based, width]`']
+    log['']
+
+bases = for b in range[2, 37]
+    if not small_prime[b]
+        b
+found = for b in bases
+    first_rhonda[b, 10]
+for i in range[len[bases]]
+    report[bases[i], found[i]]

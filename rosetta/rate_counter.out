@@ -1,0 +1,13 @@
+The job: the length of a number's Collatz sequence.
+
+Five rounds of 100000 jobs (n = 1 … 100000), each round timed:
+round 1: 100000 jobs, 10753840 steps in all
+round 2: 100000 jobs, 10753840 steps in all
+round 3: 100000 jobs, 10753840 steps in all
+round 4: 100000 jobs, 10753840 steps in all
+round 5: 100000 jobs, 10753840 steps in all
+(the times and rates: run with the argument time)
+
+Jobs run for 2 seconds, the count read at each half second:
+(how many jobs fit in 2 seconds changes from run to run: run with the
+argument time)

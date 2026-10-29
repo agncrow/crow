@@ -1,0 +1,72 @@
+--- Rosetta Code: Maximum triangle path sum
+--- https://rosettacode.org/wiki/Maximum_triangle_path_sum
+--- From the bottom row up, each number takes on the larger of the two totals below it,
+--- so the top ends up holding the best total; the path is then walked down again.
+
+fn rows_of[text]
+    rows = []
+    for line in split[text, '\n']
+        if trim[line] ne ''
+            numbers = for word in split[trim[line], ' ']
+                int[word]
+            rows = push[rows, numbers]
+    return rows
+
+--- best[r][i]: the largest total of a walk from row r, place i, to the bottom.
+--- (The table is grown by push and turned over at the end: a list literal holding a
+--- row of numbers read from text, [rows[-1]], is an internal error,
+--- findings/maximum_triangle_path_sum-1.co.)
+fn best_totals[rows]
+    below = rows[-1]
+    table = []
+    table = push[table, below]
+    r = len[rows] - 2
+    while r gte 0
+        below = for i in range[len[rows[r]]]
+            rows[r][i] + max[below[i], below[i + 1]]
+        table = push[table, below]
+        r = r - 1
+    return reverse[table]
+
+fn best_path[rows, best]
+    i = 0
+    steps = []
+    for r in range[len[rows]]
+        if r gt 0 and best[r][i + 1] gt best[r][i]
+            i = i + 1
+        steps = push[steps, str[rows[r][i]]]
+    return join[steps, ' + ']
+
+fn report[text]
+    rows = rows_of[text]
+    best = best_totals[rows]
+    log['`len[rows]` rows: the maximum total is `best[0][0]`']
+    log['  `best_path[rows, best]`']
+
+report['
+    55
+   94 48
+  95 30 96
+ 77 71 26 67
+']
+
+report['
+                          55
+                        94 48
+                       95 30 96
+                     77 71 26 67
+                    97 13 76 38 45
+                  07 36 79 16 37 68
+                 48 07 09 18 70 26 06
+               18 72 79 46 59 79 29 90
+              20 76 87 11 32 07 07 49 18
+            27 83 58 35 71 11 25 57 29 85
+           14 64 36 96 27 11 58 56 92 18 55
+         02 90 03 60 48 49 41 46 33 36 47 23
+        92 50 48 02 36 59 42 79 72 20 82 77 42
+      56 78 38 80 39 75 02 71 66 66 01 03 55 72
+     44 25 67 84 71 67 11 61 40 57 58 89 40 56 36
+   85 32 25 85 57 48 84 35 47 62 17 01 01 99 89 52
+  06 71 28 75 94 48 37 10 23 51 06 48 53 18 74 98 15
+27 02 92 23 08 71 76 84 15 52 92 63 81 10 44 10 69 93
+']

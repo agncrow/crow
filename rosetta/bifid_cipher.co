@@ -1,0 +1,85 @@
+--- Rosetta Code: Bifid cipher
+--- https://rosettacode.org/wiki/Bifid_cipher
+--- A square is its alphabet read row by row; a letter's place p in it is the
+--- row p / side and the column p % side. Encryption writes every letter's row,
+--- then every letter's column, and reads the line back in pairs; decryption
+--- splits the pairs' coordinates in half again. Bonus: a 6 x 6 square of the
+--- 26 letters and the 10 digits encrypts every letter, J too, uniquely.
+
+fn side_of[alphabet]
+    side = 1
+    while side * side lt len[alphabet]
+        side = side + 1
+    return side
+
+fn places[alphabet]
+    --- each character of the square and its place, row by row
+    chars = split[alphabet, '']
+    return map[chars, range[len[chars]]]
+
+fn prepare[message, alphabet]
+    --- upper case, J as I where the square has no J, and only the square's characters
+    text = upper[message]
+    if 'J' not in alphabet
+        text = replace[text, 'J', 'I']
+    kept = for c in split[text, '']
+        if c in alphabet
+            c
+    return join[kept, '']
+
+fn encrypt[message, alphabet]
+    side = side_of[alphabet]
+    at = places[alphabet]
+    letters = split[alphabet, '']
+    rows = []
+    cols = []
+    for c in split[message, '']
+        rows = push[rows, at[c] / side]
+        cols = push[cols, at[c] % side]
+    line = concat[rows, cols]
+    out = for k in range[len[rows]]
+        letters[line[2 * k] * side + line[2 * k + 1]]
+    return join[out, '']
+
+fn decrypt[message, alphabet]
+    side = side_of[alphabet]
+    at = places[alphabet]
+    letters = split[alphabet, '']
+    line = []
+    for c in split[message, '']
+        line = push[line, at[c] / side]
+        line = push[line, at[c] % side]
+    n = len[line] / 2
+    out = for k in range[n]
+        letters[line[k] * side + line[n + k]]
+    return join[out, '']
+
+fn show_square[alphabet]
+    side = side_of[alphabet]
+    chars = split[alphabet, '']
+    for r in range[side]
+        row = slice[chars, r * side, r * side + side]
+        line = join[row, ' ']
+        log['    `line`']
+
+fn demonstrate[title, message, alphabet]
+    log[title]
+    show_square[alphabet]
+    plain = prepare[message, alphabet]
+    secret = encrypt[plain, alphabet]
+    log['  Message  : `message`']
+    log['  Encrypted: `secret`']
+    log['  Decrypted: `decrypt[secret, alphabet]`']
+    log['']
+
+typical = 'ABCDEFGHIKLMNOPQRSTUVWXYZ'
+wikipedia = 'BGWKZQPNDSIOAXEFCLUMTHYVR'
+playfair = 'PLAYFIREXMBCDGHKNOQSTUVWZ'
+everything = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+january = 'The invasion will start on the first of January'
+
+demonstrate['1. The task example:', 'ATTACKATDAWN', typical]
+demonstrate['2. The Wikipedia example:', 'FLEEATONCE', wikipedia]
+demonstrate['3. The task example with the Wikipedia square:', 'ATTACKATDAWN', wikipedia]
+demonstrate['4. A square of my own (J read as I):', january, playfair]
+demonstrate['Bonus: a 6 x 6 square holds all 26 letters and the 10 digits, so J stays J:', january, everything]

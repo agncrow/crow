@@ -1,0 +1,50 @@
+Wed->Thu in one-line notation: 1 4 7 14 15 6 8 2 13 11 3 9 12 5 10
+Wed->Thu in cycle notation:    (2 8 7 3 11 10 15 5 14 4) (9 12 13)
+Wed's DRAINSTYLEPOUCH permuted by the one-line notation: DITCHSYRUPALONE
+Wed's DRAINSTYLEPOUCH permuted by the cycles:            DITCHSYRUPALONE
+
+Thu->Wed, the inverse, in one-line notation: 1 8 11 2 14 6 3 7 12 15 10 13 9 4 5
+Thu->Wed, the inverse, in cycle notation:    (2 4 14 5 15 10 11 3 7 8) (9 13 12)
+Thu's DITCHSYRUPALONE permuted by the one-line notation: DRAINSTYLEPOUCH
+Thu's DITCHSYRUPALONE permuted by the cycles:            DRAINSTYLEPOUCH
+
+Converting between the notations:
+  cycles (2 4 14 5 15 10 11 3 7 8) (9 13 12) are the one-line 1 8 11 2 14 6 3 7 12 15 10 13 9 4 5
+  one-line 1 8 11 2 14 6 3 7 12 15 10 13 9 4 5 is the cycles (2 4 14 5 15 10 11 3 7 8) (9 13 12)
+
+Thu->Fri:                     (1 10 4 13 2 8 9 11 3 6) (5 7) (12 14)
+Wed->Thu, then Thu->Fri:      (1 10 15 7 6) (2 9 14 13 11 4 8 5 12)
+Wed->Fri, from the shelves:   (1 10 15 7 6) (2 9 14 13 11 4 8 5 12)
+Wed's DRAINSTYLEPOUCH permuted by it: SOAPYTHIRDUNCLE
+
+Starting with Sunday's shelf and doing each day's permutation in turn:
+     RADIOLUNCHTYPES
+Mon: HANDYCOILSERUPT
+Tue: SPOILUNDERYACHT
+Wed: DRAINSTYLEPOUCH
+Thu: DITCHSYRUPALONE
+Fri: SOAPYTHIRDUNCLE
+Sat: SHINEPARTYCLOUD
+Sun: RADIOLUNCHTYPES
+
+The permutation of each day (from the day before):
+Mon: order 18, signature -1, cycles (1 12 5 7 13 14 11 15 10) (3 4 8) (6 9)
+Tue: order 30, signature -1, cycles (1 14 2 12 10) (3 7) (4 8) (5 11 9) (6 13)
+Wed: order 12, signature  1, cycles (1 6 13 14 15 7 5 9 10 2 11 8) (3 12)
+Thu: order 30, signature -1, cycles (2 8 7 3 11 10 15 5 14 4) (9 12 13)
+Fri: order 10, signature -1, cycles (1 10 4 13 2 8 9 11 3 6) (5 7) (12 14)
+Sat: order 33, signature  1, cycles (2 13 11 14 12 4 6 9 8 3 7) (5 10 15)
+Sun: order 40, signature  1, cycles (1 15 3 4 8) (2 10 12 6 13 5 14 7) (9 11)
+
+Friday's permutation done ten times over (its order is 10):
+    STOREDAILYPUNCH
+ 1  DNPYAOETISLCRUH
+ 2  ORLSEPANTDIUYCH
+ 3  PYIDALERNOTCSUH
+ 4  LSTOEIAYRPNUDCH
+ 5  IDNPATESYLRCOUH
+ 6  TORLENADSIYUPCH
+ 7  NPYIAREODTSCLUH
+ 8  RLSTEYAPONDUICH
+ 9  YIDNASELPROCTUH
+10  STOREDAILYPUNCH

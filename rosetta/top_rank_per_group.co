@@ -1,0 +1,48 @@
+--- Rosetta Code: Top rank per group
+--- https://rosettacode.org/wiki/Top_rank_per_group
+--- The employees are a frame. Sorted by department and, within one, by salary
+--- from the highest, a running count over each department is every row's
+--- place in it (SQL's row_number), and a mask keeps the places up to N. N is
+--- the program's argument, 3 when none is given.
+
+use frame
+
+fn employees[]
+    frame.new[name = ['Tyler Bennett', 'John Rappl', 'George Woltman', 'Adam Smith', 'Claire Buckman', 'David McClellan', 'Rich Holcomb', 'Nathan Adams', 'Richard Potter', 'David Motsinger', 'Tim Sampair', 'Kim Arlich', 'Timothy Grove'], id = ['E10297', 'E21437', 'E00127', 'E63535', 'E39876', 'E04242', 'E01234', 'E41298', 'E43128', 'E27002', 'E03033', 'E10001', 'E16398'], salary = [32000, 47000, 53500, 18000, 27800, 41500, 49500, 21900, 15900, 19250, 27000, 57000, 29900], dept = ['D101', 'D050', 'D101', 'D202', 'D202', 'D101', 'D202', 'D050', 'D101', 'D202', 'D101', 'D190', 'D190']]
+
+--- the n best paid of each department, the best first; equal salaries are
+--- taken in the frame's order, as Python's nlargest takes them
+fn top_salaries[staff, n]
+    by_pay = sort[staff, ['dept', 'salary'], desc = [false, true]]
+    by_pay.place = window[by_pay, 'salary', 'count', by = 'dept']
+    by_pay[by_pay.place lte n]
+
+fn wanted[given]
+    if len[given] eq 0
+        return 3
+    n = int[given[0]]
+    if not n.ok or n lt 1
+        halt['N is a count of employees, 1 or more: not `given[0]`']
+    n
+
+fn show[top]
+    name = fmt['Employee Name', width = 17]
+    id = fmt['Employee ID', width = 13]
+    heading = '  `name``id`Salary'
+    for dept in unique[top, 'dept']
+        rows = top[top.dept eq dept]
+        log['Department `dept`']
+        log[heading]
+        for i in range[len[rows]]
+            log['  `fmt[rows.name[i], width = 17]``fmt[rows.id[i], width = 13]``fmt[rows.salary[i], width = 6]`']
+        log['']
+
+fn title[n]
+    if n eq 1
+        return 'The top salary in each department:'
+    'The top `n` salaries in each department:'
+
+n = wanted[args[]]
+log[title[n]]
+log['']
+show[top_salaries[employees[], n]]

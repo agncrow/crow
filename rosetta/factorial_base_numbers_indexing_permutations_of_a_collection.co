@@ -1,0 +1,112 @@
+--- Rosetta Code: Factorial base numbers indexing permutations of a collection
+--- https://rosettacode.org/wiki/Factorial_base_numbers_indexing_permutations_of_a_collection
+--- `permuted` follows the task's pseudo-code: for each digit g, most significant first, the items
+--- at m … m + g are rotated so that the one at m + g comes first. What is left after m stays in
+--- order, so g picks the g-th smallest item left, and the factorial base numbers in counting order
+--- give the permutations in lexicographic order: unlike the methods of RC's Permutations task,
+--- each one is made from its index alone, with nothing kept from the one before. All 11! =
+--- 39,916,800 permutations of 11 digits take far past ten seconds here, so all 9! = 362,880
+--- permutations of 9 digits are generated, counted and checked distinct (each follows the
+--- last in order) instead.
+
+use math
+
+fn permuted[omega, digits]
+    --- omega arranged by the factorial base number whose digits are given
+    for m in range[len[digits]]
+        g = digits[m]
+        if g gt 0
+            omega = concat[[slice[omega, 0, m], [omega[m + g]], slice[omega, m, m + g], slice[omega, m + g + 1, len[omega]]]]
+    return omega
+
+fn dotted[digits]
+    parts = for d in digits
+        str[d]
+    return join[parts, '.']
+
+fn next_number[digits]
+    --- the factorial base number after this one, counted as an odometer: digit i runs 0 … len - i
+    i = len[digits] - 1
+    while i gte 0 and digits[i] eq len[digits] - i
+        digits[i] = 0
+        i = i - 1
+    if i gte 0
+        digits[i] = digits[i] + 1
+    return digits
+
+fn factorial_of[n]
+    product = 1
+    for k in range[2, n + 1]
+        product = product * k
+    return product
+
+fn value_of[digits]
+    --- the number a factorial base number writes: digit i is worth (len - i)!
+    total = 0
+    for i in range[len[digits]]
+        total = total + digits[i] * factorial_of[len[digits] - i]
+    return total
+
+struct Tally [count, ordered]
+
+fn count_permutations[n]
+    --- every permutation of n digits from the n! factorial base numbers of n - 1 digits:
+    --- how many came, and whether each came after the last in order (so all are distinct)
+    omega = for d in range[n]
+        str[d]
+    digits = for i in range[n - 1]
+        0
+    wanted = factorial_of[n]
+    count = 0
+    ordered = true
+    last = ''
+    while count lt wanted
+        word = join[permuted[omega, digits], '']
+        if word lte last
+            ordered = false
+        last = word
+        count = count + 1
+        digits = next_number[digits]
+    return Tally[count, ordered]
+
+fn shoe[]
+    --- the task's shoe: spades, hearts, diamonds, clubs, each from the ace down
+    cards = []
+    for suit in ['♠', '♥', '♦', '♣']
+        for face in ['A', 'K', 'Q', 'J', '10', '9', '8', '7', '6', '5', '4', '3', '2']
+            cards = push[cards, '`face``suit`']
+    return cards
+
+fn deal[digits]
+    log[dotted[digits]]
+    log[join[permuted[shoe[], digits], '']]
+    log['(permutation number `value_of[digits]` of the 52! in order, counting from 0)']
+    log['']
+
+log['The factorial base numbers of three digits and the permutations of 0123 they index:']
+digits = [0, 0, 0]
+for i in range[24]
+    word = join[permuted[[0, 1, 2, 3], digits], '']
+    log['`dotted[digits]` -> `word`']
+    digits = next_number[digits]
+
+log['']
+result = count_permutations[9]
+log['Permutations of 9 digits generated: `result.count`, and 9! is `factorial_of[9]`']
+if result.ordered
+    log['each came after the one before it in lexicographic order, so all are distinct']
+else
+    log['some permutation came twice']
+
+log['']
+log['The shoe:']
+log[join[shoe[], '']]
+log['']
+deal[[39, 49, 7, 47, 29, 30, 2, 12, 10, 3, 29, 37, 33, 17, 12, 31, 29, 34, 17, 25, 2, 4, 25, 4, 1, 14, 20, 6, 21, 18, 1, 1, 1, 4, 0, 5, 15, 12, 4, 3, 10, 10, 9, 1, 6, 5, 5, 3, 0, 0, 0]]
+deal[[51, 48, 16, 22, 3, 0, 19, 34, 29, 1, 36, 30, 12, 32, 12, 29, 30, 26, 14, 21, 8, 12, 1, 3, 10, 4, 7, 17, 6, 21, 8, 12, 15, 15, 13, 15, 7, 3, 12, 11, 9, 5, 5, 6, 6, 3, 4, 0, 3, 2, 1]]
+
+log['A factorial base number of my own, drawn at random (seeded): digit i from 0 to 51 - i']
+seed[2026]
+mine = for i in range[51]
+    rand[52 - i]
+deal[mine]

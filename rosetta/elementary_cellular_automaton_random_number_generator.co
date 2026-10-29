@@ -1,0 +1,83 @@
+--- Rosetta Code: Elementary cellular automaton/Random number generator
+--- https://rosettacode.org/wiki/Elementary_cellular_automaton/Random_number_generator
+--- The state of n wrapping cells is one int, cell i its bit i, so a whole
+--- generation is computed with bit operations: the cells whose neighbourhood
+--- is pattern p are the and of three words (each neighbour word, or its
+--- complement), and the next state is the or of those for every pattern the
+--- rule maps to 1. The random bits are cell 0's, eight to a byte, first bit
+--- most significant, from a state whose only 1 is cell 0.
+
+use bits
+
+--- Each cell takes the value of the cell before it (bit i gets bit i - 1).
+fn from_below[s, n]
+    bitor[bitand[shift[s, 1], shift[1, n] - 1], shift[s, 1 - n]]
+
+--- Each cell takes the value of the cell after it (bit i gets bit i + 1).
+fn from_above[s, n]
+    bitor[shift[s, -1], shift[bitand[s, 1], n - 1]]
+
+fn bit_of[x, i]
+    bitand[shift[x, -i], 1]
+
+--- A neighbour word as pattern p wants it: as it is for a 1, flipped for a 0.
+fn wanted[word, bit, mask]
+    if bit eq 1
+        return word
+    return bitxor[word, mask]
+
+--- The next generation of any rule: the pattern's high bit is the neighbour
+--- above (bit i + 1), its low bit the neighbour below (bit i - 1).
+fn step[s, rule, n]
+    mask = shift[1, n] - 1
+    above = from_above[s, n]
+    below = from_below[s, n]
+    next = 0
+    p = 0
+    while p lt 8
+        if bit_of[rule, p] eq 1
+            a = wanted[above, bit_of[p, 2], mask]
+            c = wanted[s, bit_of[p, 1], mask]
+            b = wanted[below, bit_of[p, 0], mask]
+            next = bitor[next, bitand[bitand[a, c], b]]
+        p = p + 1
+    return next
+
+--- Rule 30 alone in three operations: above xor (itself or below).
+fn step30[s, n]
+    bitxor[from_above[s, n], bitor[s, from_below[s, n]]]
+
+--- Bytes from cell 0, with the rule-30 step (the extra credit's fast form).
+fn random_bytes[count, n]
+    s = 1
+    found = []
+    while len[found] lt count
+        b = 0
+        k = 0
+        while k lt 8
+            b = 2 * b + bitand[s, 1]
+            s = step30[s, n]
+            k = k + 1
+        found = push[found, b]
+    return found
+
+fn shown[xs]
+    parts = for x in xs
+        str[x]
+    join[parts, ' ']
+
+for n in [64, 100]
+    bytes_seen = shown[random_bytes[10, n]]
+    log['`n` cells: `bytes_seen`']
+
+--- The general step of any rule, given rule 30, agrees with the shortcut.
+s = 1
+same = true
+k = 0
+while k lt 1000
+    t = step[s, 30, 64]
+    if t ne step30[s, 64]
+        same = false
+    s = t
+    k = k + 1
+log['The rule-30 shortcut agrees with the general rule for 1000 generations: `same`']

@@ -229,7 +229,12 @@ impl TypeContext {
                     // its count is refused where it is written, and that is
                     // the one mistake — nothing typed, the function handed as
                     // a value had been refused too)
-                    let given: Vec<Ty> = (0..params.len()).map(|i| arg_types.get(i).cloned().unwrap_or(Ty::Unknown)).collect();
+                    // (a failed argument never enters a function: the
+                    // parameter takes the payload — typed as a value that can
+                    // fail, `before[maybe[a], b]` had made the function's
+                    // parameter one, and a call handing a plain value did not
+                    // build compiled; Rosetta Code, Stream merge)
+                    let given: Vec<Ty> = (0..params.len()).map(|i| arg_types.get(i).map(|t| t.payload().clone()).unwrap_or(Ty::Unknown)).collect();
                     let fn_type = Ty::Fn(given, Box::new(Ty::Unknown));
                     let unified = existing.unify(&fn_type);
                     self.vars.insert(name.clone(), unified);
@@ -487,12 +492,27 @@ impl TypeContext {
                         params[j].1 = params[j].1.unify(pt);
                     }
                 }
-                let ret = target.return_type.unify(ret_type);
+                // (a function whose answer is known, of another kind than
+                // the parameter's — an earlier round's guess, made while a
+                // function it calls was not copied yet — answers its own:
+                // joined, `next_of`'s vector had been read as the list of
+                // text another copy answers; Rosetta Code, Monads/List monad)
+                let own = target.return_type.is_concrete() && !target.return_type.compatible(ret_type);
+                let ret = if own { target.return_type.clone() } else { target.return_type.unify(ret_type) };
                 if let Some(t) = self.functions.get_mut(n) {
                     t.params = params.clone();
                     t.return_type = ret.clone();
                 }
-                Ty::Fn(params.into_iter().map(|(_, t)| t).collect(), Box::new(ret))
+                let handed = Ty::Fn(params.into_iter().map(|(_, t)| t).collect(), Box::new(ret));
+                if own {
+                    if let Some(c) = self.functions.get_mut(callee)
+                        && let Some(p) = c.params.get_mut(i)
+                    {
+                        p.1 = handed;
+                    }
+                    continue;
+                }
+                handed
             } else if let Some(existing @ Ty::Fn(..)) = self.vars.get(n).cloned() {
                 let handed = Ty::Fn(param_types.clone(), ret_type.clone());
                 let merged = existing.unify(&handed);

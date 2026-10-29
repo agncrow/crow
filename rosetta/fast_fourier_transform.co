@@ -1,0 +1,101 @@
+--- Rosetta Code: Fast Fourier transform
+--- https://rosettacode.org/wiki/Fast_Fourier_transform
+--- The recursive radix-2 Cooley-Tukey FFT over complex numbers held as records; the
+--- inverse is the conjugate of the transform of the conjugate, over n. The magnitudes
+--- are checked against math's own fft.
+
+use math
+
+struct Complex [re, im]
+
+fn plus[a, b]
+    return Complex[a.re + b.re, a.im + b.im]
+
+fn minus[a, b]
+    return Complex[a.re - b.re, a.im - b.im]
+
+fn times[a, b]
+    return Complex[a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re]
+
+fn conj[a]
+    return Complex[a.re, -a.im]
+
+--- e ^ (i * angle)
+fn cis[angle]
+    return Complex[cos[angle], sin[angle]]
+
+fn modulus[a]
+    return sqrt[a.re * a.re + a.im * a.im]
+
+--- the discrete Fourier transform of xs, whose length is a power of 2
+fn cooley_tukey[xs]
+    n = len[xs]
+    if n lte 1
+        return xs
+    half = n / 2
+    evens = for k in range[half]
+        xs[2 * k]
+    odds = for k in range[half]
+        xs[2 * k + 1]
+    e = cooley_tukey[evens]
+    o = cooley_tukey[odds]
+    twiddled = for k in range[half]
+        times[cis[-2.0 * pi * k / n], o[k]]
+    low = for k in range[half]
+        plus[e[k], twiddled[k]]
+    high = for k in range[half]
+        minus[e[k], twiddled[k]]
+    return concat[low, high]
+
+fn inverse[xs]
+    n = len[xs]
+    flipped = for x in xs
+        conj[x]
+    back = for x in cooley_tukey[flipped]
+        Complex[x.re / n, -x.im / n]
+    return back
+
+--- a number to 3 decimals, a tiny negative shown as 0
+fn num[x]
+    if abs[x] lt 0.0005
+        return '0.000'
+    return fmt[x, decimals = 3]
+
+--- a + bi, the real parts lined up
+fn shown[c]
+    re = fmt[num[c.re], width = 7, align = 'right']
+    if c.im lt -0.0005
+        return '`re` - `num[-c.im]`i'
+    return '`re` + `num[c.im]`i'
+
+fn complexes[reals]
+    cs = for r in reals
+        Complex[r, 0.0]
+    return cs
+
+fn report[name, xs]
+    log['`name`:']
+    for x in xs
+        log['    `shown[x]`']
+
+signal = [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+spectrum = cooley_tukey[complexes[signal]]
+report['FFT of [1, 1, 1, 1, 0, 0, 0, 0]', spectrum]
+sizes = for c in spectrum
+    num[modulus[c]]
+line = join[sizes, ' ']
+log['Magnitudes: `line`']
+report['Inverse FFT of that', inverse[spectrum]]
+
+--- a complex input: the eight points of a ramp turned a quarter each step
+ramp = for k in range[8]
+    times[Complex[float[k], 0.0], cis[pi * k / 2.0]]
+report['Input', ramp]
+report['FFT of it', cooley_tukey[ramp]]
+report['And back', inverse[cooley_tukey[ramp]]]
+
+parts = fft[signal]
+builtin = for k in range[len[signal]]
+    num[sqrt[parts[0][k] * parts[0][k] + parts[1][k] * parts[1][k]]]
+line = join[builtin, ' ']
+log['Magnitudes from math\'s fft: `line`']

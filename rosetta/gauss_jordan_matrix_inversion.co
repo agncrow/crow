@@ -1,0 +1,64 @@
+--- Rosetta Code: Gauss-Jordan matrix inversion
+--- https://rosettacode.org/wiki/Gauss-Jordan_matrix_inversion
+--- The matrix is set beside the identity, [A | I], and reduced column by column: the
+--- pivot is the row from the diagonal down with the largest magnitude in the column
+--- (partial pivoting), swapped up, scaled to 1 and subtracted from every other row.
+--- When the left half is I, the right half is A's inverse.
+
+use math
+
+--- A's inverse, or an error value when A is not square or is singular
+fn inverse[a]
+    n = len[a]
+    if a.shape[1] ne n
+        return error['the matrix is not square', 'math']
+    m = concat[a, eye[n], 1]
+    for c in range[n]
+        p = c
+        for r in range[c + 1, n]
+            if abs[m[r][c]] gt abs[m[p][c]]
+                p = r
+        if abs[m[p][c]] lt 10.0 ^ -12
+            return error['the matrix is singular', 'math']
+        if p ne c
+            row = m[p]
+            m[p] = m[c]
+            m[c] = row
+        m[c] = m[c] / m[c][c]
+        for r in range[n]
+            if r ne c
+                m[r] = m[r] - m[c] * m[r][c]
+    rows = for r in range[n]
+        slice[m[r], n, 2 * n]
+    return stack[rows]
+
+--- a number to so many places, a rounding error's -0.000000 shown as 0
+fn place[x, places]
+    if abs[x] lt 0.5 * 10.0 ^ -places
+        return fmt[0.0, decimals = places, width = places + 4]
+    return fmt[x, decimals = places, width = places + 4]
+
+fn show[title, m, places]
+    log[title]
+    for r in range[len[m]]
+        cells = for x in m[r]
+            place[x, places]
+        line = join[cells, '']
+        log['|`line`|']
+    log['']
+
+fn invert[a]
+    show['A:', a, 0]
+    b = inverse[a]
+    if b.ok
+        show['Inverse of A:', b, 6]
+        show['A times its inverse:', a * b, 6]
+    else
+        log['A has no inverse: `b.reason`']
+        log['']
+
+invert[[[1, 2, 3], [4, 1, 6], [7, 8, 9]]]
+invert[[[2, -1, 0], [-1, 2, -1], [0, -1, 2]]]
+invert[[[-1, -2, 3, 2], [-4, -1, 6, 2], [7, -8, 9, 1], [1, -2, 1, 3]]]
+invert[[[1, 2, 3], [4, 5, 6], [7, 8, 9]]]
+invert[[[1, 2, 3], [4, 5, 6]]]

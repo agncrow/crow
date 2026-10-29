@@ -1,0 +1,13 @@
+How often each line of a 10-line file is chosen in 1,000,000 runs:
+line  1:  99,983  ( 9.998%)
+line  2: 100,154  (10.015%)
+line  3: 100,053  (10.005%)
+line  4: 100,035  (10.004%)
+line  5:  99,141  ( 9.914%)
+line  6:  99,593  ( 9.959%)
+line  7: 100,228  (10.023%)
+line  8: 100,301  (10.030%)
+line  9:  99,787  ( 9.979%)
+line 10: 100,725  (10.072%)
+chi-squared 16.45 with 9 degrees of freedom (16.92 at the 5% level)
+A line chosen from standard input: This is line 3 of the file

@@ -1,0 +1,73 @@
+--- Rosetta Code: Transliterate English text using the Greek alphabet
+--- https://rosettacode.org/wiki/Transliterate_English_text_using_the_Greek_alphabet
+--- The text is read left to right: a pair of letters that the rules give one
+--- Greek letter (ch, kh, th, ph, ps, rh, ee, ck, oo) is taken whole, any other
+--- letter alone, each keeping the case of its first English letter; a lower
+--- case s that ends a word is final sigma. Everything else is kept as it is.
+--- The pangram is shown again with each Greek letter by its name.
+
+fn pairs[]
+    map[ch = 'χ', kh = 'χ', th = 'θ', ph = 'φ', ps = 'ψ', rh = 'ρ', ee = 'η', ck = 'κ', oo = 'ω']
+
+fn singles[]
+    map[a = 'α', b = 'β', c = 'κ', d = 'δ', e = 'ε', f = 'φ', g = 'γ', h = 'η', i = 'ι', j = 'ι', k = 'κ', l = 'λ', m = 'μ', n = 'ν', o = 'ο', p = 'π', q = 'κ', r = 'ρ', s = 'σ', t = 'τ', u = 'υ', v = 'β', w = 'ω', x = 'ξ', y = 'υ', z = 'ζ']
+
+fn is_letter[c]
+    lower[c] ne upper[c]
+
+--- a Greek letter in the case of the English letter it stands for
+fn cased[greek, english]
+    if english ne lower[english]
+        return upper[greek]
+    greek
+
+fn transliterated[english]
+    two = pairs[]
+    one = singles[]
+    chars = split[english, '']
+    out = []
+    i = 0
+    while i lt len[chars]
+        c = chars[i]
+        pair = ''
+        if i + 1 lt len[chars]
+            pair = lower['`c``chars[i + 1]`']
+        if pair in two
+            out = push[out, cased[two[pair], c]]
+            i = i + 2
+        else
+            letter = lower[c]
+            if letter not in one
+                out = push[out, c]
+            else if c eq 's' and (i + 1 eq len[chars] or not is_letter[chars[i + 1]])
+                out = push[out, 'ς']
+            else
+                out = push[out, cased[one[letter], c]]
+            i = i + 1
+    join[out, '']
+
+fn names[]
+    map['α' = 'alpha', 'β' = 'beta', 'γ' = 'gamma', 'δ' = 'delta', 'ε' = 'epsilon', 'ζ' = 'zeta', 'η' = 'eta', 'θ' = 'theta', 'ι' = 'iota', 'κ' = 'kappa', 'λ' = 'lambda', 'μ' = 'mu', 'ν' = 'nu', 'ξ' = 'xi', 'ο' = 'omicron', 'π' = 'pi', 'ρ' = 'rho', 'σ' = 'sigma', 'ς' = 'sigma', 'τ' = 'tau', 'υ' = 'upsilon', 'φ' = 'phi', 'χ' = 'chi', 'ψ' = 'psi', 'ω' = 'omega']
+
+--- each Greek letter by its name in angle brackets, the rest as it is
+fn spelled[greek]
+    named = names[]
+    parts = for c in split[greek, '']
+        if lower[c] in named
+            '<`named[lower[c]]`>'
+        else
+            c
+    join[parts, '']
+
+example = 'The quick brown fox jumped over the lazy dog.'
+text = 'I was looking at some rhododendrons in my back garden,\ndressed in my khaki shorts, when the telephone rang.\n\nAs I answered it, I cheerfully glimpsed that the July sun\ncaused a fragment of black pine wax to ooze on the velvet quilt\nlaying in my patio.'
+pangram = 'sphinx of black quartz, judge my vow.'
+
+rule = repeat['=', 65]
+for english in [example, text, pangram]
+    log[english]
+    log['=>']
+    log[transliterated[english]]
+    log[rule]
+log['The pangram with the Greek letters by name:']
+log[spelled[transliterated[pangram]]]

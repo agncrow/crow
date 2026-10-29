@@ -1,0 +1,18 @@
+truncate_demo.txt holds 45 bytes
+  truncate_file[truncate_demo.txt, 19]: now 19 bytes
+  what is left: 'The quick brown fox'
+  truncate_file[truncate_demo.txt, 19] refused: truncate_demo.txt holds 19 bytes, and 19 is no fewer
+  truncate_file[truncate_demo.txt, 100] refused: truncate_demo.txt holds 19 bytes, and 100 is no fewer
+  truncate_file[truncate_demo.txt, -1] refused: a length is never negative
+  truncate_file[no_such_file.txt, 10] refused: there is no file no_such_file.txt
+
+truncate_demo_utf8.txt holds 10 characters in 12 bytes
+  truncate_file[truncate_demo_utf8.txt, 6]: now 6 bytes
+  what is left: 'naïve'
+  truncate_file[truncate_demo_utf8.txt, 3]: now 3 bytes
+  read as text: cannot read 'truncate_demo_utf8.txt': it is not text (UTF-8)
+
+truncate_demo.bin holds 256 bytes, 0 to 255
+  truncate_file[truncate_demo.bin, 100]: now 100 bytes
+  its last four bytes: 96 97 98 99
+  the first 100 bytes as they were (cksum): true

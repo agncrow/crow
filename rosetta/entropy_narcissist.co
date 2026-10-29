@@ -1,0 +1,33 @@
+--- Rosetta Code: Entropy/Narcissist
+--- https://rosettacode.org/wiki/Entropy/Narcissist
+--- The program reads its own source and computes its Shannon entropy in bits
+--- per character, H = -sum p log2 p over the characters' frequencies. It runs
+--- from a work directory, so it reads itself by its absolute path in the
+--- repository.
+
+use math
+
+--- how many times each character occurs
+fn counts_of[chars]
+    counts = map[]
+    for c in chars
+        if c in counts
+            counts[c] = counts[c] + 1
+        else
+            counts[c] = 1
+    return counts
+
+fn entropy[text]
+    chars = split[text, '']
+    counts = counts_of[chars]
+    n = float[len[chars]]
+    h = 0.0
+    for c in keys[counts]
+        p = counts[c] / n
+        h = h - p * log2[p]
+    return h
+
+source = read['/Users/vijay/code/rust_projects/crow/rosetta/entropy_narcissist.co']
+chars = split[source, '']
+log['`len[chars]` characters, `len[counts_of[chars]]` of them distinct']
+log['entropy: `entropy[source]` bits per character']

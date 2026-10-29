@@ -1,0 +1,105 @@
+--- Rosetta Code: Erdös-Selfridge categorization of primes
+--- https://rosettacode.org/wiki/Erd%C3%B6s-Selfridge_categorization_of_primes
+--- A sieve keeps the smallest prime factor of every number up to one past the
+--- millionth prime. The primes are taken in increasing order: the prime factors
+--- of p + 1 other than p + 1 itself are smaller than p, so their categories are
+--- known, and p's is 1 when they are only 2s and 3s, else one more than the
+--- highest among them.
+
+struct Tally [count, first, last]
+
+--- spf[m] is the smallest prime factor of m: every number starts as its own,
+--- and each prime claims the multiples no smaller prime has
+fn smallest_factors[limit]
+    spf = range[limit]
+    p = 2
+    while p * p lt limit
+        if spf[p] eq p
+            k = p * p
+            while k lt limit
+                if spf[k] eq k
+                    spf[k] = p
+                k = k + p
+        p = p + 1
+    return spf
+
+--- the category of the prime p, from the categories of the smaller primes
+fn category_of[spf, category, p]
+    m = p + 1
+    above = 0
+    smooth = true
+    while m gt 1
+        q = spf[m]
+        if q gt 3
+            smooth = false
+            if category[q] gt above
+                above = category[q]
+        m = m / q
+    if smooth
+        return 1
+    return above + 1
+
+--- the first `count` primes, each keyed to its category; the sieve must reach
+--- one past the last of them
+fn categorize[count, limit]
+    spf = smallest_factors[limit]
+    category = map[]
+    p = 2
+    while len[category] lt count
+        if spf[p] eq p
+            c = category_of[spf, category, p]
+            category = set[category, p, c]
+        p = p + 1
+    return category
+
+fn highest[xs]
+    top = xs[0]
+    for x in xs
+        top = max[top, x]
+    return top
+
+--- each category's count, smallest and largest prime, from 1 to the highest
+fn tallies[primes, cats]
+    top = highest[cats]
+    counts = for c in range[top + 1]
+        0
+    firsts = counts
+    lasts = counts
+    for i in range[len[primes]]
+        c = cats[i]
+        if counts[c] eq 0
+            firsts[c] = primes[i]
+        counts[c] = counts[c] + 1
+        lasts[c] = primes[i]
+    found = for c in range[1, top + 1]
+        Tally[counts[c], firsts[c], lasts[c]]
+    return found
+
+--- the items in rows of `per`, each number right-aligned in `width`
+fn show_rows[xs, per, width]
+    for start in range[0, len[xs], per]
+        cells = for x in slice[xs, start, start + per]
+            fmt[x, width = width]
+        log[join[cells, '']]
+
+category = categorize[1000000, 15485865]
+primes = keys[category]
+cats = values[category]
+
+log['The first 200 primes by category:']
+for c in range[1, highest[slice[cats, 0, 200]] + 1]
+    members = for i in range[200]
+        if cats[i] eq c
+            primes[i]
+    log['']
+    log['Category `c` (`len[members]`):']
+    show_rows[members, 12, 6]
+
+log['']
+log['The first 1,000,000 primes by category:']
+log['']
+log['Category      Count   Smallest     Largest']
+found = tallies[primes, cats]
+for c in range[len[found]]
+    t = found[c]
+    log['`fmt[c + 1, width = 8]` `fmt[t.count, width = 10, commas = true]` `fmt[t.first, width = 10, commas = true]` `fmt[t.last, width = 11, commas = true]`']

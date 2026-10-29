@@ -1,0 +1,17 @@
+2 ⊗ -2 = 0
+-0.001 ⊕ -inf = -0.001
+0 ⊗ -inf = -inf
+1.5 ⊕ -1 = 1.5
+-0.5 ⊗ 0 = -0.5
+
+5 ↑ 7 = 35 (and 5 * 7 = 35)
+5 ↑ 0 is refused: a power is a positive whole number, not 0
+
+5 ⊗ (8 ⊕ 7) = 13
+5 ⊗ 8 ⊕ 5 ⊗ 7 = 13
+5 ⊗ (8 ⊕ 7) equals 5 ⊗ 8 ⊕ 5 ⊗ 7: true
+
+Over [-inf, -2.5, -1, 0, 0.5, 3, 7.25]:
+  a ⊗ (b ⊕ c) = a ⊗ b ⊕ a ⊗ c for all 343 choices of a, b, c: true
+  x ⊕ -inf = x, x ⊗ 0 = x and x ⊕ x = x for each x: true
+  a ↑ b = a * b for each a and b from 1 to 9: true

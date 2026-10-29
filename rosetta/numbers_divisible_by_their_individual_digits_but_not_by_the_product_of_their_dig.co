@@ -1,0 +1,44 @@
+--- Rosetta Code: Numbers divisible by their individual digits, but not by the product of their digits
+--- https://rosettacode.org/wiki/Numbers_divisible_by_their_individual_digits,_but_not_by_the_product_of_their_digits
+--- Each n below 1,000 is taken apart into its digits by division by ten; a zero
+--- digit rules n out (nothing divides by zero), the rest must each divide n while
+--- their product does not.
+
+fn digits[n]
+    --- n's decimal digits, the last one first
+    ds = []
+    rest = n
+    while rest gt 0
+        ds = push[ds, rest % 10]
+        rest = rest / 10
+    ds
+
+fn wanted[n]
+    --- whether each digit of n divides n and their product does not
+    ds = digits[n]
+    if 0 in ds
+        return false
+    product = 1
+    divides = true
+    for d in ds
+        product = product * d
+        if n % d ne 0
+            divides = false
+    divides and n % product ne 0
+
+fn rows_of[xs, per, width]
+    --- the numbers as lines of `per`, each right-aligned in `width` columns
+    lines = []
+    for start in range[0, len[xs], per]
+        cells = for x in slice[xs, start, start + per]
+            fmt[x, width = width]
+        lines = push[lines, join[cells, ' ']]
+    lines
+
+found = for n in range[1, 1000]
+    if wanted[n]
+        n
+log['`len[found]` numbers below 1,000 are divisible by each of their digits but not by their product:']
+log['']
+for line in rows_of[found, 10, 3]
+    log[line]

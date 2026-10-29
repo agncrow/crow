@@ -1,0 +1,327 @@
+--- Rosetta Code: Weiler-Atherton polygon clipping
+--- https://rosettacode.org/wiki/Weiler-Atherton_polygon_clipping
+--- The task's subject and clip polygons, every coordinate an exact fraction, so a
+--- crossing lies exactly where it is. Both polygons are turned counter-clockwise
+--- (by the sign of their area), the crossings of their edges found, each marked
+--- entering or leaving by the side the subject's edge crosses the clip's from, and
+--- put into both polygons' lists of corners in order along each edge. From each
+--- entering crossing not yet used, the walk follows the subject until it leaves the
+--- clip polygon, then the clip polygon until it enters the subject again, until it is
+--- back where it began. A corner of one polygon lying on the other's edge with both
+--- its edges to one side (the clip's corner (330, 120) on the subject's top) is a
+--- touch, not a crossing; a meeting that does cross at a corner is refused. The
+--- result is printed (rounded as the other entries print it, and to three places),
+--- checked against which cells of a grid lie in both polygons, drawn in characters,
+--- and written as an SVG, weiler_atherton_polygon_clipping.svg in the current
+--- directory (removed at the end unless the program is given the argument keep).
+--- Five more pairs are clipped and checked the same way: squares overlapping, one
+--- inside the other each way round, two apart, and a comb across a clockwise bar,
+--- which leaves three pieces.
+
+struct Point [x, y]
+
+--- a crossing of subject edge i and clip edge j: where, how far along each, and
+--- whether the subject enters the clip polygon there
+struct Crossing [at, i, along_i, j, along_j, entering]
+
+--- a corner of a polygon's list: a corner of its own (crossing -1) or a crossing
+struct Node [at, crossing]
+
+fn pt[x, y]
+    return Point[fraction[x, 1], fraction[y, 1]]
+
+fn minus[a, b]
+    return Point[a.x - b.x, a.y - b.y]
+
+fn cross[a, b]
+    return a.x * b.y - a.y * b.x
+
+fn area[polygon]
+    twice = fraction[0, 1]
+    n = len[polygon]
+    for k in range[n]
+        twice = twice + cross[polygon[k], polygon[(k + 1) % n]]
+    return twice / 2
+
+fn counter_clockwise[polygon]
+    if area[polygon] lt 0
+        return reverse[polygon]
+    return polygon
+
+--- even-odd: whether p is inside the polygon (p on no edge)
+fn inside[p, polygon]
+    within = false
+    n = len[polygon]
+    for k in range[n]
+        a = polygon[k]
+        b = polygon[(k + 1) % n]
+        if (a.y gt p.y) ne (b.y gt p.y)
+            x = a.x + (p.y - a.y) * (b.x - a.x) / (b.y - a.y)
+            if p.x lt x
+                within = not within
+    return within
+
+--- the polygon from its first corner outside the other one, where there is one
+fn from_outside[polygon, other]
+    n = len[polygon]
+    k = 0
+    while k lt n and inside[polygon[k], other]
+        k = k + 1
+    if k eq n
+        return polygon
+    return concat[slice[polygon, k, n], slice[polygon, 0, k]]
+
+--- whether a corner of one polygon lies on an edge of the other: fine where both
+--- its neighbours lie to one side (a touch), refused where the boundaries cross
+fn check_corners[polygon, other, name, report]
+    n = len[polygon]
+    m = len[other]
+    for k in range[n]
+        v = polygon[k]
+        before = polygon[(k + n - 1) % n]
+        after = polygon[(k + 1) % n]
+        for j in range[m]
+            p = other[j]
+            q = other[(j + 1) % m]
+            d = minus[q, p]
+            w = minus[v, p]
+            if cross[d, w] eq 0 and w.x * d.x + w.y * d.y gte 0 and w.x * d.x + w.y * d.y lte d.x * d.x + d.y * d.y
+                side = cross[d, minus[before, p]] * cross[d, minus[after, p]]
+                if side lte 0 or (w.x eq 0 and w.y eq 0) or (v.x eq q.x and v.y eq q.y)
+                    halt['the `name` polygon\'s corner `shown[v]` lies on the other\'s boundary where they cross: not handled']
+                if report
+                    log['The `name` polygon\'s corner `shown[v]` touches the `other_name[name]` polygon\'s edge `shown[p]`-`shown[q]` from one side: no crossing there.']
+
+fn other_name[name]
+    if name eq 'clip'
+        return 'subject'
+    return 'clip'
+
+fn crossings[subject, clip]
+    found = []
+    n = len[subject]
+    m = len[clip]
+    for i in range[n]
+        p = subject[i]
+        d = minus[subject[(i + 1) % n], p]
+        for j in range[m]
+            r = clip[j]
+            e = minus[clip[(j + 1) % m], r]
+            den = cross[d, e]
+            if den ne 0
+                w = minus[r, p]
+                t = cross[w, e] / den
+                u = cross[w, d] / den
+                if t gt 0 and t lt 1 and u gt 0 and u lt 1
+                    at = Point[p.x + t * d.x, p.y + t * d.y]
+                    found = push[found, Crossing[at, i, t, j, u, cross[e, d] gt 0]]
+    return found
+
+--- a polygon's corners with the crossings on each edge put in, in order along it
+fn with_crossings[corners, found, on_subject]
+    nodes = []
+    for edge in range[len[corners]]
+        nodes = push[nodes, Node[corners[edge], -1]]
+        left = []
+        for k in range[len[found]]
+            c = found[k]
+            if (on_subject and c.i eq edge) or (not on_subject and c.j eq edge)
+                left = push[left, k]
+        while len[left] gt 0
+            best = 0
+            for b in range[1, len[left]]
+                if along[found[left[b]], on_subject] lt along[found[left[best]], on_subject]
+                    best = b
+            nodes = push[nodes, Node[found[left[best]].at, left[best]]]
+            left = concat[slice[left, 0, best], slice[left, best + 1, len[left]]]
+    return nodes
+
+fn along[c, on_subject]
+    if on_subject
+        return c.along_i
+    return c.along_j
+
+fn place_of[nodes, k]
+    i = 0
+    while nodes[i].crossing ne k
+        i = i + 1
+    return i
+
+--- the walk: each entering crossing not yet used starts a polygon of the result
+fn walk[subject_nodes, clip_nodes, found]
+    used = for k in range[len[found]]
+        false
+    polygons = []
+    for start in subject_nodes
+        k = start.crossing
+        if k gte 0 and found[k].entering and not used[k]
+            polygon = []
+            current = k
+            on_subject = true
+            done = false
+            while not done
+                used[current] = true
+                polygon = push[polygon, found[current].at]
+                nodes = clip_nodes
+                if on_subject
+                    nodes = subject_nodes
+                at = (place_of[nodes, current] + 1) % len[nodes]
+                while nodes[at].crossing lt 0
+                    polygon = push[polygon, nodes[at].at]
+                    at = (at + 1) % len[nodes]
+                current = nodes[at].crossing
+                on_subject = not on_subject
+                done = current eq k
+            polygons = push[polygons, polygon]
+    return polygons
+
+--- (the polygons turned go into new names, each guarded before it is used: answered
+--- unguarded in a list, the compiled program lost the other path's answer, and a
+--- parameter given the turned polygon did not build there, called from a function:
+--- findings/weiler_atherton_polygon_clipping-2.co and -1.co)
+fn clip_polygon[subject, clip, report]
+    s = from_outside[counter_clockwise[subject], clip]
+    c = counter_clockwise[clip]
+    if not s.ok or not c.ok
+        return error['the polygons could not be turned', 'clip']
+    check_corners[c, s, 'clip', report]
+    check_corners[s, c, 'subject', report]
+    found = crossings[s, c]
+    if len[found] eq 0
+        if inside[s[0], c]
+            return [s]
+        if inside[c[0], s]
+            return [c]
+        return []
+    return walk[with_crossings[s, found, true], with_crossings[c, found, false], found]
+
+fn shown[p]
+    return '(`round[p.x]`, `round[p.y]`)'
+
+fn closely[p]
+    return '(`fmt[float[p.x], decimals = 3]`, `fmt[float[p.y], decimals = 3]`)'
+
+fn exact[p]
+    return '(`p.x`, `p.y`)'
+
+fn corners_text[polygon]
+    parts = for p in polygon
+        shown[p]
+    return join[parts, ' ']
+
+--- another pair: the pieces, their area, and the cells of the grid they disagree on
+fn try_pair[name, subject, clip]
+    result = clip_polygon[subject, clip, false]
+    total = fraction[0, 1]
+    for polygon in result
+        total = total + area[polygon]
+    drawn = picture[subject, clip, result, 50, 18]
+    log['`name`: `len[result]` polygons, area `total`, cells disagreeing `drawn.disagree`']
+    for polygon in result
+        log['    `corners_text[polygon]`']
+
+fn in_any[p, polygons]
+    for polygon in polygons
+        if inside[p, polygon]
+            return true
+    return false
+
+--- the plane in characters, a cell twice as high as it is wide: # in the result,
+--- : in the subject only, . in the clip only; and how many cells the result and the
+--- two polygons disagree about
+struct Picture [lines, disagree]
+
+fn picture[subject, clip, result, columns, rows]
+    disagree = 0
+    lines = []
+    for r in range[rows]
+        cells = []
+        for c in range[columns]
+            p = Point[fraction[45 + 10 * c, 1], fraction[125 + 20 * r, 1]]
+            s = inside[p, subject]
+            k = inside[p, clip]
+            got = in_any[p, result]
+            if got ne (s and k)
+                disagree = disagree + 1
+            mark = ' '
+            if got
+                mark = '#'
+            else if s
+                mark = ':'
+            else if k
+                mark = '.'
+            cells = push[cells, mark]
+        lines = push[lines, trim_end[join[cells, '']]]
+    return Picture[lines, disagree]
+
+fn trim_end[text]
+    letters = split[text, '']
+    last = len[letters] - 1
+    while last gte 0 and letters[last] eq ' '
+        last = last - 1
+    return join[slice[letters, 0, last + 1], '']
+
+fn svg_points[polygon]
+    parts = for p in polygon
+        '`fmt[float[p.x], decimals = 1]`,`fmt[float[p.y], decimals = 1]`'
+    return join[parts, ' ']
+
+fn svg[subject, clip, result]
+    parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="560" height="440" viewBox="20 80 560 440">']
+    parts = push[parts, '<rect x="20" y="80" width="560" height="440" fill="white"/>']
+    parts = push[parts, '<polygon points="`svg_points[subject]`" fill="#cfe2ff" stroke="#1f5fbf" stroke-width="2"/>']
+    parts = push[parts, '<polygon points="`svg_points[clip]`" fill="#ffd6d6" fill-opacity="0.6" stroke="#c62828" stroke-width="2"/>']
+    for polygon in result
+        parts = push[parts, '<polygon points="`svg_points[polygon]`" fill="#43a047" fill-opacity="0.85" stroke="#1b5e20" stroke-width="3"/>']
+    parts = push[parts, '</svg>']
+    text = join[parts, '\n']
+    return '`text`\n'
+
+subject = [pt[180, 420], pt[180, 120], pt[520, 120], pt[520, 420], pt[420, 420], pt[320, 220]]
+clip = [pt[60, 220], pt[330, 120], pt[410, 290], pt[80, 480], pt[280, 280]]
+log['Subject polygon: `corners_text[subject]`']
+log['Clip polygon:    `corners_text[clip]`']
+log['']
+result = clip_polygon[subject, clip, true]
+log['']
+log['The subject clipped by the clip polygon: `len[result]` polygons, their corners rounded as']
+log['the other entries show them, then exactly and to three places']
+total = fraction[0, 1]
+for k in range[len[result]]
+    polygon = result[k]
+    a = area[polygon]
+    total = total + a
+    log['  `k + 1`: `corners_text[polygon]`']
+    for p in polygon
+        log['     `fmt[shown[p], width = 12]` `fmt[exact[p], width = 26]` `closely[p]`']
+    log['     area `a` = `fmt[float[a], decimals = 3]`']
+log['Their area together: `total` = `fmt[float[total], decimals = 3]`']
+swapped = clip_polygon[clip, subject, false]
+other = fraction[0, 1]
+for polygon in swapped
+    other = other + area[polygon]
+log['The clip polygon clipped by the subject instead: `len[swapped]` polygons, area `other`']
+log['']
+drawn = picture[subject, clip, result, 50, 18]
+for line in drawn.lines
+    log[line]
+log['']
+log['Grid cells where the result and the two polygons disagree: `drawn.disagree` of 900']
+written = write['weiler_atherton_polygon_clipping.svg', svg[subject, clip, result]]
+if not written.ok
+    halt['weiler_atherton_polygon_clipping.svg could not be written: `written.reason`']
+log['weiler_atherton_polygon_clipping.svg: the subject in blue, the clip polygon in red, the result in green']
+log['']
+log['More pairs, each checked against the grid as above:']
+square = [pt[100, 150], pt[300, 150], pt[300, 350], pt[100, 350]]
+try_pair['two squares overlapping', square, [pt[200, 250], pt[400, 250], pt[400, 450], pt[200, 450]]]
+try_pair['a square inside the clip polygon', square, [pt[60, 120], pt[520, 120], pt[520, 460], pt[60, 460]]]
+try_pair['a clip polygon inside the square', square, [pt[150, 200], pt[250, 200], pt[200, 300]]]
+try_pair['apart', square, [pt[350, 300], pt[450, 300], pt[450, 400]]]
+comb = [pt[100, 150], pt[500, 150], pt[500, 450], pt[420, 450], pt[420, 220], pt[380, 220], pt[380, 450], pt[300, 450], pt[300, 220], pt[260, 220], pt[260, 450], pt[100, 450]]
+try_pair['a comb across a bar, clockwise', comb, [pt[60, 400], pt[540, 400], pt[540, 300], pt[60, 300]]]
+given = args[]
+if 'keep' not in given
+    removed = rm['weiler_atherton_polygon_clipping.svg']
+    if not removed.ok
+        halt['weiler_atherton_polygon_clipping.svg could not be removed: `removed.reason`']

@@ -1,0 +1,24 @@
+--- Rosetta Code: Narcissist
+--- https://rosettacode.org/wiki/Narcissist
+--- A narcissist in the manner of a quine: the program does not read its own file
+--- but rebuilds its source from the template t below, in which a tilde stands for
+--- a line break, a hash for a quote and an at sign for the template itself (those
+--- three characters, a backtick and a backslash appear nowhere else in the
+--- source). The candidate is the whole of standard input, read as one text, so
+--- any finite input is compared character for character; the answer is accept or
+--- reject. (narcissist.in holds a copy of this file, so the run prints accept.)
+use bits
+
+fn source_of[t]
+    --- the program text that the template t stands for
+    q = char[39]
+    lines = replace[t, char[126], char[10]]
+    quoted = replace[lines, char[35], q]
+    return replace[quoted, char[64], concat[[q, t, q]]]
+
+t = '--- Rosetta Code: Narcissist~--- https://rosettacode.org/wiki/Narcissist~--- A narcissist in the manner of a quine: the program does not read its own file~--- but rebuilds its source from the template t below, in which a tilde stands for~--- a line break, a hash for a quote and an at sign for the template itself (those~--- three characters, a backtick and a backslash appear nowhere else in the~--- source). The candidate is the whole of standard input, read as one text, so~--- any finite input is compared character for character; the answer is accept or~--- reject. (narcissist.in holds a copy of this file, so the run prints accept.)~use bits~~fn source_of[t]~    --- the program text that the template t stands for~    q = char[39]~    lines = replace[t, char[126], char[10]]~    quoted = replace[lines, char[35], q]~    return replace[quoted, char[64], concat[[q, t, q]]]~~t = @~given = read[#/dev/stdin#]~if given.ok and given eq source_of[t]~    log[#accept#]~else~    log[#reject#]~'
+given = read['/dev/stdin']
+if given.ok and given eq source_of[t]
+    log['accept']
+else
+    log['reject']

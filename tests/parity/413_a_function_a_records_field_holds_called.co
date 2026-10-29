@@ -1,0 +1,12 @@
+--- a function a record's field holds, called through the field: compiled,
+--- it had been called as a method of the record, and the program did not
+--- build (Rosetta Code, Currying)
+
+struct Box [f, x]
+
+fn square[i]
+    return i * i
+
+log[square[2]]
+b = Box[square, 3]
+log[b.f[b.x]]

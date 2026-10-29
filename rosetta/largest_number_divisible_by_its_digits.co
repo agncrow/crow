@@ -1,0 +1,106 @@
+--- Rosetta Code: Largest number divisible by its digits
+--- https://rosettacode.org/wiki/Largest_number_divisible_by_its_digits
+--- A number whose digits are exactly a set S is a multiple of lcm(S), so for each
+--- set, larger sets first, the multiples of lcm(S) are tried from the largest
+--- arrangement of S down to the smallest. Two facts of base b rule a set out
+--- before any search: if b divides lcm(S) the number ends in 0, and a number is
+--- its digit sum mod b - 1, so gcd(lcm(S), b - 1) must divide the sum of S.
+
+use bits
+
+struct Search [number, step, tried]
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+fn lcm_of[digits]
+    l = 1
+    for d in digits
+        l = l / gcd[l, d] * d
+    return l
+
+fn value_of[digits, base]
+    --- the number written with these digits, most significant first
+    n = 0
+    for d in digits
+        n = n * base + d
+    return n
+
+fn shown[n, base]
+    symbols = split['0123456789ABCDEF', '']
+    parts = []
+    while n gt 0
+        parts = push[parts, symbols[n % base]]
+        n = n / base
+    return join[reverse[parts], '']
+
+fn possible[digits, base]
+    l = lcm_of[digits]
+    if l % base eq 0
+        return false
+    total = 0
+    for d in digits
+        total = total + d
+    return total % gcd[l, base - 1] eq 0
+
+fn has_digits[n, allowed, base]
+    --- whether n's digits are all different and all in the set (as bits: bit d for digit d)
+    seen = 0
+    while n gt 0
+        bit = shift[1, n % base]
+        if bitand[allowed, bit] eq 0 or bitand[seen, bit] ne 0
+            return false
+        seen = bitor[seen, bit]
+        n = n / base
+    return true
+
+fn divisible_by_digits[n, base]
+    --- the check itself, digit by digit
+    rest = n
+    while rest gt 0
+        d = rest % base
+        if d eq 0 or n % d ne 0
+            return false
+        rest = rest / base
+    return true
+
+fn search_set[digits, base]
+    allowed = 0
+    for d in digits
+        allowed = bitor[allowed, shift[1, d]]
+    step = lcm_of[digits]
+    low = value_of[digits, base]
+    n = value_of[reverse[digits], base]
+    n = n - n % step
+    tried = 0
+    while n gte low
+        tried = tried + 1
+        if has_digits[n, allowed, base]
+            return Search[n, step, tried]
+        n = n - step
+    return Search[0, step, tried]
+
+fn largest_lynch_bell[base]
+    best = Search[0, 1, 0]
+    size = base - 1
+    while size gt 0 and best.number eq 0
+        for mask in range[shift[1, base - 1]]
+            if bitcount[mask] eq size
+                digits = for d in range[1, base]
+                    if bitand[mask, shift[1, d - 1]] ne 0
+                        d
+                if possible[digits, base]
+                    found = search_set[digits, base]
+                    if found.number gt best.number
+                        best = found
+        size = size - 1
+    return best
+
+for base in [10, 16]
+    found = largest_lynch_bell[base]
+    n = found.number
+    log['Base `base`: `shown[n, base]`']
+    log['  `n` in base 10, a multiple of `found.step` (the lcm of its digits); `found.tried` multiples tried']
+    log['  divisible by each of its digits: `divisible_by_digits[n, base]`']

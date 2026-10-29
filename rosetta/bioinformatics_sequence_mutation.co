@@ -1,0 +1,90 @@
+--- Rosetta Code: Bioinformatics/Sequence mutation
+--- https://rosettacode.org/wiki/Bioinformatics/Sequence_mutation
+--- A seeded random sequence of 250 bases, then ten mutations — a substitution,
+--- a deletion or an insertion, chosen by weight — each one described as it is made.
+
+use math
+
+fn weighted[weights]
+    --- The index of a weight, drawn in proportion to the weights.
+    total = sum[weights]
+    pick = rand[] * total
+    i = 0
+    while pick gte weights[i] and i lt len[weights] - 1
+        pick = pick - weights[i]
+        i = i + 1
+    return i
+
+fn random_base[weights]
+    bases = ['A', 'C', 'G', 'T']
+    return bases[weighted[weights]]
+
+fn random_sequence[n, weights]
+    bases = for i in range[n]
+        random_base[weights]
+    return join[bases, '']
+
+fn pretty[dna]
+    i = 0
+    while i lt len[dna]
+        log['`fmt[i, width = 5]`: `slice[dna, i, i + 50]`']
+        i = i + 50
+    log['']
+    log['  BASECOUNT:']
+    for base in ['A', 'C', 'G', 'T']
+        log['      `base`: `occurs[dna, base]`']
+    log['    TOT= `len[dna]`']
+
+struct Mutation [dna, what]
+
+fn substituted[dna, at, base]
+    before = slice[dna, 0, at]
+    after = slice[dna, at + 1, len[dna]]
+    return Mutation['`before``base``after`', 'Substitute `base` for `dna[at]` at `at`']
+
+fn deleted[dna, at]
+    before = slice[dna, 0, at]
+    after = slice[dna, at + 1, len[dna]]
+    return Mutation['`before``after`', 'Delete     `dna[at]` at `at`']
+
+fn inserted[dna, at, base]
+    before = slice[dna, 0, at]
+    after = slice[dna, at, len[dna]]
+    return Mutation['`before``base``after`', 'Insert     `base` at `at`']
+
+fn mutate[dna, kind_weights, base_weights]
+    --- kind_weights weigh substitution, deletion and insertion, in that order.
+    kind = weighted[kind_weights]
+    if kind eq 0
+        return substituted[dna, rand[len[dna]], random_base[base_weights]]
+    if kind eq 1
+        return deleted[dna, rand[len[dna]]]
+    --- An insertion may also go after the last base.
+    return inserted[dna, rand[len[dna] + 1], random_base[base_weights]]
+
+seed[2026]
+even = [1.0, 1.0, 1.0, 1.0]
+dna = random_sequence[250, even]
+log['SEQUENCE:']
+pretty[dna]
+
+kind_weights = [2.0, 1.0, 1.0]
+log['']
+log['MUTATIONS (substitute : delete : insert weighed 2 : 1 : 1):']
+for k in range[10]
+    m = mutate[dna, kind_weights, even]
+    dna = m.dna
+    log['  `fmt[k + 1, width = 2]`. `m.what`']
+log['']
+log['MUTATED SEQUENCE:']
+pretty[dna]
+
+--- Extra credit: the weights chosen another way — only insertions, of G and C.
+log['']
+log['FIVE INSERTIONS OF G OR C ONLY:']
+for k in range[5]
+    m = mutate[dna, [0.0, 0.0, 1.0], [0.0, 1.0, 1.0, 0.0]]
+    dna = m.dna
+    log['  `fmt[k + 1, width = 2]`. `m.what`']
+log['']
+pretty[dna]

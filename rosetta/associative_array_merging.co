@@ -1,0 +1,30 @@
+--- Rosetta Code: Associative array/Merging
+--- https://rosettacode.org/wiki/Associative_array/Merging
+--- A map holds values of one kind, so values of several kinds (text and numbers)
+--- are parsed JSON values, the language's dynamic kind. merge sets the update's
+--- entries into the base and answers a new map: no value changes in place, so the
+--- two maps handed to it are as they were. A map keeps its keys in order.
+
+--- every key of either map, with the update's value where it has one, else the base's
+fn merge[base, update]
+    merged = base
+    for k in keys[update]
+        merged = set[merged, k, update[k]]
+    return merged
+
+--- a JSON object as a map of its parsed values
+fn entries_of[text]
+    j = json[text]
+    return map[keys[j], values[j]]
+
+fn show[title, m]
+    log[title]
+    for k in keys[m]
+        log['    `fmt[k, width = 6]` `encode[m[k]]`']
+
+base = entries_of['{"name": "Rocket Skates", "price": 12.75, "color": "yellow"}']
+update = entries_of['{"price": 15.25, "color": "red", "year": 1974}']
+merged = merge[base, update]
+show['base:', base]
+show['update:', update]
+show['merged:', merged]

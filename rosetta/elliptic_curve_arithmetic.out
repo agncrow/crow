@@ -1,0 +1,15 @@
+a = (-1.817, 1.000)
+b = (-1.442, 2.000)
+c = a + b = (10.375, -33.525)
+d = -c = (10.375, 33.525)
+c + d = Zero
+a + b + d = Zero
+a * 12345 = (10.759, 35.387)
+
+a, b and d = -(a + b) lie on one line: true
+
+p = (-1.906, 0.266), q = (-1.896, 0.427)
+p + q = (248.832, -3925.169)
+p, q and -(p + q) lie on one line: true
+p + q + -(p + q) = Zero
+3p computed as p + p + p and as p * 3: (-1.855, 0.783) and (-1.855, 0.783)

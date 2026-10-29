@@ -1,0 +1,5 @@
+Hello from include_a_file_lib.co
+INCLUDED!
+moved from Point[x = 0, y = 0] to Point[x = 3, y = 4]
+a distance of 5
+and Point[x = 6, y = 8] is 10 from the origin

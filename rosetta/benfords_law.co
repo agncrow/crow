@@ -1,0 +1,53 @@
+--- Rosetta Code: Benford's law
+--- https://rosettacode.org/wiki/Benford's_law
+--- Tallies the first significant digit of each number and sets the shares beside
+--- log10(1 + 1/d): the first 1000 Fibonacci numbers (ints grow, so each is exact),
+--- and for extra credit the populations of the 235 countries and dependencies
+--- listed on Wikipedia's "List of countries and dependencies by population"
+--- (revision 1382299340, 28 October 2026; rosetta/data/country_populations.txt).
+
+use math
+
+fn first_digit[n]
+    --- the first significant digit of a positive whole number
+    return int[str[n][0]]
+
+fn fibonacci_first_digits[count]
+    digits = []
+    a = 1
+    b = 1
+    for i in range[count]
+        digits = push[digits, first_digit[a]]
+        a, b = b, a + b
+    return digits
+
+fn population_first_digits[path]
+    --- each line is a place's name, a tab, and its population
+    digits = []
+    for line in split[trim[read[path]], '\n']
+        fields = split[line, '\t']
+        digits = push[digits, first_digit[int[fields[1]]]]
+    return digits
+
+fn tally[digits]
+    counts = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    for d in digits
+        counts[d - 1] = counts[d - 1] + 1
+    return counts
+
+fn percent[share]
+    return fmt[100.0 * share, decimals = 2, width = 6]
+
+fn show[title, digits]
+    counts = tally[digits]
+    total = len[digits]
+    log[title]
+    log['digit  observed  expected  deviation']
+    for d in range[1, 10]
+        observed = 1.0 * counts[d - 1] / total
+        expected = log10[1.0 + 1.0 / d]
+        log['  `d`     `percent[observed]`%   `percent[expected]`%    `percent[abs[observed - expected]]`%']
+
+show['First digits of the first 1000 Fibonacci numbers:', fibonacci_first_digits[1000]]
+log['']
+show['First digits of the populations of 235 countries and dependencies (Wikipedia):', population_first_digits['country_populations.txt']]

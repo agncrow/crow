@@ -1,0 +1,74 @@
+--- Rosetta Code: Heronian triangles
+--- https://rosettacode.org/wiki/Heronian_triangles
+--- hero[a, b, c] is Hero's formula. A triangle is Heronian when the area it gives
+--- rounds to a whole A with 16 A^2 = (a+b+c)(b+c-a)(a+c-b)(a+b-c) in exact ints.
+--- Sides a <= b <= c <= 200 with no common divisor; each triangle is kept as one
+--- int (area, perimeter, then the sides from the largest), so sorting the ints
+--- orders the triangles as the task asks.
+
+fn hero[a, b, c]
+    s = (a + b + c) / 2.0
+    product = s * (s - a) * (s - b) * (s - c)
+    if product lte 0.0
+        return 0.0
+    return sqrt[product]
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+--- The area when it is a whole number, else 0.
+fn heronian_area[a, b, c]
+    whole = round[hero[a, b, c]]
+    if whole gt 0 and 16 * whole * whole eq (a + b + c) * (b + c - a) * (a + c - b) * (a + b - c)
+        return whole
+    return 0
+
+--- The area, then three digits each for the perimeter, c, b and a.
+fn sort_key[a, b, c, area]
+    return (((area * 1000 + a + b + c) * 1000 + c) * 1000 + b) * 1000 + a
+
+--- The primitive Heronian triangles whose shortest side is a, as keys.
+fn with_shortest[a, most]
+    found = []
+    for b in range[a, most + 1]
+        c = b
+        while c lte most and c lt a + b
+            area = heronian_area[a, b, c]
+            if area gt 0 and gcd[gcd[a, b], c] eq 1
+                found = push[found, sort_key[a, b, c, area]]
+            c = c + 1
+    return found
+
+fn primitive_heronian[most]
+    groups = for a in range[1, most + 1]
+        with_shortest[a, most]
+    found = []
+    for group in groups
+        found = concat[found, group]
+    return sort[found]
+
+fn shown[k]
+    a = k % 1000
+    b = k / 1000 % 1000
+    c = k / 1000000 % 1000
+    perimeter = k / 1000000000 % 1000
+    area = k / 1000000000000
+    sides = '`fmt[a, width = 5]``fmt[b, width = 5]``fmt[c, width = 5]`'
+    return '`sides``fmt[perimeter, width = 11]``fmt[area, width = 7]`'
+
+header = '    a    b    c  perimeter   area'
+triangles = primitive_heronian[200]
+log['Primitive Heronian triangles with sides up to 200: `len[triangles]`']
+log['']
+log['The first ten, ordered by area, then perimeter, then the sides from the largest:']
+log[header]
+for k in slice[triangles, 0, 10]
+    log[shown[k]]
+log['']
+log['Those with area 210, in the same order:']
+log[header]
+for k in triangles
+    if k / 1000000000000 eq 210
+        log[shown[k]]

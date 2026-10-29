@@ -1,0 +1,14 @@
+[1, 99, 4] >>= increment >>= dollars: ['$2.00', '$100.00', '$5.00']
+[3, 4, 5] >>= increment >>= increment: [5, 6, 7]
+pure[12] >>= divisors >>= odd_spelled: ['odd 1', 'odd 3']
+
+the monad laws, for divisors, odd_spelled and m = [6, 7]:
+  left identity, pure[6] >>= divisors eq divisors[6]: true
+  right identity, m >>= pure eq m: true
+  associativity, (m >>= divisors) >>= odd_spelled eq m >>= (x -> divisors[x] >>= odd_spelled): true
+
+the cartesian product of 1..5 and 6..10:
+(1, 6) (1, 7) (1, 8) (1, 9) (1, 10) (2, 6) (2, 7) (2, 8) (2, 9) (2, 10) (3, 6) (3, 7) (3, 8) (3, 9) (3, 10) (4, 6) (4, 7) (4, 8) (4, 9) (4, 10) (5, 6) (5, 7) (5, 8) (5, 9) (5, 10)
+
+Pythagorean triples with sides up to 25:
+(3, 4, 5) (5, 12, 13) (6, 8, 10) (7, 24, 25) (8, 15, 17) (9, 12, 15) (12, 16, 20) (15, 20, 25)

@@ -1,0 +1,86 @@
+--- Rosetta Code: Deepcopy
+--- https://rosettacode.org/wiki/Deepcopy
+--- Crow has values, not references: an assignment, an argument handed to a
+--- function and every field or index write behave as deep copies, so
+--- `copy = original` is a deep copy (when and how much is copied is the
+--- implementation's choice: the interpreter copies on write; no program can
+--- tell). Shown on a nested record of mixed kinds, through a function, and on
+--- a cyclic graph, which Crow writes with keys since no value refers to another.
+---
+--- Limitations, all following from values without references:
+---   * a structure cannot be cyclic or share a part: a record written into its
+---     own field holds the record as it was; cycles and sharing are written
+---     with keys or indices (a map from a node's name to its neighbours' names),
+---     and copying such a map copies the keys, never what they name elsewhere;
+---   * a list holds one kind and a map one kind of value: mixed kinds are the
+---     fields of a record;
+---   * there is no shallow copy to choose instead.
+--- Documentation: the language spec, sections 1 (Scope), 9 (A Record or None)
+--- and 11 (a value handed to a function is the function's own):
+--- https://github.com/agncrow/crow/blob/main/docs/language-spec.md
+
+struct Address [street, city]
+struct Person [name, age, tags, scores, home, friend]
+
+--- the parameter is the function's own copy: the caller's record is untouched
+fn birthday[p]
+    p.age = p.age + 1
+    p.tags = push[p.tags, 'older']
+    return p
+
+--- the names met following each node's first edge, `steps` times
+fn walk[graph, start, steps]
+    path = [start]
+    at = start
+    i = 0
+    while i lt steps
+        at = graph[at][0]
+        path = push[path, at]
+        i = i + 1
+    return join[path, ' -> ']
+
+alice = Person['Alice', 30, ['admin'], map[math = [90, 85]], Address['1 Main St', 'Springfield'], 0]
+bob = Person['Bob', 25, ['dev', 'ops'], map[math = [60], art = [75]], Address['2 Oak Ave', 'Shelbyville'], alice]
+
+log['A record of mixed kinds: text, an int, a list, a map of lists, a record, and a link to another record']
+log['original: `bob`']
+copy = bob
+log['copy eq original: `copy eq bob`']
+log['']
+
+--- change the copy at every depth
+copy.name = 'Robert'
+copy.tags[0] = 'lead'
+copy.scores['math'][0] = 100
+copy.home.city = 'Capital City'
+copy.friend.name = 'Alicia'
+copy.friend.scores['math'] = push[copy.friend.scores['math'], 77]
+log['The copy changed at every depth:']
+log['copy:     `copy`']
+log['original: `bob`']
+log['alice:    `alice`']
+log['copy eq original: `copy eq bob`']
+log['']
+
+older = birthday[bob]
+log['Handed to a function that changes it: the answer is `older.age` with tags `older.tags`, the original still `bob.age` with `bob.tags`']
+log['']
+
+--- no cycle can be made: the field takes the record as it was
+ring = Person['Ring', 1, [], map[], Address['', ''], 0]
+as_it_was = ring
+ring.friend = as_it_was
+log['A record written into its own field: `ring`']
+log['its friend has no friend: `ring.friend.friend eq 0`']
+log['']
+
+--- a cyclic graph, its edges written as keys, copied and changed
+graph = map[a = ['b'], b = ['c'], c = ['a']]
+copied = graph
+copied['c'] = ['b']
+original_walk = walk[graph, 'a', 6]
+copied_walk = walk[copied, 'a', 6]
+log['A cyclic graph: `graph`']
+log['the copy with edge c -> a turned to c -> b: `copied`']
+log['walking the original: `original_walk`']
+log['walking the copy:     `copied_walk`']

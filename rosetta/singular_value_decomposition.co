@@ -1,0 +1,303 @@
+--- Rosetta Code: Singular value decomposition
+--- https://rosettacode.org/wiki/Singular_value_decomposition
+--- Each matrix of the input (m and n, then m rows of n numbers) is decomposed by
+--- one-sided Jacobi rotations (Hestenes): the columns are rotated two at a time until
+--- every two are orthogonal; their lengths are then the singular values, the columns
+--- scaled to length 1 are U, and the rotations together are V. A matrix with fewer
+--- rows than columns is decomposed through its transpose, and the columns of U for a
+--- singular value of 0 are completed to an orthonormal set (Gram-Schmidt). This is
+--- the thin decomposition, U m x k, Σ k x k and V n x k for k = min(m, n). A pair of
+--- singular vectors may be negated together; each is turned here so that the last
+--- entry of its column of V that is not 0 is positive, which gives the task's sample
+--- output. Each decomposition is held to A = U Σ Vᵀ and to orthonormal columns, and
+--- compared with Crow's own svd (use math), which answers the thin [U, S, Vt] with the
+--- signs numpy gives the sample: the same singular values, the same vectors up to sign.
+
+use math
+
+--- the number a piece of text writes, NaN where it writes none
+fn number_of[piece]
+    x = float[piece]
+    if not x.ok
+        return nan
+    return x
+
+--- the numbers written on a line, between any spaces
+fn numbers_of[line]
+    pieces = for piece in split[trim[line], ' ']
+        if piece ne ''
+            piece
+    xs = for piece in pieces
+        number_of[piece]
+    for x in xs
+        if x ne x
+            halt['\'`line`\' holds something that is not a number']
+    return xs
+
+--- every matrix of the standard input, each a list of rows
+fn read_matrices[]
+    matrices = []
+    line = input[]
+    while line.ok
+        if trim[line] eq ''
+            line = input[]
+            continue
+        dims = numbers_of[line]
+        if len[dims] ne 2
+            halt['expected m and n, got \'`line`\'']
+        m = int[dims[0]]
+        n = int[dims[1]]
+        if m lt 1 or n lt 1
+            halt['a matrix has at least one row and one column, got \'`line`\'']
+        rows = []
+        while len[rows] lt m
+            row = input[]
+            if not row.ok
+                halt['the input ends inside a `m` x `n` matrix']
+            xs = numbers_of[row]
+            if len[xs] ne n
+                halt['expected `n` numbers in the row \'`row`\'']
+            rows = push[rows, xs]
+        matrices = push[matrices, rows]
+        line = input[]
+    return matrices
+
+fn transposed[a]
+    t = for j in range[len[a[0]]]
+        column = for i in range[len[a]]
+            a[i][j]
+        column
+    return t
+
+fn identity[n]
+    rows = for i in range[n]
+        row = for j in range[n]
+            if i eq j
+                1.0
+            else
+                0.0
+        row
+    return rows
+
+fn dot_of[x, y]
+    total = 0.0
+    for i in range[len[x]]
+        total = total + x[i] * y[i]
+    return total
+
+fn scaled[x, by]
+    ys = for v in x
+        v * by
+    return ys
+
+--- x less its part along each of the unit vectors
+fn orthogonal_to[x, units]
+    for u in units
+        along = dot_of[x, u]
+        x = for i in range[len[x]]
+            x[i] - along * u[i]
+    return x
+
+--- c x - s y and s x + c y
+fn rotate_pair[x, y, c, s]
+    first = for i in range[len[x]]
+        c * x[i] - s * y[i]
+    second = for i in range[len[x]]
+        s * x[i] + c * y[i]
+    return [first, second]
+
+struct Svd [u, s, v]
+
+--- the decomposition of a, at least as many rows as columns; u and v are lists of
+--- columns
+fn jacobi[a]
+    m = len[a]
+    n = len[a[0]]
+    cols = transposed[a]
+    vs = identity[n]
+    sweeps = 0
+    rotated = true
+    while rotated and sweeps lt 100
+        rotated = false
+        sweeps = sweeps + 1
+        for p in range[n - 1]
+            for q in range[p + 1, n]
+                alpha = dot_of[cols[p], cols[p]]
+                beta = dot_of[cols[q], cols[q]]
+                gamma = dot_of[cols[p], cols[q]]
+                if abs[gamma] gt 10.0 ^ -15 * sqrt[alpha * beta]
+                    rotated = true
+                    zeta = (beta - alpha) / (2.0 * gamma)
+                    t = 1.0 / (abs[zeta] + sqrt[1.0 + zeta * zeta])
+                    if zeta lt 0.0
+                        t = -t
+                    c = 1.0 / sqrt[1.0 + t * t]
+                    s = c * t
+                    pair = rotate_pair[cols[p], cols[q], c, s]
+                    cols[p] = pair[0]
+                    cols[q] = pair[1]
+                    pair = rotate_pair[vs[p], vs[q], c, s]
+                    vs[p] = pair[0]
+                    vs[q] = pair[1]
+    lengths = for col in cols
+        sqrt[dot_of[col, col]]
+    order = reverse[argsort[lengths]]
+    largest = lengths[order[0]]
+    us = []
+    sigmas = []
+    vees = []
+    for j in order
+        sigma = lengths[j]
+        u = []
+        if sigma gt largest * m * 10.0 ^ -15
+            u = scaled[cols[j], 1.0 / sigma]
+        else
+            --- a singular value of 0 to the precision of the rest: the unit vector
+            --- that keeps the most of itself made orthogonal to the others
+            sigma = 0.0
+            most = 0.0
+            for k in range[m]
+                unit = for i in range[m]
+                    if i eq k
+                        1.0
+                    else
+                        0.0
+                rest = orthogonal_to[orthogonal_to[unit, us], us]
+                size = sqrt[dot_of[rest, rest]]
+                if size gt most
+                    u = scaled[rest, 1.0 / size]
+                    most = size
+        us = push[us, u]
+        sigmas = push[sigmas, sigma]
+        vees = push[vees, vs[j]]
+    return Svd[us, sigmas, vees]
+
+--- each pair of singular vectors turned so that the last entry of its column of V
+--- that is not 0 is positive
+fn turned[d]
+    us = []
+    vs = []
+    for j in range[len[d.s]]
+        u = d.u[j]
+        v = d.v[j]
+        last = len[v] - 1
+        while last gt 0 and v[last] eq 0.0
+            last = last - 1
+        if v[last] lt 0.0
+            u = scaled[u, -1.0]
+            v = scaled[v, -1.0]
+        us = push[us, u]
+        vs = push[vs, v]
+    return Svd[us, d.s, vs]
+
+fn decompose[a]
+    if len[a] gte len[a[0]]
+        return turned[jacobi[a]]
+    d = jacobi[transposed[a]]
+    return turned[Svd[d.v, d.s, d.u]]
+
+--- the largest difference between a and u Σ vᵀ, u and v given as lists of columns
+fn residual[a, u, s, v]
+    worst = 0.0
+    for i in range[len[a]]
+        for j in range[len[a[0]]]
+            back = 0.0
+            for k in range[len[s]]
+                back = back + u[k][i] * s[k] * v[k][j]
+            worst = max[worst, abs[a[i][j] - back]]
+    return worst
+
+--- the largest difference between the columns' dot products and the identity's
+fn off_orthonormal[cols]
+    worst = 0.0
+    for i in range[len[cols]]
+        for j in range[len[cols]]
+            want = 0.0
+            if i eq j
+                want = 1.0
+            worst = max[worst, abs[dot_of[cols[i], cols[j]] - want]]
+    return worst
+
+--- a number as text, a negative zero as 0
+fn shown[x]
+    return str[x + 0.0]
+
+fn show_rows[rows]
+    for row in rows
+        texts = for x in row
+            shown[x]
+        log[join[texts, ' ']]
+
+fn diagonal[s]
+    rows = for i in range[len[s]]
+        row = for j in range[len[s]]
+            if i eq j
+                s[i]
+            else
+                0.0
+        row
+    return rows
+
+fn report[a]
+    m = len[a]
+    n = len[a[0]]
+    log['A, `m` x `n`:']
+    show_rows[a]
+    d = decompose[a]
+    log['']
+    log['U:']
+    show_rows[transposed[d.u]]
+    log['']
+    log['Σ:']
+    show_rows[diagonal[d.s]]
+    log['']
+    log['V:']
+    show_rows[transposed[d.v]]
+    log['']
+    near = 10.0 ^ -12
+    whole = residual[a, d.u, d.s, d.v] lt near
+    columns = off_orthonormal[d.u] lt near and off_orthonormal[d.v] lt near
+    log['U Σ Vᵀ is A: `whole`; the columns of U and of V are orthonormal: `columns`']
+    --- Crow's own svd, its U and Vt as lists of columns as here
+    parts = svd[a]
+    k = len[d.s]
+    theirs_u = for j in range[k]
+        column = for i in range[m]
+            parts[0][i][j]
+        column
+    theirs_v = for j in range[k]
+        column = for i in range[n]
+            parts[2][j][i]
+        column
+    theirs_s = for j in range[k]
+        parts[1][j]
+    same_values = true
+    same_vectors = true
+    for j in range[k]
+        if abs[theirs_s[j] - d.s[j]] gt near * (1.0 + d.s[0])
+            same_values = false
+        if d.s[j] gt near
+            turn = 1.0
+            if dot_of[theirs_v[j], d.v[j]] lt 0.0
+                turn = -1.0
+            for i in range[m]
+                if abs[theirs_u[j][i] * turn - d.u[j][i]] gt 10.0 ^ -9
+                    same_vectors = false
+            for i in range[n]
+                if abs[theirs_v[j][i] * turn - d.v[j][i]] gt 10.0 ^ -9
+                    same_vectors = false
+    log['']
+    log['svd[A] of use math answers U, S and Vt:']
+    for part in parts
+        log[part]
+    log['The same singular values: `same_values`; the same vectors up to sign: `same_vectors`']
+
+matrices = read_matrices[]
+first = true
+for a in matrices
+    if not first
+        log['']
+        log['----']
+        log['']
+    first = false
+    report[a]

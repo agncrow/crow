@@ -1,0 +1,46 @@
+--- Rosetta Code: Centre and radius of a circle passing through 3 points in a plane
+--- https://rosettacode.org/wiki/Centre_and_radius_of_a_circle_passing_through_3_points_in_a_plane
+--- The centre is equally far from the three points: the two linear equations
+--- that says, solved by Cramer's rule. Three points on one line have no such
+--- circle, and the answer is then an error value.
+
+struct Point [x, y]
+struct Circle [centre, radius]
+
+fn distance[p, q]
+    return sqrt[(p.x - q.x) ^ 2 + (p.y - q.y) ^ 2]
+
+fn circle_through[a, b, c]
+    d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
+    if d eq 0.0
+        return error['the points lie on one line', 'math']
+    sa = a.x ^ 2 + a.y ^ 2
+    sb = b.x ^ 2 + b.y ^ 2
+    sc = c.x ^ 2 + c.y ^ 2
+    x = (sa * (b.y - c.y) + sb * (c.y - a.y) + sc * (a.y - b.y)) / d
+    y = (sa * (c.x - b.x) + sb * (a.x - c.x) + sc * (b.x - a.x)) / d
+    centre = Point[x, y]
+    return Circle[centre, distance[centre, a]]
+
+fn shown[p]
+    return '(`p.x`, `p.y`)'
+
+fn show_circle[a, b, c]
+    points = '`shown[a]`, `shown[b]` and `shown[c]`'
+    circle = circle_through[a, b, c]
+    if not circle.ok
+        log['`points`: no circle, `circle.reason`']
+        return
+    log['Through `points`:']
+    log['    centre `shown[circle.centre]`, radius `circle.radius`']
+    x = fmt[circle.centre.x, decimals = 2]
+    y = fmt[circle.centre.y, decimals = 2]
+    r = fmt[circle.radius, decimals = 2]
+    log['    rounded: centre (`x`, `y`), radius `r`']
+    gaps = for p in [a, b, c]
+        fmt[distance[circle.centre, p], decimals = 12]
+    together = join[gaps, ', ']
+    log['    the three points lie `together` from the centre']
+
+show_circle[Point[22.83, 2.07], Point[14.39, 30.24], Point[33.65, 17.31]]
+show_circle[Point[0.0, 0.0], Point[1.0, 1.0], Point[2.5, 2.5]]

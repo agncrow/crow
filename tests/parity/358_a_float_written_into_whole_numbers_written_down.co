@@ -1,0 +1,18 @@
+--- a float written by position into whole numbers written down holds
+--- floats from then on, at the top level as in a function: the top level's
+--- lines are scanned one at a time, and the literal, made a list of ints
+--- for its write, had met the float unwidened — an internal error
+ys = [1, 2]
+ys[0] = 2.5
+log[ys]
+zs = [1, 2]
+zs = push[zs, 3]
+zs[1] = 0.5
+log[zs]
+
+fn f[]
+    ws = [1, 2]
+    ws[1] = 7.25
+    return ws
+
+log[f[]]

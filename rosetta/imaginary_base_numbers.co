@@ -1,0 +1,182 @@
+--- Rosetta Code: Imaginary base numbers
+--- https://rosettacode.org/wiki/Imaginary_base_numbers
+--- In base bi the even places are powers of -b² and the odd places b times
+--- them, so a number's real part is written in base -b², its imaginary part
+--- divided by b in base -b² too, and the two digit strings interleaved. The
+--- numbers are exact fractions, so a non-integer such as 227.65625+10.859375i
+--- comes out to its last digit; a value with no finite expansion is rounded to
+--- six places of base -b² (twelve of base bi). Bases 2i to 6i and -2i to -6i
+--- (digits 0-9 then A-Z). The task's table writes 2i as 10.0: a 0 at the end
+--- of the fraction is left out here, so it is 10.
+
+struct Complex [re, im]
+
+fn digit_names[]
+    return split['0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', '']
+
+--- the value of a digit written as a character
+fn digit_value[c]
+    names = digit_names[]
+    d = 0
+    while names[d] ne c
+        d = d + 1
+    return d
+
+--- base ^ e for any whole e, as an exact fraction
+fn power[base, e]
+    if e gte 0
+        return fraction[base ^ e, 1]
+    return fraction[1, base ^ (0 - e)]
+
+--- the digits of the whole number n in base -big, least significant first
+fn negabase[n, big]
+    digits = []
+    rest = n
+    while rest ne 0
+        d = rest % big
+        if d lt 0
+            d = d + big
+        digits = push[digits, d]
+        rest = (rest - d) / (0 - big)
+    return digits
+
+--- the digits of x in base -big to `places` places after the point, least
+--- significant first: the first `places` digits are the fraction's
+fn negabase_places[x, big, places]
+    n = round[x * power[0 - big, places]]
+    return negabase[n, big]
+
+--- z written in base bi
+fn to_base[z, b, places]
+    big = b * b
+    re = negabase_places[z.re, big, places]
+    im = negabase_places[z.im / b, big, places]
+    size = 2 * max[max[len[re], len[im]], places]
+    --- at[j] is the digit of place j - 2 * places of base bi
+    at = for j in range[size]
+        0
+    for i in range[len[re]]
+        at[2 * i] = re[i]
+    for i in range[len[im]]
+        at[2 * i + 1] = im[i]
+    names = digit_names[]
+    whole = ''
+    j = size - 1
+    while j gte 2 * places
+        if whole ne '' or at[j] ne 0
+            whole = '`whole``names[at[j]]`'
+        j = j - 1
+    if whole eq ''
+        whole = '0'
+    last = 0
+    while last lt 2 * places and at[last] eq 0
+        last = last + 1
+    if last eq 2 * places
+        return whole
+    part = ''
+    j = 2 * places - 1
+    while j gte last
+        part = '`part``names[at[j]]`'
+        j = j - 1
+    return '`whole`.`part`'
+
+--- the number that `text` writes in base bi
+fn from_base[text, b]
+    big = 0 - b * b
+    halves = split[text, '.']
+    digits = split[halves[0], '']
+    top = len[digits] - 1
+    if len[halves] gt 1
+        digits = concat[digits, split[halves[1], '']]
+    re = fraction[0, 1]
+    im = fraction[0, 1]
+    i = 0
+    while i lt len[digits]
+        k = top - i
+        d = digit_value[digits[i]]
+        if k % 2 eq 0
+            re = re + d * power[big, k / 2]
+        else
+            im = im + d * b * power[big, (k - 1) / 2]
+        i = i + 1
+    return Complex[re, im]
+
+--- a fraction as a decimal: exact where ten places hold it, else rounded to ten
+fn decimal_text[f]
+    if f eq floor[f]
+        return str[floor[f]]
+    text = fmt[f, decimals = 10]
+    while ends[text, '0']
+        text = slice[text, 0, -1]
+    return text
+
+fn shown[z]
+    re = decimal_text[z.re]
+    im = decimal_text[abs[z.im]]
+    if z.im eq 0
+        return re
+    if z.re eq 0
+        if z.im lt 0
+            return '-`im`i'
+        return '`im`i'
+    if z.im lt 0
+        return '`re`-`im`i'
+    return '`re`+`im`i'
+
+fn number[text]
+    return fraction[decimal[text]]
+
+fn complex[re, im]
+    return Complex[number[re], number[im]]
+
+--- one column of the quater-imaginary table: the number, its digits, and back
+fn there_and_back[z]
+    digits = to_base[z, 2, 6]
+    back = from_base[digits, 2]
+    a = fmt[shown[z], width = 4, align = 'right']
+    b = fmt[digits, width = 8, align = 'right']
+    c = fmt[shown[back], width = 4, align = 'right']
+    return '`a` -> `b` -> `c`'
+
+log['Quater-imaginary (base 2i): each number, its digits, and the number they write']
+for n in range[1, 17]
+    plus = there_and_back[complex[str[n], '0']]
+    minus = there_and_back[complex[str[0 - n], '0']]
+    log['`plus`      `minus`']
+log['']
+for n in range[1, 17]
+    plus = there_and_back[complex['0', str[n]]]
+    minus = there_and_back[complex['0', str[0 - n]]]
+    log['`plus`      `minus`']
+
+--- other values and other bases, each written in its base and read back
+fn report[z, b]
+    digits = to_base[z, b, 6]
+    back = from_base[digits, b]
+    value = fmt[shown[z], width = 38, align = 'right']
+    base = fmt['`b`i', width = 3, align = 'right']
+    written = fmt[digits, width = 13]
+    log['`value` in base `base` is `written`  and back: `shown[back]`']
+
+log['']
+log['Other values and bases:']
+report[complex['0', '0'], 2]
+report[complex['5', '0'], 2]
+report[complex['-13', '0'], 2]
+report[complex['0', '9'], 2]
+report[complex['0', '-3'], 2]
+report[complex['7.75', '-7.5'], 2]
+report[complex['0.25', '0'], 2]
+for b in [2, 3, 4, 5, 6, -2, -3, -4, -5, -6]
+    report[complex['5', '5'], b]
+report[complex['227.65625', '10.859375'], 4]
+
+--- a word read as digits of base 6i or -6i, its value shown to ten places,
+--- and that decimal written in the base again
+fn word_back[word, b]
+    exact = from_base[word, b]
+    near = complex[decimal_text[exact.re], decimal_text[exact.im]]
+    report[near, b]
+
+word_back['ROSETTA.CODE', 6]
+word_back['CROW.LANG', -6]

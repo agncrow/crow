@@ -1,0 +1,30 @@
+--- A list of plain items given a literal whose items can fail holds each
+--- item that is good, and the assignment refuses one that failed, as a
+--- variable whose first value could not fail refuses a later failure
+--- (spec, §1). The reassignment had been refused as a change of kind in
+--- both modes — `parts = ['b`x`']` of a text read from the environment
+--- (Rosetta Code, Terminal control/Coloured text).
+
+fn shown[name]
+    x = env[name, 'unset']
+    parts = ['a']
+    parts = ['b`x`', 'c']
+    return parts
+
+fn halves[s]
+    y = float[s]
+    ps = [1.0]
+    ps = [y / 2.0, 3.0]
+    return ps
+
+x = env['CROW_PARITY_415_NOT_SET', '']
+parts = ['a']
+parts = ['b`x`']
+log[parts]
+log[shown['CROW_PARITY_415_NOT_SET']]
+log[halves['5']]
+log[halves['five'].reason]
+n = int['7']
+ns = [1, 2]
+ns = [n, n + 1]
+log[ns]

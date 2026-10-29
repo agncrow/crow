@@ -1,0 +1,19 @@
+--- Rosetta Code: Include a file
+--- https://rosettacode.org/wiki/Include_a_file
+--- `use` includes another source file: `use include_a_file_lib` reads
+--- include_a_file_lib.co beside this file (a path such as `use lib/shapes` or
+--- `use lib.shapes` reads lib/shapes.co), and what it declares is reached
+--- through its name. `use include_a_file_lib as lib` would name it `lib`.
+
+use include_a_file_lib
+
+log[include_a_file_lib.greeting]
+log[include_a_file_lib.shout['included']]
+
+start = include_a_file_lib.origin[]
+there = include_a_file_lib.moved[start, 3, 4]
+log['moved from `start` to `there`']
+log['a distance of `include_a_file_lib.distance[start, there]`']
+
+corner = include_a_file_lib.Point[6, 8]
+log['and `corner` is `include_a_file_lib.distance[start, corner]` from the origin']

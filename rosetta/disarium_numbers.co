@@ -1,0 +1,129 @@
+--- Rosetta Code: Disarium numbers
+--- https://rosettacode.org/wiki/Disarium_numbers
+--- An n-digit number d1 d2 ... dn is a Disarium number when the sum over its positions of
+--- d^i - d * 10^(n - i) is 0: one independent term per position. Each length is searched a
+--- position at a time from the outside in (the first digits move the sum by their place, the
+--- last by their power), and a branch is cut when what the positions left can add cannot
+--- bring the sum back to 0. The innermost positions are not searched: a table of what they
+--- add, built once per length, answers them (meet in the middle). That finds all 20.
+
+--- a position's term for each digit it can hold, and what that digit adds to the number
+struct Place [terms, numbers]
+
+--- the outer places in search order, the least and the most the places from the j-th on
+--- can add, and the inner places' table
+struct Search [places, low, high, table]
+
+fn place[n, i]
+    first = 0
+    if i eq 1 and n gt 1
+        first = 1
+    terms = for d in range[first, 10]
+        d ^ i - d * 10 ^ (n - i)
+    numbers = for d in range[first, 10]
+        d * 10 ^ (n - i)
+    return Place[terms, numbers]
+
+--- the positions from the outside in: 1, n, 2, n - 1, ...
+fn outside_in[n]
+    order = []
+    lo = 1
+    hi = n
+    while lo lte hi
+        order = push[order, lo]
+        if hi ne lo
+            order = push[order, hi]
+        lo = lo + 1
+        hi = hi - 1
+    return order
+
+--- every sum the inner places can make, with the numbers their digits make for it
+fn inner_table[inner]
+    sums = inner[0].terms
+    numbers = inner[0].numbers
+    for p in slice[inner, 1, len[inner]]
+        grown_sums = []
+        grown_numbers = []
+        for k in range[len[sums]]
+            for j in range[len[p.terms]]
+                grown_sums = push[grown_sums, sums[k] + p.terms[j]]
+                grown_numbers = push[grown_numbers, numbers[k] + p.numbers[j]]
+        sums = grown_sums
+        numbers = grown_numbers
+    table = map[]
+    for k in range[len[sums]]
+        s = sums[k]
+        if s not in table
+            table[s] = push[[], numbers[k]]
+        else
+            table[s] = push[table[s], numbers[k]]
+    return table
+
+fn least[xs]
+    m = xs[0]
+    for x in xs
+        if x lt m
+            m = x
+    return m
+
+fn most[xs]
+    m = xs[0]
+    for x in xs
+        if x gt m
+            m = x
+    return m
+
+fn searcher[n]
+    order = outside_in[n]
+    inner_count = max[1, min[n / 3, 6]]
+    outer = for k in range[n - inner_count]
+        place[n, order[k]]
+    inner = for k in range[n - inner_count, n]
+        place[n, order[k]]
+    lo = 0
+    hi = 0
+    for p in inner
+        lo = lo + least[p.terms]
+        hi = hi + most[p.terms]
+    lows = [lo]
+    highs = [hi]
+    for p in reverse[outer]
+        lo = lo + least[p.terms]
+        hi = hi + most[p.terms]
+        lows = push[lows, lo]
+        highs = push[highs, hi]
+    return Search[outer, reverse[lows], reverse[highs], inner_table[inner]]
+
+--- the Disarium numbers whose outer places from the j-th on are still to choose: the
+--- terms chosen so far add up to `partial`, their digits to `number`
+fn search[s, j, partial, number, found]
+    if j eq len[s.places]
+        if 0 - partial in s.table
+            for rest in s.table[0 - partial]
+                found = push[found, number + rest]
+        return found
+    p = s.places[j]
+    low = s.low[j + 1]
+    high = s.high[j + 1]
+    for k in range[len[p.terms]]
+        t = partial + p.terms[k]
+        if t + low lte 0 and t + high gte 0
+            found = search[s, j + 1, t, number + p.numbers[k], found]
+    return found
+
+fn disarium_of_length[n]
+    return sort[search[searcher[n], 0, 0, 0, []]]
+
+numbers = []
+n = 1
+while len[numbers] lt 20
+    numbers = concat[numbers, disarium_of_length[n]]
+    n = n + 1
+first18 = for x in slice[numbers, 0, 18]
+    str[x]
+log['The first 18 Disarium numbers:']
+log[join[first18, ' ']]
+log['']
+log['All 20:']
+for x in numbers
+    log[x]

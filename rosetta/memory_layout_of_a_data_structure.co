@@ -1,0 +1,78 @@
+--- Rosetta Code: Memory layout of a data structure
+--- https://rosettacode.org/wiki/Memory_layout_of_a_data_structure
+--- Crow gives no control over how a value lies in memory: a record's fields have no
+--- declared width, order or packing, and there are no bit fields. What it has: a record
+--- with a field per pin, and the plug's nine lines packed into one int's bits (pin n at
+--- bit n - 1), set and read by name with `use bits`, as an interface's control word is.
+
+use bits
+
+--- The 9-pin plug, pins 1 to 9.
+struct Plug [cd, rd, td, dtr, sg, dsr, rts, cts, ri]
+
+fn pin_names[]
+    return ['CD', 'RD', 'TD', 'DTR', 'SG', 'DSR', 'RTS', 'CTS', 'RI']
+
+fn pin_lines[]
+    return ['Carrier detect', 'Received data', 'Transmitted data', 'Data terminal ready', 'Signal ground', 'Data set ready', 'Request to send', 'Clear to send', 'Ring indicator']
+
+--- A pin's bit: pin 1 is bit 0.
+fn bit_of[name]
+    names = pin_names[]
+    i = 0
+    while names[i] ne name
+        i = i + 1
+    return shift[1, i]
+
+fn raised[word, name]
+    return bitor[word, bit_of[name]]
+
+fn lowered[word, name]
+    return bitand[word, bitxor[bit_of[name], -1]]
+
+fn is_up[word, name]
+    return bitand[word, bit_of[name]] ne 0
+
+--- The record of a word, and the word of a record.
+fn plug_of[word]
+    return Plug[is_up[word, 'CD'], is_up[word, 'RD'], is_up[word, 'TD'], is_up[word, 'DTR'], is_up[word, 'SG'], is_up[word, 'DSR'], is_up[word, 'RTS'], is_up[word, 'CTS'], is_up[word, 'RI']]
+
+fn word_of[plug]
+    ups = [plug.cd, plug.rd, plug.td, plug.dtr, plug.sg, plug.dsr, plug.rts, plug.cts, plug.ri]
+    word = 0
+    for i in range[9]
+        if ups[i]
+            word = bitor[word, shift[1, i]]
+    return word
+
+fn binary[word, width]
+    digits = for i in range[width]
+        str[bitand[shift[word, i - width + 1], 1]]
+    join[digits, '']
+
+fn hex[word, width]
+    digits = split['0123456789abcdef', '']
+    shown = for i in range[width]
+        digits[bitand[shift[word, 4 * (i - width + 1)], 15]]
+    join[shown, '']
+
+log['pin  name  bit  line']
+names = pin_names[]
+lines = pin_lines[]
+for i in range[9]
+    log['`fmt[i + 1, width = 3]`  `fmt[names[i], width = 4]`  `fmt[i, width = 3]`  `lines[i]`']
+
+log['']
+word = 0
+for name in ['RI', 'TD', 'CD']
+    word = raised[word, name]
+log['RI, TD and CD raised: word `word` = 0x`hex[word, 4]` = 0b`binary[word, 9]`']
+--- A record shows its fields in the order of their names: it has no layout to show.
+log[plug_of[word]]
+
+word = lowered[raised[word, 'DTR'], 'TD']
+dtr = is_up[word, 'DTR']
+td = is_up[word, 'TD']
+log['DTR raised, TD lowered: 0b`binary[word, 9]`; DTR up: `dtr`, TD up: `td`']
+back = word_of[plug_of[word]]
+log['Through the record and back: 0b`binary[back, 9]`, the same word: `back eq word`']

@@ -1,0 +1,3 @@
+k02_a_function_named_like_membership.co:5:4: 'contains' is how `x in xs` asks — pick another name for this function
+  5 │ fn contains[a, x]
+    │    ^^^^^^^^

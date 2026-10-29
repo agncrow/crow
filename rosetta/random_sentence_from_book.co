@@ -1,0 +1,154 @@
+--- Rosetta Code: Random sentence from book
+--- https://rosettacode.org/wiki/Random_sentence_from_book
+--- The War of the Worlds (Project Gutenberg's 36-0.txt, kept in data/) is cut to
+--- the book proper and read as words, with . ! ? and the pauses , ; : as words
+--- of their own. How often each word follows each word, and each pair of words,
+--- is counted; a sentence starts after an unseen full stop and grows by weighted
+--- choices among what followed its last two words, until a sentence end.
+
+use math
+
+--- the book proper: from its first sentence to the end of its last, the
+--- chapter headings (lines with no small letter) left out
+fn book_text[path]
+    whole = read[path]
+    first = 'No one would have believed'
+    after = split[whole, first][1]
+    body = split['`first``after`', '*** END OF THE PROJECT GUTENBERG'][0]
+    kept = for line in split[body, '\n']
+        if matches[line, '[a-z]']
+            line
+    return join[kept, '\n']
+
+fn is_mark[w]
+    return w in ['.', '!', '?', ',', ';', ':']
+
+fn is_end[w]
+    return w in ['.', '!', '?']
+
+--- the book's words in order, marks words of their own: letters as written,
+--- an apostrophe or a hyphen only inside a word, any other character a space.
+--- Mr. Mrs. Dr. and St. end no sentence: they lose the point, as British print
+--- writes them. A mark right after a mark adds nothing (. . . is one end), and
+--- the words start with the unseen full stop.
+fn words_of[text]
+    t = sub[text, '\b(Mrs?|Dr|St)\.', '$1']
+    t = sub[t, '(\pL)’(\pL)', '$1\'$2']
+    t = sub[t, '[^\pL\pN\'.!?,;:-]+', ' ']
+    t = sub[t, '([.!?,;:])', ' $1 ']
+    t = sub[t, '(^|\s)-+', '$1']
+    t = sub[t, '-+(\s|$)', '$1']
+    pieces = split[trim[sub[t, '\s+', ' ']], ' ']
+    words = ['.']
+    for w in pieces
+        if not (is_mark[w] and is_mark[words[-1]])
+            words = push[words, w]
+    return words
+
+--- what followed what, counted: the key is the words before, a tab, and the
+--- word after
+fn counted[words, size]
+    counts = map[]
+    for i in range[len[words] - size]
+        before = join[slice[words, i, i + size], ' ']
+        key = '`before`\t`words[i + size]`'
+        if key in counts
+            counts[key] = counts[key] + 1
+        else
+            counts[key] = 1
+    return counts
+
+struct Choices [nexts, seen, total]
+
+--- the counts gathered by what came before: the keys come in order, so a
+--- context's keys are side by side
+fn grouped[counts]
+    follow = map[]
+    context = ''
+    nexts = []
+    seen = []
+    total = 0
+    for key in keys[counts]
+        parts = split[key, '\t']
+        if parts[0] ne context
+            if total gt 0
+                follow[context] = Choices[nexts, seen, total]
+            context = parts[0]
+            nexts = []
+            seen = []
+            total = 0
+        nexts = push[nexts, parts[1]]
+        seen = push[seen, counts[key]]
+        total = total + counts[key]
+    follow[context] = Choices[nexts, seen, total]
+    return follow
+
+--- a word drawn with the weight of how often it was seen
+fn pick[c]
+    r = rand[c.total]
+    i = 0
+    while r gte c.seen[i]
+        r = r - c.seen[i]
+        i = i + 1
+    return c.nexts[i]
+
+--- the words written as a sentence: no space before a mark, a capital first
+fn tidy[words]
+    text = sub[join[words, ' '], ' ([.!?,;:])', '$1']
+    head = upper[slice[text, 0, 1]]
+    rest = slice[text, 1, len[text]]
+    return '`head``rest`'
+
+fn sentence[one, two]
+    prev = '.'
+    word = pick[one['.']]
+    words = [word]
+    while not is_end[word]
+        nxt = pick[two['`prev` `word`']]
+        prev = word
+        word = nxt
+        words = push[words, word]
+    return tidy[words]
+
+--- text broken into lines of at most width characters, the later ones indented
+fn wrapped[text, width]
+    lines = []
+    line = ''
+    for w in split[text, ' ']
+        if line eq ''
+            line = w
+        else
+            if len[line] + 1 + len[w] gt width
+                lines = push[lines, line]
+                line = '    `w`'
+            else
+                line = '`line` `w`'
+    lines = push[lines, line]
+    return lines
+
+--- the most often seen of a context's choices, with their counts
+fn commonest[c, n]
+    ranked = for i in range[len[c.nexts]]
+        '`fmt[c.seen[i], width = 6, fill = \'0\']` `c.nexts[i]`'
+    top = slice[reverse[sort[ranked]], 0, n]
+    shown = for r in top
+        parts = split[r, ' ']
+        '`parts[1]` (`int[parts[0]]`)'
+    return join[shown, ', ']
+
+text = book_text['war_of_the_worlds.txt']
+words = words_of[text]
+one = grouped[counted[words, 1]]
+two = grouped[counted[words, 2]]
+distinct = len[keys[one]]
+log['The War of the Worlds: `len[words] - 1` words and marks, `distinct` distinct;']
+log['`len[keys[two]]` pairs of them are followed by something.']
+log['']
+log['Most often after the unseen full stop: `commonest[one[\'.\'], 8]`']
+log['Most often after "the Martians": `commonest[two[\'the Martians\'], 8]`']
+log['']
+seed[1898]
+for k in range[10]
+    for line in wrapped[sentence[one, two], 76]
+        log[line]
+    log['']

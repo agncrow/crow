@@ -1,0 +1,86 @@
+--- Rosetta Code: Index finite lists of positive integers
+--- https://rosettacode.org/wiki/Index_finite_lists_of_positive_integers
+--- A bijection whose rank grows only as long as the list: each item less one
+--- is written in bijective base 2 (digits 1 and 2, so that 0 is no digits at
+--- all), the items' digits are joined with a 3 between each two, and that
+--- string of 1s, 2s and 3s is read in bijective base 3, where every string is
+--- a different number. The empty list is 0 and any other list one more than
+--- its string, so every n from 0 up ranks exactly one list. (`rank` is named
+--- rank_of: math's `rank` is in the way of a function of that name.)
+
+use math as m
+
+--- n in bijective base b (digits 1 to b), most significant first
+fn bijective_digits[n, b]
+    digits = []
+    rest = n
+    while rest gt 0
+        d = rest % b
+        if d eq 0
+            d = b
+        digits = push[digits, d]
+        rest = (rest - d) / b
+    return reverse[digits]
+
+fn rank_of[items]
+    if len[items] eq 0
+        return 0
+    n = 0
+    for i in range[len[items]]
+        if i gt 0
+            n = 3 * n + 3
+        for d in bijective_digits[items[i] - 1, 2]
+            n = 3 * n + d
+    return n + 1
+
+fn unrank[n]
+    items = []
+    if n eq 0
+        return items
+    item = 0
+    for d in bijective_digits[n - 1, 3]
+        if d eq 3
+            items = push[items, item + 1]
+            item = 0
+        else
+            item = 2 * item + d
+    items = push[items, item + 1]
+    return items
+
+log['unrank[n] for n from 0 to 10, each ranked again:']
+for n in range[11]
+    items = unrank[n]
+    log['`fmt[n, width = 2]`  `fmt[str[items], width = 9]`  `rank_of[items]`']
+
+--- how many n below `top` fail to be the rank of the list they unrank to
+fn misses[top]
+    bad = 0
+    n = 0
+    while n lt top
+        if rank_of[unrank[n]] ne n
+            bad = bad + 1
+        n = n + 1
+    return bad
+
+log['n below 100,000 that are not the rank of their own list: `misses[100000]`']
+
+--- a random positive integer of `digits` digits, drawn a digit at a time
+fn random_number[digits]
+    n = rand[1, 9]
+    for i in range[digits - 1]
+        n = 10 * n + rand[0, 9]
+    return n
+
+--- a list of random length holding random positive integers, some of them large
+m.seed[2026]
+count = rand[1, 8]
+picked = []
+for i in range[count]
+    picked = push[picked, random_number[rand[1, 30]]]
+log['']
+log['A random list: `picked`']
+r = rank_of[picked]
+log['its rank: `r`']
+back = unrank[r]
+log['unranked: `back`']
+log['the same list: `back eq picked`']

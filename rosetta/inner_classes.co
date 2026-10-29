@@ -1,0 +1,43 @@
+--- Rosetta Code: Inner classes
+--- https://rosettacode.org/wiki/Inner_classes
+--- Crow is not object oriented and has no inner classes: a record (`struct`)
+--- is pure data with no methods, its functions stand beside it, and a record is
+--- declared at the top level only (a struct inside a function or a block is
+--- refused). What stands in for an inner class: a record that keeps, in a
+--- field, the outer record it was made from (as a Java inner instance keeps
+--- its enclosing instance), a function that makes it (its constructor), and
+--- functions that take it (its methods) and may read the outer record's fields
+--- through it. Its name begins with the outer record's, to say whose it is.
+--- Values never change in place, so the inner record holds the outer one as
+--- it was when the inner was made.
+
+--- the outer "class": one field
+struct Outer [value]
+
+--- the inner "class": the outer record it belongs to, and a field of its own
+struct OuterInner [outer, value]
+
+--- the constructors; an inner record is made from its outer record
+fn new_outer[value]
+    return Outer[value]
+
+fn new_inner[outer, value]
+    return OuterInner[outer, value]
+
+--- an instance method of the inner record, reading its own field and its outer's
+fn total_value[inner]
+    return inner.outer.value + inner.value
+
+fn describe[inner]
+    return 'an inner record of value `inner.value` inside an outer record of value `inner.outer.value`'
+
+outer = new_outer[22]
+inner = new_inner[outer, 20]
+log[describe[inner]]
+log['total_value: `total_value[inner]`']
+log[inner]
+
+--- two inner records of one outer record, and one of another
+other = new_inner[outer, 8]
+elsewhere = new_inner[new_outer[100], 20]
+log['totals: `total_value[other]` and `total_value[elsewhere]`']

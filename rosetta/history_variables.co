@@ -1,0 +1,65 @@
+--- Rosetta Code: History variables
+--- https://rosettacode.org/wiki/History_variables
+--- Crow has no history variables, and needs nothing enabled to write them: a value
+--- never changes in place, so a history is a record of a name and every value it
+--- has held, and an assignment answers a new history with one value more. Reading
+--- the history changes nothing; undo answers the history before its last value.
+
+struct History [name, values]
+
+--- A history variable, defined with no value yet.
+fn history[name]
+    return History[name, []]
+
+--- An assignment: every value held before, and the new one.
+fn assign[h, value]
+    return History[h.name, push[h.values, value]]
+
+--- The value it holds now, or the reason it holds none.
+fn current[h]
+    if len[h.values] eq 0
+        return error['`h.name` has no value yet', 'history']
+    return h.values[-1]
+
+--- The value its n-th assignment gave it, counting from 1.
+fn recalled[h, n]
+    if n lt 1 or n gt len[h.values]
+        return error['`h.name` was assigned `len[h.values]` times, so it has no value `n`', 'history']
+    return h.values[n - 1]
+
+--- The history as it was before its last assignment.
+fn undo[h]
+    return History[h.name, pop[h.values]]
+
+fn shown[h]
+    texts = for v in h.values
+        str[v]
+    listed = join[texts, ', ']
+    return '`h.name`: [`listed`]'
+
+x = history['x']
+log['Defined: `shown[x]`']
+empty = current[x]
+log['Its value: `empty.reason`']
+log['']
+
+x = assign[x, 1]
+x = assign[x, 2]
+x = assign[x, 3]
+log['After three assignments x is `current[x]`, and its history is `shown[x]`.']
+log['Reading the history changed nothing: x is still `current[x]`, `shown[x]`.']
+log['']
+
+log['The three values recalled by their assignments:']
+for n in range[1, 4]
+    log['  assignment `n`: `recalled[x, n]`']
+past = recalled[x, 4]
+log['  assignment 4: `past.reason`']
+log['']
+
+log['The three values recalled by undoing, newest first:']
+y = x
+while len[y.values] gt 0
+    log['  `current[y]`, from `shown[y]`']
+    y = undo[y]
+log['x itself still holds them all: `shown[x]`']

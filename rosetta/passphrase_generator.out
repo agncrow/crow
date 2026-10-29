@@ -1,0 +1,44 @@
+19,911 words of 4 to 9 letters in unixdict.txt
+
+n = 5: Gluing19-Plank67-Often49-Aquinas50-Musicale68
+
+Ten of 5 words:
+    Weave88-Gumshoe50-Rhapsody32-Foliate92-Alternate47
+    Cauldron25-Poor80-Hanley22-Sunset25-Cyanate13
+    Runyon16-Gargle69-Armenian92-Edition65-Deuterium13
+    Juridic93-Gobble91-Locomote72-Romeo76-Dilate74
+    Skulk57-Oceanic98-Buffoon88-Whittier24-Prefer42
+    Dastard53-Behalf16-Evaporate83-Thayer83-Surcease87
+    Irwin41-Stringent71-Slim46-Camellia23-Profiteer36
+    Mccluskey11-Tragedy50-Betel71-Posse29-Gird10
+    Vermilion51-Baggage80-Spaghetti62-Bloodroot99-Blizzard52
+    Trashy12-Ruckus25-Lumpish71-Success13-Entity25
+
+Ten of 8 words:
+    Tortoise48-Alcestis67-Raster97-Bagatelle62-Psycho94-Premium67-Phonology36-Hoop94
+    Person21-Grocery68-Workout27-Corp35-Leave11-Shunt20-Fusty70-Beast46
+    Strangle50-Span16-Divan84-Kent69-Sheep83-Lorelei92-White65-Mangle86
+    Presence47-Quantity66-Mine11-Candid59-Palate10-Divert42-Larkspur83-Rodriguez96
+    Chess62-Betsey87-Chuckle86-Oblong24-Synoptic99-Apostate86-Morass78-Cabinetry97
+    Leftward67-Glacis58-Michelin98-Octopus61-Herculean60-Iconic11-Sundown91-Stator11
+    Dynamism56-Covenant17-Precess78-Eddie96-Platoon92-Sanitary65-Mellon58-Gunshot79
+    Nolo65-Pedantry83-Pasha96-Purr10-Draco60-Carnegie94-Bohr54-Maternal38
+    Tuscan55-Quote22-Yearn78-Wart99-Wilfred75-Oasis20-Lessen48-Swerve28
+    Indispose12-Midwife38-Passer16-Everyday44-Airstrip19-Waterloo60-Dilemma19-Aitken93
+
+Ten of 12 words:
+    Pegging28-Issuant55-Mescaline36-Pyrolyse49-Moccasin68-Pessimist89-Osiris71-Whimsey74-Meek33-Noble31-Omission54-Dampen22
+    Peal98-Dogging73-Goad88-Follicle95-Ketosis85-Qualm53-Quotient88-Bien43-Camelot55-Ingestion62-Kaddish97-Thomistic23
+    Quicksand56-Grenoble95-Taoist69-Diaper89-Purport51-Glimpse84-Elton92-Whelk95-Rheumatic22-Dolphin85-Luncheon92-Pulmonary37
+    Parsnip51-Oxidate73-Grunt76-Bermuda22-Crispin16-Bellamy85-Rehearse82-Rusk93-Groundsel43-Melinda96-Aliquot69-Ether38
+    Mother47-Lathe78-Ductwork98-Edmondson50-Lusaka73-Oyster83-Lacunae62-Olefin46-Razorback93-Shaken52-Sieve19-Fabric13
+    Curate63-Welt88-Filly29-Leadsman74-Veronica89-Kentucky67-Mini95-Network98-Gossamer11-Knight74-Flag13-Textural94
+    Allegra88-Forget84-Dictum86-Prima36-Dyad94-Birdwatch81-Kellogg57-Mullion29-Climb32-Billet73-Discrete50-Tibet43
+    Heritable17-Couscous55-Cove93-Estimable82-Limbic34-Lipscomb27-Hydraulic73-Knock83-Patty17-Shasta77-Avid38-Gimmickry48
+    Passaic92-Alias87-Aircraft69-Elisha81-Assonant57-Bologna78-Capita15-Bookcase32-Folklore68-Wiley33-Spandrel66-Angle22
+    Solvate27-Chime16-Phillips14-School22-Lipschitz88-Nimbus74-Whitehead73-Sacrilege37-Therapist15-Cordage55-Citadel64-Pretty76
+
+Each word adds log2(19911 x 90) = 20.8 bits of entropy:
+    5 words: 103.9 bits
+    8 words: 166.2 bits
+    12 words: 249.3 bits

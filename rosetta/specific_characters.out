@@ -1,0 +1,14 @@
+["ahwiueshaiu", "ajxxfioaaf", "ajrdsfroiwr"]
+  ahwiueshaiu: 2 specific (h u), 5 not (a w i e s)
+  ajxxfioaaf: 1 specific (x), 5 not (a j f i o)
+  ajrdsfroiwr: 0 specific (), 9 not (a j r d s f o i w)
+  distinct specific characters: [2, 1, 0]
+  distinct characters that are not (extra credit): [5, 5, 9]
+
+["mississippi", "committee", "balloon", "bookkeeper"]
+  mississippi: 0 specific (), 4 not (m i s p)
+  committee: 1 specific (t), 5 not (c o m i e)
+  balloon: 1 specific (l), 4 not (b a o n)
+  bookkeeper: 1 specific (k), 5 not (b o e p r)
+  distinct specific characters: [0, 1, 1, 1]
+  distinct characters that are not (extra credit): [4, 5, 4, 5]

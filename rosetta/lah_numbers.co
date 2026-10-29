@@ -1,0 +1,71 @@
+--- Rosetta Code: Lah numbers
+--- https://rosettacode.org/wiki/Lah_numbers
+--- The unsigned Lah numbers row by row, by L(n + 1, k) = (n + k) L(n, k) +
+--- L(n, k - 1) from L(0, 0) = 1, with ints that grow as far as they need to;
+--- row 100 is checked against the closed form L(n, k) = C(n - 1, k - 1) n! / k!.
+
+--- the rows L(0, *) to L(last, *), each from k = 0 to k = n
+fn lah_rows[last]
+    --- the first row is built by push, so the rows are lists of ints that grow
+    --- (written as the literal [1], the rows were held as tensors of floats)
+    row = push[[], 1]
+    rows = []
+    rows = push[rows, row]
+    n = 0
+    while n lt last
+        below = for k in range[n + 2]
+            here = 0
+            if k lte n
+                here = (n + k) * row[k]
+            if k gte 1
+                here = here + row[k - 1]
+            here
+        rows = push[rows, below]
+        row = below
+        n = n + 1
+    return rows
+
+fn factorial[n]
+    product = 1
+    for i in range[2, n + 1]
+        product = product * i
+    return product
+
+fn choose[n, k]
+    c = 1
+    for i in range[k]
+        c = c * (n - i) / (i + 1)
+    return c
+
+--- L(n, k) by the closed form, for 1 <= k <= n
+fn lah[n, k]
+    return choose[n - 1, k - 1] * factorial[n] / factorial[k]
+
+fn is_true[b]
+    return b
+
+rows = lah_rows[100]
+
+log['Unsigned Lah numbers L(n, k):']
+heads = for k in range[13]
+    fmt[k, width = 11]
+head = join[heads, '']
+log['n/k`head`']
+for n in range[13]
+    label = fmt[n, width = 3, align = 'left']
+    cells = for k in range[n + 1]
+        fmt[rows[n][k], width = 11]
+    line = join[cells, '']
+    log['`label``line`']
+
+last = rows[100]
+best = 0
+for k in range[len[last]]
+    if last[k] gt last[best]
+        best = k
+log['']
+log['The largest L(100, k) is at k = `best`, `len[str[last[best]]]` digits:']
+log[last[best]]
+same = for k in range[1, 101]
+    last[k] eq lah[100, k]
+log['Row 100 agrees with the closed form: `all[same, is_true]`']

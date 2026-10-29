@@ -1,0 +1,332 @@
+--- Rosetta Code: Solve a Rubik's cube
+--- https://rosettacode.org/wiki/Solve_a_Rubik's_cube
+--- Thistlethwaite's algorithm as Stefan Pochmann's program for the 2004 cube
+--- contest does it (the Go, Kotlin, Nim and Wren entries translate it): four
+--- phases, each a breadth-first search run from the cube and from the solved
+--- cube at once, over the moves the phase may use, until the two meet. Each
+--- phase looks only at what it must put right (its key): the edges' flips; then
+--- the corners' twists and the middle layer's edges; then the slices' edges, the
+--- corners' tetrads and the parity; then everything, by half turns alone.
+--- The cube is read as the contest wrote it: the cubie at each of the twenty
+--- places UF UR UB UL DF DR DB DL FR FL BR BL UFR URB UBL ULF DRF DFL DLB DBR,
+--- its stickers named by the faces whose colour they show. A move is a face
+--- (U D F B L R) and quarter turns clockwise (1, 2 or 3, as Pochmann writes
+--- them). Every solution is applied to the cube to check that it solves it.
+--- The cube given on the command line, or by default the one the Nim and Wren
+--- entries solve; then, from scrambles written as moves, the superflip and one
+--- more.
+
+use bits
+
+struct Move [name, places, from, twist]
+
+fn place_names[]
+    return ['UF', 'UR', 'UB', 'UL', 'DF', 'DR', 'DB', 'DL', 'FR', 'FL', 'BR', 'BL', 'UFR', 'URB', 'UBL', 'ULF', 'DRF', 'DFL', 'DLB', 'DBR']
+
+fn solved_cube[]
+    --- places 0 … 19 hold cubies 0 … 19; 20 … 39 hold how far each is
+    --- turned (edges 0 or 1, corners 0, 1 or 2)
+    cube = for i in range[40]
+        if i lt 20
+            i
+        else
+            0
+    return cube
+
+fn quarter[cube, face]
+    --- one face turned a quarter clockwise, as Pochmann's program turns it:
+    --- the four edges and four corners of the face, each to the next one's place
+    cycles = [[0, 1, 2, 3, 0, 1, 2, 3], [4, 7, 6, 5, 4, 5, 6, 7], [0, 9, 4, 8, 0, 3, 5, 4], [2, 10, 6, 11, 2, 1, 7, 6], [3, 11, 7, 9, 3, 2, 6, 5], [1, 8, 5, 10, 1, 0, 4, 7]]
+    after = cube
+    for i in range[8]
+        corner = i / 4
+        target = cycles[face][i] + corner * 12
+        source = i + 1
+        if i % 4 eq 3
+            source = i - 3
+        killer = cycles[face][source] + corner * 12
+        delta = 0
+        if i lt 4
+            if face eq 2 or face eq 3
+                delta = 1
+        else if face gte 2
+            delta = 2 - i % 2
+        after[target] = cube[killer]
+        after[target + 20] = (cube[killer + 20] + delta) % (2 + corner)
+    return after
+
+fn all_moves[]
+    --- the 18 moves, move m being face m / 3 turned m % 3 + 1 quarters: each as
+    --- the places it changes, the place each takes its cubie from, and the turn
+    --- it adds to it
+    faces = split['UDFBLR', '']
+    moves = []
+    for m in range[18]
+        face = m / 3
+        cube = solved_cube[]
+        for q in range[m % 3 + 1]
+            cube = quarter[cube, face]
+        places = for p in range[20]
+            if cube[p] ne p or cube[p + 20] ne 0
+                p
+        from = slice[cube, 0, 20]
+        twist = slice[cube, 20, 40]
+        name = '`faces[face]``m % 3 + 1`'
+        moves = push[moves, Move[name, places, from, twist]]
+    return moves
+
+fn turned[cube, move]
+    --- the cube after a move
+    next = cube
+    i = 0
+    while i lt len[move.places]
+        p = move.places[i]
+        f = move.from[p]
+        next[p] = cube[f]
+        next[p + 20] = (cube[f + 20] + move.twist[p]) % (2 + p / 12)
+        i = i + 1
+    return next
+
+fn inverse[m]
+    --- the move that undoes move m
+    return m + 2 - 2 * (m % 3)
+
+fn allowed[phase, m]
+    --- the moves of each phase: all; then F and B only by half turns; then L
+    --- and R too; then half turns alone
+    masks = [0, 262143, 259263, 74943, 74898]
+    return bitand[shift[masks[phase], 0 - m], 1] eq 1
+
+fn key[cube, phase]
+    --- what phase looks at, as text: two cubes with one key are one to it
+    if phase eq 1
+        --- the edges' flips
+        flips = 0
+        e = 0
+        while e lt 12
+            flips = bitor[flips, shift[cube[20 + e], e]]
+            e = e + 1
+        return str[flips]
+    if phase eq 2
+        --- which places hold the middle layer's edges, the corners' twists (and,
+        --- as Pochmann's key has it, the last edge's flip)
+        found = cube[31]
+        e = 0
+        while e lt 12
+            found = bitor[found, shift[cube[e] / 8, e]]
+            e = e + 1
+        c = 0
+        while c lt 8
+            found = bitor[found, shift[cube[32 + c], 12 + 2 * c]]
+            c = c + 1
+        return str[found]
+    if phase eq 3
+        --- each edge's slice, each corner's tetrad, the corners' parity
+        slices = 0
+        e = 0
+        while e lt 12
+            group = 2
+            if cube[e] lte 7
+                group = cube[e] % 2
+            slices = bitor[slices, shift[group, 2 * e]]
+            e = e + 1
+        tetrads = 0
+        c = 0
+        while c lt 8
+            tetrads = bitor[tetrads, shift[bitand[cube[c + 12] - 12, 5], 3 * c]]
+            c = c + 1
+        return '`slices` `tetrads` `inversions[cube, 12, 20] % 2`'
+    return str[cube]
+
+fn phase_moves[cube, phase, moves]
+    --- the moves that take cube to what phase must reach, by a breadth-first
+    --- search from both ends: a cube reached from one end whose key the other
+    --- end has reached joins them
+    goal = solved_cube[]
+    start_key = key[cube, phase]
+    goal_key = key[goal, phase]
+    if start_key eq goal_key
+        return []
+    queue = [cube, goal]
+    side = map[]
+    side[start_key] = 1
+    side[goal_key] = 2
+    last = map[]
+    before = map[]
+    head = 0
+    while head lt len[queue]
+        old = queue[head]
+        head = head + 1
+        old_key = key[old, phase]
+        old_side = side[old_key]
+        m = 0
+        while m lt 18
+            if allowed[phase, m]
+                new = turned[old, moves[m]]
+                new_key = key[new, phase]
+                if new_key not in side
+                    queue = push[queue, new]
+                    side[new_key] = old_side
+                    last[new_key] = m
+                    before[new_key] = old_key
+                else if side[new_key] ne old_side
+                    ahead = old_key
+                    behind = new_key
+                    joint = m
+                    if old_side eq 2
+                        ahead = new_key
+                        behind = old_key
+                        joint = inverse[m]
+                    path = [joint]
+                    while ahead ne start_key
+                        path = concat[[last[ahead]], path]
+                        ahead = before[ahead]
+                    while behind ne goal_key
+                        path = push[path, inverse[last[behind]]]
+                        behind = before[behind]
+                    return path
+            m = m + 1
+    return []
+
+fn solution[cube, moves]
+    --- the four phases' moves, one list each
+    phases = []
+    for phase in range[1, 5]
+        path = phase_moves[cube, phase, moves]
+        for m in path
+            cube = turned[cube, moves[m]]
+        phases = push[phases, path]
+    return phases
+
+fn read_cube[text]
+    --- the cube the contest's notation writes: each cubie turned until it is
+    --- one of the places' names, the turns counted
+    names = place_names[]
+    given = split[trim[sub[text, '\s+', ' ']], ' ']
+    if len[given] ne 20
+        return error['a cube is twenty cubies, got `len[given]`', 'input']
+    cube = solved_cube[]
+    for i in range[20]
+        cubie = given[i]
+        turns = 0
+        while cubie not in names and turns lt len[cubie]
+            cubie = '`slice[cubie, 1, len[cubie]]``cubie[0]`'
+            turns = turns + 1
+        if cubie not in names
+            return error['no cubie is written `given[i]`', 'input']
+        index = 0
+        while names[index] ne cubie
+            index = index + 1
+        cube[i] = index
+        cube[i + 20] = turns
+    why = fault[cube]
+    if why ne ''
+        return error[why, 'input']
+    return cube
+
+fn inversions[cube, from, to]
+    --- how many pairs of places from … to - 1 hold their cubies out of order
+    count = 0
+    i = from
+    while i lt to
+        j = i + 1
+        while j lt to
+            if cube[i] gt cube[j]
+                count = count + 1
+            j = j + 1
+        i = i + 1
+    return count
+
+fn fault[cube]
+    --- why the cubies cannot be turned to the solved cube, or '' where they can:
+    --- each cubie once, edges flipped an even number of times, corners twisted
+    --- a whole number of turns, edges and corners swapped alike
+    seen = for i in range[20]
+        0
+    for i in range[20]
+        seen[cube[i]] = seen[cube[i]] + 1
+        if (i lt 12) ne (cube[i] lt 12)
+            return 'an edge and a corner are swapped'
+    for n in seen
+        if n ne 1
+            return 'a cubie is there twice'
+    flips = 0
+    for i in range[20, 32]
+        flips = flips + cube[i]
+    twists = 0
+    for i in range[32, 40]
+        twists = twists + cube[i]
+    if flips % 2 ne 0
+        return 'one edge is flipped'
+    if twists % 3 ne 0
+        return 'a corner is twisted'
+    if inversions[cube, 0, 12] % 2 ne inversions[cube, 12, 20] % 2
+        return 'two cubies are swapped'
+    return ''
+
+fn written[cube]
+    --- the contest's notation of a cube
+    names = place_names[]
+    parts = for i in range[20]
+        name = names[cube[i]]
+        n = len[name]
+        turns = cube[i + 20]
+        '`slice[name, n - turns, n]``slice[name, 0, n - turns]`'
+    return join[parts, ' ']
+
+fn move_names[path, moves]
+    names = for m in path
+        moves[m].name
+    return join[names, ' ']
+
+fn scrambled[scramble, moves]
+    --- the solved cube turned by moves written as U, U2, U' …
+    cube = solved_cube[]
+    for word in split[scramble, ' ']
+        face = 0
+        while split['UDFBLR', ''][face] ne word[0]
+            face = face + 1
+        turns = 1
+        if ends[word, '2']
+            turns = 2
+        else if ends[word, '\'']
+            turns = 3
+        cube = turned[cube, moves[face * 3 + turns - 1]]
+    return cube
+
+fn solve[cube, moves]
+    log['Cube:  `written[cube]`']
+    phases = solution[cube, moves]
+    what = ['edges flipped right', 'corners twisted right, the middle layer\'s edges in it', 'edges in their slices, corners in their tetrads, even parity', 'solved by half turns']
+    total = 0
+    every = []
+    for i in range[4]
+        done = move_names[phases[i], moves]
+        if done eq ''
+            done = 'nothing to do'
+        log['Phase `i + 1` (`what[i]`): `done` (`len[phases[i]]` moves)']
+        total = total + len[phases[i]]
+        every = concat[every, phases[i]]
+    log['Solution: `move_names[every, moves]`  (moves `total`)']
+    after = cube
+    for m in every
+        after = turned[after, moves[m]]
+    log['It solves the cube: `after eq solved_cube[]`']
+    log['']
+
+moves = all_moves[]
+given = args[]
+if len[given] gt 0
+    cube = read_cube[join[given, ' ']]
+    if cube.ok
+        solve[cube, moves]
+    else
+        log[cube.reason]
+else
+    solve[read_cube['UL DL RF UB FD BR DB UF DR UR BL FL FDR BLU DLB URB RUF FLD BRD FUL'], moves]
+    superflip = 'U R2 F B R B2 R U2 L B2 R U\' D\' R2 F R\' L B2 U2 F2'
+    log['The superflip, scrambled by `superflip`:']
+    solve[scrambled[superflip, moves], moves]
+    other = 'D2 F\' L2 U B\' R D\' L2 F U2 R\' B2 D L\' F2 U\' R2 B L D\''
+    log['Scrambled by `other`:']
+    solve[scrambled[other, moves], moves]

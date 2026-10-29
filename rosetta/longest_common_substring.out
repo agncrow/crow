@@ -1,0 +1,9 @@
+The longest common substring of "thisisatest" and "testing123testing": "test"
+
+"thisisatest_stinger" and "testing123testingthing": "sting"
+"thisisatest_stinger" and "thisis": "thisis"
+"xyzzy" and "zyzzyva": "yzzy"
+"abcxyz" and "xyzabc": "abc", "xyz", 2 of length 3
+"abc" and "xyz": none
+
+Common to "thisisatest_stinger", "testing123testingthing", "thisis": "thi"

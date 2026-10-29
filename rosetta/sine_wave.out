@@ -1,0 +1,22 @@
+sine_wave.wav, 160044 bytes, read back:
+  RIFF of 160036 bytes, WAVE
+  format 1 (PCM), 1 channel, 32000 samples a second, 8 bits a sample
+  160000 samples: 5 seconds of a 440 Hz sine
+
+Two periods of the wave, a second in (every other sample):
+       *****                               ******
+     **     **                            *      *
+    *         *                          *        *
+               *                        *          *
+   *                                   *            *
+  *             *                     *              *
+ *               *
+*                 *                  *                *
+                                    *                  *
+                   *               *                    *
+                    *                                                  *
+                     *            *                      *            *
+                      *          *                        *          *
+                       *        *                          *        *
+                        *     **                            *      *
+                         *****                               ******

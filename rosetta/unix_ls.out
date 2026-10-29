@@ -1,0 +1,10 @@
+In foo:
+bar
+
+In foo/bar:
+1
+2
+a
+b
+
+foo is removed: true

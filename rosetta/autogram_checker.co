@@ -1,0 +1,116 @@
+--- Rosetta Code: Autogram checker
+--- https://rosettacode.org/wiki/Autogram_checker
+--- The sentence's words are scanned for counts: number words (twenty-eight, one
+--- hundred and ninety-seven, a single) and then what they count (a's, as, z, commas,
+--- !, letters). Each claim is held to the characters counted in the sentence, and
+--- every letter in it (and with punctuation, every , ' - and !) must be claimed.
+--- Case is ignored; spaces and full stops are never counted.
+
+struct Test [text, punctuation]
+
+fn tests[]
+    return [
+        Test['This sentence employs two a\'s, two c\'s, two d\'s, twenty-eight e\'s, five f\'s, three g\'s, eight h\'s, eleven i\'s, three l\'s, two m\'s, thirteen n\'s, nine o\'s, two p\'s, five r\'s, twenty-five s\'s, twenty-three t\'s, six v\'s, ten w\'s, two x\'s, five y\'s, and one z.', false],
+        Test['This sentence employs two a\'s, two c\'s, two d\'s, twenty eight e\'s, five f\'s, three g\'s, eight h\'s, eleven i\'s, three l\'s, two m\'s, thirteen n\'s, nine o\'s, two p\'s, five r\'s, twenty five s\'s, twenty three t\'s, six v\'s, ten w\'s, two x\'s, five y\'s, and one z.', false],
+        Test['Only the fool would take trouble to verify that his sentence was composed of ten a\'s, three b\'s, four c\'s, four d\'s, forty-six e\'s, sixteen f\'s, four g\'s, thirteen h\'s, fifteen i\'s, two k\'s, nine l\'s, four m\'s, twenty-five n\'s, twenty-four o\'s, five p\'s, sixteen r\'s, forty-one s\'s, thirty-seven t\'s, ten u\'s, eight v\'s, eight w\'s, four x\'s, eleven y\'s, twenty-seven commas, twenty-three apostrophes, seven hyphens and, last but not least, a single !', true],
+        Test['This pangram contains four as, one b, two cs, one d, thirty es, six fs, five gs, seven hs, eleven is, one j, one k, two ls, two ms, eighteen ns, fifteen os, two ps, one q, five rs, twenty-seven ss, eighteen ts, two us, seven vs, eight ws, two xs, three ys, & one z.', false],
+        Test['This sentence contains one hundred and ninety-seven letters: four a\'s, one b, three c\'s, five d\'s, thirty-four e\'s, seven f\'s, one g, six h\'s, twelve i\'s, three l\'s, twenty-six n\'s, ten o\'s, ten r\'s, twenty-nine s\'s, nineteen t\'s, six u\'s, seven v\'s, four w\'s, four x\'s, five y\'s, and one z.', false],
+        Test['Thirteen e\'s, five f\'s, two g\'s, five h\'s, eight i\'s, two l\'s, three n\'s, six o\'s, six r\'s, twenty s\'s, twelve t\'s, three u\'s, four v\'s, six w\'s, four x\'s, two y\'s.', false],
+        Test['Fifteen e\'s, seven f\'s, four g\'s, six h\'s, eight i\'s, four n\'s, five o\'s, six r\'s, eighteen s\'s, eight t\'s, four u\'s, three v\'s, two w\'s, three x\'s.', true],
+        Test['Sixteen e\'s, five f\'s, three g\'s, six h\'s, nine i\'s, five n\'s, four o\'s, six r\'s, eighteen s\'s, eight t\'s, three u\'s, three v\'s, two w\'s, four z\'s.', false]
+    ]
+
+--- the value of each number word an autogram counts with
+fn number_words[]
+    return map[single = 1, one = 1, two = 2, three = 3, four = 4, five = 5, six = 6, seven = 7, eight = 8, nine = 9, ten = 10, eleven = 11, twelve = 12, thirteen = 13, fourteen = 14, fifteen = 15, sixteen = 16, seventeen = 17, eighteen = 18, nineteen = 19, twenty = 20, thirty = 30, forty = 40, fifty = 50, sixty = 60, seventy = 70, eighty = 80, ninety = 90]
+
+--- what a word after a number counts: a character, 'letters', or '' for nothing
+fn counted_by[word]
+    if word eq 'letters' or word eq '!'
+        return word
+    if starts[word, 'comma']
+        return ','
+    if starts[word, 'apostrophe']
+        return '\''
+    if starts[word, 'hyphen']
+        return '-'
+    if len[word] eq 1 or (len[word] eq 2 and ends[word, 's']) or (len[word] eq 3 and ends[word, '\'s'])
+        return word[0]
+    return ''
+
+--- the sentence's words in lower case: letters, apostrophes and !
+fn words_of[sentence]
+    spaced = sub[lower[sentence], '[^a-z\'!]+', ' ']
+    words = for w in split[trim[spaced], ' ']
+        if w ne ''
+            w
+    return words
+
+--- what the sentence says it holds: each counted thing and its number
+fn claims_of[sentence]
+    value = number_words[]
+    words = words_of[sentence]
+    claims = map[]
+    i = 0
+    while i lt len[words]
+        if words[i] not in value
+            i = i + 1
+            continue
+        n = 0
+        while i lt len[words] and words[i] in value
+            n = n + value[words[i]]
+            i = i + 1
+            if i + 1 lt len[words] and words[i] eq 'hundred'
+                n = n * 100
+                i = i + 1
+                if words[i] eq 'and'
+                    i = i + 1
+        if i lt len[words] and counted_by[words[i]] ne ''
+            claims = set[claims, counted_by[words[i]], n]
+    return claims
+
+fn name_of[c]
+    if c eq ','
+        return 'comma'
+    if c eq '\''
+        return 'apostrophe'
+    if c eq '-'
+        return 'hyphen'
+    return c
+
+--- what is wrong with the sentence as an autogram: nothing when it is one
+fn problems_of[given]
+    text = lower[given.text]
+    claims = claims_of[given.text]
+    letters = split['abcdefghijklmnopqrstuvwxyz', '']
+    total = 0
+    for c in letters
+        total = total + occurs[text, c]
+    counted = letters
+    if given.punctuation
+        counted = concat[letters, [',', '\'', '-', '!']]
+    problems = []
+    for c in keys[claims]
+        found = total
+        if c ne 'letters'
+            found = occurs[text, c]
+        if found ne claims[c]
+            problems = push[problems, '`name_of[c]`: it says `claims[c]`, there are `found`']
+    for c in counted
+        if c not in claims and occurs[text, c] gt 0
+            problems = push[problems, '`name_of[c]`: there are `occurs[text, c]`, which it does not say']
+    return problems
+
+all_tests = tests[]
+for k in range[len[all_tests]]
+    sentence = all_tests[k]
+    problems = problems_of[sentence]
+    counting = 'letters'
+    if sentence.punctuation
+        counting = 'letters and punctuation'
+    if len[problems] eq 0
+        log['Sentence `k + 1` (`counting`): an autogram']
+    else
+        log['Sentence `k + 1` (`counting`): not an autogram']
+        for p in problems
+            log['    `p`']

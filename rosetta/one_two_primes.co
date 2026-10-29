@@ -1,0 +1,131 @@
+--- Rosetta Code: One-two primes
+--- https://rosettacode.org/wiki/One-two_primes
+--- The n-digit numbers made of 1s and 2s, in order, are the repunit of n ones
+--- plus the binary digits of k = 0, 1, 2, ... read in decimal. Once n is past
+--- the sieve, its primes below 20,000 strike out most of them by remainders
+--- alone (the repunit's remainder plus the small addend's); the rest take the
+--- strong probable-prime test to the first twelve primes as bases, a proof
+--- below 3.3 * 10^24 (the first twenty terms). The stretch runs here for n =
+--- 100 to 700, under two seconds; `crow run one_two_primes.co 2000` runs it to
+--- n = 2000 as the task asks (nearly two minutes in either mode; every value
+--- agrees with the Raku entry's).
+
+--- the binary digits of k read as a decimal number: 5 -> 101
+fn binary_as_decimal[k]
+    b = 0
+    place = 1
+    rest = k
+    while rest gt 0
+        b = b + rest % 2 * place
+        place = place * 10
+        rest = rest / 2
+    b
+
+--- the primes below n, by the sieve of Eratosthenes
+fn primes_below[n]
+    marks = for i in range[n]
+        true
+    found = []
+    i = 2
+    while i lt n
+        if marks[i]
+            found = push[found, i]
+            j = i * i
+            while j lt n
+                marks[j] = false
+                j = j + i
+        i = i + 1
+    found
+
+--- b^e mod m by repeated squaring
+fn power_mod[b, e, m]
+    result = 1
+    base = b % m
+    k = e
+    while k gt 0
+        if k % 2 eq 1
+            result = result * base % m
+        base = base * base % m
+        k = k / 2
+    result
+
+--- whether odd n > a passes the strong probable-prime test to base a
+fn strong[n, a]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    x = power_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return true
+    r = 1
+    while r lt s
+        x = x * x % n
+        if x eq n - 1
+            return true
+        r = r + 1
+    false
+
+--- n is one of the bases, or has none of them as a factor and passes the
+--- strong test to each
+fn is_prime[n, bases]
+    if n lt 2
+        return false
+    i = 0
+    while i lt len[bases]
+        if n % bases[i] eq 0
+            return n eq bases[i]
+        i = i + 1
+    i = 0
+    while i lt len[bases]
+        if not strong[n, bases[i]]
+            return false
+        i = i + 1
+    true
+
+--- whether the repunit plus b has none of the sieve's primes as a factor,
+--- given the repunit's remainders by them
+fn sieved[remainders, sieve, b]
+    i = 0
+    while i lt len[sieve]
+        p = sieve[i]
+        if (remainders[i] + b % p) % p eq 0
+            return false
+        i = i + 1
+    true
+
+--- the smallest n-digit prime made of the digits 1 and 2
+fn one_two_prime[n, bases, sieve]
+    repunit = (10 ^ n - 1) / 9
+    remainders = for p in sieve
+        repunit % p
+    past_sieve = repunit gt sieve[-1]
+    k = 0
+    while true
+        b = binary_as_decimal[k]
+        if not past_sieve or sieved[remainders, sieve, b]
+            candidate = repunit + b
+            if is_prime[candidate, bases]
+                return candidate
+        k = k + 1
+    0
+
+--- the leading ones replaced by their count
+fn condensed[number]
+    text = str[number]
+    ones = 0
+    while ones lt len[text] and text[ones] eq '1'
+        ones = ones + 1
+    '(1 x `ones`) `slice[text, ones, len[text]]`'
+
+bases = primes_below[40]
+sieve = primes_below[20000]
+for n in range[1, 21]
+    log['`fmt[n, width = 4]`: `one_two_prime[n, bases, sieve]`']
+given = args[]
+last = 700
+if len[given] eq 1
+    last = int[given[0]]
+for n in range[100, last + 1, 100]
+    log['`fmt[n, width = 4]`: `condensed[one_two_prime[n, bases, sieve]]`']

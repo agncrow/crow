@@ -1,0 +1,36 @@
+--- Rosetta Code: Feigenbaum constant calculation
+--- https://rosettacode.org/wiki/Feigenbaum_constant_calculation
+--- The logistic map x -> a - x^2 doubles its period at parameters a1, a2, ...; each
+--- next one is found by Newton's method from the ratio so far, and the ratios of the
+--- gaps between them approach Feigenbaum's delta, 4.669201609...
+
+--- the next superstable parameter after a1 (a2 before it), by Newton's method
+--- on the 2 ^ i fold iterate of the map, from the guess the last ratio d gives
+fn next_parameter[i, a1, a2, d]
+    a = a1 + (a1 - a2) / d
+    j = 0
+    while j lt 10
+        x = 0.0
+        y = 0.0
+        k = 0
+        while k lt 2 ^ i
+            y = 1.0 - 2.0 * y * x
+            x = a - x * x
+            k = k + 1
+        a = a - x / y
+        j = j + 1
+    return a
+
+log[' i |     δ']
+a1 = 1.0
+a2 = 0.0
+d = 3.2
+i = 2
+while i lte 13
+    a = next_parameter[i, a1, a2, d]
+    d = (a1 - a2) / (a - a1)
+    log['`fmt[i, width = 2]` | `fmt[d, decimals = 8]`']
+    a2 = a1
+    a1 = a
+    i = i + 1
+log['(δ = 4.669201609102990... to 15 decimals)']

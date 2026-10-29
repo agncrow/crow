@@ -1,0 +1,13 @@
+--- `fmt` lays out a decimal and a fraction as numbers, their digits kept:
+--- both had been refused, though the decimal is the language's number for
+--- money (Rosetta Code, Arithmetic-geometric mean).
+price = decimal['1234.5']
+log[fmt[price, decimals = 2, commas = true]]
+log[fmt[price, width = 10]]
+log[fmt[decimal['-0.125'], decimals = 2]]
+log[fmt[decimal['0.25'], percent = true]]
+third = fraction[1, 3]
+log[fmt[third, width = 6]]
+log[fmt[third, decimals = 4]]
+log[fmt[fraction[-2, 3], decimals = 2]]
+log[fmt[fraction[1234567, 1], commas = true]]

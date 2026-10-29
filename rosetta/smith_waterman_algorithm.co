@@ -1,0 +1,129 @@
+--- Rosetta Code: Smith–Waterman algorithm
+--- https://rosettacode.org/wiki/Smith–Waterman_algorithm
+--- H is filled a row at a time: H(i, j) is the best of 0, H(i-1, j-1) plus the match or
+--- less the mismatch score, and H(i-1, j) or H(i, j-1) less the gap. The alignment is
+--- traced back from the first cell, row by row, holding the highest score, each step
+--- taking a move that made its cell's score (the diagonal first, then up, then left),
+--- until a cell of 0. With the task's scores (match +2, mismatch -1, gap -2) its example
+--- scores 10, ACACA against ACACA — not the 14 the task says, which counts the seven
+--- matches of A-CACACTA / AGCACAC-A and leaves out its two gaps (that alignment scores
+--- 10 as well); with a gap of -1 it is the best, at 12. Wikipedia's example is third.
+
+struct Scores [match, mismatch, gap]
+struct Cell [i, j]
+struct Alignment [score, top, bottom, path]
+
+fn letters[text]
+    return split[text, '']
+
+fn similarity[x, y, s]
+    if x eq y
+        return s.match
+    return -s.mismatch
+
+--- the scores H, a row for each letter of a and the row of 0 above them
+fn scores_of[a, b, s]
+    h = for i in range[len[a] + 1]
+        row = for j in range[len[b] + 1]
+            0
+        row
+    for i in range[1, len[a] + 1]
+        for j in range[1, len[b] + 1]
+            diagonal = h[i - 1][j - 1] + similarity[a[i - 1], b[j - 1], s]
+            up = h[i - 1][j] - s.gap
+            left = h[i][j - 1] - s.gap
+            h[i][j] = max[max[0, diagonal], max[up, left]]
+    return h
+
+--- the alignment ending at the first cell of the highest score
+fn traced[h, a, b, s]
+    best = Cell[0, 0]
+    for i in range[len[h]]
+        for j in range[len[h[0]]]
+            if h[i][j] gt h[best.i][best.j]
+                best = Cell[i, j]
+    i = best.i
+    j = best.j
+    top = []
+    bottom = []
+    path = []
+    while h[i][j] gt 0
+        path = push[path, Cell[i, j]]
+        if h[i][j] eq h[i - 1][j - 1] + similarity[a[i - 1], b[j - 1], s]
+            top = push[top, a[i - 1]]
+            bottom = push[bottom, b[j - 1]]
+            i = i - 1
+            j = j - 1
+        else if h[i][j] eq h[i - 1][j] - s.gap
+            top = push[top, a[i - 1]]
+            bottom = push[bottom, '-']
+            i = i - 1
+        else
+            top = push[top, '-']
+            bottom = push[bottom, b[j - 1]]
+            j = j - 1
+    return Alignment[h[best.i][best.j], reverse[top], reverse[bottom], reverse[path]]
+
+--- the text without the blanks at its end
+fn right_trimmed[text]
+    chars = split[text, '']
+    last = len[chars] - 1
+    while last gte 0 and chars[last] eq ' '
+        last = last - 1
+    return join[slice[chars, 0, last + 1], '']
+
+--- H with its rows and columns labelled by the letters, the path's cells starred
+fn show_scores[h, a, b, path]
+    heads = for c in b
+        head = fmt[c, width = 3, align = 'right']
+        '`head` '
+    columns = join[heads, '']
+    log[right_trimmed['      `columns`']]
+    for i in range[len[h]]
+        label = ' '
+        if i gt 0
+            label = a[i - 1]
+        cells = for j in range[len[h[0]]]
+            mark = ' '
+            if Cell[i, j] in path
+                mark = '*'
+            '`fmt[h[i][j], width = 3]``mark`'
+        row = join[cells, '']
+        log[right_trimmed['`label` `row`']]
+
+fn report[x, y, s]
+    a = letters[x]
+    b = letters[y]
+    log['A = `x`, B = `y`; match +`s.match`, mismatch -`s.mismatch`, gap -`s.gap`']
+    h = scores_of[a, b, s]
+    found = traced[h, a, b, s]
+    show_scores[h, a, b, found.path]
+    log['Highest score: `found.score`']
+    pairs = for k in range[len[found.top]]
+        if found.top[k] eq found.bottom[k]
+            '|'
+        else if found.top[k] eq '-' or found.bottom[k] eq '-'
+            ' '
+        else
+            '.'
+    top = join[found.top, '']
+    bottom = join[found.bottom, '']
+    bars = join[pairs, '']
+    log['Aligned:  A `top`']
+    log['            `bars`']
+    log['          B `bottom`']
+    first = found.path[0]
+    last = found.path[-1]
+    from_a = join[slice[a, first.i - 1, last.i], '']
+    from_b = join[slice[b, first.j - 1, last.j], '']
+    log['The substrings: `from_a` of A (letters `first.i` to `last.i`), `from_b` of B (letters `first.j` to `last.j`)']
+    steps = for c in found.path
+        '(`c.i`, `c.j`)'
+    route = join[steps, ' ']
+    log['The path through H: `route`']
+
+report['ACACACTA', 'AGCACACA', Scores[2, 1, 2]]
+log['']
+report['ACACACTA', 'AGCACACA', Scores[2, 1, 1]]
+log['']
+report['TGTTACGG', 'GGTTGACTA', Scores[3, 3, 2]]

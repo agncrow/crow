@@ -1,0 +1,105 @@
+--- Rosetta Code: Word wrap
+--- https://rosettacode.org/wiki/Word_wrap
+--- Crow has no wrapping builtin, so both algorithms are written out. The basic one is
+--- Wikipedia's minimum length greedy algorithm: each word goes on the current line if
+--- it fits, else it starts the next. For the extra credit, minimum raggedness, the
+--- measure Knuth and Plass's TeX line breaker minimises in its simplest form (D. E.
+--- Knuth and M. F. Plass, "Breaking Paragraphs into Lines", Software: Practice and
+--- Experience 11, 1981; Wikipedia, Word wrap, "Minimum raggedness"): the sum over
+--- every line but the last of the square of the space it leaves at its end, made as
+--- small as it can be by dynamic programming from the last word back. Greedy filling
+--- can leave one line long and the next short; the balanced lines cost less.
+
+--- the words of the text, any run of spaces and line breaks between them
+fn words_of[text]
+    pieces = split[trim[sub[text, '\s+', ' ']], ' ']
+    return pieces
+
+fn greedy[words, width]
+    lines = []
+    line = words[0]
+    space_left = width - len[line]
+    i = 1
+    while i lt len[words]
+        w = words[i]
+        if len[w] + 1 gt space_left
+            lines = push[lines, line]
+            line = w
+            space_left = width - len[w]
+        else
+            line = '`line` `w`'
+            space_left = space_left - 1 - len[w]
+        i = i + 1
+    return push[lines, line]
+
+--- least[i] is the least raggedness of the words from i on, and breaks[i] where the
+--- first line of that best setting ends; a line holds at least one word, so a word
+--- wider than the column has a line of its own
+fn balanced[words, width]
+    n = len[words]
+    least = for i in range[n + 1]
+        0
+    breaks = for i in range[n + 1]
+        n
+    i = n - 1
+    while i gte 0
+        length = len[words[i]]
+        j = i + 1
+        least[i] = -1
+        going = true
+        while going
+            cost = 0
+            if j lt n
+                cost = (width - length) ^ 2 + least[j]
+            if least[i] lt 0 or cost lt least[i]
+                least[i] = cost
+                breaks[i] = j
+            if j lt n and length + 1 + len[words[j]] lte width
+                length = length + 1 + len[words[j]]
+                j = j + 1
+            else
+                going = false
+        i = i - 1
+    lines = []
+    i = 0
+    while i lt n
+        line = join[slice[words, i, breaks[i]], ' ']
+        lines = push[lines, line]
+        i = breaks[i]
+    return lines
+
+fn raggedness[lines, width]
+    total = 0
+    i = 0
+    while i lt len[lines] - 1
+        total = total + (width - len[lines[i]]) ^ 2
+        i = i + 1
+    return total
+
+fn show[title, lines, width]
+    log['`title` at `width` columns (raggedness `raggedness[lines, width]`):']
+    ruler = repeat['-', width]
+    log[ruler]
+    for line in lines
+        log[line]
+    log[ruler]
+    log['']
+
+frog = 'In olden times when wishing still helped one, there lived a king
+whose daughters were all beautiful, but the youngest was so beautiful
+that the sun itself, which has seen so much, was astonished whenever
+it shone in her face.  Close by the king\'s castle lay a great dark
+forest, and under an old lime-tree in the forest was a well, and when
+the day was very warm, the king\'s child went out into the forest and
+sat down by the side of the cool fountain, and when she was bored she
+took a golden ball, and threw it up on high and caught it, and this
+ball was her favorite plaything.'
+words = words_of[frog]
+show['Greedy', greedy[words, 80], 80]
+show['Greedy', greedy[words, 72], 72]
+show['Minimum raggedness', balanced[words, 72], 72]
+
+--- the example of Wikipedia's article, where the greedy lines are the ragged ones
+short = words_of['aaa bb cc ddddd']
+show['Greedy', greedy[short, 6], 6]
+show['Minimum raggedness', balanced[short, 6], 6]

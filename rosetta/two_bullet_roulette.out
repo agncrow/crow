@@ -1,0 +1,7 @@
+100000 games of each (L load, S spin, F fire):
+A. LSLSFSF  55.49% deaths (exactly 5/9 = 55.56%): spin after loading the first bullet, and after the first shot
+B. LSLSFF   58.43% deaths (exactly 7/12 = 58.33%): spin after loading the first bullet only
+C. LLSFSF   55.75% deaths (exactly 5/9 = 55.56%): spin after the first shot only
+D. LLSFF    49.87% deaths (exactly 1/2 = 50.00%): spin after neither
+
+The highest chance of death is B: spin after loading the first bullet only.

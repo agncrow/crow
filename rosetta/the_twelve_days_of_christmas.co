@@ -1,0 +1,23 @@
+--- Rosetta Code: The Twelve Days of Christmas
+--- https://rosettacode.org/wiki/The_Twelve_Days_of_Christmas
+--- Each verse names its day, then counts the gifts down from that day's to the
+--- partridge, which takes an "And" once it is not the only gift.
+
+fn verse[n, days, gifts]
+    lines = ['On the `days[n - 1]` day of Christmas', 'My true love sent to me:']
+    k = n - 1
+    while k gt 0
+        lines = push[lines, gifts[k]]
+        k = k - 1
+    last = gifts[0]
+    if n gt 1
+        last = 'And `lower[last]`'
+    lines = push[lines, '`last`.']
+    return join[lines, '\n']
+
+days = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth']
+gifts = ['A partridge in a pear tree', 'Two turtle doves', 'Three French hens', 'Four calling birds', 'Five gold rings', 'Six geese a-laying', 'Seven swans a-swimming', 'Eight maids a-milking', 'Nine ladies dancing', 'Ten lords a-leaping', 'Eleven pipers piping', 'Twelve drummers drumming']
+
+verses = for n in range[1, 13]
+    verse[n, days, gifts]
+log[join[verses, '\n\n']]

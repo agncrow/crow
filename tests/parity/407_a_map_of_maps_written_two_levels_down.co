@@ -1,0 +1,26 @@
+--- a map of empty maps written two levels down (`m['a']['n'] = 1`)
+--- types the inner maps' keys and values by the write, at the top level
+--- and in a function: they had stayed maps of nothing known, compiled as
+--- text, and the program did not build (Rosetta Code, Random sentence from
+--- book)
+
+m = map[]
+m['a'] = map[]
+m['a']['n'] = 1
+m['a']['o'] = m['a']['n'] + 1
+log[m]
+
+fn counts[words]
+    follow = map[]
+    for i in range[len[words] - 1]
+        w = words[i]
+        if w not in follow
+            follow[w] = map[]
+        nxt = words[i + 1]
+        if nxt in follow[w]
+            follow[w][nxt] = follow[w][nxt] + 1
+        else
+            follow[w][nxt] = 1
+    return follow
+
+log[counts[['a', 'b', 'a', 'b', 'a', 'c']]]

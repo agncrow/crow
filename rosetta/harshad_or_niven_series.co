@@ -1,0 +1,31 @@
+--- Rosetta Code: Harshad or Niven series
+--- https://rosettacode.org/wiki/Harshad_or_Niven_series
+--- Crow has no generators, so the series is made one member at a time:
+--- next_harshad[n] is the first Harshad number after n.
+
+fn digit_sum[n]
+    total = 0
+    while n gt 0
+        total = total + n % 10
+        n = n / 10
+    return total
+
+fn is_harshad[n]
+    return n % digit_sum[n] eq 0
+
+fn next_harshad[n]
+    n = n + 1
+    while not is_harshad[n]
+        n = n + 1
+    return n
+
+first = []
+n = 0
+while len[first] lt 20
+    n = next_harshad[n]
+    first = push[first, n]
+shown = for x in first
+    str[x]
+first_text = join[shown, ' ']
+log['The first 20 Harshad numbers: `first_text`']
+log['The first Harshad number after 1000: `next_harshad[1000]`']

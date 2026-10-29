@@ -1,0 +1,22 @@
+--- A window's sum, minimum and maximum over a column of ints are ints,
+--- exactly (spec, frame: a window's cells are typed by what it computes,
+--- a sum, min or max in the column's kind): computed through floats, a
+--- cell past 2^53 had lost its last digits and a running max had been a
+--- number no cell holds, in both modes (Rosetta Code, CSV data
+--- manipulation). A sum past 64 bits is refused.
+use frame
+
+t = frame.new[k = ['a', 'b', 'a', 'b'], a = [9007199254740993, 1, 2, 9007199254740995]]
+t.run = window[t, 'a', 'sum']
+t.top = window[t, 'a', 'max']
+t.low = window[t, 'a', 'min']
+t.two = window[t, 'a', 'sum', 2]
+t.each = window[t, 'a', 'sum', by = ['k']]
+log[t.dtypes]
+log[t.run]
+log[t.top]
+log[t.low]
+log[t.two]
+log[t.each]
+huge = frame.new[a = [9223372036854775807, 1]]
+log[window[huge, 'a', 'sum']]

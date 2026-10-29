@@ -1,0 +1,120 @@
+--- Rosetta Code: Compiler/Simple file inclusion pre processor
+--- https://rosettacode.org/wiki/Compiler/Simple_file_inclusion_pre_processor
+--- Crow's own inclusion is `use name`, which imports a module (its functions called by
+--- the module's name) rather than pasting text, so this pre-processor reads a directive
+--- of its own, written as a Crow comment so that a file holding one is still Crow:
+---
+---     --- include 'path/file.co'
+---
+--- alone on its line. The line is replaced by the file's lines, each indented as the
+--- directive was, so a snippet can be included into a function's or a loop's body. A
+--- path is read from the directory of the file that includes it (standard input's is
+--- the current directory), '.' and '..' resolved. Included files may include others to
+--- any depth; a file that would include itself, directly or through others, is refused
+--- as a cycle, and a file that cannot be read is refused, each naming the file and the
+--- line of the directive. The source is read from standard input and the expanded
+--- source written to standard output. The demonstration's library files are written
+--- into the current directory (pp_lib/) as the program starts and removed as it ends.
+
+--- the directory of a path: all before its last '/', or '' for the current directory
+fn dir_of[path]
+    return join[slice[split[path, '/'], 0, -1], '/']
+
+--- a path written in a directive, read from the directory of the file holding it
+fn resolved[dir, path]
+    whole = path
+    if dir ne '' and not starts[path, '/']
+        whole = '`dir`/`path`'
+    kept = []
+    for part in split[whole, '/']
+        if part eq '..' and len[kept] gt 0 and kept[-1] ne '..' and kept[-1] ne ''
+            kept = pop[kept]
+        else if part ne '.' and (part ne '' or len[kept] eq 0)
+            kept = push[kept, part]
+    return join[kept, '/']
+
+--- a file's text as lines, the newline that ends the last one not a line of its own
+fn lines_of[text]
+    lines = split[text, '\n']
+    if len[lines] gt 0 and lines[-1] eq ''
+        lines = pop[lines]
+    return lines
+
+--- the files a cycle runs through, from the first time `path` was entered
+fn cycle_of[chain, path]
+    i = 0
+    while chain[i] ne path
+        i = i + 1
+    return join[push[slice[chain, i, len[chain]], path], ' -> ']
+
+--- the lines of a source with every directive replaced by its file's lines, expanded in
+--- turn: `name` is the source's name, `dir` its directory, `chain` the files whose
+--- inclusion it is part of
+fn expand[lines, name, dir, chain]
+    out = []
+    for k in range[len[lines]]
+        line = lines[k]
+        d = find[line, '^(\s*)---\s*include\s+\'([^\']+)\'\s*$']
+        if not d.ok
+            out = push[out, line]
+        else
+            indent = d.groups[1]
+            path = resolved[dir, d.groups[2]]
+            if path in chain
+                cycle = cycle_of[chain, path]
+                return error['`name`, line `k + 1`: `path` would include itself: `cycle`', 'include']
+            text = read[path]
+            if not text.ok
+                return error['`name`, line `k + 1`: `text.reason`', 'include']
+            inner = expand[lines_of[text], path, dir_of[path], push[chain, path]]
+            for x in inner
+                if x eq ''
+                    out = push[out, x]
+                else
+                    out = push[out, '`indent``x`']
+    return out
+
+--- the demonstration's library: shapes.co includes numbers.co from its own directory
+library = map[]
+library = set[library, 'pp_lib/shapes.co', join[[
+    '--- shapes and their areas',
+    '--- include \'numbers.co\'',
+    '',
+    'struct Shape [name, size]',
+    '',
+    'fn area[s]',
+    '    if s.name eq \'square\'',
+    '        return s.size * s.size',
+    '    if s.name eq \'circle\'',
+    '        return half_turn[] * s.size * s.size',
+    '    return root_three[] / 4.0 * s.size * s.size'
+], '\n']]
+library = set[library, 'pp_lib/numbers.co', join[[
+    '--- two numbers, to the digits a float holds',
+    'fn half_turn[]',
+    '    return 3.141592653589793',
+    '',
+    'fn root_three[]',
+    '    return 1.7320508075688772'
+], '\n']]
+library = set[library, 'pp_lib/report.co', join[[
+    '--- one shape\'s line of the report',
+    'shown = fmt[area[s], decimals = 3]',
+    'log[\'\`s.name\` of size \`s.size\` has area \`shown\`\']'
+], '\n']]
+mkdir['pp_lib']
+for path in keys[library]
+    write[path, '`library[path]`\n']
+
+source = []
+line = input[]
+while line.ok
+    source = push[source, line]
+    line = input[]
+expanded = expand[source, 'standard input', '', []]
+if expanded.ok
+    for x in expanded
+        log[x]
+else
+    log['error: `expanded.reason`']
+rm['pp_lib']

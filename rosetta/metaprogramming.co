@@ -1,0 +1,76 @@
+--- Rosetta Code: Metaprogramming
+--- https://rosettacode.org/wiki/Metaprogramming
+--- Crow has none of what this task counts: no macros, no preprocessor, no
+--- user-defined operators or syntax, and no eval. It rejects macros by design:
+--- every program reads by the one grammar, and the one vocabulary zone (the HTML
+--- elements inside a `view`) is the language's own (spec, "Names Are Never
+--- Ambiguous", rule 5). What it has nearby is shown below: rewrites the parser
+--- makes, a function written once and compiled once for each kind it is called
+--- with (as a template is instantiated, with no type written), a list of
+--- functions the compiler writes a dispatch over, and the kind of a value asked
+--- as the program runs. The spec's sections "Then Chaining", "Membership" and
+--- "Specialization": https://github.com/agncrow/crow/blob/main/docs/language-spec.md
+
+struct Point [x, y]
+
+--- The largest item of a list by `gt`: numbers by value, text by character code.
+fn largest[xs]
+    best = xs[0]
+    for x in xs
+        if x gt best
+            best = x
+    return best
+
+fn double[x]
+    return x * 2
+
+fn square[x]
+    return x * x
+
+fn negate[x]
+    return 0 - x
+
+--- 1. Rewrites the parser makes. A `then` chain becomes nested calls, each step
+--- taking the value so far as its first argument, and `x in xs` a call of the
+--- membership row: nothing past the parser knows either form exists.
+log['A then chain, and the nested calls it is rewritten into:']
+chained = 'the quick brown fox' then split[' '] then reverse then join[' ']
+nested = join[reverse[split['the quick brown fox', ' ']], ' ']
+log['  `chained`']
+log['  `nested`']
+
+--- A chain written as lines: a step that names the variable reads the value so
+--- far where it says, and the value may change its kind along the way.
+n = '42'
+    then int
+    then n * n + 1
+log['A chain as lines, \'42\' then int then n * n + 1: `n`']
+
+letter = 'e'
+vowels = split['aeiou', '']
+log['Membership, rewritten to a call: `letter` in vowels is `letter in vowels`, `letter` not in vowels is `letter not in vowels`']
+
+--- 2. Generic code with no type written: `largest` is compiled once for a list
+--- of ints and once for a list of text, as its calls ask.
+fruit = ['pear', 'apple', 'zucchini', 'fig']
+shown_fruit = join[fruit, ', ']
+log['One function, compiled once per kind of list it is called with:']
+log['  the largest of 3, 41, 7 is `largest[[3, 41, 7]]`']
+log['  the largest of `shown_fruit` is `largest[fruit]`']
+
+--- 3. Functions as values: a list literal of functions is a group, and a call
+--- through an item of it is a dispatch the compiler writes over the members.
+names = ['double', 'square', 'negate']
+group = [double, square, negate]
+log['A group of functions, each applied to 7:']
+for i in range[len[group]]
+    f = group[i]
+    log['  `names[i]` 7 is `f[7]`']
+
+--- 4. The kind of a value, asked as the program runs.
+word = 'a'
+point = Point[1, 2]
+table = map[a = 1]
+log['The kind of a value, asked as the program runs:']
+log['  3 is `type[3]`, 2.5 is `type[2.5]`, `word` is `type[word]`, true is `type[true]`']
+log['  [1, 2] is `type[[1, 2]]`, map[a = 1] is `type[table]`, Point[1, 2] is `type[point]`, double is `type[double]`']

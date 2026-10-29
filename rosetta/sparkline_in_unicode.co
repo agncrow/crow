@@ -1,0 +1,71 @@
+--- Rosetta Code: Sparkline in unicode
+--- https://rosettacode.org/wiki/Sparkline_in_unicode
+--- The numbers of a line are parted by any run of spaces, tabs and commas. The
+--- range from the least to the greatest is cut into eight equal bins, the
+--- greatest going in the top one, and each number is drawn as its bin's bar
+--- (U+2581 to U+2588); a line of equal numbers is drawn at the lowest bar. The
+--- series are the program's arguments, one a series, or else the task's two
+--- and the two edge cases from its talk page.
+
+fn numbers_of[text]
+    --- the numbers of a line, or an error naming a word that is none
+    found = []
+    words = trim[sub[text, '[\s,]+', ' ']]
+    if words eq ''
+        return found
+    for word in split[words, ' ']
+        x = float[word]
+        if not x.ok
+            return error['not a number: `word`', 'input']
+        found = push[found, x]
+    return found
+
+fn least[xs]
+    low = xs[0]
+    for x in xs
+        if x lt low
+            low = x
+    return low
+
+fn greatest[xs]
+    high = xs[0]
+    for x in xs
+        if x gt high
+            high = x
+    return high
+
+fn sparkline[xs]
+    --- each number as the bar of its eighth of the range
+    bars = split['▁▂▃▄▅▆▇█', '']
+    low = least[xs]
+    high = greatest[xs]
+    marks = for x in xs
+        bin = 0
+        if high gt low
+            bin = min[7, floor[(x - low) / (high - low) * 8]]
+        bars[bin]
+    return join[marks, '']
+
+fn show[line]
+    log['Numbers: `line`']
+    xs = numbers_of[line]
+    if not xs.ok
+        log['  `xs.reason`']
+    else if len[xs] eq 0
+        log['  no numbers']
+    else
+        total = 0.0
+        for x in xs
+            total = total + x
+        mean = fmt[total / len[xs], decimals = 3]
+        log['  `len[xs]` numbers, least `least[xs]`, greatest `greatest[xs]`, mean `mean`']
+        log['  `sparkline[xs]`']
+    log['']
+
+given = args[]
+if len[given] gt 0
+    for line in given
+        show[line]
+else
+    for line in ['1 2 3 4 5 6 7 8 7 6 5 4 3 2 1', '1.5, 0.5 3.5, 2.5 5.5, 4.5 7.5, 6.5', '0, 1, 19, 20', '0, 999, 4000, 4999, 7000, 7999']
+        show[line]

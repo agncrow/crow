@@ -1,0 +1,19 @@
+--- under `use math as m`, math is reached through `m` alone: a bare name is
+--- the core's (`min`), the program's own function (`rank`, `where`) or a
+--- variable (`sum`) — each had been refused as math's, a call to be written
+--- `m.min[…]`, in both modes
+
+use math as m
+
+fn rank[xs]
+    return len[xs]
+
+fn where[xs]
+    return xs[0]
+
+log[min[30, 4]]
+sum = [1, 2]
+log[sum[0]]
+log[rank[[1, 2]]]
+log[where[[5, 6]]]
+log[m.mean[[1.0, 2.0]]]

@@ -1,0 +1,4 @@
+1. the first top-level line runs first
+2. main runs, with 0 command-line arguments
+   Hello from main, Rosetta Code!
+3. the last top-level line runs once main has returned

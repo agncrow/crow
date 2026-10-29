@@ -1,0 +1,118 @@
+--- Rosetta Code: Mind boggling card trick
+--- https://rosettacode.org/wiki/Mind_boggling_card_trick
+--- A deck of 52 named cards (hearts and diamonds red, clubs and spades black),
+--- shuffled by a seeded Fisher-Yates so every run is the same. Dealt in pairs:
+--- the top card turned up names the pile the next, unseen card goes to, and is
+--- discarded. Then X cards, X itself random, are swapped between the red and
+--- the black piles, each bunch drawn at random from its pile, and the black
+--- cards in the black pile are counted against the red cards in the red pile.
+--- The trick is shown once in full, then run 10,000 times more.
+use math
+
+struct Card [name, red]
+
+struct Piles [red, black, discard]
+
+fn new_deck[]
+    faces = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+    suits = ['♥', '♦', '♣', '♠']
+    cards = []
+    for suit in suits
+        for face in faces
+            cards = push[cards, Card['`face``suit`', suit eq '♥' or suit eq '♦']]
+    return cards
+
+--- Fisher-Yates: each place from the last down takes a random card at or before it.
+fn shuffled[cards]
+    i = len[cards] - 1
+    while i gt 0
+        j = rand[i + 1]
+        held = cards[i]
+        cards[i] = cards[j]
+        cards[j] = held
+        i = i - 1
+    return cards
+
+fn deal[cards]
+    red = []
+    black = []
+    discard = []
+    i = 0
+    while i + 1 lt len[cards]
+        turned = cards[i]
+        if turned.red
+            red = push[red, cards[i + 1]]
+        else
+            black = push[black, cards[i + 1]]
+        discard = push[discard, turned]
+        i = i + 2
+    return Piles[red, black, discard]
+
+--- x cards drawn at random from each pile (the top x once the pile is
+--- shuffled), each bunch put into the other pile
+fn swapped[piles, x]
+    red = shuffled[piles.red]
+    black = shuffled[piles.black]
+    red_bunch = slice[red, 0, x]
+    black_bunch = slice[black, 0, x]
+    red = concat[slice[red, x, len[red]], black_bunch]
+    black = concat[slice[black, x, len[black]], red_bunch]
+    return Piles[red, black, piles.discard]
+
+--- how many of the cards are red (wanted true) or black (false)
+fn count_red[cards, wanted]
+    count = 0
+    i = 0
+    while i lt len[cards]
+        if cards[i].red eq wanted
+            count = count + 1
+        i = i + 1
+    return count
+
+fn names[cards]
+    words = for card in cards
+        card.name
+    join[words, ' ']
+
+--- the trick from a fresh deck: whether the two counts agree
+fn trick_holds[]
+    piles = deal[shuffled[new_deck[]]]
+    x = rand[0, min[len[piles.red], len[piles.black]]]
+    piles = swapped[piles, x]
+    return count_red[piles.black, false] eq count_red[piles.red, true]
+
+seed[1729]
+deck = shuffled[new_deck[]]
+log['The shuffled deck:']
+log['  `names[deck]`']
+piles = deal[deck]
+log['Dealt, the cards turned up and discarded:']
+log['  `names[piles.discard]`']
+log['the red pile (`len[piles.red]` cards):   `names[piles.red]`']
+log['the black pile (`len[piles.black]` cards): `names[piles.black]`']
+
+x = rand[0, min[len[piles.red], len[piles.black]]]
+piles = swapped[piles, x]
+log['']
+log['`x` cards drawn at random from each pile and swapped:']
+log['the red pile:   `names[piles.red]`']
+log['the black pile: `names[piles.black]`']
+reds = count_red[piles.red, true]
+blacks = count_red[piles.black, false]
+log['']
+log['Red cards in the red pile:     `reds`']
+log['Black cards in the black pile: `blacks`']
+if reds eq blacks
+    log['They are equal, as the mathematician says.']
+else
+    log['They differ: the assertion is wrong.']
+
+runs = 10000
+held = 0
+k = 0
+while k lt runs
+    if trick_holds[]
+        held = held + 1
+    k = k + 1
+log['']
+log['Run `fmt[runs, commas = true]` times more from fresh shuffles: the counts agreed `fmt[held, commas = true]` times.']

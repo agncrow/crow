@@ -1,0 +1,139 @@
+--- Rosetta Code: Casting out nines
+--- https://rosettacode.org/wiki/Casting_out_nines
+--- Part 1 adds a number's digits as by hand, casting out a nine whenever the
+--- running sum reaches one. Part 2 filters a range with it. Part 3 works in
+--- any base: it generates only the k with k ≡ k^2 (mod base - 1), as the
+--- residues r with r ≡ r^2 plus multiples of base - 1. Each range is checked
+--- to hold every Kaprekar number in it.
+
+--- the check digit: the digits added one at a time, a nine cast out whenever
+--- the running sum reaches it, so the sum never passes 17
+fn co9[n]
+    check = 0
+    rest = n
+    while rest gt 0
+        check = check + rest % 10
+        if check gte 9
+            check = check - 9
+        rest = rest / 10
+    return check
+
+--- k's square, written in the base, splits into two parts that add up to k,
+--- the right part not zero (1 is a Kaprekar number by convention)
+fn is_kaprekar[k, base]
+    if k eq 1
+        return true
+    square = k * k
+    place = base
+    while place lte square
+        right = square % place
+        if right gt 0 and square / place + right eq k
+            return true
+        place = place * base
+    return false
+
+fn kaprekars[base, first, last]
+    found = for k in range[first, last + 1]
+        if is_kaprekar[k, base]
+            k
+    return found
+
+--- part 2: the range filtered by the check digits of k and k^2
+fn co9_filtered[first, last]
+    kept = for k in range[first, last + 1]
+        if co9[k] eq co9[k * k]
+            k
+    return kept
+
+--- part 3: the residues r of base - 1 with r ≡ r^2; every k with k ≡ k^2 is
+--- one of them plus a multiple of base - 1
+fn residues[base]
+    m = base - 1
+    rs = for r in range[m]
+        if r % m eq (r * r) % m
+            r
+    return rs
+
+fn generated[base, first, last]
+    m = base - 1
+    rs = residues[base]
+    found = []
+    x = first / m
+    while x * m lte last
+        for r in rs
+            k = x * m + r
+            if k gte first and k lte last
+                found = push[found, k]
+        x = x + 1
+    return found
+
+fn in_base[n, base]
+    digits = '0123456789abcdefghijklmnopqrstuvwxyz'
+    if n lt base
+        return digits[n]
+    high = in_base[n / base, base]
+    low = digits[n % base]
+    return '`high``low`'
+
+fn numbers_text[ns]
+    texts = for n in ns
+        str[n]
+    return join[texts, ' ']
+
+fn show_wrapped[ns]
+    i = 0
+    while i lt len[ns]
+        texts = for n in slice[ns, i, i + 20]
+            fmt[n, width = 4]
+        log[join[texts, '']]
+        i = i + 20
+
+--- how small a part of the range the candidates are, and whether they hold
+--- every Kaprekar number of the range
+fn report[candidates, base, first, last]
+    total = last - first + 1
+    share = fmt[float[len[candidates]] / float[total], percent = true, decimals = 2]
+    known = kaprekars[base, first, last]
+    missing = for k in known
+        if k not in candidates
+            k
+    shown = for k in known
+        if base eq 10
+            str[k]
+        else
+            written = in_base[k, base]
+            '`k` (`written`)'
+    held = 'all'
+    if len[missing] gt 0
+        held = 'NOT all'
+    log['`len[candidates]` candidates of `total` numbers (`share`)']
+    names = join[shown, ', ']
+    log['Kaprekar numbers in the range, `held` among the candidates: `names`']
+
+log['Part 1: check digits']
+for n in [6395, 8051647]
+    log['co9[`n`] = `co9[n]`']
+a = 6395
+b = 8051647
+log['`a` + `b` = `a + b`: co9 is `co9[a + b]`, as co9[`co9[a]` + `co9[b]`] = `co9[co9[a] + co9[b]]`']
+log['`a` * `b` = `a * b`: co9 is `co9[a * b]`, as co9[`co9[a]` * `co9[b]`] = `co9[co9[a] * co9[b]]`']
+
+log['']
+log['Part 2: k from 1 to 99 with co9[k] = co9[k^2]']
+kept = co9_filtered[1, 99]
+log[numbers_text[kept]]
+report[kept, 10, 1, 99]
+log['And from 1 to 10000:']
+report[co9_filtered[1, 10000], 10, 1, 10000]
+
+log['']
+log['Part 3: k with k % (base - 1) = k^2 % (base - 1), generated from the residues']
+for case in [[10, 1, 99], [16, 1, 255], [17, 1, 288]]
+    base = case[0]
+    first = case[1]
+    last = case[2]
+    rs = numbers_text[residues[base]]
+    log['Base `base`, `first` to `last` (residues `rs`):']
+    found = generated[base, first, last]
+    show_wrapped[found]
+    report[found, base, first, last]

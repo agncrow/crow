@@ -1,0 +1,10 @@
+s holds '', of length 0
+s is empty (compared with '')
+s is empty (its length is 0)
+t is not empty (compared with '')
+t is not empty (its length is 4)
+'' is empty
+' ' is not empty
+'a' is not empty
+'' is empty
+'crow' is not empty

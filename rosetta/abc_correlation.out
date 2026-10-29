@@ -1,0 +1,67 @@
+"the quick brown fox jumps over the lazy dog" -> true
+"abc" -> true
+"abcc" -> false
+"back" -> true
+"Back" -> false
+"aabbcc" -> true
+"abbccc" -> false
+"gone" -> true
+"" -> true
+"cabbage crab cobbler" -> false
+
+326 words of unixdict.txt hold as many a's as b's as c's, at least one of each:
+abc             abduct          abject          abscess         absence         acerbity
+aerobic         alberich        albrecht        aminobenzoic    archbishop      ascribe
+bach            bachelor        bacilli         bacillus        back            backdrop
+backfill        background      backlog         backorder       backside        backstop
+backup          backwood        bacon           bacterium       balcony         balletic
+baltic          bankruptcy      basic           basidiomycetes  basophilic      batch
+batchelder      bausch          beach           beacon          beatific        beatrice
+becalm          became          because         beckman         beecham         bellyache
+benchmark       benefactor      beneficial      beneficiary     bianco          bicentennial
+bichromate      bidirectional   bifocal         bifurcate       biharmonic      bimetallic
+bimolecular     binocular       binuclear       birdwatch       birthplace      bismarck
+bivouac         black           blacken         blackfeet       blackout        blacksmith
+blackstone      blackwell       blanc           blanch          blanche         bleach
+blockade        blockage        bluejacket      boca            boldface        boniface
+bookcase        borosilicate    botanic         boxcar          brace           bracelet
+bracken         bracket         brackish        bract           brainchild      brainchildren
+branch          breach          bricklay        bricklayer      bricklaying     briefcase
+britannic       broach          brocade         bronchial       bronchiolar     bucharest
+buchenwald      buchwald        buckaroo        buckwheat       bullwhack       bushwhack
+cab             cabdriver       cabin           cabinet         cabinetry       cable
+cabot           caleb           caliber         calibre         camber          cambridge
+campbell        canterbury      carbide         carbine         carboloy        carbon
+carbone         carbonium       carbonyl        carborundum     carboxy         carboy
+carburetor      carib           caribou         carob           casebook        catbird
+celebrant       celebrate       cerebral        cerebrate       chablis         chamber
+chambers        charybdis       chilblain       childbear       chipboard       clamber
+clipboard       cobalt          cobra           codebreak       cognizable      collapsible
+collarbone      colombia        columbia        combat          combatted       combinate
+combination     combinator      commensurable   committable     compatible      compellable
+compensable     conferrable     connubial       controllable    coralberry      cornbread
+corroborate     crab            cranberry       crossbar        crowbait        cuba
+culpable        cultivable      cumberland      cupboard        debacle         debauch
+debauchery      decomposable    delectable      depreciable     despicable      diabetic
+diabolic        discriminable   dissociable     disturbance     duplicable      educable
+emblematic      embrace         enforceable     enunciable      evocable        excisable
+excusable       execrable       exercisable     explicable      extricable      fabric
+feedback        fluorocarbon    fullback        hackberry       hebraic         hecatomb
+hecuba          hibachi         horseback       humpback        hydrocarbon     iambic
+imperceivable   incommensurable incommutable    incompatible    incomputable    incondensable
+inconsiderable  inconsolable    incontestable   incontrollable  incorporable    incubate
+inculpable      indecipherable  indecomposable  indiscoverable  ineducable      ineluctable
+inexcusable     inexplicable    inextricable    inscrutable     irrecoverable   irrevocable
+jackboot        jacob           jacobi          jacobite        jacobs          jacobsen
+jacobson        jacobus         judicable       justiciable     knuckleball     kochab
+licensable      linebacker      lubricant       lubricate       macbeth         matchbook
+metabolic       microbial       mobcap          nabisco         noticeable      obduracy
+obfuscate       obfuscatory     obstacle        obstinacy       offenbach       piggyback
+placebo         precipitable    problematic     pronounceable   publication     pullback
+recombinant     remembrance     republican      revocable       roadblock       rockabye
+rollback        scab            scabious        scabrous        scarborough     schnabel
+schwab          scoreboard      scramble        scrapbook       screwball       screwbean
+scrutable       scuba           semblance       serviceable     setback         sociable
+strabismic      subtracter      switchblade     switchboard     syllabic        tablecloth
+throwback       transcribe      turtleback      umbilical       vocable         voiceband
+wingback        zellerbach

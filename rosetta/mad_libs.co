@@ -1,0 +1,61 @@
+--- Rosetta Code: Mad Libs
+--- https://rosettacode.org/wiki/Mad_Libs
+--- The story is read from standard input up to a blank line. Its blanks are the
+--- <…> on one line; each is asked for once, in the order they first appear, and
+--- the story is filled in one pass, so a word holding a <…> of its own is kept as
+--- it was given. A < with no > after it on its line is left as text.
+
+fn blank_in[piece]
+    --- the blank a piece after a '<' opens with ('name' of 'name> went …'), or ''
+    parts = split[piece, '>']
+    if len[parts] lt 2 or parts[0] eq '' or '\n' in parts[0]
+        return ''
+    parts[0]
+
+fn blanks[story]
+    --- each blank once, in the order they first appear
+    found = []
+    pieces = split[story, '<']
+    for piece in slice[pieces, 1, len[pieces]]
+        b = blank_in[piece]
+        if b ne '' and b not in found
+            found = push[found, b]
+    found
+
+fn filled[story, words]
+    pieces = split[story, '<']
+    out = [pieces[0]]
+    for piece in slice[pieces, 1, len[pieces]]
+        b = blank_in[piece]
+        if b eq ''
+            out = push[out, '<`piece`']
+        else
+            rest = slice[piece, len[b] + 1, len[piece]]
+            out = push[out, '`words[b]``rest`']
+    join[out, '']
+
+fn read_story[]
+    lines = []
+    line = input[]
+    while line.ok and trim[line] ne ''
+        lines = push[lines, line]
+        line = input[]
+    join[lines, '\n']
+
+fn play[]
+    log['Write a story, then a blank line. Each <blank> in it is asked for once.']
+    story = read_story[]
+    words = map[]
+    for b in blanks[story]
+        word = input['`b`: ']
+        if not word.ok
+            log['']
+            log['The input ended before <`b`> had a word.']
+            return false
+        words = set[words, b, trim[word]]
+    log['']
+    log['The story:']
+    log[filled[story, words]]
+    true
+
+done = play[]

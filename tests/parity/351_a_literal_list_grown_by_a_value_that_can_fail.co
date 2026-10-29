@@ -1,0 +1,22 @@
+--- a list written down and grown in a loop by `push` of a value that can
+--- fail: the push hands its failure on, and the variable holds the list —
+--- a list of ints (the literal grown is one) or a tensor of floats. The
+--- tensor's loop had been read once for its shape, and the join made the
+--- variable one that can fail: the lowered program disagreed with itself
+xs = [1, 2]
+for i in range[2]
+    xs = push[xs, int['3']]
+log[xs]
+
+ys = [1.5, 2.5]
+for i in range[2]
+    ys = push[ys, float['3.5']]
+log[ys]
+
+zs = [0, 10]
+i = 0
+while i lt 2
+    n = int['7']
+    zs = push[zs, n]
+    i = i + 1
+log[zs]

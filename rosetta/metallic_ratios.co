@@ -1,0 +1,74 @@
+--- Rosetta Code: Metallic ratios
+--- https://rosettacode.org/wiki/Metallic_ratios
+--- The Lucas-like sequence x(n) = b x(n-1) + x(n-2) from 1, 1, in ints that grow;
+--- each ratio x(n+1)/x(n) is rounded to the places asked for in exact integer
+--- arithmetic, until the next ratio rounds to the same text. The closed form
+--- (b + sqrt(b^2 + 4)) / 2, as a decimal of 300 digits, checks every answer.
+
+struct Approximation [steps, value]
+
+fn names[]
+    return ['Platinum', 'Golden', 'Silver', 'Bronze', 'Copper', 'Nickel', 'Aluminum', 'Iron', 'Tin', 'Lead']
+
+fn lucas[b, count]
+    xs = [1, 1]
+    while len[xs] lt count
+        xs = push[xs, b * xs[-1] + xs[-2]]
+    return xs
+
+--- top / bottom to `places` decimal places, a half rounded up, as text.
+fn rounded[top, bottom, places]
+    scale = 10 ^ places
+    q = (2 * top * scale + bottom) / (2 * bottom)
+    whole = q / scale
+    part = fmt[q % scale, width = places, fill = '0']
+    return '`whole`.`part`'
+
+--- Ratios of successive terms until one rounds as the one before it.
+fn approximate[b, places]
+    x0 = 1
+    x1 = 1
+    shown = rounded[x1, x0, places]
+    previous = ''
+    steps = 0
+    while shown ne previous
+        previous = shown
+        steps = steps + 1
+        x0, x1 = x1, b * x1 + x0
+        shown = rounded[x1, x0, places]
+    return Approximation[steps, shown]
+
+--- The root of x^2 - bx - 1 = 0, (b + sqrt(b^2 + 4)) / 2, rounded to `places`.
+fn closed_form[b, places]
+    root = sqrt[decimal[b * b + 4, digits = 300]]
+    x = (decimal[b] + root) / 2
+    return str[round[x, places]]
+
+fn shown_terms[xs]
+    words = for x in xs
+        str[x]
+    join[words, ', ']
+
+fn plural[n]
+    if n eq 1
+        return 'iteration'
+    return 'iterations'
+
+fn report[b, name, places]
+    terms = shown_terms[lucas[b, 15]]
+    found = approximate[b, places]
+    agrees = found.value eq closed_form[b, places]
+    log['Lucas sequence for the `name` ratio, b = `b`:']
+    log['  first 15 terms: `terms`']
+    log['  value to `places` decimal places after `found.steps` `plural[found.steps]`: `found.value`']
+    log['  equals (`b` + sqrt(`b * b + 4`)) / 2 to `places` places: `agrees`']
+    log['']
+
+metals = names[]
+for b in range[10]
+    report[b, metals[b], 32]
+
+golden = approximate[1, 256]
+log['Golden ratio to 256 decimal places after `golden.steps` iterations:']
+log[golden.value]
+log['equals (1 + sqrt(5)) / 2 to 256 places: `golden.value eq closed_form[1, 256]`']

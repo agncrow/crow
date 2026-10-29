@@ -1,0 +1,70 @@
+--- Rosetta Code: Biorhythms
+--- https://rosettacode.org/wiki/Biorhythms
+--- The days since birth, taken modulo each cycle's length, place the day on three
+--- sine curves; each is described by its quadrant, with the date of the next event,
+--- and a chart in characters shows the cycles around the first target date.
+
+use math
+
+struct Cycle [name, length]
+
+fn cycles[]
+    return [Cycle['Physical', 23], Cycle['Emotional', 28], Cycle['Mental', 33]]
+
+fn days_between[born, target]
+    return round[(target - born) / 86400.0]
+
+fn level[cycle, days]
+    --- Where the day lies on the cycle's sine curve, from -1 to +1.
+    return sin[2.0 * pi * (days % cycle.length) / cycle.length]
+
+fn state[cycle, days, target]
+    position = days % cycle.length
+    percent = round[100.0 * level[cycle, days]]
+    if percent gt 95
+        return 'peak'
+    if percent lt -95
+        return 'valley'
+    if abs[percent] lt 5
+        return 'critical transition'
+    trends = ['up and rising', 'up but falling', 'down and falling', 'down but rising']
+    events = ['peak', 'transition', 'valley', 'transition']
+    quadrant = 4 * position / cycle.length
+    ahead = (quadrant + 1) * cycle.length / 4 - position
+    next = fmt[target + ahead * 86400, style = 'date']
+    return '`percent`% (`trends[quadrant]`, next `events[quadrant]` `next`)'
+
+fn report[born_text, target_text]
+    days = days_between[moment[born_text], moment[target_text]]
+    log['Born `born_text`, target `target_text`']
+    log['Day `days`:']
+    for cycle in cycles[]
+        name = fmt[cycle.name, width = 9]
+        position = fmt[days % cycle.length, width = 2]
+        log['  `name` day `position`: `state[cycle, days, moment[target_text]]`']
+    log['']
+
+fn chart_row[days]
+    --- One day's line: -1 at the left edge, 0 at the bar, +1 at the right edge.
+    cells = for i in range[41]
+        ' '
+    cells[20] = '|'
+    for cycle in cycles[]
+        at = 20 + round[20.0 * level[cycle, days]]
+        cells[at] = slice[cycle.name, 0, 1]
+    return sub[join[cells, ''], ' +$', '']
+
+fn plot_cycles[born_text, target_text, reach]
+    born = moment[born_text]
+    target = moment[target_text]
+    days = days_between[born, target]
+    log['The cycles around `target_text` (P physical, E emotional, M mental):']
+    log['              -1                  0                  +1']
+    for offset in range[-reach, reach + 1]
+        date = fmt[target + offset * 86400, style = 'date']
+        log['  `date`  `chart_row[days + offset]`']
+
+report['1943-03-09', '1972-07-11']
+report['1809-01-12', '1863-11-19']
+report['1809-02-12', '1863-11-19']
+plot_cycles['1943-03-09', '1972-07-11', 12]

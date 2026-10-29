@@ -1,0 +1,47 @@
+--- Rosetta Code: Isqrt (integer square root) of X
+--- https://rosettacode.org/wiki/Isqrt_(integer_square_root)_of_X
+--- The task's quadratic residue in whole numbers alone: a power of four past x,
+--- then the root found a bit at a time from it. An int grows as it needs, so
+--- 7^73 needs nothing more; every root is checked: r^2 <= x < (r + 1)^2.
+
+fn isqrt[x]
+    q = 1
+    while q lte x
+        q = q * 4
+    z = x
+    r = 0
+    while q gt 1
+        q = q / 4
+        t = z - r - q
+        r = r / 2
+        if t gte 0
+            z = t
+            r = r + q
+    return r
+
+fn is_root[r, x]
+    return r * r lte x and x lt (r + 1) * (r + 1)
+
+log['The integer square roots of the integers 0 to 65:']
+roots = for x in range[66]
+    r = isqrt[x]
+    assert[is_root[r, x]]
+    str[r]
+shown = join[roots, ' ']
+log[shown]
+log['']
+
+log['The integer square roots of the odd powers of 7 from 7^1 to 7^73:']
+power_head = fmt['power', width = 5]
+x_head = fmt['7 ^ power', width = 82, align = 'right']
+root_head = fmt['integer square root', width = 41, align = 'right']
+log['`power_head` `x_head` `root_head`']
+rules = for w in [5, 82, 41]
+    repeat['-', w]
+rule = join[rules, ' ']
+log[rule]
+for p in range[1, 75, 2]
+    x = 7 ^ p
+    r = isqrt[x]
+    assert[is_root[r, x]]
+    log['`fmt[p, width = 5]` `fmt[x, width = 82, commas = true]` `fmt[r, width = 41, commas = true]`']

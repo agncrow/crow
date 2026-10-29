@@ -1,0 +1,84 @@
+--- Rosetta Code: Sierpinski triangle/Graphical
+--- https://rosettacode.org/wiki/Sierpinski_triangle/Graphical
+--- The triangle of order n is three triangles of order n - 1, half the size, one at
+--- each corner; order 0 is a filled triangle. Order 8 (3^8 = 6,561 triangles) is drawn
+--- as an SVG image, sierpinski_triangle.svg, written to the current directory and
+--- removed at the end unless the program is given the argument keep. Crow draws on no
+--- screen of its own, so the console shows order 5 in characters: the cell in row r and
+--- place c is filled where the binomial coefficient C(r, c) is odd, which is where
+--- c and r - c share no bit.
+
+use bits, math
+
+struct Point [x, y]
+struct Triangle [a, b, c]
+
+fn middle[p, q]
+    return Point[(p.x + q.x) / 2.0, (p.y + q.y) / 2.0]
+
+--- the filled triangles of order n inside the triangle t
+fn sierpinski[t, n]
+    if n eq 0
+        return [t]
+    ab = middle[t.a, t.b]
+    bc = middle[t.b, t.c]
+    ca = middle[t.c, t.a]
+    top = sierpinski[Triangle[t.a, ab, ca], n - 1]
+    left = sierpinski[Triangle[ab, t.b, bc], n - 1]
+    right = sierpinski[Triangle[ca, bc, t.c], n - 1]
+    return concat[[top, left, right]]
+
+fn at[p]
+    x = fmt[p.x, decimals = 2]
+    y = fmt[p.y, decimals = 2]
+    return '`x`,`y`'
+
+--- the triangles as one SVG path on a square of the given side, y downwards
+fn svg[triangles, side]
+    pieces = for t in triangles
+        a = at[t.a]
+        b = at[t.b]
+        c = at[t.c]
+        'M`a`L`b`L`c`Z'
+    path = join[pieces, '']
+    head = '<svg xmlns="http://www.w3.org/2000/svg" width="`side`" height="`side`" viewBox="0 0 `side` `side`">'
+    background = '<rect width="100%" height="100%" fill="white"/>'
+    shape = '<path fill="navy" d="`path`"/>'
+    return '`head`\n`background`\n`shape`\n</svg>\n'
+
+--- the triangle of the given order in characters, a row of cells for each of its
+--- 2^order rows
+fn picture[order]
+    rows = 2 ^ order
+    lines = for r in range[rows]
+        cells = for c in range[r + 1]
+            if bitand[c, r - c] eq 0
+                '▲'
+            else
+                ' '
+        pad = repeat[' ', rows - 1 - r]
+        row = join[cells, ' ']
+        '`pad``row`'
+    return lines
+
+order = 8
+side = 600.0
+margin = 20.0
+width = side - 2.0 * margin
+height = width * sqrt[3.0] / 2.0
+top = (side - height) / 2.0
+whole = Triangle[Point[side / 2.0, top], Point[margin, top + height], Point[side - margin, top + height]]
+triangles = sierpinski[whole, order]
+saved = write['sierpinski_triangle.svg', svg[triangles, side]]
+if not saved.ok
+    halt['sierpinski_triangle.svg could not be written: `saved.reason`']
+log['sierpinski_triangle.svg: the triangle of order `order`, `len[triangles]` filled triangles on `side` x `side` pixels']
+log['']
+log['The triangle of order 5 in characters:']
+for line in picture[5]
+    log[line]
+given = args[]
+if 'keep' not in given
+    removed = rm['sierpinski_triangle.svg']
+    if not removed.ok
+        halt['sierpinski_triangle.svg could not be removed: `removed.reason`']

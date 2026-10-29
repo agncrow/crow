@@ -1,0 +1,85 @@
+--- Rosetta Code: Sphenic numbers
+--- https://rosettacode.org/wiki/Sphenic_numbers
+--- One sieve to a million counts the distinct primes dividing every number, and gives
+--- a number that a prime's square divides the count 4, which no later prime brings back
+--- down: a sphenic number is one whose count is 3, and a triplet three of them in a row.
+--- The stretch is done in full; the 200,000th number's primes come from trial division.
+
+--- counts[n]: how many distinct primes divide n, or 4 and more where a square does
+fn prime_counts[size]
+    counts = for i in range[size]
+        0
+    for p in range[2, size]
+        if counts[p] eq 0
+            m = p
+            while m lt size
+                counts[m] = counts[m] + 1
+                m = m + p
+            square = p * p
+            m = square
+            while m lt size
+                counts[m] = 4
+                m = m + square
+    return counts
+
+fn sphenic_numbers[counts]
+    found = for n in range[len[counts]]
+        if counts[n] eq 3
+            n
+    return found
+
+--- the first number of every run of three sphenic numbers in a row
+fn triplet_firsts[sphenic]
+    firsts = for i in range[len[sphenic] - 2]
+        if sphenic[i + 2] - sphenic[i] eq 2
+            sphenic[i]
+    return firsts
+
+fn prime_factors[n]
+    factors = []
+    p = 2
+    while p * p lte n
+        while n % p eq 0
+            factors = push[factors, p]
+            n = n / p
+        p = p + 1
+    if n gt 1
+        factors = push[factors, n]
+    return factors
+
+fn triplet[first]
+    return '(`first` `first + 1` `first + 2`)'
+
+fn show_rows[cells, per_row, gap]
+    i = 0
+    while i lt len[cells]
+        log[join[slice[cells, i, i + per_row], gap]]
+        i = i + per_row
+
+fn commas[n]
+    return fmt[n, commas = true]
+
+limit = 1000000
+sphenic = sphenic_numbers[prime_counts[limit]]
+firsts = triplet_firsts[sphenic]
+
+log['Sphenic numbers less than 1,000:']
+small = for n in sphenic
+    if n lt 1000
+        fmt[n, width = 5]
+show_rows[small, 15, '']
+
+log['']
+log['Sphenic triplets less than 10,000:']
+early = for first in firsts
+    if first + 2 lt 10000
+        triplet[first]
+show_rows[early, 3, '  ']
+
+log['']
+log['There are `commas[len[sphenic]]` sphenic numbers less than 1,000,000.']
+log['There are `commas[len[firsts]]` sphenic triplets less than 1,000,000.']
+nth = sphenic[199999]
+factors = join[prime_factors[nth], ' x ']
+log['The 200,000th sphenic number is `commas[nth]` = `factors`.']
+log['The 5,000th sphenic triplet is `triplet[firsts[4999]]`.']

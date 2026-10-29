@@ -1,0 +1,18 @@
+--- Rosetta Code: Comma quibbling
+--- https://rosettacode.org/wiki/Comma_quibbling
+--- All the words but the last are joined by ', ', the last follows ' and ', and
+--- the whole is put in braces; no words is just the braces.
+
+fn quibble[words]
+    n = len[words]
+    if n eq 0
+        return '{}'
+    if n eq 1
+        return '{`words[0]`}'
+    leading = join[slice[words, 0, n - 1], ', ']
+    last = words[n - 1]
+    return '{`leading` and `last`}'
+
+for words in [[], ['ABC'], ['ABC', 'DEF'], ['ABC', 'DEF', 'G', 'H']]
+    shown = fmt[str[words], width = 24]
+    log['Input: `shown` -> Output: `quibble[words]`']

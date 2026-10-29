@@ -1,0 +1,90 @@
+--- Rosetta Code: First perfect square in base n with n unique digits
+--- https://rosettacode.org/wiki/First_perfect_square_in_base_n_with_n_unique_digits
+--- A number leaves the same remainder modulo b - 1 as its base-b digit sum, and a
+--- square with each digit once has the digit sum b(b - 1)/2: only roots whose squares
+--- leave that remainder are tried. Where no square can leave it, the square needs
+--- one digit more, repeated so that the sum can, and the search starts at the
+--- smallest such number. Bases 2 to 16 (the task and its optional part), then the
+--- stretch, past 64 bits: 17 to 19. Base 20 would test 11 million squares, too
+--- many for a short run.
+
+use bits
+
+--- the largest r with r * r lte n, by Newton's method on whole numbers
+fn isqrt[n]
+    if n lt 2
+        return n
+    r = n
+    s = (r + n / r) / 2
+    while s lt r
+        r = s
+        s = (r + n / r) / 2
+    return r
+
+--- the smallest r with r * r gte n
+fn ceil_root[n]
+    r = isqrt[n]
+    if r * r lt n
+        return r + 1
+    return r
+
+fn digit_text[n, base]
+    symbols = '0123456789abcdefghijklmnopqrstuvwxyz'
+    out = ''
+    while n gt 0
+        out = '`symbols[n % base]``out`'
+        n = n / base
+    return out
+
+--- whether every digit of the base appears in n
+fn uses_every_digit[n, base]
+    seen = 0
+    while n gt 0
+        seen = bitor[seen, shift[1, n % base]]
+        n = n / base
+    return seen eq shift[1, base] - 1
+
+--- the number with these base-b digits, most significant first
+fn from_digits[digits, base]
+    n = 0
+    for d in digits
+        n = n * base + d
+    return n
+
+--- whether some square leaves the remainder r modulo m
+fn square_remainder[r, m]
+    hits = for x in range[m]
+        if (x * x) % m eq r
+            x
+    return len[hits] gt 0
+
+--- the root of the first square holding every base-b digit
+fn first_root[base]
+    m = base - 1
+    need = (base * (base - 1) / 2) % m
+    r = ceil_root[from_digits[concat[[1, 0], range[2, base]], base]]
+    --- squares of base digits: each digit once, so the remainder is need
+    if square_remainder[need, m]
+        limit = base ^ base
+        while r * r lt limit
+            if (r * r) % m eq need and uses_every_digit[r * r, base]
+                return r
+            r = r + 1
+    --- one digit more: the smallest digit d repeated that a square's remainder allows
+    d = 0
+    while not square_remainder[(need + d) % m, m]
+        d = d + 1
+    rest = for x in range[base]
+        if x ne 1
+            x
+    start = from_digits[concat[[1], sort[push[rest, d]]], base]
+    r = max[r, ceil_root[start]]
+    while not uses_every_digit[r * r, base]
+        r = r + 1
+    return r
+
+log['Base         Root  Square']
+for base in range[2, 20]
+    root = first_root[base]
+    shown = fmt[digit_text[root, base], width = 12, align = 'right']
+    log['`fmt[base, width = 4]`  `shown`  `digit_text[root * root, base]`']

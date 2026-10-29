@@ -1,0 +1,44 @@
+--- Rosetta Code: Stair-climbing puzzle
+--- https://rosettacode.org/wiki/Stair-climbing_puzzle
+--- step is the task's API: it takes nothing, a seeded draw decides whether the attempt
+--- climbs or falls, the attempt is told as its side effect, and the answer is whether
+--- it climbed. step_up is the task's recursion, with no variable and no number: after
+--- a fall, climb twice; step_up_loop is its loop form, climbing once after each fall
+--- until a step holds. (A program keeps no state between calls but what it holds, so
+--- the robot's height is not kept: each attempt says what it did.)
+--- How deep the recursion goes: each call is made by a fall in the call below it, so
+--- a climb is never deeper than one call more than its falls, and the loop form is
+--- exactly one call deeper than the robot is below where the climb began. A fair robot
+--- would end every climb but could fall any distance on the way (the attempts a climb
+--- takes have no finite mean), so this one climbs two times in three: it ever falls k
+--- steps below its start with chance at most (1/2)^k, and the depth stays a few calls,
+--- far inside Crow's limit of 10,000 nested calls. The seed makes every run the same.
+
+use math
+
+fn step[]
+    if rand[3] gt 0
+        log['    step: climbed']
+        return true
+    log['    step: fell']
+    return false
+
+fn step_up[]
+    if not step[]
+        step_up[]
+        step_up[]
+
+fn step_up_loop[]
+    while not step[]
+        step_up_loop[]
+
+seed[7]
+log['step_up, the recursive form (after a fall, climb twice):']
+for n in range[1, 6]
+    log['  climb `n`:']
+    step_up[]
+log['']
+log['step_up, the loop form (climb once after each fall, until a step holds):']
+for n in range[1, 6]
+    log['  climb `n`:']
+    step_up_loop[]

@@ -1,0 +1,91 @@
+--- Rosetta Code: Punched cards
+--- https://rosettacode.org/wiki/Punched_cards
+--- Each character's holes in the Hollerith card code for ASCII (the ACM's proposed
+--- standard the task links, ANSI X3.26): rows 12, 11 and 0 are the zones, 0 to 9 the
+--- digits. A card of 80 columns is printed with its text along the top, then a line per
+--- row, top to bottom: ▓ is a hole, and an unpunched place shows the row's digit (the
+--- zone rows are blank), as the ALGOL 68 entry draws it. The test is the card of Crow's
+--- hello-world program, and a card of every character the code punches.
+
+use bits
+
+--- the punches of the characters that are not letters or digits
+fn special[]
+    return map[
+        '&' = [12], '-' = [11], '{' = [12, 0], '|' = [12, 11], '}' = [11, 0],
+        '/' = [0, 1], '~' = [11, 0, 1],
+        '\`' = [8, 1], ':' = [8, 2], '#' = [8, 3], '@' = [8, 4], '\'' = [8, 5], '=' = [8, 6], '"' = [8, 7],
+        '[' = [12, 8, 2], '.' = [12, 8, 3], '<' = [12, 8, 4], '(' = [12, 8, 5], '+' = [12, 8, 6], '!' = [12, 8, 7],
+        ']' = [11, 8, 2], '$' = [11, 8, 3], '*' = [11, 8, 4], ')' = [11, 8, 5], ';' = [11, 8, 6], '^' = [11, 8, 7],
+        '\\' = [0, 8, 2], ',' = [0, 8, 3], '%' = [0, 8, 4], '_' = [0, 8, 5], '>' = [0, 8, 6], '?' = [0, 8, 7]
+    ]
+
+--- whether character c is one of first to last
+fn within[c, first, last]
+    return code[c] gte code[first] and code[c] lte code[last]
+
+--- the rows punched for character c: a digit is its own row, a letter a zone (or two,
+--- for a small letter) and a digit, counted from A, J and S (which starts at 2)
+fn holes[c, specials]
+    k = code[c]
+    if c eq ' '
+        return []
+    if within[c, '0', '9']
+        return [k - code['0']]
+    if within[c, 'A', 'I']
+        return [12, k - code['A'] + 1]
+    if within[c, 'J', 'R']
+        return [11, k - code['J'] + 1]
+    if within[c, 'S', 'Z']
+        return [0, k - code['S'] + 2]
+    if within[c, 'a', 'i']
+        return [12, 0, k - code['a'] + 1]
+    if within[c, 'j', 'r']
+        return [12, 11, k - code['j'] + 1]
+    if within[c, 's', 'z']
+        return [11, 0, k - code['s'] + 2]
+    if c in specials
+        return specials[c]
+    return error['no card code for `c`', 'card']
+
+--- what a row shows where it is not punched
+fn unpunched[row]
+    if row gt 9
+        return ' '
+    return str[row]
+
+--- the lines of a card punched with the first 80 characters of text
+fn card[text, specials]
+    chars = split[text, '']
+    columns = for i in range[80]
+        if i lt len[chars]
+            holes[chars[i], specials]
+        else
+            []
+    dashes = repeat['-', 82]
+    shown = fmt[slice[text, 0, 80], width = 80]
+    lines = ['/`dashes`+', '| `shown` |']
+    for row in [12, 11, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        places = for punches in columns
+            if row in punches
+                '▓'
+            else
+                unpunched[row]
+        line = join[places, '']
+        lines = push[lines, '| `line` |']
+    blank = repeat[' ', 80]
+    lines = push[lines, '| `blank` |']
+    lines = push[lines, '+`dashes`+']
+    return lines
+
+specials = special[]
+hello = 'log[\'Hello, World!\']'
+log['The hello-world program in Crow, on one card:']
+for line in card[hello, specials]
+    log[line]
+log['']
+log['Every character the code punches, on two cards:']
+every = ['&-0123456789ABCDEFGHIJKLMNOPQR/STUVWXYZ:#@\'="[.<(+|]$*);^\\,%_>?', 'abcdefghijklmnopqrstuvwxyz \`{}~!']
+for text in every
+    for line in card[text, specials]
+        log[line]

@@ -1,0 +1,21 @@
+The tree of the Wikipedia example: (7, 2) [(5, 4) [(2, 3) (4, 7)] (9, 6) [(8, 1) -]]
+Wikipedia example data:
+  point searched for: (9, 2)
+  nearest neighbour:  (8, 1)
+  distance:           1.4142135623730951
+  nodes visited:      3 of 6
+  trying every point finds the same: true
+
+1000 random points in the unit cube:
+  point searched for: (0.401562, 0.225307, 0.690734)
+  nearest neighbour:  (0.382594, 0.243678, 0.674004)
+  distance:           0.03125965924616505
+  nodes visited:      16 of 1000
+  trying every point finds the same: true
+
+100,000 random points in the unit cube:
+  point searched for: (0.505460, 0.561205, 0.660118)
+  nearest neighbour:  (0.508028, 0.554645, 0.662264)
+  distance:           0.007364112469479411
+  nodes visited:      40 of 100000
+  trying every point finds the same: true

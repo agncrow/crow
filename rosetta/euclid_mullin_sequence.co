@@ -1,0 +1,87 @@
+--- Rosetta Code: Euclid-Mullin sequence
+--- https://rosettacode.org/wiki/Euclid-Mullin_sequence
+--- Each term is the least prime factor of one plus the product of the terms
+--- before it. That number is taken apart completely, small primes by trial
+--- division and the rest by Pollard's rho, with a part judged prime by the
+--- Miller-Rabin test, and the least of its prime factors is the next term.
+--- The first 16 terms. The stretch's next 11 begin with a 14-digit factor of
+--- a 51-digit number, minutes of work even for GMP: they are left out.
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+fn pow_mod[base, e, m]
+    result = 1
+    base = base % m
+    while e gt 0
+        if e % 2 eq 1
+            result = result * base % m
+        base = base * base % m
+        e = e / 2
+    return result
+
+--- Miller-Rabin with the first twelve primes as witnesses: certain below
+--- 3.3 * 10^24, and with no number known to fool it above
+fn is_prime[n]
+    if n lt 2
+        return false
+    witnesses = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]
+    for i in range[len[witnesses]]
+        if n % witnesses[i] eq 0
+            return n eq witnesses[i]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    for i in range[len[witnesses]]
+        x = pow_mod[witnesses[i], d, n]
+        if x ne 1 and x ne n - 1
+            squarings = 1
+            while squarings lt s and x ne n - 1
+                x = x * x % n
+                squarings = squarings + 1
+            if x ne n - 1
+                return false
+    return true
+
+--- a factor of the composite n other than 1 and n, by Pollard's rho
+--- (Floyd's cycle finding), trying x^2 + c for c = 1, 2, … until one splits n
+fn rho[n]
+    c = 0
+    d = n
+    while d eq n
+        c = c + 1
+        x = 2
+        y = 2
+        d = 1
+        while d eq 1
+            x = (x * x + c) % n
+            y = (y * y + c) % n
+            y = (y * y + c) % n
+            d = gcd[abs[x - y], n]
+    return d
+
+--- the least prime factor of n, for n above 1
+fn least_factor[n]
+    d = 2
+    while d lt 1000
+        if n % d eq 0
+            return d
+        d = d + 1
+    if is_prime[n]
+        return n
+    part = rho[n]
+    return min[least_factor[part], least_factor[n / part]]
+
+product = 1
+terms = []
+while len[terms] lt 16
+    t = least_factor[product + 1]
+    terms = push[terms, t]
+    product = product * t
+log['The first 16 terms of the Euclid-Mullin sequence:']
+for t in terms
+    log[t]

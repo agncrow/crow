@@ -1,0 +1,57 @@
+--- Rosetta Code: Monads/Writer monad
+--- https://rosettacode.org/wiki/Monads/Writer_monad
+--- A Writer is a record of a value and the lines of log that made it; bind runs a
+--- function on the value and appends its lines to the ones before. Crow has no
+--- closures, so lift cannot answer a new function: it takes the plain function,
+--- the note and the value together (the closure's captures as arguments), and each
+--- Writer version is a named function calling it. The pipe reads as >>=:
+--- `w then bind[f]` is bind[w, f].
+
+struct Writer [value, lines]
+
+--- unit (return): a value with nothing logged
+fn unit[v]
+    return Writer[v, []]
+
+--- a value with one line of log saying what it is
+fn noted[v, note]
+    return Writer[v, ['`note`: `v`']]
+
+--- bind (>>=): f on the value, its lines after the ones before
+fn bind[w, f]
+    next = f[w.value]
+    return Writer[next.value, concat[w.lines, next.lines]]
+
+--- the three simple functions
+fn root[x]
+    return sqrt[x]
+
+fn add_one[x]
+    return x + 1.0
+
+fn half[x]
+    return x / 2.0
+
+--- a plain function's Writer version, applied to x
+fn lift[f, note, x]
+    return noted[f[x], note]
+
+fn root_w[x]
+    return lift[root, 'square root', x]
+
+fn add_one_w[x]
+    return lift[add_one, 'add one', x]
+
+fn half_w[x]
+    return lift[half, 'half', x]
+
+fn shown[w]
+    return join[w.lines, '\n']
+
+phi = noted[5, 'initial value'] then bind[root_w] then bind[add_one_w] then bind[half_w]
+log['The golden ratio is `phi.value`, derived as follows:']
+log[shown[phi]]
+log['']
+log['unit and bind, starting from unit[5] with nothing logged:']
+plain = unit[5] then bind[root_w] then bind[add_one_w] then bind[half_w]
+log[shown[plain]]

@@ -1,0 +1,45 @@
+--- Rosetta Code: Mian-Chowla sequence
+--- https://rosettacode.org/wiki/Mian-Chowla_sequence
+--- Every sum of two terms (a term with itself too) is marked in a list of
+--- truths; a candidate is the next term when none of its sums with the terms so
+--- far, nor twice itself, is marked yet. Its sums are then marked.
+
+--- whether c added to every term, and to itself, makes only sums not seen yet
+fn admits[terms, seen, c]
+    if seen[2 * c]
+        return false
+    i = 0
+    while i lt len[terms]
+        if seen[terms[i] + c]
+            return false
+        i = i + 1
+    return true
+
+fn mian_chowla[count]
+    terms = [1]
+    seen = [false, false, true]
+    candidate = 1
+    while len[terms] lt count
+        candidate = candidate + 1
+        while len[seen] lte 2 * candidate
+            seen = push[seen, false]
+        if admits[terms, seen, candidate]
+            for t in terms
+                seen[t + candidate] = true
+            seen[2 * candidate] = true
+            terms = push[terms, candidate]
+    return terms
+
+fn shown[xs]
+    words = for x in xs
+        str[x]
+    join[words, ' ']
+
+terms = mian_chowla[100]
+first = shown[slice[terms, 0, 30]]
+last_ten = shown[slice[terms, 90, 100]]
+log['The first 30 terms of the Mian-Chowla sequence:']
+log[first]
+log['']
+log['Terms 91 to 100:']
+log[last_ten]

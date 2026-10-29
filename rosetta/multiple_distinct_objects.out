@@ -1,0 +1,7 @@
+n = 5, read at run time
+n distinct objects:               counter 0=0, counter 1=0, counter 2=0, counter 3=0, counter 4=0
+counters[0] eq counters[1]:       false
+after counters[2].count = 10:     counter 0=0, counter 1=0, counter 2=10, counter 3=0, counter 4=0
+n copies of one object:           counter 0=0, counter 0=0, counter 0=0, counter 0=0, counter 0=0
+copies[0] eq copies[1]:           true
+after copies[2].count = 7:        counter 0=0, counter 0=0, counter 0=7, counter 0=0, counter 0=0

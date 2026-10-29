@@ -1,0 +1,215 @@
+--- Rosetta Code: I'm a software engineer, get me out of here
+--- https://rosettacode.org/wiki/I'm_a_software_engineer,_get_me_out_of_here
+--- The map's cells (a digit each; a space is outside the country) are numbered
+--- row by row. A cell of n > 0 leads to the cells n steps away in each of the
+--- eight directions, a day's travel; a cell of 0 is safety, where the party
+--- stops. Dijkstra's algorithm from HQ gives the days to every cell, and the
+--- routes to the nearest safety; Floyd's algorithm gives the shortest route
+--- between every two cells, kept in flat lists (entry i * count + j) of days
+--- and of the next cell on the way. Places are written (row, column) from 0.
+
+use bits
+
+struct Country [columns, place, cells, moves]
+struct Reach [days, before]
+struct Routes [count, days, next]
+
+fn the_map[]
+    return [
+        '         00000         ',
+        '      00003130000      ',
+        '    000321322221000    ',
+        '   00231222432132200   ',
+        '  0041433223233211100  ',
+        '  0232231612142618530  ',
+        ' 003152122326114121200 ',
+        ' 031252235216111132210 ',
+        ' 022211246332311115210 ',
+        '00113232262121317213200',
+        '03152118212313211411110',
+        '03231234121132221411410',
+        '03513213411311414112320',
+        '00427534125412213211400',
+        ' 013322444412122123210 ',
+        ' 015132331312411123120 ',
+        ' 003333612214233913300 ',
+        '  0219126511415312570  ',
+        '  0021321524341325100  ',
+        '   00211415413523200   ',
+        '    000122111322000    ',
+        '      00001120000      ',
+        '         00000         '
+    ]
+
+fn step_at[map_rows, cell]
+    --- the digit of a cell: how far its moves go
+    return code[map_rows[cell[0]][cell[1]]] - code['0']
+
+fn country[map_rows]
+    rows = len[map_rows]
+    columns = len[map_rows[0]]
+    --- place[r * columns + c] is the number of the cell at (r, c), or -1
+    place = []
+    cells = []
+    for r in range[rows]
+        for c in range[columns]
+            if map_rows[r][c] eq ' '
+                place = push[place, -1]
+            else
+                place = push[place, len[cells]]
+                cells = push[cells, [r, c]]
+    directions = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]
+    moves = for cell in cells
+        step = step_at[map_rows, cell]
+        targets = for d in directions
+            r = cell[0] + step * d[0]
+            c = cell[1] + step * d[1]
+            if step gt 0 and r gte 0 and r lt rows and c gte 0 and c lt columns
+                if place[r * columns + c] gte 0
+                    place[r * columns + c]
+        targets
+    return Country[columns, place, cells, moves]
+
+fn cell_at[land, r, c]
+    return land.place[r * land.columns + c]
+
+fn dijkstra[moves, source]
+    --- the days from source to every cell (-1 where no route goes), and the
+    --- cell before each on its route
+    count = len[moves]
+    days = for i in range[count]
+        -1
+    before = for i in range[count]
+        -1
+    done = for i in range[count]
+        false
+    days[source] = 0
+    while true
+        --- the nearest cell not settled yet
+        u = -1
+        i = 0
+        while i lt count
+            if not done[i] and days[i] gte 0 and (u lt 0 or days[i] lt days[u])
+                u = i
+            i = i + 1
+        if u lt 0
+            break
+        done[u] = true
+        for v in moves[u]
+            if days[v] lt 0 or days[u] + 1 lt days[v]
+                days[v] = days[u] + 1
+                before[v] = u
+    return Reach[days, before]
+
+fn route_to[reach, target]
+    --- the cells from the source to target, following the cells before
+    route = [target]
+    u = target
+    while reach.before[u] gte 0
+        u = reach.before[u]
+        route = push[route, u]
+    return reverse[route]
+
+fn floyd[moves]
+    count = len[moves]
+    never = count + 1
+    days = for i in range[count * count]
+        never
+    next = for i in range[count * count]
+        -1
+    for u in range[count]
+        days[u * count + u] = 0
+        next[u * count + u] = u
+        for v in moves[u]
+            days[u * count + v] = 1
+            next[u * count + v] = v
+    k = 0
+    while k lt count
+        i = 0
+        while i lt count
+            ik = days[i * count + k]
+            if ik lt never and i ne k
+                row = i * count
+                via = k * count
+                j = 0
+                while j lt count
+                    kj = days[via + j]
+                    if kj lt never and ik + kj lt days[row + j]
+                        days[row + j] = ik + kj
+                        next[row + j] = next[row + k]
+                    j = j + 1
+            i = i + 1
+        k = k + 1
+    return Routes[count, days, next]
+
+fn floyd_route[routes, from, to]
+    route = [from]
+    u = from
+    while u ne to
+        u = routes.next[u * routes.count + to]
+        route = push[route, u]
+    return route
+
+fn shown[land, route]
+    places = for u in route
+        cell = land.cells[u]
+        '(`cell[0]`, `cell[1]`)'
+    return join[places, ' ']
+
+fn days_word[n]
+    if n eq 1
+        return '1 day'
+    return '`n` days'
+
+map_rows = the_map[]
+land = country[map_rows]
+count = len[land.cells]
+hq = cell_at[land, 11, 11]
+from_hq = dijkstra[land.moves, hq]
+
+log['Part 1: Dijkstra\'s algorithm from HQ at (11, 11)']
+nearest = -1
+for u in range[count]
+    d = from_hq.days[u]
+    if step_at[map_rows, land.cells[u]] eq 0 and d gte 0 and (nearest lt 0 or d lt nearest)
+        nearest = d
+safe = for u in range[count]
+    if step_at[map_rows, land.cells[u]] eq 0 and from_hq.days[u] eq nearest
+        u
+log['There are `len[safe]` shortest routes of `days_word[nearest]` to safety:']
+for u in safe
+    log['  `shown[land, route_to[from_hq, u]]`']
+
+log['']
+log['Part 2: Floyd\'s algorithm between every two cells']
+routes = floyd[land.moves]
+south = cell_at[land, 21, 11]
+north = cell_at[land, 1, 11]
+for pair in [[south, north], [north, south]]
+    route = floyd_route[routes, pair[0], pair[1]]
+    log['From `shown[land, [pair[0]]]` to `shown[land, [pair[1]]]`, `days_word[len[route] - 1]`: `shown[land, route]`']
+longest = 0
+for i in range[count * count]
+    d = routes.days[i]
+    if d lt count + 1 and d gt longest
+        longest = d
+log['The longest shortest routes, `days_word[longest]`:']
+for i in range[count * count]
+    if routes.days[i] eq longest
+        log['  `shown[land, floyd_route[routes, i / count, i % count]]`']
+
+log['']
+log['Extra credit']
+unreached = for u in range[count]
+    if from_hq.days[u] lt 0
+        u
+log['Cells HQ cannot reach: `shown[land, unreached]`']
+farthest = 0
+for d in from_hq.days
+    farthest = max[farthest, d]
+slowest = for u in range[count]
+    if from_hq.days[u] eq farthest
+        u
+log['`len[slowest]` cells take `days_word[farthest]` to reinforce from HQ:']
+for u in slowest
+    log['  `shown[land, route_to[from_hq, u]]`']

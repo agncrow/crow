@@ -1,0 +1,26 @@
+--- a tree's links pushed onto a stack of records (`push[stack, t.left]`)
+--- are the records they hold, as a function taking a record gets one:
+--- compiled, the link had been pushed as it was, and the program did not
+--- build (Rosetta Code, Same fringe)
+
+struct Node [value, left, right]
+
+fn leaves[root]
+    out = []
+    stack = [root]
+    while len[stack] gt 0
+        t = stack[-1]
+        stack = pop[stack]
+        if t.left eq 0 and t.right eq 0
+            out = push[out, t.value]
+        if t.right ne 0
+            stack = push[stack, t.right]
+        if t.left ne 0
+            stack = push[stack, t.left]
+    return out
+
+a = Node[1, 0, 0]
+b = Node[2, 0, 0]
+c = Node[3, 0, 0]
+tree = Node[0, Node[9, a, b], c]
+log[leaves[tree]]

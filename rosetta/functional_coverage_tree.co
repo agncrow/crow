@@ -1,0 +1,152 @@
+--- Rosetta Code: Functional coverage tree
+--- https://rosettacode.org/wiki/Functional_coverage_tree
+--- The task's table is read as written: a node's depth is its indent over four, and its
+--- parent the latest node one level up. A missing weight is 1, a missing coverage 0. A
+--- parent's coverage is the weighted mean of its children's, worked from the last line
+--- up; for the extra credit each node's power is its parent's times its share of the
+--- parent's weights, and its delta (1 - coverage) times its power, worked top down.
+
+struct Tree [names, depths, parents, weights, coverage]
+
+fn indent_of[text]
+    n = 0
+    while n lt len[text] and text[n] eq ' '
+        n = n + 1
+    return n
+
+--- a number written in a cell, or the default where the cell is blank
+fn cell_number[cell, default]
+    if trim[cell] eq ''
+        return default
+    return float[trim[cell]]
+
+fn parse[table]
+    names = []
+    depths = []
+    parents = []
+    weights = []
+    coverage = []
+    --- the latest node at each depth so far
+    latest = []
+    lines = split[table, '\n']
+    for line in slice[lines, 1, len[lines]]
+        cells = split[line, '|']
+        name = trim[cells[0]]
+        depth = indent_of[cells[0]] / 4
+        parent = -1
+        if depth gt 0
+            parent = latest[depth - 1]
+        if depth lt len[latest]
+            latest[depth] = len[names]
+        else
+            latest = push[latest, len[names]]
+        weight = cell_number[cells[1], 1.0]
+        covered = cell_number[cells[2], 0.0]
+        if not weight.ok or not covered.ok
+            return error['a cell of `name` is no number', 'parse']
+        names = push[names, name]
+        depths = push[depths, depth]
+        parents = push[parents, parent]
+        weights = push[weights, weight]
+        coverage = push[coverage, covered]
+    return Tree[names, depths, parents, weights, coverage]
+
+--- the sum of each node's children's weights (0 for a leaf)
+fn child_weights[tree]
+    sums = for w in tree.weights
+        0.0
+    for i in range[len[tree.names]]
+        p = tree.parents[i]
+        if p gte 0
+            sums[p] = sums[p] + tree.weights[i]
+    return sums
+
+--- each parent's coverage as the weighted mean of its children's, the deepest first:
+--- a child always comes after its parent, so walking up finishes every child first
+fn rolled_up[tree]
+    sums = child_weights[tree]
+    totals = for w in tree.weights
+        0.0
+    coverage = tree.coverage
+    i = len[tree.names] - 1
+    while i gte 0
+        if sums[i] gt 0.0
+            coverage[i] = totals[i] / sums[i]
+        p = tree.parents[i]
+        if p gte 0
+            totals[p] = totals[p] + tree.weights[i] * coverage[i]
+        i = i - 1
+    return coverage
+
+--- what the top's coverage would gain were each node fully covered
+fn deltas[tree, coverage]
+    sums = child_weights[tree]
+    power = for w in tree.weights
+        1.0
+    for i in range[len[tree.names]]
+        p = tree.parents[i]
+        if p gte 0
+            power[i] = power[p] * tree.weights[i] / sums[p]
+    gains = for i in range[len[tree.names]]
+        (1.0 - coverage[i]) * power[i]
+    return gains
+
+fn show[tree, coverage, gains]
+    log['NAME_HIERARCHY                  |  WEIGHT |  COVERAGE |     DELTA']
+    for i in range[len[tree.names]]
+        indent = repeat[' ', 4 * tree.depths[i]]
+        name = fmt['`indent``tree.names[i]`', width = 32]
+        weight = fmt[tree.weights[i], decimals = 1, width = 8]
+        covered = fmt[coverage[i], decimals = 6, width = 10]
+        gain = fmt[gains[i], decimals = 6, width = 10]
+        log['`name`|`weight` |`covered` |`gain`']
+
+table = 'NAME_HIERARCHY                  |WEIGHT  |COVERAGE  |
+cleaning                        |        |          |
+    house1                      |40      |          |
+        bedrooms                |        |0.25      |
+        bathrooms               |        |          |
+            bathroom1           |        |0.5       |
+            bathroom2           |        |          |
+            outside_lavatory    |        |1         |
+        attic                   |        |0.75      |
+        kitchen                 |        |0.1       |
+        living_rooms            |        |          |
+            lounge              |        |          |
+            dining_room         |        |          |
+            conservatory        |        |          |
+            playroom            |        |1         |
+        basement                |        |          |
+        garage                  |        |          |
+        garden                  |        |0.8       |
+    house2                      |60      |          |
+        upstairs                |        |          |
+            bedrooms            |        |          |
+                suite_1         |        |          |
+                suite_2         |        |          |
+                bedroom_3       |        |          |
+                bedroom_4       |        |          |
+            bathroom            |        |          |
+            toilet              |        |          |
+            attics              |        |0.6       |
+        groundfloor             |        |          |
+            kitchen             |        |          |
+            living_rooms        |        |          |
+                lounge          |        |          |
+                dining_room     |        |          |
+                conservatory    |        |          |
+                playroom        |        |          |
+            wet_room_&_toilet   |        |          |
+            garage              |        |          |
+            garden              |        |0.9       |
+            hot_tub_suite       |        |1         |
+        basement                |        |          |
+            cellars             |        |1         |
+            wine_cellar         |        |1         |
+            cinema              |        |0.75      |'
+
+tree = parse[table]
+coverage = rolled_up[tree]
+show[tree, coverage, deltas[tree, coverage]]
+log['']
+log['The top level coverage is `fmt[coverage[0], decimals = 6]`.']

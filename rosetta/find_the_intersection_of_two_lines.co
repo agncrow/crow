@@ -1,0 +1,63 @@
+--- Rosetta Code: Find the intersection of two lines
+--- https://rosettacode.org/wiki/Find_the_intersection_of_two_lines
+--- Each line is given by two points on it. Where the 2 x 2 determinant of their
+--- directions is not 0 the lines cross once, at the point Cramer's rule gives; the
+--- coordinates are kept as exact fractions. A determinant of 0 means the lines are
+--- parallel: the same line, or apart. Since the lines are given by two points each,
+--- the program also says whether the crossing lies between both pairs of points.
+
+struct Point [x, y]
+
+--- a point of whole coordinates, held as fractions as every point here is
+fn at[x, y]
+    return Point[fraction[x], fraction[y]]
+
+--- the cross product of b - a and c - a: 0 when the three points lie on one line
+fn turn[a, b, c]
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+
+--- where the line through a and b crosses the line through c and d
+fn intersection[a, b, c, d]
+    det = (a.x - b.x) * (c.y - d.y) - (a.y - b.y) * (c.x - d.x)
+    if det eq 0
+        if turn[a, b, c] eq 0
+            return error['they are one line', 'geometry']
+        return error['they are parallel and never meet', 'geometry']
+    first = a.x * b.y - a.y * b.x
+    second = c.x * d.y - c.y * d.x
+    x = (first * (c.x - d.x) - (a.x - b.x) * second) / det
+    y = (first * (c.y - d.y) - (a.y - b.y) * second) / det
+    return Point[x, y]
+
+--- whether p, on the line through a and b, lies between them
+fn between[p, a, b]
+    inside_x = (p.x - a.x) * (p.x - b.x) lte 0
+    inside_y = (p.y - a.y) * (p.y - b.y) lte 0
+    return inside_x and inside_y
+
+fn shown[p]
+    return '(`p.x`, `p.y`)'
+
+fn report[a, b, c, d]
+    log['the line through `shown[a]` and `shown[b]`, and the line through `shown[c]` and `shown[d]`:']
+    p = intersection[a, b, c, d]
+    if not p.ok
+        log['    `p.reason`']
+        return
+    on_first = between[p, a, b]
+    on_second = between[p, c, d]
+    where = 'between neither pair of points'
+    if on_first and on_second
+        where = 'between both pairs of points'
+    else if on_first
+        where = 'between the first pair of points only'
+    else if on_second
+        where = 'between the second pair of points only'
+    log['    meet at `shown[p]`, `where`']
+
+report[at[4, 0], at[6, 10], at[0, 3], at[10, 7]]
+report[at[4, 0], at[6, 4], at[0, 3], at[10, 7]]
+report[at[0, 0], at[1, 1], at[0, 1], at[1, 2]]
+report[at[0, 0], at[1, 1], at[2, 2], at[5, 5]]
+report[at[0, 0], at[1, 2], at[5, 0], at[4, 1]]
+report[at[-3, 1], at[2, 4], at[0, 7], at[7, -2]]

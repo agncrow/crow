@@ -1,0 +1,55 @@
+--- Rosetta Code: Word frequency
+--- https://rosettacode.org/wiki/Word_frequency
+--- A letter is any character Unicode calls a letter, so é and æ are letters and
+--- Misérables is one word; everything else (spaces, digits, punctuation, apostrophes,
+--- hyphens, underscores) parts words, so it's is it and s, and well-dressed is two
+--- words. The text is lowered first, so The and the are one word. The words are
+--- counted in a map, and the counts ordered in a frame, highest first, ties by the
+--- word, so the order is the same every run.
+--- Usage: crow run word_frequency.co [file] [n] — by default Les Misérables, Project
+--- Gutenberg's 135-0.txt, and 10.
+
+use frame
+
+fn words_of[text]
+    spaced = sub[lower[text], '[^\p{L}]+', ' ']
+    return split[trim[spaced], ' ']
+
+fn counted[words]
+    counts = map[]
+    for w in words
+        if w in counts
+            counts[w] = counts[w] + 1
+        else
+            counts[w] = 1
+    return counts
+
+fn path_asked[given]
+    if len[given] lt 1
+        return '135-0.txt'
+    return given[0]
+
+fn count_asked[given]
+    if len[given] lt 2
+        return 10
+    return int[given[1]]
+
+given = args[]
+path = path_asked[given]
+n = count_asked[given]
+if not n.ok or n lt 1
+    halt['the count of words to show is a whole number above 0, as 10']
+text = read[path]
+if not text.ok
+    halt[text.reason]
+words = words_of[text]
+counts = counted[words]
+table = frame.new[word = keys[counts], count = values[counts]]
+ranked = head[sort[table, ['count', 'word'], desc = [true, false]], n]
+log['`path`: `fmt[len[words], commas = true]` words, `fmt[len[counts], commas = true]` of them different']
+log['The `n` most common:']
+widest = 4
+for w in ranked.word
+    widest = max[widest, len[w]]
+for i in range[len[ranked]]
+    log['`fmt[i + 1, width = 4]`  `fmt[ranked.word[i], width = widest]` `fmt[ranked.count[i], width = 6]`']

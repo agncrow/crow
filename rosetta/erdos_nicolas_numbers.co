@@ -1,0 +1,31 @@
+--- Rosetta Code: Erdős-Nicolas numbers
+--- https://rosettacode.org/wiki/Erd%C5%91s-Nicolas_numbers
+--- A divisor sieve: each d from 2 up is added to the running sum of every
+--- multiple of it, so a number's sum grows through its divisors in ascending
+--- order. A number whose sum equals it before its next proper divisor is added
+--- is an Erdős–Nicolas number (a perfect number reaches its own sum only with
+--- its last proper divisor). The search runs to two million, past the eighth;
+--- the ninth, 61,900,800, would need a sieve thirty times as long.
+
+--- each Erdős–Nicolas number up to `limit`, keyed to how many of its first
+--- divisors sum to it
+fn erdos_nicolas[limit]
+    total = for n in range[limit + 1]
+        1
+    count = total
+    found = map[]
+    d = 2
+    while d + d lte limit
+        n = d + d
+        while n lte limit
+            if total[n] eq n
+                found = set[found, n, count[n]]
+            total[n] = total[n] + d
+            count[n] = count[n] + 1
+            n = n + d
+        d = d + 1
+    return found
+
+found = erdos_nicolas[2000000]
+for n in keys[found]
+    log['`fmt[n, width = 9]` equals the sum of its first `found[n]` divisors']

@@ -1,0 +1,12 @@
+--- A variable named like web's form (`bytes`, web not imported) is indexed
+--- as the program's own, and one named like another language's keyword
+--- (`match`) is read and written by position, inside an interpolation too:
+--- both had been refused, the keyword's lesson placed at line 1 of the
+--- file (Rosetta Code, Bitcoin address validation, Blossom algorithm).
+bytes = [1, 2]
+log[bytes[0]]
+
+match = [1, 2]
+match[0] = 5
+log[match]
+log['`match[0]`']

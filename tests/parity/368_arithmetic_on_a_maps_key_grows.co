@@ -1,0 +1,7 @@
+--- an item of a list of an int-keyed map's keys is any 64-bit int, and
+--- arithmetic on it grows past them: unranged, the key had read as fitting
+--- anywhere, and `p ^ 70` overflowed compiled
+m = map[2 = 'x']
+p = keys[m][0]
+log[p ^ 70]
+log[p + 9223372036854775807]

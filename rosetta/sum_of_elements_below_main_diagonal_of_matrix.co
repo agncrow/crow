@@ -1,0 +1,29 @@
+--- Rosetta Code: Sum of elements below main diagonal of matrix
+--- https://rosettacode.org/wiki/Sum_of_elements_below_main_diagonal_of_matrix
+--- An element lies below the main diagonal where its column is less than its row,
+--- so row i gives its first i items; a matrix that is not square is refused.
+
+fn below_diagonal[m]
+    total = 0
+    for i in range[len[m]]
+        row = m[i]
+        if len[row] ne len[m]
+            return error['the matrix is not square', 'shape']
+        for j in range[i]
+            total = total + row[j]
+    return total
+
+fn show[row]
+    cells = for x in row
+        fmt[x, width = 3]
+    return join[cells, '']
+
+matrix = [[1, 3, 7, 8, 10], [2, 4, 16, 14, 4], [3, 1, 9, 18, 11], [12, 14, 17, 18, 20], [7, 1, 3, 9, 5]]
+for row in matrix
+    log[show[row]]
+log['Sum of the elements below the main diagonal: `below_diagonal[matrix]`']
+
+wide = [[1, 2, 3], [4, 5, 6]]
+answer = below_diagonal[wide]
+if not answer.ok
+    log['A matrix of 2 rows and 3 columns: `answer.reason`']

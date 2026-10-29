@@ -1,0 +1,157 @@
+--- Rosetta Code: Paraffins
+--- https://rosettacode.org/wiki/Paraffins
+--- Counting by Polya's theorem: the radicals (alkyl groups, with a lone H as the
+--- empty one) have the series a(x) = 1 + x Z(S3; a), a carbon holding three of
+--- them; a paraffin rooted at a carbon is x Z(S4; a), at a bond Z(S2; a - 1), and by
+--- Otter's theorem the paraffins are x Z(S4; a) - ((a - 1)^2 - (a(x^2) - 1)) / 2.
+--- Each coefficient is a sum over the earlier ones, so every count is exact.
+--- Listing (the extra credit): a paraffin is centred on one carbon, holding four
+--- radicals of fewer than n/2 carbons, or on one bond between two radicals of n/2;
+--- radicals are made size by size, each from three smaller ones taken in the order
+--- of the list, so none is made twice, and the paraffins the same way.
+
+struct Radicals [sizes, texts]
+
+fn stretched[a, m, k]
+    --- coefficient k of a(x^m)
+    if k % m eq 0
+        return a[k / m]
+    return 0
+
+fn alkane_counts[limit]
+    --- the number of paraffins with 0 to limit carbons
+    a = [1]
+    sq = []
+    n = 1
+    while n lte limit + 1
+        k = n - 1
+        square = 0
+        cube = 0
+        mixed = 0
+        i = 0
+        while i lte k
+            square = square + a[i] * a[k - i]
+            i = i + 1
+        sq = push[sq, square]
+        i = 0
+        while i lte k
+            cube = cube + a[i] * sq[k - i]
+            mixed = mixed + a[i] * stretched[a, 2, k - i]
+            i = i + 1
+        a = push[a, (cube + 3 * mixed + 2 * stretched[a, 3, k]) / 6]
+        n = n + 1
+    counts = [1]
+    n = 1
+    while n lte limit
+        k = n - 1
+        fourth = 0
+        two_two = 0
+        one_three = 0
+        i = 0
+        while i lte k
+            fourth = fourth + sq[i] * sq[k - i]
+            two_two = two_two + sq[i] * stretched[a, 2, k - i]
+            one_three = one_three + a[i] * stretched[a, 3, k - i]
+            i = i + 1
+        halves = stretched[sq, 2, k]
+        at_carbon = (fourth + 6 * two_two + 3 * halves + 8 * one_three + 6 * stretched[a, 4, k]) / 24
+        at_bond = (sq[n] - 2 * a[n] - stretched[a, 2, n]) / 2
+        counts = push[counts, at_carbon - at_bond]
+        n = n + 1
+    return counts
+
+fn radicals_upto[limit]
+    --- every radical of up to limit carbons as text, in order of size
+    sizes = [0]
+    texts = ['H']
+    k = 1
+    while k lte limit
+        known = len[sizes]
+        a = 0
+        while a lt known
+            b = a
+            while b lt known
+                c = b
+                while c lt known
+                    if sizes[a] + sizes[b] + sizes[c] eq k - 1
+                        sizes = push[sizes, k]
+                        texts = push[texts, '(C `texts[a]` `texts[b]` `texts[c]`)']
+                    c = c + 1
+                b = b + 1
+            a = a + 1
+        k = k + 1
+    return Radicals[sizes, texts]
+
+fn paraffins_of[n, radicals]
+    --- every paraffin of n carbons once, as text: the bond-centred ones (BCP),
+    --- then the carbon-centred ones (CCP)
+    sizes = radicals.sizes
+    texts = radicals.texts
+    found = []
+    small = 0
+    while small lt len[sizes] and sizes[small] * 2 lt n
+        small = small + 1
+    halves = small
+    while halves lt len[sizes] and sizes[halves] * 2 eq n
+        halves = halves + 1
+    a = small
+    while a lt halves
+        b = a
+        while b lt halves
+            found = push[found, 'BCP `texts[a]` `texts[b]`']
+            b = b + 1
+        a = a + 1
+    --- sizes only grow along the list, so each loop stops at the first radical that
+    --- makes the four too large together
+    a = 0
+    while a lt small and 4 * sizes[a] lte n - 1
+        b = a
+        while b lt small and sizes[a] + 3 * sizes[b] lte n - 1
+            c = b
+            while c lt small and sizes[a] + sizes[b] + 2 * sizes[c] lte n - 1
+                d = c
+                while d lt small and sizes[a] + sizes[b] + sizes[c] + sizes[d] lte n - 1
+                    if sizes[a] + sizes[b] + sizes[c] + sizes[d] eq n - 1
+                        found = push[found, 'CCP `texts[a]` `texts[b]` `texts[c]` `texts[d]`']
+                    d = d + 1
+                c = c + 1
+            b = b + 1
+        a = a + 1
+    return found
+
+fn carbons_given[]
+    --- the number of carbons asked for on the command line: 17, the task's example,
+    --- when none is given or it is no whole number of at least 1
+    given = args[]
+    if len[given] gt 0
+        n = int[given[0]]
+        if n.ok
+            if n gte 1
+                return n
+    return 17
+
+carbons = carbons_given[]
+counts = alkane_counts[max[500, carbons]]
+log['With `carbons` carbon atoms there are `fmt[counts[carbons], commas = true]` paraffins.']
+log['']
+log['The number of paraffins with n carbon atoms:']
+for row in range[0, 40, 4]
+    cells = for n in range[row + 1, row + 5]
+        '`fmt[n, width = 3]`: `fmt[counts[n], commas = true, width = 18]`'
+    log[join[cells, '  ']]
+log['']
+for n in [100, 500]
+    log['n = `n`: `counts[n]`']
+log['']
+
+radicals = radicals_upto[7]
+log['The paraffins of up to 7 carbons:']
+for n in range[1, 8]
+    log['n = `n`:']
+    for paraffin in paraffins_of[n, radicals]
+        log['    `paraffin`']
+listed = for n in range[1, 15]
+    len[paraffins_of[n, radicals]]
+log['']
+log['Listed for 1 to 14 carbons: `str[listed]`']
+log['Counted:                    `str[slice[counts, 1, 15]]`']

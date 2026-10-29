@@ -1,0 +1,170 @@
+--- Rosetta Code: Superpermutation minimisation
+--- https://rosettacode.org/wiki/Superpermutation_minimisation
+--- Four ways to write a superpermutation of the letters A, B, C, ... for N = 1 to 7,
+--- each result checked to hold every one of the N! permutations, then compared by
+--- length; the best is the one whose strings are shortest against the yardstick
+--- N! * N, by the geometric mean of the ratio over every N.
+
+--- the orders of the items, in the order Python's itertools gives them
+fn orders[items]
+    if len[items] lte 1
+        return [items]
+    found = []
+    for i in range[len[items]]
+        rest = concat[slice[items, 0, i], slice[items, i + 1, len[items]]]
+        for p in orders[rest]
+            found = push[found, concat[[items[i]], p]]
+    return found
+
+fn factorial[n]
+    product = 1
+    for k in range[2, n + 1]
+        product = product * k
+    return product
+
+--- the permutations of the first n letters, in alphabetical order
+fn permutations[letters, n]
+    found = for p in orders[slice[letters, 0, n]]
+        join[p, '']
+    return found
+
+fn is_permutation[w, base]
+    return join[sort[split[w, '']], ''] eq base
+
+--- the permutations of the letters of base that s holds, in the order it first holds them
+fn held_in_order[s, base]
+    m = len[base]
+    seen = map[]
+    found = []
+    i = 0
+    while i + m lte len[s]
+        w = slice[s, i, i + m]
+        if w not in seen and is_permutation[w, base]
+            seen[w] = true
+            found = push[found, w]
+        i = i + 1
+    return found
+
+--- a followed by b, less the longest end of a that b begins with
+fn overlapped[a, b]
+    k = min[len[a], len[b] - 1]
+    while k gt 0 and not ends[a, slice[b, 0, k]]
+        k = k - 1
+    return '`a``slice[b, k, len[b]]`'
+
+--- 1: every permutation written out, one after another
+fn every_permutation[letters, n]
+    return join[permutations[letters, n], '']
+
+--- 2: the permutations from the last, each written only where the string lacks it
+fn unseen_only[letters, n]
+    s = ''
+    for p in reverse[permutations[letters, n]]
+        if p not in s
+            s = '`s``p`'
+    return s
+
+fn rearranged[window, order]
+    text = ''
+    for j in order
+        text = '`text``window[j]`'
+    return text
+
+--- 3: from the first permutation, add the fewest letters that make the last n a
+--- permutation not yet seen: a rearrangement of the oldest k of the last n, the
+--- smallest k first, the rearrangements in itertools order
+fn greedy[letters, n]
+    first = join[slice[letters, 0, n], '']
+    seen = map[]
+    seen[first] = true
+    pieces = [first]
+    window = first
+    shapes = for k in range[n]
+        orders[range[k]]
+    total = factorial[n]
+    while len[seen] lt total
+        add = ''
+        used = 0
+        skip = 1
+        while add eq '' and skip lt n
+            arrangements = shapes[skip]
+            i = 0
+            while add eq '' and i lt len[arrangements]
+                trial = rearranged[window, arrangements[i]]
+                if '`slice[window, skip, n]``trial`' not in seen
+                    add = trial
+                    used = skip
+                i = i + 1
+            skip = skip + 1
+        if add eq ''
+            return error['the greedy method found no next permutation', 'stuck']
+        window = '`slice[window, used, n]``add`'
+        seen[window] = true
+        pieces = push[pieces, add]
+    return join[pieces, '']
+
+--- 4: each permutation P of the first n - 1 letters, in the order the string for
+--- n - 1 holds them, becomes P, the nth letter, P again, and these are joined with
+--- their overlaps: 1! + 2! + ... + n! letters
+fn recursive[letters, n]
+    s = letters[0]
+    k = 2
+    while k lte n
+        base = join[slice[letters, 0, k - 1], '']
+        grown = ''
+        for p in held_in_order[s, base]
+            grown = overlapped[grown, '`p``letters[k - 1]``p`']
+        s = grown
+        k = k + 1
+    return s
+
+fn made_by[method, letters, n]
+    if method eq 0
+        return every_permutation[letters, n]
+    else if method eq 1
+        return unseen_only[letters, n]
+    else if method eq 2
+        return greedy[letters, n]
+    return recursive[letters, n]
+
+letters = split['ABCDEFG', '']
+top = 7
+names = ['every permutation', 'unseen only', 'greedy', 'recursive']
+log['Superpermutations of the first N letters, for N = 1 to `top`, by four methods:']
+log['  every permutation: each permutation written out in turn (the yardstick, N! * N letters)']
+log['  unseen only: the permutations from the last, each added where the string lacks it']
+log['  greedy: add the fewest letters, a rearrangement of the oldest of the last N, that']
+log['          end in a permutation not seen yet']
+log['  recursive: each permutation P of N - 1 letters, in the order the string for N - 1']
+log['             holds them, made P N P, joined at their overlaps (1! + 2! + ... + N!)']
+log['']
+heads = for n in range[1, top + 1]
+    fmt['N=`n`', width = 7, align = 'right']
+header = join[heads, '']
+title = fmt['method', width = 18]
+log['`title``header`  mean ratio']
+best = 0
+best_mean = 2.0
+for method in range[4]
+    cells = []
+    product = 1.0
+    for n in range[1, top + 1]
+        s = made_by[method, letters, n]
+        base = join[slice[letters, 0, n], '']
+        if len[held_in_order[s, base]] ne factorial[n]
+            halt['`names[method]` missed a permutation of `n` letters']
+        cells = push[cells, fmt[len[s], width = 7]]
+        product = product * len[s] / (factorial[n] * n)
+    mean = product ^ (1.0 / top)
+    if mean lt best_mean
+        best = method
+        best_mean = mean
+    shown = join[cells, '']
+    log['`fmt[names[method], width = 18]``shown`  `fmt[mean, decimals = 3, width = 10]`']
+log['']
+log['Each string holds all N! permutations. Best: `names[best]`.']
+log['The shortest possible lengths are known up to N = 5: 1, 3, 9, 33, 153 (OEIS A180632).']
+log['']
+log['The strings for N = 3:']
+for method in range[4]
+    log['`fmt[names[method], width = 18]``made_by[method, letters, 3]`']

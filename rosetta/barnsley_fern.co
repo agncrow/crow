@@ -1,0 +1,66 @@
+--- Rosetta Code: Barnsley fern
+--- https://rosettacode.org/wiki/Barnsley_fern
+--- The iterated function system run from (0, 0), each step one of the four maps
+--- chosen with its odds (the draws seeded, so every run grows the same fern). The fern
+--- is written as a PPM image, barnsley_fern.ppm (green on white, 300 by 600), in the
+--- current directory, and drawn small in characters on the console.
+use math
+
+struct Fern [width, height, pixels, cols, rows, counts]
+
+--- Where a point lands on a grid of w by h: the fern spans x from -2.182 to 2.6558
+--- and y from 0 to 9.9983.
+fn cell[x, y, w, h]
+    col = int[(x + 2.182) * (w - 1) / 4.8378]
+    row = int[(9.9983 - y) * (h - 1) / 9.9983]
+    return row * w + col
+
+fn grow[n, width, height, cols, rows]
+    pixels = for i in range[width * height]
+        false
+    counts = for i in range[cols * rows]
+        0
+    x = 0.0
+    y = 0.0
+    for i in range[n]
+        r = rand[]
+        if r lt 0.01
+            x, y = 0.0, 0.16 * y
+        else if r lt 0.86
+            x, y = 0.85 * x + 0.04 * y, -0.04 * x + 0.85 * y + 1.6
+        else if r lt 0.93
+            x, y = 0.2 * x - 0.26 * y, 0.23 * x + 0.22 * y + 1.6
+        else
+            x, y = -0.15 * x + 0.28 * y, 0.26 * x + 0.24 * y + 0.44
+        pixels[cell[x, y, width, height]] = true
+        at = cell[x, y, cols, rows]
+        counts[at] = counts[at] + 1
+    return Fern[width, height, pixels, cols, rows, counts]
+
+fn ppm[fern]
+    lines = for row in range[fern.height]
+        cells = for col in range[fern.width]
+            colour = '255 255 255'
+            if fern.pixels[row * fern.width + col]
+                colour = '0 150 0'
+            colour
+        join[cells, ' ']
+    body = join[lines, '\n']
+    return 'P3\n`fern.width` `fern.height`\n255\n`body`\n'
+
+--- On the console, a character marks a cell that more than 12 points fell in.
+fn sketch[fern]
+    for row in range[fern.rows]
+        chars = for col in range[fern.cols]
+            mark = ' '
+            if fern.counts[row * fern.cols + col] gt 12
+                mark = '*'
+            mark
+        line = join[chars, '']
+        log[line]
+
+seed[1]
+fern = grow[200000, 300, 600, 60, 60]
+_written = write['barnsley_fern.ppm', ppm[fern]]
+sketch[fern]
+log['200000 points drawn; the image is barnsley_fern.ppm.']

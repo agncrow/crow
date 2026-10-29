@@ -1,0 +1,46 @@
+--- Rosetta Code: Population count
+--- https://rosettacode.org/wiki/Population_count
+--- popcount counts the ones by halving: the last binary digit of n is n % 2. Ints
+--- grow without limit, so it takes any non-negative int; use bits's bitcount counts
+--- the same ones, and the two are checked against each other.
+
+use bits
+
+fn popcount[n]
+    count = 0
+    while n gt 0
+        count = count + n % 2
+        n = n / 2
+    return count
+
+--- the first 30 numbers from 0 whose population count is even (parity 0, the evil
+--- numbers) or odd (parity 1, the odious numbers)
+fn first_thirty[parity]
+    found = []
+    n = 0
+    while len[found] lt 30
+        if popcount[n] % 2 eq parity
+            found = push[found, n]
+        n = n + 1
+    return found
+
+fn shown[numbers]
+    texts = for n in numbers
+        str[n]
+    return join[texts, ' ']
+
+powers = for i in range[30]
+    3 ^ i
+counts = for p in powers
+    popcount[p]
+log['pop counts of 3^0 .. 3^29: `shown[counts]`']
+log['the first thirty evil numbers: `shown[first_thirty[0]]`']
+log['the first thirty odious numbers: `shown[first_thirty[1]]`']
+
+checked = concat[powers, [3 ^ 100, 2 ^ 200 - 1, 10 ^ 50]]
+agree = true
+for n in checked
+    if popcount[n] ne bitcount[n]
+        agree = false
+log['popcount agrees with bitcount on 3^0 .. 3^29, 3^100, 2^200 - 1 and 10^50: `agree`']
+log['popcount[3^100] = `popcount[3 ^ 100]`, popcount[2^200 - 1] = `popcount[2 ^ 200 - 1]`, popcount[10^50] = `popcount[10 ^ 50]`']

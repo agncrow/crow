@@ -1,0 +1,22 @@
+The game dealt [2, 4, 1, 3]:
+    [2, 4, 1, 3]
+    [4, 2, 1, 3]
+    [3, 1, 2, 4]
+    [2, 1, 3, 4]
+    [1, 2, 3, 4]
+4 swaps.
+
+ n  topswops(n)
+ 1            0
+ 2            1
+ 3            2
+ 4            4
+ 5            7
+ 6           10
+ 7           16
+ 8           22
+ 9           30
+10           38
+
+The game played backwards, n = 1 to 11: 0, 1, 2, 4, 7, 10, 16, 22, 30, 38, 51
+The two ways agree for n = 1 to 10: true

@@ -1,0 +1,39 @@
+The task:
+    2♥ 2♦ 2♣ k♣ q♦:          three-of-a-kind
+    2♥ 5♥ 7♦ 8♣ 9♠:          high-card
+    a♥ 2♦ 3♣ 4♣ 5♦:          straight
+    2♥ 3♥ 2♦ 3♣ 3♦:          full-house
+    2♥ 7♥ 2♦ 3♣ 3♦:          two-pair
+    2♥ 7♥ 7♦ 7♣ 7♠:          four-of-a-kind
+    10♥ j♥ q♥ k♥ a♥:         straight-flush
+    4♥ 4♠ k♠ 5♦ 10♠:         one-pair
+    q♣ 10♣ 7♣ 6♣ q♣:         invalid (q♣ twice)
+With jokers:
+    joker  2♦  2♠  k♠  q♦:   three-of-a-kind
+    joker  5♥  7♦  8♠  9♦:   straight
+    joker  2♦  3♠  4♠  5♠:   straight
+    joker  3♥  2♦  3♠  3♦:   four-of-a-kind
+    joker  7♥  2♦  3♠  3♦:   three-of-a-kind
+    joker  7♥  7♦  7♠  7♣:   five-of-a-kind
+    joker  j♥  q♥  k♥  A♥:   straight-flush
+    joker  4♣  k♣  5♦ 10♠:   one-pair
+    joker  k♣  7♣  6♣  4♣:   flush
+    joker  2♦  joker  4♠  5♠: straight
+    joker  Q♦  joker  A♠ 10♠: straight
+    joker  Q♦  joker  A♦ 10♦: straight-flush
+    joker  2♦  2♠  joker  q♦: four-of-a-kind
+In the playing card characters of Unicode:
+    🂡 🂮 🂭 🂫 🂪:               straight-flush
+    🂱 🃁 🃑 🂡 🂿:               five-of-a-kind
+    🂲 🃃 🂴 🃕 🂶:               straight
+    🃎 🃞 🂾 🂫 🃋:               full-house
+    🃙 🂩 🃄 🃔 🂷:               two-pair
+    🃟 🃏 🃒 🃓 🃕:               straight-flush
+    🂼 🃒 🃓 🃔 🃕:               invalid (🂼: no card in this game)
+And some that are not hands:
+    2h 3d 4c 5s:             invalid (4 cards)
+    2h 3d 4c 5s 6h 7d:       invalid (6 cards)
+    joker joker joker 2s 3s: invalid (3 jokers)
+    1h 2d 3c 4s 5h:          invalid (1h: no face 1)
+    2h 3d 4c 5s 6x:          invalid (6x: no suit x)
+    a♠ 🂡 3c 4s 5h:           invalid (🂡 twice)

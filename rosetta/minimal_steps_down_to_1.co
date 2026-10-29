@@ -1,0 +1,105 @@
+--- Rosetta Code: Minimal steps down to 1
+--- https://rosettacode.org/wiki/Minimal_steps_down_to_1
+--- Tabulated from 1 upward: the steps from n are one more than from the best
+--- number one move takes it to (a division by a divisor that divides it, or a
+--- subtraction of a subtractor smaller than it). On a tie the smaller number
+--- wins, then the move written first, as the Python reference chooses. Each
+--- number's move is kept, so one shortest way down is read back from it.
+
+struct Move [next, how]
+
+struct Table [steps, via, how]
+
+struct Most [steps, numbers]
+
+fn moves_from[n, divisors, subtractors]
+    found = []
+    for d in divisors
+        if n % d eq 0
+            found = push[found, Move[n / d, '/`d`']]
+    for s in subtractors
+        if n gt s
+            found = push[found, Move[n - s, '-`s`']]
+    return found
+
+--- the move to the number with the fewest steps left: on a tie the smaller
+--- number, then the move written first; a number that cannot reach 1 (its
+--- steps -1) is not moved to, and no move at all is Move[0, '']
+fn best_move[n, steps, divisors, subtractors]
+    best = Move[0, '']
+    for m in moves_from[n, divisors, subtractors]
+        if steps[m.next] gte 0
+            if best.next eq 0 or steps[m.next] lt steps[best.next]
+                best = m
+            else if steps[m.next] eq steps[best.next] and m.next lt best.next
+                best = m
+    return best
+
+fn tabulate[limit, divisors, subtractors]
+    steps = [-1, 0]
+    via = [0, 0]
+    how = ['', '']
+    n = 2
+    while n lte limit
+        best = best_move[n, steps, divisors, subtractors]
+        if best.next eq 0
+            steps = push[steps, -1]
+        else
+            steps = push[steps, steps[best.next] + 1]
+        via = push[via, best.next]
+        how = push[how, best.how]
+        n = n + 1
+    return Table[steps, via, how]
+
+fn way_down[table, n]
+    parts = []
+    k = n
+    while k gt 1
+        move = table.how[k]
+        next = table.via[k]
+        parts = push[parts, '`move`=> `next`']
+        k = next
+    if len[parts] eq 0
+        return 'already there'
+    return join[parts, ', ']
+
+fn most_steps[table, limit]
+    most = 0
+    numbers = []
+    n = 1
+    while n lte limit
+        s = table.steps[n]
+        if s gt most
+            most = s
+            numbers = [n]
+        else if s eq most
+            numbers = push[numbers, n]
+        n = n + 1
+    return Most[most, numbers]
+
+fn listed[xs]
+    words = for x in xs
+        str[x]
+    join[words, ', ']
+
+fn plural[n, word]
+    if n eq 1
+        return '1 `word`'
+    return '`n` `word`s'
+
+fn report[divisors, subtractors, limits]
+    table = tabulate[limits[-1], divisors, subtractors]
+    log['Divisors `listed[divisors]`, subtractors `listed[subtractors]`:']
+    for n in range[1, 11]
+        shown = fmt[n, width = 2]
+        steps = plural[table.steps[n], 'step']
+        log['  `shown` takes `steps`: `way_down[table, n]`']
+    for limit in limits
+        most = most_steps[table, limit]
+        up_to = fmt[limit, commas = true]
+        taken = plural[len[most.numbers], 'number']
+        log['  Up to `up_to` the most is `most.steps` steps, taken by `taken`: `listed[most.numbers]`']
+    log['']
+
+report[[2, 3], [1], [2000, 20000]]
+report[[2, 3], [2], [2000, 20000]]

@@ -1,0 +1,18 @@
+note  solfege  MIDI  frequency (Hz)
+C4    Do         60         261.626
+D4    Re         62         293.665
+E4    Mi         64         329.628
+F4    Fa         65         349.228
+G4    Sol        67         391.995
+A4    La         69         440.000
+B4    Si         71         493.883
+C5    Do         72         523.251
+
+The scale as a score (ABC notation):
+X:1
+T:C major scale, from middle C
+M:4/4
+L:1/4
+Q:1/4=120
+K:C
+C D E F | G A B c |]

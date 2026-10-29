@@ -1,0 +1,3 @@
+j87_a_parameter_named_like_a_function_of_the_program.co:7:10: 'scores' is a function of this program — pick another name for this parameter: `scores[…]` would call the function
+  7 │ fn first[scores]
+    │          ^^^^^^

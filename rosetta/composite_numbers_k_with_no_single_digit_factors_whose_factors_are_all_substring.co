@@ -1,0 +1,142 @@
+--- Rosetta Code: Composite numbers k with no single digit factors whose factors are all substrings of k
+--- https://rosettacode.org/wiki/Composite_numbers_k_with_no_single_digit_factors_whose_factors_are_all_substrings_of_k
+--- A term k is found from its smallest prime factor p (from 11 up to the square root of
+--- k), which k's digits must show: so only the multiples of p that show p's digits are
+--- made, and each is kept when p is its smallest factor and every prime factor of k is
+--- in k's digits, read off a table of smallest prime factors. The search runs over
+--- ranges that double until twenty terms are found.
+
+--- the smallest prime factor of every number up to n, 0 where the number is prime
+fn smallest_factors[n]
+    spf = for i in range[n + 1]
+        0
+    i = 2
+    while i * i lte n
+        if spf[i] eq 0
+            j = i * i
+            while j lte n
+                if spf[j] eq 0
+                    spf[j] = i
+                j = j + i
+        i = i + 1
+    return spf
+
+fn smallest[m, spf]
+    if spf[m] eq 0
+        return m
+    return spf[m]
+
+fn power_mod[b, e, m]
+    result = 1
+    b = b % m
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+--- whether k = p * m is a term, p being a prime its digits show: p must be k's
+--- smallest prime factor (a k with a smaller one is found from that one) and every
+--- prime factor of k must be in its digits
+fn is_term[k, p, spf]
+    m = k / p
+    if m eq 1 or smallest[m, spf] lt p
+        return false
+    digits = str[k]
+    while m gt 1
+        q = smallest[m, spf]
+        if str[q] not in digits
+            return false
+        while m % q eq 0
+            m = m / q
+    return true
+
+--- the terms in [lo, hi) whose smallest prime factor is p. A multiple k of p showing
+--- p's digits with j digits after them is k = a * 10^(w + j) + p * 10^j + b, with w
+--- the width of p and 0 <= b < 10^j: for each j the cheaper of a and b is walked,
+--- the other found from it (for a fixed b, a runs through one class modulo p).
+fn terms_showing[p, lo, hi, spf]
+    found = []
+    width = len[str[p]]
+    span = 1
+    while p * span lt hi
+        step = span * 10 ^ width
+        top = (hi - 1 - p * span) / step
+        if span lte top + 1
+            back = power_mod[step % p, p - 2, p]
+            b = 0
+            while b lt span
+                first = 0
+                if lo gt p * span + b
+                    first = (lo - p * span - b + step - 1) / step
+                a = (p - b % p) * back % p
+                a = first + (a - first % p + p) % p
+                k = a * step + p * span + b
+                while k lt hi
+                    if is_term[k, p, spf]
+                        found = push[found, k]
+                    k = k + p * step
+                b = b + 1
+        else
+            a = 0
+            if lo gt p * span
+                a = (lo - p * span) / step
+            while a lte top
+                start = a * step + p * span
+                k = (max[start, lo] + p - 1) / p * p
+                while k lt start + span and k lt hi
+                    if is_term[k, p, spf]
+                        found = push[found, k]
+                    k = k + p
+                a = a + 1
+        span = span * 10
+    return found
+
+--- a sorted list with each value once (a term whose digits show p twice is made twice)
+fn distinct[xs]
+    out = []
+    for x in xs
+        if len[out] eq 0 or out[-1] ne x
+            out = push[out, x]
+    return out
+
+--- the terms in [lo, hi), in order
+fn terms_between[lo, hi]
+    spf = smallest_factors[hi / 11 + 1]
+    found = []
+    p = 11
+    while p * p lt hi
+        if spf[p] eq 0
+            found = concat[found, terms_showing[p, lo, hi, spf]]
+        p = p + 2
+    return distinct[sort[found]]
+
+--- k's prime factors, smallest first, with each repeat
+fn factors_of[k]
+    out = []
+    q = 2
+    while q * q lte k
+        while k % q eq 0
+            out = push[out, str[q]]
+            k = k / q
+        q = q + 1
+    if k gt 1
+        out = push[out, str[k]]
+    return out
+
+terms = []
+lo = 0
+hi = 1000000
+while len[terms] lt 20
+    terms = concat[terms, terms_between[lo, hi]]
+    lo = hi
+    hi = hi * 2
+for i in range[20]
+    if i eq 0
+        log['The first ten:']
+    if i eq 10
+        log['The next ten:']
+    k = terms[i]
+    shown = join[factors_of[k], ' x ']
+    log['`fmt[k, width = 12, commas = true]` = `shown`']

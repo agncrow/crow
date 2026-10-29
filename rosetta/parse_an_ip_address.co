@@ -1,0 +1,171 @@
+--- Rosetta Code: Parse an IP Address
+--- https://rosettacode.org/wiki/Parse_an_IP_Address
+--- A hand-written parser. IPv4 is four dotted decimal octets; IPv6 is eight groups of up
+--- to four hex digits, where one '::' stands for the zero groups left out and the last two
+--- groups may be written as dotted IPv4 (::ffff:127.0.0.1). A port follows the colon after
+--- an IPv4 address, or after an IPv6 address's brackets ([::1]:80). The address is one int
+--- (128 bits fit: an int grows); text that is no address is an error value saying why.
+
+use bits
+
+struct Address [space, number, port, has_port]
+
+--- a record's field may hold a failure, but a function handed one answers it at once:
+--- built through here, an address with a malformed part is that part's error
+fn address[space, number, port, has_port]
+    return Address[space, number, port, has_port]
+
+fn octet_of[text]
+    if not matches[text, '^[0-9]{1,3}$']
+        return error['\'`text`\' is not an octet', 'ip']
+    n = int[text]
+    if n gt 255
+        return error['the octet `n` is past 255', 'ip']
+    return n
+
+fn port_of[text]
+    if not matches[text, '^[0-9]{1,5}$']
+        return error['\'`text`\' is not a port', 'ip']
+    n = int[text]
+    if n gt 65535
+        return error['the port `n` is past 65535', 'ip']
+    return n
+
+--- four dotted octets as one 32-bit number
+fn ipv4_of[text]
+    parts = split[text, '.']
+    if len[parts] ne 4
+        return error['\'`text`\' is not four dotted octets', 'ip']
+    n = 0
+    for part in parts
+        n = n * 256 + octet_of[part]
+    return n
+
+fn hex_digit[c]
+    k = code[c]
+    if k lte code['9']
+        return k - code['0']
+    return k - code['a'] + 10
+
+--- one to four hex digits as a 16-bit number
+fn group_of[text]
+    if not matches[text, '^[0-9a-fA-F]{1,4}$']
+        return error['\'`text`\' is not a group of one to four hex digits', 'ip']
+    n = 0
+    for c in split[lower[text], '']
+        n = n * 16 + hex_digit[c]
+    return n
+
+--- the 16-bit groups written between colons; where `dotted_tail` is true the last
+--- may be a dotted IPv4 address, which is two groups
+fn groups_of[text, dotted_tail]
+    found = []
+    if text eq ''
+        return found
+    pieces = split[text, ':']
+    last = len[pieces] - 1
+    for i in range[len[pieces]]
+        piece = pieces[i]
+        if dotted_tail and i eq last and '.' in piece
+            v4 = ipv4_of[piece]
+            found = push[found, v4 / 65536]
+            found = push[found, v4 % 65536]
+        else
+            found = push[found, group_of[piece]]
+    return found
+
+--- groups read as one number, the first the most significant
+fn number_of[groups]
+    n = 0
+    for g in groups
+        n = n * 65536 + g
+    return n
+
+--- an IPv6 address as one 128-bit number
+fn ipv6_of[text]
+    halves = split[text, '::']
+    if len[halves] gt 2
+        return error['\'`text`\' holds :: more than once', 'ip']
+    if len[halves] eq 1
+        groups = groups_of[text, true]
+        if len[groups] ne 8
+            return error['\'`text`\' holds `len[groups]` groups, not 8', 'ip']
+        return number_of[groups]
+    head = groups_of[halves[0], false]
+    tail = groups_of[halves[1], true]
+    left_out = 8 - len[head] - len[tail]
+    if left_out lt 1
+        return error['\'`text`\' leaves no group for :: to stand for', 'ip']
+    zeros = for i in range[left_out]
+        0
+    return number_of[concat[concat[head, zeros], tail]]
+
+fn parse_ip[text]
+    if starts[text, '[']
+        pieces = split[slice[text, 1, len[text]], ']']
+        if len[pieces] ne 2
+            return error['\'`text`\' opens [ and does not close it once', 'ip']
+        number = ipv6_of[pieces[0]]
+        after = pieces[1]
+        if after eq ''
+            return address['IPv6', number, 0, false]
+        if not starts[after, ':']
+            return error['\'`after`\' after ] is not :port', 'ip']
+        port = port_of[slice[after, 1, len[after]]]
+        return address['IPv6', number, port, true]
+    colons = occurs[text, ':']
+    if colons eq 0
+        return address['IPv4', ipv4_of[text], 0, false]
+    if colons eq 1 and '.' in text
+        halves = split[text, ':']
+        number = ipv4_of[halves[0]]
+        port = port_of[halves[1]]
+        return address['IPv4', number, port, true]
+    return address['IPv6', ipv6_of[text], 0, false]
+
+--- a number in hex capitals, zeros in front to fill `width` digits
+fn hex_of[n, width]
+    digits = split['0123456789ABCDEF', '']
+    shown = ''
+    rest = n
+    while rest gt 0
+        shown = '`digits[rest % 16]``shown`'
+        rest = rest / 16
+    return fmt[shown, width = width, fill = '0', align = 'right']
+
+fn port_shown[a]
+    if a.has_port
+        return str[a.port]
+    return 'none'
+
+fn line_of[text]
+    a = parse_ip[text]
+    shown = fmt[text, width = 44]
+    if not a.ok
+        return '`shown` error: `a.reason`'
+    width = 8
+    if a.space eq 'IPv6'
+        width = 32
+    number = fmt[hex_of[a.number, width], width = 34]
+    return '`shown` `a.space`  `number``port_shown[a]`'
+
+heading = fmt['Input', width = 44]
+log['`heading` Space Address (hex)                     Port']
+tests = [
+    '127.0.0.1', '127.0.0.1:80', '::1', '[::1]:80', '2605:2700:0:3::4713:93e3',
+    '[2605:2700:0:3::4713:93e3]:80', '::ffff:127.0.0.1', '[::ffff:71.19.147.227]:80',
+    '::192.168.0.1', '::', '1::', '[1::]:65535', '192.168.0.1:0',
+    '2001:db8:85a3:0:0:8a2e:370:7334', '2001:db8:85a3::8a2e:370:7334',
+    '[2001:db8:85a3:8d3:1319:8a2e:370:7348]:443', 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+    '0000:0000:0000::0000:0000', 'fff:ffff:0:ffff:ffff:ffff:ffff:ffff',
+    '256.0.0.0', '127.0.0.1:65536', '1.2.3', 'g::1', 'a::b::1', '0000:0000',
+    '1:2:3:4:5:6:7:8::', '::ffff:127.0.0.0.1', '1.2.3.4::', '[::1', '[::1]80'
+]
+for t in tests
+    log[line_of[t]]
+
+--- the task's examples, the address number in hex and in decimal
+log['']
+for t in ['127.0.0.1', '::ffff:127.0.0.1', '::1']
+    a = parse_ip[t]
+    log['`t` has the address number `hex_of[a.number, 1]` (`a.number` decimal) in the `a.space` address space']

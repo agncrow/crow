@@ -1,0 +1,23 @@
+--- a parameter returned as it is beside a return of another kind is
+--- refused as a function answering two kinds, where the returns are: the
+--- parameter had taken the function's other answer as its type, and the
+--- refusal had landed in another function, `a list has no field 'x'`
+--- (Rosetta Code, Weiler-Atherton polygon clipping)
+
+struct Point [x, y]
+
+fn shifted[p]
+    return Point[p.x + 1, p.y]
+
+fn singles[points]
+    out = []
+    for p in points
+        out = push[out, [shifted[p]]]
+    return out
+
+fn pieces[points]
+    if len[points] eq 0
+        return points
+    return singles[points]
+
+log[pieces[[Point[1, 2]]]]

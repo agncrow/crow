@@ -1,0 +1,3 @@
+k05_a_group_member_where_a_function_is_taken.co:14:1: `apply_to`'s 'f' is a function another call hands by name, and this is a member of a list of functions — hand the function by name (`apply_to[double, …]`), or call the member where it is (`fs[i][x]`)
+  14 │ log[apply_to[fs[0], 5]]
+     │ ^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,696 @@
+--- Rosetta Code: Facial detection in a photo
+--- https://rosettacode.org/wiki/Facial_detection_in_a_photo
+--- Everything after reading the files is Crow. A baseline JPEG decoder (the Huffman codes, the
+--- quantization tables, and an inverse DCT of each luminance block's sixteen lowest
+--- frequencies) gives the photo in gray at half its size, where the faces are 30 to 50 pixels
+--- wide. Then Viola and Jones's detector with OpenCV's trained cascade
+--- haarcascade_frontalface_alt.xml (22 stages of 2135 Haar features on a 20 x 20 window) runs as
+--- OpenCV's detectMultiScale runs it: the image scaled down by 1.1 a step, the window moved 2
+--- pixels at a time (1 past a scale of 2), windows of little contrast passed over, and the
+--- windows that pass every stage grouped as groupRectangles groups them, keeping groups of five
+--- or more. A stage tests every window of a scale at once, in tensors: the corners its features
+--- read are gathered from the summed-area table, and a sparse matrix of the features' weights
+--- turns them into the features' values.
+--- Crow's read takes text only, so the photo's bytes come through od (POSIX). The photo and the
+--- cascade are downloaded where the current directory lacks them. The faces are printed as
+--- [x, y, width, height] in the photo's pixels, and drawn over the photo in faces.svg.
+
+use math
+use bits
+
+struct Jpeg [width, height, h, v, tq, dc_table, ac_table, quant, huff, restart, start]
+
+struct Cascade [size, stage_threshold, stage_first, stage_count, weak_feature, weak_threshold, weak_left, weak_right, feature_first, feature_count, rect_x, rect_y, rect_w, rect_h, rect_weight]
+
+struct Box [x, y, w, h]
+
+--- reading the files
+
+fn fetch_if_missing[file, url]
+    --- downloads the file where the current directory lacks it
+    if not exists[file]
+        answer = request[url, save = file]
+        saved = false
+        if answer.ok
+            saved = answer.status eq 200
+        if not saved
+            halt['cannot download `url`']
+
+fn byte_value[word]
+    b = int[word]
+    if not b.ok
+        halt['od wrote `word` where a byte belongs']
+        return 0
+    return bitand[b, 255]
+
+fn od_listing[path]
+    --- the file's bytes as od writes them, in decimal: read takes only text
+    listing = shell['od -An -v -tu1 `path`']
+    if not listing.ok
+        halt['od cannot run']
+        return ''
+    if listing.status ne 0
+        halt['od cannot read `path`']
+    return listing.stdout
+
+fn bytes_of[path]
+    words = split[sub[trim[od_listing[path]], '\s+', ' '], ' ']
+    found = for w in words
+        byte_value[w]
+    return found
+
+fn text_of[path]
+    text = read[path]
+    if not text.ok
+        halt['cannot read `path`']
+        return ''
+    return text
+
+--- the JPEG decoder
+
+fn u16[data, i]
+    return data[i] * 256 + data[i + 1]
+
+fn with_table[huff, slot, counts, symbols]
+    --- a Huffman table as a lookup: for every 16 bits a code can start, the code's length
+    --- times 256 plus its symbol, written at the table's slot of the list of tables
+    code = 0
+    k = 0
+    length = 1
+    while length lte 16
+        c = 0
+        while c lt counts[length - 1]
+            entry = length * 256 + symbols[k]
+            p = slot * 65536 + shift[code, 16 - length]
+            stop = slot * 65536 + shift[code + 1, 16 - length]
+            while p lt stop
+                huff[p] = entry
+                p = p + 1
+            code = code + 1
+            k = k + 1
+            c = c + 1
+        code = code * 2
+        length = length + 1
+    return huff
+
+fn parse[data]
+    --- the markers before the scan: the frame, the tables, the restart interval, the scan's tables
+    if u16[data, 0] ne 65496
+        halt['not a JPEG file']
+    width = 0
+    height = 0
+    ids = []
+    h = []
+    v = []
+    tq = []
+    quant = for k in range[256]
+        0
+    huff = for k in range[8 * 65536]
+        0
+    restart = 0
+    dc_table = [0, 0, 0, 0]
+    ac_table = [0, 0, 0, 0]
+    i = 2
+    while true
+        marker = data[i + 1]
+        length = u16[data, i + 2]
+        body = i + 4
+        last = i + 2 + length
+        if marker eq 219
+            j = body
+            while j lt last
+                if shift[data[j], -4] ne 0
+                    halt['16-bit quantization tables are not read here']
+                t = bitand[data[j], 15]
+                for k in range[64]
+                    quant[t * 64 + k] = data[j + 1 + k]
+                j = j + 65
+        else if marker eq 192 or marker eq 193
+            height = u16[data, body + 1]
+            width = u16[data, body + 3]
+            for c in range[data[body + 5]]
+                at = body + 6 + 3 * c
+                ids = push[ids, data[at]]
+                h = push[h, shift[data[at + 1], -4]]
+                v = push[v, bitand[data[at + 1], 15]]
+                tq = push[tq, data[at + 2]]
+        else if marker eq 196
+            j = body
+            while j lt last
+                table_class = shift[data[j], -4]
+                id = bitand[data[j], 15]
+                counts = slice[data, j + 1, j + 17]
+                n = 0
+                for count in counts
+                    n = n + count
+                huff = with_table[huff, table_class * 4 + id, counts, slice[data, j + 17, j + 17 + n]]
+                j = j + 17 + n
+        else if marker eq 221
+            restart = u16[data, body]
+        else if marker eq 218
+            for c in range[data[body]]
+                at = body + 1 + 2 * c
+                for f in range[len[ids]]
+                    if ids[f] eq data[at]
+                        dc_table[f] = shift[data[at + 1], -4]
+                        ac_table[f] = bitand[data[at + 1], 15]
+            return Jpeg[width, height, h, v, tq, dc_table, ac_table, quant, huff, restart, last]
+        else if marker gte 194 and marker lte 207 and marker ne 196 and marker ne 200 and marker ne 204
+            halt['only a baseline JPEG is read here (marker `marker`)']
+        i = last
+    return Jpeg[width, height, h, v, tq, dc_table, ac_table, quant, huff, restart, i]
+
+fn entropy_coded[data, start]
+    --- the scan's bytes, each 0xFF 0x00 read as 0xFF, and where each restart interval begins
+    coded = []
+    marks = [0]
+    i = start
+    while true
+        b = data[i]
+        if b eq 255
+            next = data[i + 1]
+            if next eq 0
+                coded = push[coded, 255]
+                i = i + 2
+                continue
+            if next gte 208 and next lte 215
+                marks = push[marks, len[coded]]
+                i = i + 2
+                continue
+            break
+        coded = push[coded, b]
+        i = i + 1
+    marks = push[marks, len[coded]]
+    return [coded, marks]
+
+fn zigzag[]
+    return [0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63]
+
+fn largest[xs]
+    best = xs[0]
+    for x in xs
+        best = max[best, x]
+    return best
+
+fn blocks_across[jpeg]
+    --- the luminance blocks in a row of the scan: whole units of the largest sampling
+    unit = 8 * largest[jpeg.h]
+    return (jpeg.width + unit - 1) / unit * jpeg.h[0]
+
+fn blocks_down[jpeg]
+    unit = 8 * largest[jpeg.v]
+    return (jpeg.height + unit - 1) / unit * jpeg.v[0]
+
+fn low_frequencies[jpeg, coded, marks]
+    --- the sixteen lowest frequencies of every luminance block, dequantized, at
+    --- ((block row × blocks a row + block column) × 16 + 4 × vertical + horizontal)
+    mcux = blocks_across[jpeg] / jpeg.h[0]
+    mcuy = blocks_down[jpeg] / jpeg.v[0]
+    h0 = jpeg.h[0]
+    v0 = jpeg.v[0]
+    across = mcux * h0
+    coef = for i in range[blocks_down[jpeg] * across * 16]
+        0.0
+    order = zigzag[]
+    low = for k in range[64]
+        -1
+    for k in range[64]
+        z = order[k]
+        if z / 8 lt 4 and z % 8 lt 4
+            low[k] = z / 8 * 4 + z % 8
+    pow2 = for k in range[40]
+        shift[1, k]
+    huff = jpeg.huff
+    quant = jpeg.quant
+    ncomp = len[jpeg.h]
+    total = mcux * mcuy
+    per = jpeg.restart
+    if per eq 0
+        per = total
+    mcu = 0
+    interval = 0
+    while mcu lt total
+        p = marks[interval]
+        stop = marks[interval + 1]
+        interval = interval + 1
+        acc = 0
+        nbits = 0
+        preds = [0, 0, 0, 0]
+        n = 0
+        while n lt per and mcu lt total
+            my = mcu / mcux
+            mx = mcu % mcux
+            c = 0
+            while c lt ncomp
+                dc_base = jpeg.dc_table[c] * 65536
+                ac_base = (4 + jpeg.ac_table[c]) * 65536
+                q = jpeg.tq[c] * 64
+                by = 0
+                while by lt jpeg.v[c]
+                    bx = 0
+                    while bx lt jpeg.h[c]
+                        base = 0
+                        if c eq 0
+                            base = ((my * v0 + by) * across + mx * h0 + bx) * 16
+                        --- the DC difference: enough bits for a code and its value, then both
+                        --- (the refill is written out at both codes: a call per code costs more)
+                        while nbits lt 27
+                            acc = acc * 256
+                            if p lt stop
+                                acc = acc + coded[p]
+                            p = p + 1
+                            nbits = nbits + 8
+                        e = huff[dc_base + shift[acc, 16 - nbits]]
+                        nbits = nbits - shift[e, -8]
+                        s = bitand[e, 255]
+                        diff = 0
+                        if s gt 0
+                            nbits = nbits - s
+                            diff = bitand[shift[acc, -nbits], pow2[s] - 1]
+                            if diff lt pow2[s - 1]
+                                diff = diff - pow2[s] + 1
+                        acc = bitand[acc, pow2[nbits] - 1]
+                        preds[c] = preds[c] + diff
+                        if c eq 0
+                            coef[base] = float[preds[c] * quant[q]]
+                        --- the AC coefficients, a run of zeros and a value at a time
+                        k = 1
+                        while k lt 64
+                            while nbits lt 27
+                                acc = acc * 256
+                                if p lt stop
+                                    acc = acc + coded[p]
+                                p = p + 1
+                                nbits = nbits + 8
+                            e = huff[ac_base + shift[acc, 16 - nbits]]
+                            nbits = nbits - shift[e, -8]
+                            rs = bitand[e, 255]
+                            s = bitand[rs, 15]
+                            if s eq 0
+                                acc = bitand[acc, pow2[nbits] - 1]
+                                if rs eq 240
+                                    k = k + 16
+                                    continue
+                                break
+                            k = k + shift[rs, -4]
+                            nbits = nbits - s
+                            value = bitand[shift[acc, -nbits], pow2[s] - 1]
+                            acc = bitand[acc, pow2[nbits] - 1]
+                            if value lt pow2[s - 1]
+                                value = value - pow2[s] + 1
+                            if c eq 0 and low[k] gte 0
+                                coef[base + low[k]] = float[value * quant[q + k]]
+                            k = k + 1
+                        bx = bx + 1
+                    by = by + 1
+                c = c + 1
+            mcu = mcu + 1
+            n = n + 1
+    return coef
+
+fn half_basis[]
+    --- b[x][u]: the 2 x 2 means of the 8-point inverse DCT, frequencies 4 to 7 left out,
+    --- which is a 4-point inverse DCT of frequencies 0 to 3, each weighted by cos(uπ/16)
+    rows = for x in range[4]
+        cells = for u in range[4]
+            scale = 0.5
+            if u eq 0
+                scale = 0.5 / sqrt[2.0]
+            scale * cos[float[u] * pi / 16.0] * cos[float[(2 * x + 1) * u] * pi / 8.0]
+        cells
+    return rows
+
+fn gray_at_half[jpeg, coef]
+    --- the luminance at half size: each block's 4 x 4 pixels from its sixteen lowest
+    --- frequencies, a row of blocks at a time, one product per row of pixels
+    b = half_basis[]
+    across = blocks_across[jpeg]
+    weights = for y in range[4]
+        m = for vu in range[16]
+            cells = for x in range[4]
+                b[y][vu / 4] * b[x][vu % 4]
+            cells
+        tensor[m]
+    spectra = tensor[coef]
+    rows = []
+    for r in range[blocks_down[jpeg]]
+        block_row = reshape[slice[spectra, r * across * 16, (r + 1) * across * 16], across, 16]
+        for y in range[4]
+            rows = push[rows, flatten[block_row * weights[y]]]
+    picture = slice[stack[rows], 0, jpeg.height / 2]
+    return clip[floor[(picture + 128.0) + 0.5], 0.0, 255.0]
+
+--- the cascade
+
+fn number[text]
+    x = float[text]
+    if not x.ok
+        halt['the cascade holds `text` where a number belongs']
+        return 0.0
+    return x
+
+fn whole[text]
+    --- a small whole number, read from text (which reads as an int that may grow) into 32 bits
+    x = int[text]
+    if not x.ok
+        halt['the cascade holds `text` where a whole number belongs']
+        return 0
+    return bitand[x, 4294967295] - bitand[x, 2147483648] * 2
+
+fn between[text, open, close]
+    return split[split[text, open][1], close][0]
+
+fn read_cascade[text]
+    --- OpenCV's XML: the window's size; each stage's threshold and weak classifiers (a feature,
+    --- a threshold and the two values it gives); each feature's rectangles and their weights
+    size = whole[between[text, '<width>', '</width>']]
+    stage_threshold = []
+    stage_first = []
+    stage_count = []
+    weak_feature = []
+    weak_threshold = []
+    weak_left = []
+    weak_right = []
+    chunks = split[between[text, '<stages>', '</stages>'], '<maxWeakCount>']
+    for i in range[1, len[chunks]]
+        chunk = chunks[i]
+        stage_threshold = push[stage_threshold, number[between[chunk, '<stageThreshold>', '</stageThreshold>']]]
+        nodes = split[chunk, '<internalNodes>']
+        stage_first = push[stage_first, len[weak_feature]]
+        stage_count = push[stage_count, len[nodes] - 1]
+        for j in range[1, len[nodes]]
+            node = split[trim[split[nodes[j], '</internalNodes>'][0]], ' ']
+            leaves = split[trim[between[nodes[j], '<leafValues>', '</leafValues>']], ' ']
+            weak_feature = push[weak_feature, whole[node[2]]]
+            weak_threshold = push[weak_threshold, number[node[3]]]
+            weak_left = push[weak_left, number[leaves[0]]]
+            weak_right = push[weak_right, number[leaves[1]]]
+    feature_first = []
+    feature_count = []
+    rect_x = []
+    rect_y = []
+    rect_w = []
+    rect_h = []
+    rect_weight = []
+    features = split[between[text, '<features>', '</features>'], '<rects>']
+    for i in range[1, len[features]]
+        rects = split[split[features[i], '</rects>'][0], '<_>']
+        feature_first = push[feature_first, len[rect_x]]
+        feature_count = push[feature_count, len[rects] - 1]
+        for j in range[1, len[rects]]
+            r = split[trim[split[rects[j], '</_>'][0]], ' ']
+            rect_x = push[rect_x, whole[r[0]]]
+            rect_y = push[rect_y, whole[r[1]]]
+            rect_w = push[rect_w, whole[r[2]]]
+            rect_h = push[rect_h, whole[r[3]]]
+            rect_weight = push[rect_weight, number[r[4]]]
+    return Cascade[size, stage_threshold, stage_first, stage_count, weak_feature, weak_threshold, weak_left, weak_right, feature_first, feature_count, rect_x, rect_y, rect_w, rect_h, rect_weight]
+
+--- the detector
+
+fn resampler[n_out, n_in]
+    --- bilinear resampling of n_in samples to n_out as a sparse matrix, sample centres
+    --- placed as OpenCV's resize places them
+    rows = []
+    cols = []
+    weights = []
+    scale = float[n_in] / float[n_out]
+    for i in range[n_out]
+        f = (float[i] + 0.5) * scale - 0.5
+        s = floor[f]
+        frac = f - float[s]
+        if s lt 0
+            s = 0
+            frac = 0.0
+        if s gte n_in - 1
+            rows = push[rows, i]
+            cols = push[cols, n_in - 1]
+            weights = push[weights, 1.0]
+        else
+            rows = concat[rows, [i, i]]
+            cols = concat[cols, [s, s + 1]]
+            weights = concat[weights, [1.0 - frac, frac]]
+    return sparse[rows, cols, weights, [n_out, n_in]]
+
+fn summed_area[m, rows, cols]
+    --- the summed-area table of m, with a row and a column of zeros before it, flattened
+    c = cumsum[m]
+    row_ends = transpose[c][cols - 1]
+    across = c - reshape[concat[zeros[1], slice[row_ends, 0, rows - 1]], rows, 1]
+    d = cumsum[transpose[across]]
+    downs = transpose[d][rows - 1]
+    table = transpose[d - reshape[concat[zeros[1], slice[downs, 0, cols - 1]], cols, 1]]
+    padded = concat[zeros[1, cols + 1], concat[zeros[rows, 1], table, 1], 0]
+    return flatten[padded]
+
+fn rect_sum[table, bases, x, y, w, h, stride]
+    --- the sum of the pixels in the rectangle at (x, y), w by h, of every window at once
+    top = float[y * stride + x]
+    bottom = float[(y + h) * stride + x]
+    return flatten[table[bases + top] - table[bases + top + float[w]] - table[bases + bottom] + table[bases + bottom + float[w]]]
+
+struct Stage [corner_y, corner_x, weights, thresholds, gain, base, count, threshold]
+
+fn corner_column[cascade, f, side]
+    --- feature f's weights on the side x side corners of a window's summed-area table:
+    --- each rectangle's sum is its four corners, two added and two taken away
+    column = for c in range[side * side]
+        0.0
+    first = cascade.feature_first[f]
+    for k in range[first, first + cascade.feature_count[f]]
+        x = cascade.rect_x[k]
+        y = cascade.rect_y[k]
+        w = cascade.rect_w[k]
+        h = cascade.rect_h[k]
+        weight = cascade.rect_weight[k]
+        column[y * side + x] = column[y * side + x] + weight
+        column[y * side + x + w] = column[y * side + x + w] - weight
+        column[(y + h) * side + x] = column[(y + h) * side + x] - weight
+        column[(y + h) * side + x + w] = column[(y + h) * side + x + w] + weight
+    return column
+
+fn stage_of[cascade, s]
+    --- a stage as matrices, so that it tests every window of a scale in a few products: the
+    --- corners its features read, a sparse matrix of each feature's weights on them, and its
+    --- features' thresholds and two values as columns
+    side = cascade.size + 1
+    first = cascade.stage_first[s]
+    count = cascade.stage_count[s]
+    slot = for c in range[side * side]
+        -1
+    corners = []
+    rows = []
+    cols = []
+    weights = []
+    for j in range[count]
+        column = corner_column[cascade, cascade.weak_feature[first + j], side]
+        for c in range[side * side]
+            if column[c] ne 0.0
+                if slot[c] lt 0
+                    slot[c] = len[corners]
+                    corners = push[corners, c]
+                rows = push[rows, j]
+                cols = push[cols, slot[c]]
+                weights = push[weights, column[c]]
+    corner_y = for c in corners
+        float[c / side]
+    corner_x = for c in corners
+        float[c % side]
+    --- a feature gives its left value where it is below its threshold and its right value
+    --- elsewhere: the stage's sum is the right values' sum plus (left - right) where below
+    gain = for j in range[count]
+        cascade.weak_left[first + j] - cascade.weak_right[first + j]
+    base = 0.0
+    for j in range[count]
+        base = base + cascade.weak_right[first + j]
+    thresholds = reshape[tensor[slice[cascade.weak_threshold, first, first + count]], count, 1]
+    matrix = sparse[rows, cols, weights, [count, len[corners]]]
+    return Stage[tensor[corner_y], tensor[corner_x], matrix, thresholds, reshape[tensor[gain], 1, count], base, count, cascade.stage_threshold[s]]
+
+fn hits_at[img, factor, win, size, stages]
+    --- the windows of one scale that pass every stage, as boxes in the unscaled image
+    rows = img.shape[0]
+    cols = img.shape[1]
+    stride = cols + 1
+    fi = summed_area[img, rows, cols]
+    fq = summed_area[img .* img, rows, cols]
+    step = 2
+    if factor gt 2.0
+        step = 1
+    ys = range[0, rows - size + 1, step]
+    xs = range[0, cols - size + 1, step]
+    bases = flatten[reshape[tensor[ys] * float[stride], len[ys], 1] + reshape[tensor[xs], 1, len[xs]]]
+    --- each window's contrast: windows that are nearly flat are passed over
+    inner = size - 2
+    area = float[inner * inner]
+    s1 = rect_sum[fi, bases, 1, 1, inner, inner, stride]
+    s2 = rect_sum[fq, bases, 1, 1, inner, inner, stride]
+    nf = area * s2 - s1 .* s1
+    positive = nf gt 0.0
+    norm = flatten[sqrt[where[positive, nf, ones[len[nf]]]]]
+    keep = positive and (area / norm lt 0.1)
+    b = flatten[bases[keep]]
+    nrm = flatten[norm[keep]]
+    --- the stages: each reads its corners of every window left, and keeps the windows it passes
+    n = len[b]
+    s = 0
+    while s lt len[stages] and n gt 0
+        stage = stages[s]
+        m = stage.count
+        k = len[stage.corner_y]
+        --- the k corners of the n windows, from a k x n table of their places (an outer sum
+        --- written as a product, which is exact for whole numbers)
+        offsets = stage.corner_y * float[stride] + stage.corner_x
+        places = concat[reshape[offsets, k, 1], ones[k, 1], 1] * concat[ones[1, n], reshape[b, 1, n], 0]
+        corners = reshape[fi[places], k, n]
+        --- each feature at each window over the window's norm, against the feature's threshold
+        spread = ones[m, 1] * reshape[nrm, 1, n]
+        cuts = stage.thresholds * ones[1, n]
+        below = tensor[(stage.weights * corners) ./ spread - cuts lt 0.0]
+        passed = flatten[stage.gain * below] + stage.base gte stage.threshold
+        b = flatten[b[passed]]
+        nrm = flatten[nrm[passed]]
+        n = len[b]
+        s = s + 1
+    found = for base in b
+        at = int[base]
+        Box[floor[float[at % stride] * factor + 0.5], floor[float[at / stride] * factor + 0.5], win, win]
+    return found
+
+fn detect[img, cascade, scale_step]
+    --- every window that passes the cascade, at every scale whose window fits the image
+    stages = for s in range[len[cascade.stage_threshold]]
+        stage_of[cascade, s]
+    rows = img.shape[0]
+    cols = img.shape[1]
+    found = []
+    factor = 1.0
+    scales = 0
+    win = cascade.size
+    while win lte rows and win lte cols
+        scaled = img
+        if scales gt 0
+            down = floor[float[rows] / factor + 0.5]
+            along = floor[float[cols] / factor + 0.5]
+            scaled = floor[transpose[resampler[along, cols] * transpose[resampler[down, rows] * img]] + 0.5]
+        found = concat[found, hits_at[scaled, factor, win, cascade.size, stages]]
+        scales = scales + 1
+        factor = factor * scale_step
+        win = floor[float[cascade.size] * factor + 0.5]
+    return found
+
+--- grouping the hits, as OpenCV's groupRectangles does
+
+fn similar[a, b]
+    delta = 0.2 * float[min[a.w, b.w] + min[a.h, b.h]] * 0.5
+    return abs[a.x - b.x] lte delta and abs[a.y - b.y] lte delta and abs[a.x + a.w - b.x - b.w] lte delta and abs[a.y + a.h - b.y - b.h] lte delta
+
+fn root[label, i]
+    while label[i] ne i
+        i = label[i]
+    return i
+
+fn inside[a, b]
+    --- whether box a lies within box b, give or take a fifth of b
+    dx = floor[float[b.w] * 0.2 + 0.5]
+    dy = floor[float[b.h] * 0.2 + 0.5]
+    return a.x gte b.x - dx and a.y gte b.y - dy and a.x + a.w lte b.x + b.w + dx and a.y + a.h lte b.y + b.h + dy
+
+fn grouped[hits, threshold]
+    --- the hits joined where they are alike, each group's mean box with the group's size;
+    --- groups of threshold or fewer are dropped, and so is a box inside a better-held one
+    n = len[hits]
+    label = for i in range[n]
+        i
+    i = 0
+    while i lt n
+        j = i + 1
+        while j lt n
+            if similar[hits[i], hits[j]]
+                a = root[label, i]
+                b = root[label, j]
+                if a ne b
+                    label[max[a, b]] = min[a, b]
+            j = j + 1
+        i = i + 1
+    slot = for i in range[n]
+        -1
+    sx = []
+    sy = []
+    sw = []
+    sh = []
+    count = []
+    for i in range[n]
+        r = root[label, i]
+        if slot[r] lt 0
+            slot[r] = len[count]
+            sx = push[sx, 0]
+            sy = push[sy, 0]
+            sw = push[sw, 0]
+            sh = push[sh, 0]
+            count = push[count, 0]
+        c = slot[r]
+        sx[c] = sx[c] + hits[i].x
+        sy[c] = sy[c] + hits[i].y
+        sw[c] = sw[c] + hits[i].w
+        sh[c] = sh[c] + hits[i].h
+        count[c] = count[c] + 1
+    means = for c in range[len[count]]
+        k = float[count[c]]
+        Box[floor[float[sx[c]] / k + 0.5], floor[float[sy[c]] / k + 0.5], floor[float[sw[c]] / k + 0.5], floor[float[sh[c]] / k + 0.5]]
+    kept = []
+    for c in range[len[means]]
+        if count[c] gt threshold
+            held = false
+            for d in range[len[means]]
+                if d ne c and count[d] gt threshold and inside[means[c], means[d]] and (count[d] gt max[3, count[c]] or count[c] lt 3)
+                    held = true
+            if not held
+                kept = push[kept, means[c]]
+    return kept
+
+fn by_position[faces]
+    --- the faces from left to right (insertion sort on x, then y)
+    out = faces
+    i = 1
+    while i lt len[out]
+        j = i
+        while j gt 0 and (out[j - 1].x gt out[j].x or (out[j - 1].x eq out[j].x and out[j - 1].y gt out[j].y))
+            t = out[j - 1]
+            out[j - 1] = out[j]
+            out[j] = t
+            j = j - 1
+        i = i + 1
+    return out
+
+--- the photo, its faces
+
+photo = 'AOBABA176.jpg'
+model = 'haarcascade_frontalface_alt.xml'
+fetch_if_missing[photo, 'https://upload.wikimedia.org/wikipedia/commons/a/a0/AOBABA176.jpg']
+fetch_if_missing[model, 'https://raw.githubusercontent.com/opencv/opencv/4.x/data/haarcascades/haarcascade_frontalface_alt.xml']
+
+data = bytes_of[photo]
+jpeg = parse[data]
+parts = entropy_coded[data, jpeg.start]
+gray = gray_at_half[jpeg, low_frequencies[jpeg, parts[0], parts[1]]]
+log['`photo`: `jpeg.width` x `jpeg.height` pixels, decoded in gray at half size (`gray.shape[1]` x `gray.shape[0]`)']
+
+cascade = read_cascade[text_of[model]]
+log['`model`: `len[cascade.stage_threshold]` stages of `len[cascade.weak_feature]` Haar features on a `cascade.size` x `cascade.size` window']
+
+hits = detect[gray, cascade, 1.1]
+faces = by_position[grouped[hits, 4]]
+log['`len[hits]` windows passed every stage; grouped, they are `len[faces]` faces']
+log['']
+log['Detected `len[faces]` faces, as [x, y, width, height] in the photo\'s pixels:']
+for i in range[len[faces]]
+    f = faces[i]
+    log['Face `i + 1`: [`2 * f.x`, `2 * f.y`, `2 * f.w`, `2 * f.h`]']
+
+marks_svg = for f in faces
+    '<rect x="`2 * f.x`" y="`2 * f.y`" width="`2 * f.w`" height="`2 * f.h`" fill="none" stroke="lime" stroke-width="6"/>'
+svg = concat[['<svg xmlns="http://www.w3.org/2000/svg" width="`jpeg.width`" height="`jpeg.height`">', '<image href="`photo`" width="`jpeg.width`" height="`jpeg.height`"/>'], concat[marks_svg, ['</svg>']]]
+saved = write['faces.svg', join[svg, '\n']]
+if saved.ok
+    log['faces.svg draws them over the photo']

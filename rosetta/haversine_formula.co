@@ -1,0 +1,21 @@
+--- Rosetta Code: Haversine formula
+--- https://rosettacode.org/wiki/Haversine_formula
+--- The great-circle distance from latitudes and longitudes in degrees, by the
+--- haversine formula, with the radius the task recommends (6372.8 km) and with
+--- the mean earth radius (6371 km).
+
+use math
+
+fn radians[degrees]
+    return degrees * pi / 180.0
+
+fn haversine[lat1, lon1, lat2, lon2, radius]
+    dlat = radians[lat2 - lat1]
+    dlon = radians[lon2 - lon1]
+    a = sin[dlat / 2.0] ^ 2 + cos[radians[lat1]] * cos[radians[lat2]] * sin[dlon / 2.0] ^ 2
+    return 2.0 * radius * asin[sqrt[a]]
+
+--- Nashville International Airport (BNA) and Los Angeles International (LAX)
+for radius in [6372.8, 6371.0]
+    km = haversine[36.12, -86.67, 33.94, -118.4, radius]
+    log['BNA to LAX, with a radius of `radius` km: `km` km']

@@ -1,0 +1,74 @@
+--- Rosetta Code: Self-describing numbers
+--- https://rosettacode.org/wiki/Self-describing_numbers
+--- A number is checked by tallying its digits: the digit at each position must be how
+--- many times that position's number occurs. To find them all: a self-describing number
+--- of n digits has digits that add up to n (it counts all n of them) and, weighted by
+--- position, add up to n again (it is the sum of its own digits), so a search builds the
+--- digits left to right, never letting either sum pass n, and checks what it completes.
+--- There can be no more than ten digits (a position past 9 names no digit).
+
+fn digits_of[n]
+    if n eq 0
+        return [0]
+    ds = []
+    m = n
+    while m gt 0
+        ds = push[ds, m % 10]
+        m = m / 10
+    return reverse[ds]
+
+fn is_self_describing[n]
+    ds = digits_of[n]
+    if len[ds] gt 10
+        return false
+    tally = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    for d in ds
+        tally[d] = tally[d] + 1
+    i = 0
+    while i lt len[ds]
+        if ds[i] ne tally[i]
+            return false
+        i = i + 1
+    return true
+
+--- every number of size digits whose digits, and whose digits weighted by position, add
+--- up to size: the digits from pos on, given the sums of those before
+fn candidates[size, pos, number, total, weighted]
+    if pos eq size
+        if total eq size and weighted eq size
+            return [number]
+        return []
+    found = []
+    d = 0
+    if pos eq 0
+        d = 1
+    while d lte 9 and total + d lte size and weighted + pos * d lte size
+        found = concat[found, candidates[size, pos + 1, number * 10 + d, total + d, weighted + pos * d]]
+        d = d + 1
+    return found
+
+log['Self-describing?']
+for n in [1210, 2020, 21200, 3211000, 42101000, 1211, 2021, 22, 1, 0]
+    answer = 'no'
+    if is_self_describing[n]
+        answer = 'yes'
+    log['`fmt[n, width = 10]`  `answer`']
+log['']
+
+found = []
+tried = 0
+for size in range[1, 11]
+    for n in candidates[size, 0, 0, 0, 0]
+        tried = tried + 1
+        if is_self_describing[n]
+            found = push[found, n]
+shown = join[found, ' ']
+log['All self-describing numbers (`tried` candidates checked):']
+log[shown]
+
+--- the same below 100,000 by checking every number
+slow = for n in range[1, 100000]
+    if is_self_describing[n]
+        n
+shown_slow = join[slow, ' ']
+log['Checking every number below 100,000: `shown_slow`']

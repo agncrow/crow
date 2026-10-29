@@ -1,0 +1,60 @@
+--- Rosetta Code: First power of 2 that has leading decimal digits of 12
+--- https://rosettacode.org/wiki/First_power_of_2_that_has_leading_decimal_digits_of_12
+--- 2^j begins with the digits of L when the fractional part of j * log10(2) lies in
+--- the window [log10(L), log10(L + 1)), both taken less their whole part. Two hits
+--- j and j + g lie within the window's width w of each other, so only the offsets
+--- g whose step g * log10(2) lands within w of a whole number can join them: from
+--- each hit the next is the first of those offsets that lands, a few tries a hit
+--- (successive hits differ by at most three amounts) instead of every power.
+
+use math
+
+struct Window [lo, hi]
+
+fn frac[x]
+    return x - floor[x]
+
+fn window_of[l]
+    places = len[str[l]] - 1
+    return Window[log10[l] - places, log10[l + 1] - places]
+
+fn hits[j, w]
+    x = frac[j * log10[2.0]]
+    return x gte w.lo and x lt w.hi
+
+--- the offsets up to limit whose step lies within the window's width of a whole number
+fn joining_offsets[w, limit]
+    width = w.hi - w.lo
+    offsets = for g in range[1, limit]
+        x = frac[g * log10[2.0]]
+        if x lt width or 1.0 - x lt width
+            g
+    return offsets
+
+--- the hit after j: no offset outside the list can reach one
+fn next_hit[j, w, offsets]
+    i = 0
+    while i lt len[offsets]
+        if hits[j + offsets[i], w]
+            return j + offsets[i]
+        i = i + 1
+    k = j + offsets[-1] + 1
+    while not hits[k, w]
+        k = k + 1
+    return k
+
+fn p[l, n]
+    w = window_of[l]
+    offsets = joining_offsets[w, ceil[4.0 / (w.hi - w.lo)]]
+    j = 0
+    while not hits[j, w]
+        j = j + 1
+    count = 1
+    while count lt n
+        j = next_hit[j, w, offsets]
+        count = count + 1
+    return j
+
+for case in [[12, 1], [12, 2], [123, 45], [123, 12345], [123, 678910]]
+    log['p(`case[0]`, `case[1]`) = `p[case[0], case[1]]`']
+log['2^7 = `2 ^ 7` and 2^80 = `2 ^ 80`']

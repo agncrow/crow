@@ -1,0 +1,5 @@
+Through (22.83, 2.07), (14.39, 30.24) and (33.65, 17.31):
+    centre (18.978515660148815, 16.26541079771587), radius 14.70862397833418
+    rounded: centre (18.98, 16.27), radius 14.71
+    the three points lie 14.708623978334, 14.708623978334, 14.708623978334 from the centre
+(0, 0), (1, 1) and (2.5, 2.5): no circle, the points lie on one line

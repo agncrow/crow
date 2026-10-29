@@ -1,0 +1,98 @@
+--- Rosetta Code: Super-Poulet numbers
+--- https://rosettacode.org/wiki/Super-Poulet_numbers
+--- A Poulet number is a composite n with 2^(n - 1) = 1 modulo n; it is super-Poulet
+--- when every divisor d above 1 has 2^d = 2 modulo d. Poulet numbers are odd, so
+--- the odd numbers are tried, a block at a time, the block's tests running at once.
+--- A number that passes the first test is prime unless Miller-Rabin to the bases
+--- 2, 3 and 5 (certain below 25,326,001) finds it composite; then each divisor is
+--- tested, the divisors found by trial division up to the square root.
+
+--- base ^ exp modulo m, by repeated squaring
+fn pow_mod[base, exp, m]
+    result = 1
+    b = base % m
+    e = exp
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+--- whether the base a leaves the odd n > a possibly prime (a strong probable prime)
+fn strong[n, a]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    x = pow_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return true
+    k = 1
+    while k lt s
+        x = x * x % n
+        if x eq n - 1
+            return true
+        k = k + 1
+    return false
+
+--- whether the odd n, 7 or more and below 25,326,001, is prime
+fn is_prime[n]
+    return strong[n, 2] and strong[n, 3] and strong[n, 5]
+
+--- whether every divisor d of the odd n, other than 1 and n, has 2^d = 2 modulo d
+fn divisors_pass[n]
+    i = 3
+    while i * i lte n
+        if n % i eq 0
+            if pow_mod[2, i, i] ne 2 or pow_mod[2, n / i, n / i] ne 2
+                return false
+        i = i + 2
+    return true
+
+fn super_poulet[n]
+    if pow_mod[2, n - 1, n] ne 1 or is_prime[n]
+        return false
+    return divisors_pass[n]
+
+--- the super-Poulet numbers in order, up to the first above limit
+fn super_poulets[limit]
+    found = []
+    low = 7
+    block = 20000
+    while len[found] eq 0 or found[-1] lte limit
+        hits = for n in range[low, low + block, 2]
+            if super_poulet[n]
+                n
+        found = concat[found, hits]
+        low = low + block
+    return found
+
+fn first_above[xs, limit]
+    i = 0
+    while xs[i] lte limit
+        i = i + 1
+    return i
+
+fn ordinal[n]
+    suffix = 'th'
+    if n % 100 lt 11 or n % 100 gt 13
+        if n % 10 eq 1
+            suffix = 'st'
+        else if n % 10 eq 2
+            suffix = 'nd'
+        else if n % 10 eq 3
+            suffix = 'rd'
+    return '`n``suffix`'
+
+found = super_poulets[10000000]
+first = for n in slice[found, 0, 20]
+    str[n]
+shown = join[first, ', ']
+log['The first 20 super-Poulet numbers:']
+log[shown]
+log['']
+for limit in [1000000, 10000000]
+    i = first_above[found, limit]
+    log['The first super-Poulet number above `fmt[limit, commas = true]` is the `ordinal[i + 1]`: `fmt[found[i], commas = true]`']

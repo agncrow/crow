@@ -1,0 +1,29 @@
+--- a map keyed by an int the width pass cannot bound (`10 ^ xs[0]`): the
+--- key is no value the map holds — read as one, its values had been typed
+--- growing ints and the lowered program disagreed with itself — and a list
+--- of a map's values holds what the map holds (`values` of a map of growing
+--- ints had been typed as the map, then narrowed to 64 bits)
+fn sized[xs]
+    m = set[map[], 10 ^ xs[0], 7]
+    vs = values[m]
+    return len[vs]
+
+fn paired[xs]
+    m = map[]
+    for x in xs
+        m = set[m, 10 ^ x, x]
+    vs = for k in keys[m]
+        m[k]
+    return len[map[vs, vs]]
+
+fn grown[n]
+    m = set[map[], 1, 2 ^ n]
+    m = set[m, 2, 3]
+    return values[m]
+
+firsts = [10 ^ 2, 10 ^ 3]
+lasts = [1, 2]
+log[sized[[2, 3]]]
+log[paired[[2, 3]]]
+log[grown[70]]
+log[map[firsts, lasts]]

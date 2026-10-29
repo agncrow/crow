@@ -1,0 +1,34 @@
+--- Rosetta Code: Perfect shuffle
+--- https://rosettacode.org/wiki/Perfect_shuffle
+--- The shuffled deck's card at place i comes from place i / 2 of the left half
+--- when i is even, of the right half when i is odd; a deck is shuffled until it
+--- is back in its first order.
+
+--- the deck cut into equal halves and the halves interleaved, left card first
+fn shuffle[deck]
+    half = len[deck] / 2
+    shuffled = for i in range[len[deck]]
+        deck[i / 2 + i % 2 * half]
+    return shuffled
+
+fn shuffles_to_restore[size]
+    original = range[size]
+    deck = shuffle[original]
+    count = 1
+    while deck ne original
+        deck = shuffle[deck]
+        count = count + 1
+    return count
+
+log['The eight cards 1 to 8, shuffled until they are back in order:']
+deck = range[1, 9]
+log[join[deck, ' ']]
+deck = shuffle[deck]
+while deck ne range[1, 9]
+    log[join[deck, ' ']]
+    deck = shuffle[deck]
+log[join[deck, ' ']]
+log['']
+log['Deck size   Shuffles']
+for size in [8, 24, 52, 100, 1020, 1024, 10000]
+    log['`fmt[size, width = 9]``fmt[shuffles_to_restore[size], width = 11]`']

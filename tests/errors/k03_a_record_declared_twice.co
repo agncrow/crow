@@ -1,0 +1,7 @@
+--- a record declared twice is refused at the second, naming the first —
+--- interpreted the later had won, and the compiled program had not built
+--- (Rosetta Code, Sealed classes and methods)
+
+struct P [a]
+struct P [a, b]
+log[P[1, 2]]

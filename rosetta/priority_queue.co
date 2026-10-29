@@ -1,0 +1,143 @@
+--- Rosetta Code: Priority queue
+--- https://rosettacode.org/wiki/Priority_queue
+--- A binary heap held in a list: the entry at i has its children at 2i + 1 and 2i + 2,
+--- and no child comes before its parent. Insertion adds at the end and moves the entry
+--- up; removing the top moves the last entry to the root and down: each O(log n). The
+--- smallest number is the top priority, as the task's data reads (1 = Solve RC tasks).
+--- A queue is a value: each operation answers the new queue. Also peek, size and merge
+--- (two queues joined and made a heap again in O(n)).
+
+use math
+
+struct Entry [priority, task]
+
+--- whether entry a comes out before entry b
+fn before[a, b]
+    return a.priority lt b.priority
+
+--- the heap with the entry at i moved up past every parent it comes before
+fn sift_up[heap, i]
+    while i gt 0
+        parent = (i - 1) / 2
+        if not before[heap[i], heap[parent]]
+            break
+        held = heap[i]
+        heap[i] = heap[parent]
+        heap[parent] = held
+        i = parent
+    return heap
+
+--- the heap with the entry at i moved down below every child that comes before it
+fn sift_down[heap, i]
+    n = len[heap]
+    while true
+        left = 2 * i + 1
+        right = left + 1
+        least = i
+        if left lt n and before[heap[left], heap[least]]
+            least = left
+        if right lt n and before[heap[right], heap[least]]
+            least = right
+        if least eq i
+            break
+        held = heap[i]
+        heap[i] = heap[least]
+        heap[least] = held
+        i = least
+    return heap
+
+fn insert[queue, priority, task]
+    at = len[queue]
+    heap = push[queue, Entry[priority, task]]
+    return sift_up[heap, at]
+
+--- the entry with the top priority, without removing it
+fn peek[queue]
+    if len[queue] eq 0
+        return error['the queue is empty', 'empty']
+    return queue[0]
+
+--- the queue without its top entry
+fn removed[queue]
+    if len[queue] lte 1
+        return []
+    last = queue[-1]
+    heap = pop[queue]
+    heap[0] = last
+    return sift_down[heap, 0]
+
+--- both queues' entries in one queue: the lists joined, then every parent sifted
+--- down from the last one up
+fn merged[a, b]
+    heap = concat[a, b]
+    i = len[heap] / 2 - 1
+    while i gte 0
+        heap = sift_down[heap, i]
+        i = i - 1
+    return heap
+
+--- every entry, top priority first, removing them one by one
+fn drained[queue]
+    out = []
+    while len[queue] gt 0
+        out = push[out, peek[queue]]
+        queue = removed[queue]
+    return out
+
+fn shown[entries]
+    parts = for e in entries
+        '`e.priority` `e.task`'
+    join[parts, ', ']
+
+queue = []
+queue = insert[queue, 3, 'Clear drains']
+queue = insert[queue, 4, 'Feed cat']
+queue = insert[queue, 5, 'Make tea']
+queue = insert[queue, 1, 'Solve RC tasks']
+queue = insert[queue, 2, 'Tax return']
+first = peek[queue]
+log['size `len[queue]`, top: `first.priority` `first.task`']
+log['Priority  Task']
+while len[queue] gt 0
+    e = peek[queue]
+    log['`fmt[e.priority, width = 8]`  `e.task`']
+    queue = removed[queue]
+empty = peek[queue]
+log['peek at the empty queue: `empty.reason`']
+
+--- random priorities come out in order
+seed[42]
+jobs = []
+k = 1
+while k lte 12
+    jobs = insert[jobs, rand[1, 99], 'job `k`']
+    k = k + 1
+log['']
+log['Twelve jobs of random priority, as they come out:']
+log[shown[drained[jobs]]]
+
+--- two queues merged into one
+home = insert[insert[insert[[], 7, 'Mow lawn'], 2, 'Pay bills'], 9, 'Paint fence']
+work = insert[insert[[], 6, 'Write report'], 1, 'Fix outage']
+log['']
+log['Two queues merged:']
+log[shown[drained[merged[home, work]]]]
+
+--- a larger test: 100,000 random priorities in, then out in order (a second a mode)
+big = []
+k = 0
+while k lt 100000
+    big = insert[big, rand[1, 1000000], 'x']
+    k = k + 1
+last = 0
+ordered = true
+count = 0
+while len[big] gt 0
+    e = peek[big]
+    if e.priority lt last
+        ordered = false
+    last = e.priority
+    big = removed[big]
+    count = count + 1
+log['']
+log['100,000 random priorities: `fmt[count, commas = true]` out, in order: `ordered`']

@@ -1,0 +1,32 @@
+--- A list of whole numbers written down for a variable the program grows
+--- with `push`, or writes by position, is a list of ints, which keeps
+--- every digit: as a tensor it had held floats, rounding past 2^53
+--- interpreted and overflowing compiled — Fibonacci grown from `[0, 1]`
+--- went wrong at its 79th number (Rosetta Code, Abundant odd numbers, Bell
+--- numbers, Abelian sandpile model).
+fib = [0, 1]
+while len[fib] lt 101
+    fib = push[fib, fib[-1] + fib[-2]]
+log[fib[90]]
+log[fib[100]]
+
+xs = [1, 2]
+xs = push[xs, 2 ^ 70]
+log[xs]
+log[xs[2] eq 2 ^ 70]
+
+ys = [0, 1]
+ys[0] = 2 ^ 60 + 1
+log[ys[0]]
+
+fn powers[n]
+    out = [1]
+    for i in range[n]
+        out = push[out, out[-1] * 3]
+    return out
+
+log[powers[42][-1]]
+
+--- a list nothing grows stays the tensor it was written as
+v = [1, 2, 3]
+log[v * 2]

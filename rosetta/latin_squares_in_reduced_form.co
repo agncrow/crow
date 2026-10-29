@@ -1,0 +1,111 @@
+--- Rosetta Code: Latin Squares in reduced form
+--- https://rosettacode.org/wiki/Latin_Squares_in_reduced_form
+--- As the task builds them: row i of a reduced square is a derangement of 1 to n
+--- that starts with i and clashes with no row above it. A row is coded as a set
+--- of bits, one per (column, item) it holds, so two rows clash exactly where their
+--- codes share a bit. The squares come out in lexicographic order of their rows,
+--- and square g of order n is the g-th of them.
+
+use bits
+
+fn permutations_of[items]
+    --- every order of the items, in lexicographic order of their places
+    if len[items] lte 1
+        return [items]
+    orders = []
+    for i in range[len[items]]
+        rest = concat[slice[items, 0, i], slice[items, i + 1, len[items]]]
+        for tail in permutations_of[rest]
+            orders = push[orders, concat[[items[i]], tail]]
+    return orders
+
+fn deranged[row]
+    for j in range[len[row]]
+        if row[j] eq j + 1
+            return false
+    return true
+
+fn rows_starting[n, first]
+    --- the derangements of 1 to n that begin with first
+    others = for v in range[1, n + 1]
+        if v ne first
+            v
+    rows = []
+    for tail in permutations_of[others]
+        row = concat[[first], tail]
+        if deranged[row]
+            rows = push[rows, row]
+    return rows
+
+fn code_of[row]
+    n = len[row]
+    code = 0
+    for j in range[n]
+        code = bitor[code, shift[1, j * n + row[j] - 1]]
+    return code
+
+fn completions[square, taken, candidates]
+    --- every reduced square whose first rows are these (taken: their codes)
+    i = len[square]
+    if i eq len[candidates]
+        return [square]
+    found = []
+    for row in candidates[i]
+        code = code_of[row]
+        if bitand[taken, code] eq 0
+            found = concat[found, completions[push[square, row], bitor[taken, code], candidates]]
+    return found
+
+fn reduced_squares[n]
+    first = range[1, n + 1]
+    candidates = [[first]]
+    for i in range[2, n + 1]
+        candidates = push[candidates, rows_starting[n, i]]
+    return completions[[first], code_of[first], candidates]
+
+fn numbered[squares, g]
+    --- square g of a set, counting from 1 in the order the search makes them
+    if g lt 1 or g gt len[squares]
+        return error['g is 1 to `len[squares]` here, not `g`', 'range']
+    return squares[g - 1]
+
+fn factorial[n]
+    product = 1
+    for i in range[2, n + 1]
+        product = product * i
+    return product
+
+fn show[square]
+    for row in square
+        log[row]
+    log['']
+
+log['The four reduced latin squares of order 4 are:']
+log['']
+for square in reduced_squares[4]
+    show[square]
+
+log['The size of the set of reduced latin squares for the following orders,']
+log['the total number of latin squares of these orders, and OEIS A002860:']
+log['']
+oeis = [1, 2, 12, 576, 161280, 812851200]
+by_order = []
+for n in range[1, 7]
+    squares = reduced_squares[n]
+    by_order = push[by_order, squares]
+    size = len[squares]
+    total = size * factorial[n] * factorial[n - 1]
+    agrees = 'agrees'
+    if total ne oeis[n - 1]
+        agrees = 'DIFFERS'
+    shown_size = fmt[size, width = 4, align = 'left']
+    log['Order `n`: Size `shown_size` x `n`! x `n - 1`! => Total `fmt[total, width = 9]`   A002860: `fmt[oeis[n - 1], width = 9]` `agrees`']
+
+log['']
+for pick in [[5, 42], [6, 1], [6, 5000], [6, 9408]]
+    n = pick[0]
+    g = pick[1]
+    log['Square g = `g` of the `len[by_order[n - 1]]` reduced squares of order `n`:']
+    show[numbered[by_order[n - 1], g]]
+beyond = numbered[by_order[5], 9409]
+log['Square g = 9409 of order 6: `beyond.reason`']

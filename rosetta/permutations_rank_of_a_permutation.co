@@ -1,0 +1,161 @@
+--- Rosetta Code: Permutations/Rank of a permutation
+--- https://rosettacode.org/wiki/Permutations/Rank_of_a_permutation
+--- Lexicographic ranks (the task's table) through the factorial number system: the rank's
+--- digits, from the most significant, count the smaller items right of each place, and
+--- unranking reads them back, each taking the item that many places along those left.
+--- Also Myrvold and Ruskey's linear-time ranking (an order of its own, made by swaps),
+--- which suits the Stack Overflow question. Ints grow, so a rank of 144 items (830 bits)
+--- is a plain int.
+---
+--- Stretch goal, the Stack Overflow question (a million different random permutations of
+--- 144 items): measured on this program's functions, a million random ranks unranked by
+--- Myrvold and Ruskey's method and ranked back took about 36 seconds compiled (crow build)
+--- and 110 seconds interpreted, so the question is well within reach; the run below makes
+--- 10,000 of them, which takes a second or two.
+
+use math
+
+fn fact[n]
+    f = 1
+    for k in range[2, n + 1]
+        f = f * k
+    f
+
+--- The permutation of 0..n-1 whose lexicographic rank is r.
+fn lex_unrank[n, r]
+    --- r's digits in the factorial base, least significant first: digit j weighs j!
+    digits = []
+    for j in range[1, n + 1]
+        digits = push[digits, r % j]
+        r = r / j
+    left = range[n]
+    perm = []
+    for i in range[n]
+        d = digits[n - 1 - i]
+        perm = push[perm, left[d]]
+        left = concat[slice[left, 0, d], slice[left, d + 1, len[left]]]
+    perm
+
+--- The lexicographic rank of a permutation of 0..n-1: the count of smaller items right of
+--- each place, read as factorial-base digits (by Horner's rule).
+fn lex_rank[perm]
+    n = len[perm]
+    r = 0
+    for i in range[n]
+        smaller = 0
+        for j in range[i + 1, n]
+            if perm[j] lt perm[i]
+                smaller = smaller + 1
+        r = r * (n - i) + smaller
+    r
+
+--- Myrvold and Ruskey's unranking: swap the last item with the one at r mod n, then the
+--- same for the n - 1 items before it with r / n, and so on.
+fn mr_unrank[n, r]
+    perm = range[n]
+    k = n
+    while k gt 0
+        j = r % k
+        t = perm[k - 1]
+        perm[k - 1] = perm[j]
+        perm[j] = t
+        r = r / k
+        k = k - 1
+    perm
+
+--- Its inverse: undo the swaps from the end, with the inverse permutation to find where
+--- each item lies; the item found last at place k - 1 is the digit of weight n(n-1)..(k+1).
+fn mr_rank[perm]
+    n = len[perm]
+    place = range[n]
+    for i in range[n]
+        place[perm[i]] = i
+    r = 0
+    weight = 1
+    k = n
+    while k gt 1
+        last = k - 1
+        s = perm[last]
+        at = place[last]
+        perm[last] = last
+        perm[at] = s
+        place[s] = at
+        place[last] = last
+        r = r + s * weight
+        weight = weight * k
+        k = k - 1
+    r
+
+--- The items in columns of the given width.
+fn shown[items, width]
+    parts = for x in items
+        fmt[x, width = width]
+    join[parts, '']
+
+--- A random int from 0 up to below limit, each equally likely: random bits, as many as
+--- the limit needs, drawn 30 at a time, and drawn again while they make too large a number.
+fn random_below[limit]
+    bits = 0
+    span = 1
+    while span lt limit
+        span = span * 2
+        bits = bits + 1
+    while true
+        r = 0
+        b = 0
+        while b lt bits
+            take = min[30, bits - b]
+            r = r * 2 ^ take + rand[2 ^ take]
+            b = b + take
+        if r lt limit
+            return r
+
+--- count different random ranks below limit
+fn random_ranks[limit, count]
+    ranks = []
+    while len[ranks] lt count
+        r = random_below[limit]
+        if r not in ranks
+            ranks = push[ranks, r]
+    ranks
+
+seed[2026]
+
+log['The permutations of 0 1 2 3 in lexicographic order, ranked:']
+for r in range[fact[4]]
+    p = lex_unrank[4, r]
+    log['  `shown[p, 3]`  ->  `fmt[lex_rank[p], width = 2]`']
+log['']
+log['For n = 3, lex_unrank and lex_rank are inverses:']
+for r in range[fact[3]]
+    p = lex_unrank[3, r]
+    log['  rank `r` -> `shown[p, 3]` -> rank `lex_rank[p]`']
+log['']
+log['Four random permutations of 12 items (lexicographic unranking of random ranks):']
+for r in random_ranks[fact[12], 4]
+    log['  rank `fmt[r, width = 9]`: `shown[lex_unrank[12, r], 3]`']
+log['']
+log['Myrvold and Ruskey\'s order for n = 3, unranked and ranked back:']
+for r in range[fact[3]]
+    p = mr_unrank[3, r]
+    log['  rank `r` -> `shown[p, 3]` -> rank `mr_rank[p]`']
+
+log['']
+log['The Stack Overflow question, smaller: 144 items have 144! orders, a number of `len[str[fact[144]]]` digits.']
+log['Four random permutations of 144 items (Myrvold and Ruskey\'s unranking):']
+for r in random_ranks[fact[144], 4]
+    p = mr_unrank[144, r]
+    for start in range[0, 144, 18]
+        log['  `shown[slice[p, start, start + 18], 4]`']
+    log['  ranked back to its rank: `mr_rank[p] eq r`']
+log['']
+count = 10000
+limit = fact[144]
+ranks = map[]
+back = 0
+for k in range[count]
+    r = random_below[limit]
+    if mr_rank[mr_unrank[144, r]] eq r
+        back = back + 1
+    ranks = set[ranks, str[r], true]
+log['`count` random permutations of 144 items: `len[ranks]` different ranks, `back` ranked back to their ranks.']

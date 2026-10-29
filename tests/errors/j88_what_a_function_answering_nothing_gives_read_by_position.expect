@@ -1,0 +1,3 @@
+j88_what_a_function_answering_nothing_gives_read_by_position.co:9:5: 'x' holds no value — the function it came from answers nothing, only whether it failed (`.ok`) — and `[…]` reads an item of a list, a map, text or a column
+  9 │ log[x[0]]
+    │     ^

@@ -1,0 +1,14 @@
+--- A moment's text reads back as the moment, in every year a moment holds:
+--- outside 0 to 9999 the year is written with its sign and four digits or
+--- more, as ISO 8601's expanded form and `fmt`'s date style write it. The
+--- sign had counted among the four digits (`-005-06-01`), which read back a
+--- day off, and a year past 9999 had not read back at all (Rosetta Code,
+--- Find the last Sunday of each month).
+
+for y in [-5, 0, 1, 1969, 9999, 10000, 200000]
+    t = moment[y, 6, 1]
+    back = moment[str[t]]
+    log[str[t], fmt[t, style = 'date'], back eq t, moment[fmt[t, style = 'date']] eq t]
+u = moment[-44, 3, 15, 12, 30, 0]
+log[u, moment[str[u]] eq u]
+log[encode[[moment[12345, 1, 2]]]]

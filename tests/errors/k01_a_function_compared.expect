@@ -1,0 +1,3 @@
+k01_a_function_compared.co:10:5: eq compares values, and a function is none — compare what it answers, or its name: describe[f].name
+  10 │     return a eq b
+     │     ^^^^^^^^^^^^^

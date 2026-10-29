@@ -1,0 +1,178 @@
+The 15 puzzle: put the tiles in order, 1 to 15 with the gap last.
+
+  2  9  7  3
+  1 14  5  4
+ 11 12 10  8
+  6 13 15  .
+Move 1, the tile to slide (q quits): 'hello' is not a tile number.
+Move 1, the tile to slide (q quits): There is no tile 16: the tiles are 1 to 15.
+Move 1, the tile to slide (q quits): Tile 1 is not next to the gap.
+Move 1, the tile to slide (q quits): Tile 15 slides right.
+
+  2  9  7  3
+  1 14  5  4
+ 11 12 10  8
+  6 13  . 15
+Move 2, the tile to slide (q quits): Tile 10 slides down.
+
+  2  9  7  3
+  1 14  5  4
+ 11 12  .  8
+  6 13 10 15
+Move 3, the tile to slide (q quits): Tile 12 slides right.
+
+  2  9  7  3
+  1 14  5  4
+ 11  . 12  8
+  6 13 10 15
+Move 4, the tile to slide (q quits): Tile 14 slides down.
+
+  2  9  7  3
+  1  .  5  4
+ 11 14 12  8
+  6 13 10 15
+Move 5, the tile to slide (q quits): Tile 9 slides down.
+
+  2  .  7  3
+  1  9  5  4
+ 11 14 12  8
+  6 13 10 15
+Move 6, the tile to slide (q quits): Tile 2 slides right.
+
+  .  2  7  3
+  1  9  5  4
+ 11 14 12  8
+  6 13 10 15
+Move 7, the tile to slide (q quits): Tile 1 slides up.
+
+  1  2  7  3
+  .  9  5  4
+ 11 14 12  8
+  6 13 10 15
+Move 8, the tile to slide (q quits): Tile 9 slides left.
+
+  1  2  7  3
+  9  .  5  4
+ 11 14 12  8
+  6 13 10 15
+Move 9, the tile to slide (q quits): Tile 5 slides left.
+
+  1  2  7  3
+  9  5  .  4
+ 11 14 12  8
+  6 13 10 15
+Move 10, the tile to slide (q quits): Tile 7 slides down.
+
+  1  2  .  3
+  9  5  7  4
+ 11 14 12  8
+  6 13 10 15
+Move 11, the tile to slide (q quits): Tile 3 slides left.
+
+  1  2  3  .
+  9  5  7  4
+ 11 14 12  8
+  6 13 10 15
+Move 12, the tile to slide (q quits): Tile 4 slides up.
+
+  1  2  3  4
+  9  5  7  .
+ 11 14 12  8
+  6 13 10 15
+Move 13, the tile to slide (q quits): Tile 8 slides up.
+
+  1  2  3  4
+  9  5  7  8
+ 11 14 12  .
+  6 13 10 15
+Move 14, the tile to slide (q quits): Tile 12 slides right.
+
+  1  2  3  4
+  9  5  7  8
+ 11 14  . 12
+  6 13 10 15
+Move 15, the tile to slide (q quits): Tile 14 slides right.
+
+  1  2  3  4
+  9  5  7  8
+ 11  . 14 12
+  6 13 10 15
+Move 16, the tile to slide (q quits): Tile 11 slides right.
+
+  1  2  3  4
+  9  5  7  8
+  . 11 14 12
+  6 13 10 15
+Move 17, the tile to slide (q quits): Tile 6 slides up.
+
+  1  2  3  4
+  9  5  7  8
+  6 11 14 12
+  . 13 10 15
+Move 18, the tile to slide (q quits): Tile 13 slides left.
+
+  1  2  3  4
+  9  5  7  8
+  6 11 14 12
+ 13  . 10 15
+Move 19, the tile to slide (q quits): Tile 10 slides left.
+
+  1  2  3  4
+  9  5  7  8
+  6 11 14 12
+ 13 10  . 15
+Move 20, the tile to slide (q quits): Tile 14 slides down.
+
+  1  2  3  4
+  9  5  7  8
+  6 11  . 12
+ 13 10 14 15
+Move 21, the tile to slide (q quits): Tile 11 slides right.
+
+  1  2  3  4
+  9  5  7  8
+  6  . 11 12
+ 13 10 14 15
+Move 22, the tile to slide (q quits): Tile 6 slides right.
+
+  1  2  3  4
+  9  5  7  8
+  .  6 11 12
+ 13 10 14 15
+Move 23, the tile to slide (q quits): Tile 9 slides down.
+
+  1  2  3  4
+  .  5  7  8
+  9  6 11 12
+ 13 10 14 15
+Move 24, the tile to slide (q quits): Tile 5 slides left.
+
+  1  2  3  4
+  5  .  7  8
+  9  6 11 12
+ 13 10 14 15
+Move 25, the tile to slide (q quits): Tile 6 slides up.
+
+  1  2  3  4
+  5  6  7  8
+  9  . 11 12
+ 13 10 14 15
+Move 26, the tile to slide (q quits): Tile 10 slides up.
+
+  1  2  3  4
+  5  6  7  8
+  9 10 11 12
+ 13  . 14 15
+Move 27, the tile to slide (q quits): Tile 14 slides left.
+
+  1  2  3  4
+  5  6  7  8
+  9 10 11 12
+ 13 14  . 15
+Move 28, the tile to slide (q quits): Tile 15 slides left.
+
+  1  2  3  4
+  5  6  7  8
+  9 10 11 12
+ 13 14 15  .
+Solved in 28 moves!

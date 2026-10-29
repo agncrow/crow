@@ -1,0 +1,29 @@
+--- Rosetta Code: Thue-Morse
+--- https://rosettacode.org/wiki/Thue-Morse
+--- Two ways: each generation is the last followed by its complement (0 and 1
+--- swapped), and term n is the parity of the ones in n's binary digits. Both
+--- give the same 64 terms.
+
+use bits
+
+fn generations[count]
+    seq = '0'
+    shown = [seq]
+    while len[shown] lt count
+        seq = concat[seq, translate[seq, '01', '10']]
+        shown = push[shown, seq]
+    return shown
+
+fn by_parity[count]
+    digits = for n in range[count]
+        str[bitcount[n] % 2]
+    return join[digits, '']
+
+lines = generations[7]
+for line in lines
+    log[line]
+
+first64 = by_parity[64]
+log['']
+log['By the parity of the ones in n: `first64`']
+log['The two ways agree: `first64 eq lines[6]`']

@@ -1,0 +1,37 @@
+--- Rosetta Code: ABC correlation
+--- https://rosettacode.org/wiki/ABC_correlation
+--- Count each of a, b and c with occurs, every other character ignored, and
+--- compare the counts. The string to test is read from standard input; then
+--- a few more, and, as several other solutions do, the words of unixdict.txt
+--- that hold each of the three letters equally often, at least once.
+
+fn abc_equal[s]
+    a = occurs[s, 'a']
+    return a eq occurs[s, 'b'] and a eq occurs[s, 'c']
+
+fn show[s]
+    log['"`s`" -> `abc_equal[s]`']
+
+--- the items, so many to a line, each padded to one width
+fn show_in_rows[items, per_row]
+    width = 0
+    for item in items
+        width = max[width, len[item] + 1]
+    i = 0
+    while i lt len[items]
+        cells = for item in slice[items, i, i + per_row]
+            fmt[item, width = width]
+        log[trim[join[cells, '']]]
+        i = i + per_row
+
+show[input[]]
+for s in ['abc', 'abcc', 'back', 'Back', 'aabbcc', 'abbccc', 'gone', '', 'cabbage crab cobbler']
+    show[s]
+
+words = split[read['unixdict.txt'], '\n']
+found = for w in words
+    if 'a' in w and abc_equal[w]
+        w
+log['']
+log['`len[found]` words of unixdict.txt hold as many a\'s as b\'s as c\'s, at least one of each:']
+show_in_rows[found, 6]

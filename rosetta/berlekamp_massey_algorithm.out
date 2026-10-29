@@ -1,0 +1,22 @@
+The task example, over GF(2):
+  sequence:      0 0 1 1 0 1 0
+  C(x) = 1 + x + x^2 + x^4, linear complexity 4
+  recurrence:    s(n) = s(n-1) + s(n-2) + s(n-4)
+  the register:  0 0 1 1 0 1 0 | 0 0 1 1 0 1 0 0
+  it regenerates the sequence
+
+20 bits of the register 1 + x^3 + x^5, over GF(2):
+  sequence:      1 0 0 0 0 1 0 0 1 0 1 1 0 0 1 1 1 1 1 0
+  C(x) = 1 + x^3 + x^5, linear complexity 5
+  recurrence:    s(n) = s(n-3) + s(n-5)
+  the register:  1 0 0 0 0 1 0 0 1 0 1 1 0 0 1 1 1 1 1 0 | 0 0 1 1 0 1 1 1 0 1 0
+  it regenerates the sequence
+
+The first ten Fibonacci numbers, over GF(1000000007):
+  sequence:      0 1 1 2 3 5 8 13 21 34
+  C(x) = 1 - x - x^2, linear complexity 2
+  recurrence:    s(n) = s(n-1) + s(n-2)
+  the register:  0 1 1 2 3 5 8 13 21 34 | 55 89 144 233
+  it regenerates the sequence
+
+Fibonacci numbers 35 to 40 from that register: 9227465 14930352 24157817 39088169 63245986 102334155

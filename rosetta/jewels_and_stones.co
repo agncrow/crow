@@ -1,0 +1,16 @@
+--- Rosetta Code: Jewels and stones
+--- https://rosettacode.org/wiki/Jewels_and_stones
+--- Each character of the stones counts when the jewels' text holds it; case
+--- matters, since 'a' and 'A' are different characters.
+
+fn count_jewels[stones, jewels]
+    kept = for stone in split[stones, '']
+        if stone in jewels
+            stone
+    return len[kept]
+
+examples = [['aAAbbbb', 'aA'], ['ZZ', 'z'], ['', 'abc'], ['Mississippi', 'is'], ['The quick brown fox', 'aeiou']]
+for pair in examples
+    stones = pair[0]
+    jewels = pair[1]
+    log['stones \'`stones`\', jewels \'`jewels`\': `count_jewels[stones, jewels]`']

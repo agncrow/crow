@@ -1,0 +1,40 @@
+-- no arguments --
+42
+-- a fixed number of arguments --
+5
+-- optional arguments, by position and by name --
+Hello, Ada!
+Hi, Ada!
+Hello, Ada?
+Goodbye, Ada.
+-- a variable number of arguments, as a list --
+15
+-- named arguments of a builtin --
+3.142
+0007
+-- calls in statement context: an answer is dropped --
+-- this line is a call in statement context --
+-- the answer of a call, kept and used in an expression --
+92
+-- first-class functions --
+49
+20
+12
+36
+true
+4
+-- the pipe: x then f[a] is f[x, a] --
+8
+49
+-- builtins, a module's functions and the program's are called alike --
+4
+3
+3
+2
+-- arguments are values: the function changes only its own copy --
+the caller still holds [5, 6, 7]; the function answered [0, 6, 7]
+-- a failed argument is the call's answer, and the function does not run --
+false
+cannot convert 'seven' to int
+-- partial application, stood in for by a record --
+15

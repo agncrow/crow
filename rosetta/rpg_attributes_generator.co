@@ -1,0 +1,55 @@
+--- Rosetta Code: RPG attributes generator
+--- https://rosettacode.org/wiki/RPG_attributes_generator
+--- An attribute is four six-sided dice with the lowest dropped; a character's six
+--- attributes, kept in the order rolled, are rolled again until they total at
+--- least 75 with at least two of 15 or more. The generator is seeded, so every
+--- run rolls the same five characters.
+
+use math
+
+fn attribute[]
+    dice = for i in range[4]
+        rand[1, 6]
+    kept = slice[sort[dice], 1, 4]
+    kept[0] + kept[1] + kept[2]
+
+fn six_attributes[]
+    scores = for i in range[6]
+        attribute[]
+    scores
+
+fn total_of[scores]
+    total = 0
+    for v in scores
+        total = total + v
+    total
+
+fn high_ones[scores]
+    count = 0
+    for v in scores
+        if v gte 15
+            count = count + 1
+    count
+
+fn acceptable[scores]
+    total_of[scores] gte 75 and high_ones[scores] gte 2
+
+--- the attributes accepted, and how many sets were rolled to get them
+struct Character [scores, sets]
+
+fn character[]
+    scores = six_attributes[]
+    sets = 1
+    while not acceptable[scores]
+        scores = six_attributes[]
+        sets = sets + 1
+    Character[scores, sets]
+
+seed[2026]
+log['        STR  DEX  CON  INT  WIS  CHA   total   sets rolled']
+for k in range[1, 6]
+    c = character[]
+    cells = for v in c.scores
+        fmt[v, width = 5]
+    shown = join[cells, '']
+    log['  #`k`  `shown`   `fmt[total_of[c.scores], width = 5]`   `fmt[c.sets, width = 11]`']

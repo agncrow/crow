@@ -1,0 +1,17 @@
+Defined: x: []
+Its value: x has no value yet
+
+After three assignments x is 3, and its history is x: [1, 2, 3].
+Reading the history changed nothing: x is still 3, x: [1, 2, 3].
+
+The three values recalled by their assignments:
+  assignment 1: 1
+  assignment 2: 2
+  assignment 3: 3
+  assignment 4: x was assigned 3 times, so it has no value 4
+
+The three values recalled by undoing, newest first:
+  3, from x: [1, 2, 3]
+  2, from x: [1, 2]
+  1, from x: [1]
+x itself still holds them all: x: [1, 2, 3]

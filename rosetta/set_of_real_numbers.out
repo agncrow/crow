@@ -1,0 +1,42 @@
+The task's test:
+(0, 1] ∪ [0, 2) = [0, 2)             0: in   1: in   2: out
+[0, 2) ∩ (1, 2] = (1, 2)             0: out  1: out  2: out
+[0, 3) − (0, 1) = [0, 0] ∪ [1, 3)    0: in   1: in   2: in
+[0, 3) − [0, 1] = (1, 3)             0: out  1: out  2: in
+
+The examples of each operation:
+1 ∈ [1, 2): true
+2 ∈ [1, 2): false
+3 ∈ [1, 2): false
+[0, 2) ∪ (1, 3) = [0, 3)
+[0, 1) ∪ (2, 3] = [0, 1) ∪ (2, 3]
+[0, 2) ∩ (1, 3) = (1, 2)
+[0, 1) ∩ (2, 3] = ∅
+[0, 2) − (1, 3) = [0, 1]
+
+Infinite ends (ℝ is (-inf, inf)):
+(-inf, 0) ∪ [0, inf) = (-inf, inf)
+(-inf, inf) − [0, 1] = (-inf, 0) ∪ (1, inf)
+(-inf, 5] ∩ [3, inf) = [3, 5]
+(-inf, inf) − (-inf, 0] = (0, inf)
+ℝ − (ℝ − [0, 1]) = [0, 1]
+the length of [0, inf) is inf, of [0, 1] 1
+
+Empty sets:
+[0, 0] is empty: false
+(0, 0) is empty: true
+[0, 0) is empty: true
+(2, 1] is empty: true
+[0, 2) ∩ [2, 3] is empty: true
+[0, 2] ∩ [2, 3] is empty: false
+[0, 1) ∩ (2, 3] is empty: true
+ℝ − ℝ is empty: true
+
+A = {x | 0 < x < 10 and |sin(π x²)| > 1/2} is 100 intervals, B = {x | 0 < x < 10 and |sin(π x)| > 1/2} is 10
+A − B is 40 intervals, the first four:
+    [0.833333, 0.912871)
+    (1.080123, 1.166667]
+    [1.833333, 1.95789)
+    (2.041241, 2.166667]
+the length of A − B is 2.075864841184667
+of 1000000 points spread evenly over (0, 10), 207588 are in A − B by the sines (a length near 2.07588), and the set disagrees with the sines on 0

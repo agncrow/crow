@@ -1,0 +1,15 @@
+--- a predicate a row decides by (`all`, `any`, `find`) answers a truth:
+--- one whose answer can fail is refused before the program runs, with the
+--- fix — interpreted a failure had counted as not passing, silently, and
+--- the compiled program had not built (Rosetta Code, Roman
+--- numerals/Encode)
+
+fn checked[n]
+    if n lt 0
+        return error['negative']
+    return n
+
+fn positive[n]
+    return checked[n] gt 0
+
+log[all[[1, 2, 3], positive]]

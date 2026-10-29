@@ -1,0 +1,195 @@
+--- Rosetta Code: Penrose tiling
+--- https://rosettacode.org/wiki/Penrose_tiling
+--- The rhombus tiling (P3) by deflation of Robinson triangles, each half of a
+--- rhombus: a wheel of ten thin halves round the centre is cut into smaller
+--- halves again and again (as in preshing.com's article). The rectangle
+--- [-0.8, 0.8] x [-0.5, 0.5] inside the wheel is drawn two ways: in characters,
+--- a rhombus's sides as - / | \ with the thin rhombi dotted and the thick left
+--- blank; and as an SVG written to penrose_tiling.svg in the current directory
+--- (the last line removes it again: leave that line out to keep the picture).
+
+use math
+
+struct Point [x, y]
+
+--- half a rhombus: of a thin one, a 36-72-72 triangle with its apex at a; of a
+--- thick one, a 108-36-36 triangle; a-b and a-c are the rhombus's sides and b-c
+--- the diagonal it shares with its other half
+struct Half [thick, a, b, c]
+
+--- the point a fraction t of the way from p to q
+fn toward[p, q, t]
+    return Point[p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t]
+
+fn wheel[]
+    halves = []
+    for i in range[10]
+        b = Point[cos[(2 * i - 1) * pi / 10], sin[(2 * i - 1) * pi / 10]]
+        c = Point[cos[(2 * i + 1) * pi / 10], sin[(2 * i + 1) * pi / 10]]
+        --- every second triangle mirrored, so neighbours meet as halves of a rhombus
+        if i % 2 eq 0
+            halves = push[halves, Half[false, Point[0.0, 0.0], c, b]]
+        else
+            halves = push[halves, Half[false, Point[0.0, 0.0], b, c]]
+    return halves
+
+--- each half cut into two or three halves, smaller by the golden ratio
+fn deflate[halves]
+    cut = 2.0 / (1.0 + sqrt[5.0])
+    finer = []
+    for h in halves
+        if h.thick
+            q = toward[h.b, h.a, cut]
+            r = toward[h.b, h.c, cut]
+            finer = push[finer, Half[true, r, h.c, h.a]]
+            finer = push[finer, Half[true, q, r, h.b]]
+            finer = push[finer, Half[false, r, q, h.a]]
+        else
+            p = toward[h.a, h.b, cut]
+            finer = push[finer, Half[false, h.c, p, h.b]]
+            finer = push[finer, Half[true, p, h.c, h.a]]
+    return finer
+
+fn tiling[depth]
+    halves = wheel[]
+    for d in range[depth]
+        halves = deflate[halves]
+    return halves
+
+--- the rectangle shown: half its width and half its height, about the centre
+struct Area [w, h]
+
+--- the half in a grid of cols x rows character cells over the area, x counting
+--- columns from the left and y rows from the top
+fn on_grid[half, area, cols, rows]
+    return Half[half.thick, grid_point[half.a, area, cols, rows], grid_point[half.b, area, cols, rows], grid_point[half.c, area, cols, rows]]
+
+fn grid_point[p, area, cols, rows]
+    return Point[(p.x + area.w) * cols / (2.0 * area.w), (area.h - p.y) * rows / (2.0 * area.h)]
+
+fn cross[o, u, v]
+    return (u.x - o.x) * (v.y - o.y) - (u.y - o.y) * (v.x - o.x)
+
+fn holds[half, p]
+    d1 = cross[half.a, half.b, p]
+    d2 = cross[half.b, half.c, p]
+    d3 = cross[half.c, half.a, p]
+    below = d1 lt 0.0 or d2 lt 0.0 or d3 lt 0.0
+    above = d1 gt 0.0 or d2 gt 0.0 or d3 gt 0.0
+    return not (below and above)
+
+fn distance_to_segment[p, u, v]
+    dx = v.x - u.x
+    dy = v.y - u.y
+    t = ((p.x - u.x) * dx + (p.y - u.y) * dy) / (dx * dx + dy * dy)
+    t = min[max[t, 0.0], 1.0]
+    ex = u.x + t * dx - p.x
+    ey = u.y + t * dy - p.y
+    return sqrt[ex * ex + ey * ey]
+
+--- the character drawing the side from u to v (rows count downwards)
+fn stroke[u, v]
+    dx = abs[v.x - u.x]
+    dy = abs[v.y - u.y]
+    slant = sqrt[2.0] - 1.0
+    if dy lt dx * slant
+        return '-'
+    if dx lt dy * slant
+        return '|'
+    if (v.x - u.x) * (v.y - u.y) lt 0.0
+        return '/'
+    return '\\'
+
+--- the character of the cell centred at p: a side within half a cell, else the fill
+fn cell[halves, p]
+    i = 0
+    while i lt len[halves]
+        half = halves[i]
+        if holds[half, p]
+            to_c = distance_to_segment[p, half.c, half.a]
+            to_b = distance_to_segment[p, half.a, half.b]
+            if to_c lt 0.5 and to_c lte to_b
+                return stroke[half.c, half.a]
+            if to_b lt 0.5
+                return stroke[half.a, half.b]
+            if half.thick
+                return ' '
+            return '.'
+        i = i + 1
+    return '?'
+
+fn picture[halves, area, cols, rows]
+    gridded = for half in halves
+        on_grid[half, area, cols, rows]
+    lines = for r in range[rows]
+        cells = for c in range[cols]
+            cell[gridded, Point[c + 0.5, r + 0.5]]
+        sub[join[cells, ''], ' +$', '']
+    return lines
+
+fn seen[half, area]
+    xs = [half.a.x, half.b.x, half.c.x]
+    ys = [half.a.y, half.b.y, half.c.y]
+    return min[xs] lt area.w and max[xs] gt -area.w and min[ys] lt area.h and max[ys] gt -area.h
+
+--- a point in the picture's pixels, the y axis turned downwards
+fn pixel[p, area, scale]
+    return '`fmt[(p.x + area.w) * scale, decimals = 1]` `fmt[(area.h - p.y) * scale, decimals = 1]`'
+
+--- the thick halves, or the thin ones, as one path of filled triangles
+fn fills[halves, thick, area, scale]
+    parts = for half in halves
+        if half.thick eq thick
+            'M`pixel[half.a, area, scale]`L`pixel[half.b, area, scale]`L`pixel[half.c, area, scale]`Z'
+    return join[parts, '']
+
+--- the rhombi's sides: c to a to b of every half
+fn sides[halves, area, scale]
+    parts = for half in halves
+        'M`pixel[half.c, area, scale]`L`pixel[half.a, area, scale]`L`pixel[half.b, area, scale]`'
+    return join[parts, '']
+
+fn svg[halves, area, scale]
+    shown = for half in halves
+        if seen[half, area]
+            half
+    width = fmt[2.0 * area.w * scale, decimals = 0]
+    height = fmt[2.0 * area.h * scale, decimals = 0]
+    head = '<svg xmlns="http://www.w3.org/2000/svg" width="`width`" height="`height`">'
+    thin = '<path fill="#e8875f" d="`fills[shown, false, area, scale]`"/>'
+    thick = '<path fill="#5b8fc7" d="`fills[shown, true, area, scale]`"/>'
+    edges = '<path fill="none" stroke="#202020" stroke-width="1" stroke-linejoin="round" d="`sides[shown, area, scale]`"/>'
+    return '`head`\n`thin`\n`thick`\n`edges`\n</svg>\n'
+
+fn count_of[halves, thick]
+    found = for half in halves
+        if half.thick eq thick
+            1
+    return len[found]
+
+area = Area[0.8, 0.5]
+log['A Penrose tiling of the rectangle [-0.8, 0.8] x [-0.5, 0.5], three deflations deep:']
+log['']
+for line in picture[tiling[3], area, 79, 30]
+    log[line]
+log['']
+
+--- the thick halves outnumber the thin ones by the golden ratio in the limit
+log['depth   thin halves   thick halves   thick / thin']
+halves = wheel[]
+for d in range[7]
+    thin = count_of[halves, false]
+    thick = count_of[halves, true]
+    ratio = '-'
+    if thin gt 0
+        ratio = fmt[thick / float[thin], decimals = 6]
+    ratio = fmt[ratio, width = 15, align = 'right']
+    log['`fmt[d, width = 5]``fmt[thin, width = 14]``fmt[thick, width = 15]``ratio`']
+    halves = deflate[halves]
+log['(the golden ratio is `fmt[(1.0 + sqrt[5.0]) / 2.0, decimals = 6]`)']
+log['']
+
+fine = tiling[6]
+written = write['penrose_tiling.svg', svg[fine, area, 500.0]]
+log['Six deflations deep, as an SVG of 800 x 500 pixels, written to penrose_tiling.svg: `written.ok`']
+_gone = rm['penrose_tiling.svg']

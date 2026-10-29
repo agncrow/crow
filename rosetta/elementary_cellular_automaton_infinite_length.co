@@ -1,0 +1,59 @@
+--- Rosetta Code: Elementary cellular automaton/Infinite length
+--- https://rosettacode.org/wiki/Elementary_cellular_automaton/Infinite_length
+--- A state is the finite run of cells that is written down; every cell beyond
+--- it is the negation of the nearest end cell. Each step pads both ends with
+--- two such cells, applies the rule inside, and so grows by one cell a side.
+
+use bits
+
+fn negation[c]
+    1 - c
+
+fn next_generation[cells, rule]
+    left = negation[cells[0]]
+    right = negation[cells[-1]]
+    padded = concat[concat[[left, left], cells], [right, right]]
+    next = for i in range[1, len[padded] - 1]
+        pattern = 4 * padded[i - 1] + 2 * padded[i] + padded[i + 1]
+        bitand[shift[rule, -pattern], 1]
+    next
+
+fn picture[cells]
+    marks = for c in cells
+        if c eq 1
+            '#'
+        else
+            '.'
+    join[marks, '']
+
+--- The cells written down, with two of the cells beyond each end.
+fn shown_infinite[cells]
+    left = negation[cells[0]]
+    right = negation[cells[-1]]
+    middle = for c in cells
+        str[c]
+    written = join[middle, ', ']
+    '..., `left`, `left`,   `written`,   `right`, `right`, ...'
+
+fn cells_of[text]
+    cells = for c in split[text, '']
+        if c eq '1'
+            1
+        else
+            0
+    cells
+
+log['The states the task gives as examples:']
+for text in ['1', '01', '101']
+    cells = cells_of[text]
+    log['`fmt[str[cells], width = 10]` stands for  `shown_infinite[cells]`']
+
+lines = 25
+for rule in [90, 30]
+    log['']
+    log['Rule: `rule`']
+    cells = [1]
+    for i in range[lines]
+        indent = repeat[' ', lines - i]
+        log['`fmt[i, width = 2]`: `indent``picture[cells]`']
+        cells = next_generation[cells, rule]

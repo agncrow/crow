@@ -1,0 +1,40 @@
+--- Rosetta Code: 100 doors
+--- https://rosettacode.org/wiki/100_doors
+--- Simulates the hundred passes over a list of door states, then checks the
+--- alternate answer: the doors left open are exactly the perfect squares.
+
+fn after_passes[n]
+    doors = for i in range[n]
+        false
+    for pass in range[1, n + 1]
+        i = pass - 1
+        while i lt n
+            doors[i] = not doors[i]
+            i = i + pass
+    return doors
+
+fn numbered[doors, wanted]
+    found = for i in range[len[doors]]
+        if doors[i] eq wanted
+            i + 1
+    found
+
+fn shown[numbers]
+    words = for x in numbers
+        str[x]
+    join[words, ' ']
+
+doors = after_passes[100]
+open = numbered[doors, true]
+closed = numbered[doors, false]
+open_text = shown[open]
+closed_text = shown[closed]
+log['Open doors (`len[open]`): `open_text`']
+log['Closed doors (`len[closed]`): `closed_text`']
+
+--- The alternate: only the perfect squares are left open.
+squares = for k in range[1, 11]
+    k * k
+squares_text = shown[squares]
+log['Perfect squares: `squares_text`']
+log['Same doors: `open eq squares`']

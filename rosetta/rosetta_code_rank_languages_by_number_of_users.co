@@ -1,0 +1,101 @@
+--- Rosetta Code: Rosetta Code/Rank languages by number of users
+--- https://rosettacode.org/wiki/Rosetta_Code/Rank_languages_by_number_of_users
+--- The "X User" categories are the members of Category:Language users, and the
+--- MediaWiki API lists them with each one's size, its number of users: 500 an
+--- answer, the next asked with the continuation the one before gave. The counts
+--- make a frame, sorted by users (equal counts by name, sharing a rank), and the
+--- languages with at least 100 users are shown.
+---     crow run rosetta_code_rank_languages_by_number_of_users.co          what the API
+---                         answered on 2026-10-29, as recorded in the .json below
+---     crow run rosetta_code_rank_languages_by_number_of_users.co live     asks the API
+---     crow run rosetta_code_rank_languages_by_number_of_users.co record   asks the API
+---                         and keeps its answers in the .json
+--- The server refuses a request that names no user agent (403), so each names one.
+
+use frame
+
+fn api[]
+    'https://rosettacode.org/w/api.php'
+
+fn first_query[]
+    map[action = 'query', format = 'json', formatversion = '2', generator = 'categorymembers', gcmtitle = 'Category:Language users', gcmlimit = '500', prop = 'categoryinfo']
+
+--- every answer the API gives, each asked with the continuation of the one
+--- before, as one JSON list
+fn asked[]
+    query = first_query[]
+    agent = map['user-agent' = 'crow-rosetta (a Rosetta Code task)']
+    answers = []
+    going = true
+    while going
+        reply = request[api[], query = query, headers = agent]
+        if reply.status ne 200
+            return error['the API answered `reply.status`', 'http']
+        answers = push[answers, reply.body]
+        more = json[reply.body]['continue']
+        if more.ok
+            query = set[query, 'gcmcontinue', str[more.gcmcontinue]]
+            query = set[query, 'continue', str[more['continue']]]
+        else
+            going = false
+    listed = join[answers, ',\n']
+    '[`listed`]'
+
+--- 'Category:C sharp User' names C sharp
+fn language_of[title]
+    slice[title, len['Category:'], len[title] - len[' User']]
+
+--- a category's size, 0 where the API gives it none
+fn users_of[page]
+    size = page.categoryinfo.size
+    if size.ok
+        return int[size]
+    0
+
+--- the categories of every answer, a row each
+fn table_of[answers]
+    languages = []
+    users = []
+    for answer in answers
+        for page in answer.query.pages
+            languages = push[languages, language_of[str[page.title]]]
+            users = push[users, users_of[page]]
+    frame.new[language = languages, users = users]
+
+fn show[top]
+    log['Rank  Language            Users']
+    log['--------------------------------']
+    rank = 0
+    last = -1
+    i = 0
+    while i lt len[top]
+        n = top.users[i]
+        if n ne last
+            rank = i + 1
+            last = n
+        log['`fmt[rank, width = 4]`  `fmt[top.language[i], width = 18]``fmt[n, width = 7]`']
+        i = i + 1
+
+--- the answers asked now, or as recorded
+fn answers_for[given, path]
+    if given eq ['live'] or given eq ['record']
+        return asked[]
+    read[path]
+
+path = 'rosetta_code_rank_languages_by_number_of_users.json'
+given = args[]
+answers = answers_for[given, path]
+if not answers.ok
+    log['The API could not be asked: `answers.reason`']
+else
+    if given eq ['record']
+        kept = write[path, answers]
+        log['kept in `path`']
+    else if len[given] eq 0
+        log['As the API answered on 2026-10-29 (recorded):']
+    table = table_of[json[answers]]
+    top = table[table.users gte 100]
+    top = sort[top, ['users', 'language'], desc = [true, false]]
+    log['`len[table]` language user categories, `len[top]` of them with at least 100 users']
+    log['']
+    show[top]

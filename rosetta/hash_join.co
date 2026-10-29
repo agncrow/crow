@@ -1,0 +1,52 @@
+--- Rosetta Code: Hash join
+--- https://rosettacode.org/wiki/Hash_join
+--- Tables are lists of records; a join column is a function that reads it from a
+--- row. The hash phase puts each row of B (ideally the smaller table) in a
+--- multimap, a map from the join value to the list of rows holding it; the join
+--- phase looks up each row of A there. (Crow's map keeps its keys in order, so a
+--- lookup costs log n, not the n of a linear search.)
+
+struct Person [age, name]
+struct Fear [character, nemesis]
+struct Joined [a, b]
+
+fn name_of[p]
+    return p.name
+
+fn character_of[f]
+    return f.character
+
+--- hash phase: each join value to the rows that hold it, in order
+fn multimap[rows, key]
+    m = map[]
+    for row in rows
+        k = key[row]
+        if k in m
+            m = set[m, k, push[m[k], row]]
+        else
+            m = set[m, k, [row]]
+    return m
+
+--- join phase: each row of a beside each row of b with the same join value
+fn hash_join[a, key_a, b, key_b]
+    m = multimap[b, key_b]
+    joined = []
+    for row in a
+        k = key_a[row]
+        if k in m
+            for other in m[k]
+                joined = push[joined, Joined[row, other]]
+    return joined
+
+--- a row of the output table, its cells padded to columns
+fn line[cells]
+    padded = for c in slice[cells, 0, len[cells] - 1]
+        fmt[c, width = 13]
+    return join[push[padded, cells[-1]], '']
+
+a = [Person[27, 'Jonah'], Person[18, 'Alan'], Person[28, 'Glory'], Person[18, 'Popeye'], Person[28, 'Alan']]
+b = [Fear['Jonah', 'Whales'], Fear['Jonah', 'Spiders'], Fear['Alan', 'Ghosts'], Fear['Alan', 'Zombies'], Fear['Glory', 'Buffy']]
+
+log[line[['A.Age', 'A.Name', 'B.Character', 'B.Nemesis']]]
+for j in hash_join[a, name_of, b, character_of]
+    log[line[[str[j.a.age], j.a.name, j.b.character, j.b.nemesis]]]

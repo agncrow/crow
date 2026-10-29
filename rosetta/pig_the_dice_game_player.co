@@ -1,0 +1,124 @@
+--- Rosetta Code: Pig the dice game/Player
+--- https://rosettacode.org/wiki/Pig_the_dice_game/Player
+--- The die and the score keeping of Pig, with players that choose by a strategy. Before
+--- every roll a player is asked to roll or hold; none rolls past a total that wins.
+---   random      rolls or holds at the toss of a coin
+---   hold at 20  rolls until the turn holds 20 points, then holds
+---   desperate   as hold at 20, but rolls on while the rival is within 20 of winning
+---   keep pace   Neller and Presser's "keep pace, end race": while either player has 71
+---               or more it rolls on to win; otherwise it holds at 21 + (rival - own) / 8
+---               points, rounded
+--- A game is shown turn by turn; then (the stretch goal) 5,000 games for each order of
+--- each pair of strategies, with the first player's share of wins. The die is seeded, so
+--- every run plays the same games.
+
+use math
+
+fn other[player]
+    if player eq 0
+        return 1
+    0
+
+--- Whether a player of the strategy rolls again, with banked points, the turn's points so
+--- far and the rival's banked points.
+fn wants_roll[strategy, banked, turn, rival, goal]
+    if banked + turn gte goal
+        return false
+    if strategy eq 'random'
+        return rand[2] eq 0
+    if strategy eq 'hold at 20'
+        return turn lt 20
+    if strategy eq 'desperate'
+        return turn lt 20 or rival gte goal - 20
+    if banked gte 71 or rival gte 71
+        return true
+    turn lt 21 + round[float[rival - banked] / 8.0]
+
+fn shown[rolls]
+    parts = for r in rolls
+        str[r]
+    join[parts, ' ']
+
+--- One game between two strategies (the first in the list plays first): the winner, 0 or
+--- 1. With show, each turn is logged.
+fn play[strategies, goal, show]
+    banked = [0, 0]
+    player = 0
+    count = 0
+    while true
+        turn = 0
+        rolls = []
+        rolling = true
+        while rolling
+            if wants_roll[strategies[player], banked[player], turn, banked[other[player]], goal]
+                die = rand[1, 6]
+                rolls = push[rolls, die]
+                if die eq 1
+                    turn = 0
+                    rolling = false
+                else
+                    turn = turn + die
+            else
+                rolling = false
+        banked[player] = banked[player] + turn
+        count = count + 1
+        if show
+            who = fmt['player `player + 1` (`strategies[player]`)', width = 26]
+            outcome = 'holds `turn`'
+            if len[rolls] gt 0 and rolls[-1] eq 1
+                outcome = 'busts'
+            elif_rolls = fmt[shown[rolls], width = 22]
+            log['`fmt[count, width = 3]`. `who` rolls `elif_rolls` `fmt[outcome, width = 9]` banked `banked[player]`']
+        if banked[player] gte goal
+            return player
+        player = other[player]
+
+--- The first player's share of wins over a number of games.
+fn first_wins[first, second, games]
+    won = 0
+    for g in range[games]
+        if play[[first, second], 100, false] eq 0
+            won = won + 1
+    float[won] / float[games]
+
+seed[2026]
+log['One game, keep pace against hold at 20, to 100 points:']
+log['']
+winner = play[['keep pace', 'hold at 20'], 100, true]
+log['']
+log['Player `winner + 1` wins.']
+log['']
+--- A row of the table: the first player's share of wins against each strategy.
+fn row_of[first, strategies, games]
+    row = for second in strategies
+        first_wins[first, second, games]
+    row
+
+strategies = ['random', 'hold at 20', 'desperate', 'keep pace']
+games = 5000
+table = for first in strategies
+    row_of[first, strategies, games]
+log['The first player\'s share of wins in `fmt[games, commas = true]` games for each order of each pair:']
+log['']
+heads = for s in strategies
+    fmt[s, width = 12, align = 'right']
+corner = fmt['first \\ second', width = 14]
+heading = join[heads, '']
+log['`corner``heading`']
+for i in range[len[strategies]]
+    cells = for share in table[i]
+        fmt[share, decimals = 3, width = 12]
+    shares = join[cells, '']
+    log['`fmt[strategies[i], width = 14]``shares`']
+log['']
+log['Each strategy\'s share of wins against the other three, half the games played first:']
+for i in range[len[strategies]]
+    total = 0.0
+    for j in range[len[strategies]]
+        if j ne i
+            total = total + table[i][j] + (1.0 - table[j][i])
+    log['  `fmt[strategies[i], width = 12]` `fmt[total / 6.0, decimals = 3]`']
+log['']
+log['Going first, against the same strategy (a share of 0.5 would be no advantage):']
+for i in range[len[strategies]]
+    log['  `fmt[strategies[i], width = 12]` `fmt[table[i][i], decimals = 3]`']

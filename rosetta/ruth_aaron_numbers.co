@@ -1,0 +1,123 @@
+--- Rosetta Code: Ruth-Aaron numbers
+--- https://rosettacode.org/wiki/Ruth-Aaron_numbers
+--- Additive sieves give every n below a limit the sum of its prime divisors
+--- (each prime once) and of its prime factors (each prime once for every power
+--- of it dividing n): a prime p adds itself to every multiple of p, and for the
+--- factors again to every multiple of p^2, p^3, .... A Ruth-Aaron number n has
+--- the sum of n + 1; in a triple, n + 2 has it too. The divisor triple lies far
+--- past the rest, near 9 * 10^7: the argument stretch finds it with a segmented
+--- sieve (about 16 s compiled, 45 s interpreted).
+
+struct Sums [divisors, factors]
+
+fn prime_sums[limit]
+    divisors = for i in range[limit]
+        0
+    factors = for i in range[limit]
+        0
+    p = 2
+    while p lt limit
+        if divisors[p] eq 0
+            m = p
+            while m lt limit
+                divisors[m] = divisors[m] + p
+                m = m + p
+            q = p
+            while q lt limit
+                m = q
+                while m lt limit
+                    factors[m] = factors[m] + p
+                    m = m + q
+                q = q * p
+        p = p + 1
+    Sums[divisors, factors]
+
+--- the first `count` numbers n whose sum is the sum of the `size` - 1 after them
+fn run_starts[sums, count, size]
+    found = []
+    n = 2
+    while len[found] lt count and n + size lte len[sums]
+        same = true
+        k = 1
+        while same and k lt size
+            same = sums[n + k] eq sums[n]
+            k = k + 1
+        if same
+            found = push[found, n]
+        n = n + 1
+    found
+
+fn shown[numbers]
+    texts = for n in numbers
+        str[n]
+    join[texts, ' ']
+
+fn primes_below[limit]
+    marked = for i in range[limit]
+        false
+    found = []
+    p = 2
+    while p lt limit
+        if not marked[p]
+            found = push[found, p]
+            m = p * p
+            while m lt limit
+                marked[m] = true
+                m = m + p
+        p = p + 1
+    found
+
+--- the first n of three in a row whose prime divisors sum alike, by segments
+--- of 2^18 numbers, each number divided by its primes up to the square root
+--- (the primes below 20000 reach 4 * 10^8); what is left above 1 is a prime
+fn divisor_triple[]
+    primes = primes_below[20000]
+    size = 262144
+    a = -1
+    b = -1
+    lo = 2
+    while lo lt 400000000
+        hi = lo + size
+        rest = for i in range[size]
+            lo + i
+        sums = for i in range[size]
+            0
+        j = 0
+        while j lt len[primes] and primes[j] * primes[j] lt hi
+            p = primes[j]
+            m = (lo + p - 1) / p * p
+            while m lt hi
+                k = m - lo
+                sums[k] = sums[k] + p
+                r = rest[k] / p
+                while r % p eq 0
+                    r = r / p
+                rest[k] = r
+                m = m + p
+            j = j + 1
+        i = 0
+        while i lt size
+            c = sums[i]
+            if rest[i] gt 1
+                c = c + rest[i]
+            if a eq b and b eq c
+                return lo + i - 2
+            a = b
+            b = c
+            i = i + 1
+        lo = hi
+    0
+
+sums = prime_sums[420000]
+log['First 30 Ruth-Aaron numbers (factors):']
+log[shown[run_starts[sums.factors, 30, 2]]]
+log['']
+log['First 30 Ruth-Aaron numbers (divisors):']
+log[shown[run_starts[sums.divisors, 30, 2]]]
+log['']
+log['First Ruth-Aaron triple (factors):']
+log[shown[run_starts[sums.factors, 1, 3]]]
+if args[] eq ['stretch']
+    log['']
+    log['First Ruth-Aaron triple (divisors):']
+    log[divisor_triple[]]

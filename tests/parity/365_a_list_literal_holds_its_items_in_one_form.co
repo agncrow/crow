@@ -1,0 +1,23 @@
+--- a list literal's items are held in the form the literal holds them:
+--- numbers held as a tensor (a list's arithmetic, `ys * 2`) beside a
+--- list are the list, whole numbers beside floats floats — held as they
+--- came, the literal had been an internal error, and handed to `log` it
+--- had not built compiled
+use math
+
+ys = range[3]
+both = [ys * 2, ys]
+log[both]
+log[[ys * 2, ys]]
+zs = ys * 2
+log[[ys, zs]]
+fs = for x in [1.0, 2.0]
+    x
+log[[fs * 2.0, fs]]
+fn twice[ys, deep]
+    if deep
+        c = cos[tensor[ys]]
+        return [c, c]
+    return [ys, ys]
+log[twice[[0.0, 1.0], false]]
+log[len[twice[[0.0, 1.0], true]]]

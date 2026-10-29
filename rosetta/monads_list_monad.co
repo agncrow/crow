@@ -1,0 +1,119 @@
+--- Rosetta Code: Monads/List monad
+--- https://rosettacode.org/wiki/Monads/List_monad
+--- pure puts a value in a list; bind maps a function over a list and joins the
+--- lists it answers (concat after map), so the function may answer several values
+--- (indeterminacy) or none (a failure, which filters). Crow has no closures, and a
+--- function taking a function serves one kind of argument and answer (spec,
+--- Specialization), so bind is written once for each kind the program binds; where
+--- a later step needs what an earlier one chose (what a closure would capture),
+--- the steps hand on a record of the choices so far.
+
+struct Pick [x, y, z]
+
+--- a value as the list holding it
+fn pure[x]
+    return [x]
+
+--- m >>= f for f from an int to a list of ints
+fn bind_ints[m, f]
+    out = []
+    for x in m
+        out = concat[out, f[x]]
+    return out
+
+--- m >>= f for f from an int to a list of text
+fn bind_texts[m, f]
+    out = []
+    for x in m
+        out = concat[out, f[x]]
+    return out
+
+--- m >>= f for f from a record of choices to a list of them
+fn bind_picks[m, f]
+    out = []
+    for p in m
+        out = concat[out, f[p]]
+    return out
+
+--- Int -> List Int (each function writes the list it answers, pure's [x] included)
+fn increment[x]
+    return [x + 1]
+
+--- Int -> List Int: every divisor, so one number becomes several
+fn divisors[n]
+    ds = for d in range[1, n + 1]
+        if n % d eq 0
+            d
+    return ds
+
+--- Int -> List String
+fn dollars[x]
+    return ['$`x`.00']
+
+--- Int -> List String: the odd numbers in words, the even ones dropped
+fn odd_spelled[n]
+    if n % 2 eq 0
+        return []
+    return ['odd `n`']
+
+--- divisors then odd_spelled, as one function, for the associativity law
+fn odd_divisors_spelled[n]
+    return bind_texts[divisors[n], odd_spelled]
+
+--- the steps of two searches: each from the picks so far to the ways to go on
+fn first_of_five[p]
+    picks = for x in range[1, 6]
+        Pick[x, 0, 0]
+    return picks
+
+fn second_of_five[p]
+    picks = for y in range[6, 11]
+        Pick[p.x, y, 0]
+    return picks
+
+fn side_a[p]
+    picks = for x in range[1, 26]
+        Pick[x, 0, 0]
+    return picks
+
+fn side_b[p]
+    picks = for y in range[p.x + 1, 26]
+        Pick[p.x, y, 0]
+    return picks
+
+fn hypotenuse[p]
+    picks = for z in range[p.y + 1, 26]
+        if p.x * p.x + p.y * p.y eq z * z
+            Pick[p.x, p.y, z]
+    return picks
+
+fn pairs_shown[ps]
+    parts = for p in ps
+        '(`p.x`, `p.y`)'
+    return join[parts, ' ']
+
+fn triples_shown[ps]
+    parts = for p in ps
+        '(`p.x`, `p.y`, `p.z`)'
+    return join[parts, ' ']
+
+log['[1, 99, 4] >>= increment >>= dollars: `bind_texts[bind_ints[[1, 99, 4], increment], dollars]`']
+log['[3, 4, 5] >>= increment >>= increment: `bind_ints[bind_ints[[3, 4, 5], increment], increment]`']
+log['pure[12] >>= divisors >>= odd_spelled: `bind_texts[bind_ints[pure[12], divisors], odd_spelled]`']
+log['']
+log['the monad laws, for divisors, odd_spelled and m = [6, 7]:']
+log['  left identity, pure[6] >>= divisors eq divisors[6]: `bind_ints[pure[6], divisors] eq divisors[6]`']
+log['  right identity, m >>= pure eq m: `bind_ints[[6, 7], pure] eq [6, 7]`']
+left = bind_texts[bind_ints[[6, 7], divisors], odd_spelled]
+right = bind_texts[[6, 7], odd_divisors_spelled]
+log['  associativity, (m >>= divisors) >>= odd_spelled eq m >>= (x -> divisors[x] >>= odd_spelled): `left eq right`']
+log['']
+--- the search starts from no picks made: pure of an empty pick, as its list
+start = [Pick[0, 0, 0]]
+pairs = bind_picks[bind_picks[start, first_of_five], second_of_five]
+log['the cartesian product of 1..5 and 6..10:']
+log[pairs_shown[pairs]]
+log['']
+triples = bind_picks[bind_picks[bind_picks[start, side_a], side_b], hypotenuse]
+log['Pythagorean triples with sides up to 25:']
+log[triples_shown[triples]]

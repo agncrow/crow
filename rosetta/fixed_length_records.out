@@ -1,0 +1,44 @@
+infile.dat holds 720 bytes: 9 records of 80 columns, no line ends
+
+dd if=infile.dat cbs=80 conv=unblock
+Line 1...1.........2.........3.........4.........5.........6.........7.........8
+Line 2
+Line 3
+Line 4
+
+Line 6
+Line 7
+     Indented line 8............................................................
+Line 9                                                                 RT MARGIN
+
+dd if=outfile.dat cbs=80 conv=unblock
+8.........7.........6.........5.........4.........3.........2.........1...1 eniL
+                                                                          2 eniL
+                                                                          3 eniL
+                                                                          4 eniL
+
+                                                                          6 eniL
+                                                                          7 eniL
+............................................................8 enil detnednI
+NIGRAM TR                                                                 9 eniL
+
+A record holding NUL, a line end and a tab, reversed into a file and back: the same 80 characters: true
+
+forth.blk holds 1024 bytes: 1 block of 16 lines of 64 columns
+forth.blk as text, its lines numbered (the trailing spaces left out):
+ 1|( The bonus round: a Forth screen, 16 lines of 64 columns )
+ 2|( A line longer than 64 columns is cut at the 64th: the rest of
+ 3|: SQUARE  ( n -- n*n )  DUP * ;
+ 4|: CUBE  ( n -- n*n*n )  DUP SQUARE * ;
+ 5|: STARS  ( n -- )  0 ?DO [CHAR] * EMIT LOOP ;
+ 6|: TRIANGLE  ( n -- )  1+ 1 DO CR I STARS LOOP ;
+ 7|: COUNTDOWN  ( n -- )  BEGIN DUP . 1- DUP 0= UNTIL DROP ;
+ 8|
+ 9|5 TRIANGLE
+10|3 CUBE .
+11|10 COUNTDOWN
+12|
+13|
+14|
+15|
+16|

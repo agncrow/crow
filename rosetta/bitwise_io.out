@@ -1,0 +1,10 @@
+The bits 0101011101010 written: 57 50
+Read back: 0101011101010
+
+Words [5, 300, 1, 4000, 511] at widths [3, 9, 1, 12, 9]: B2 CF D0 7F C0
+Read back: [5, 300, 1, 4000, 511]
+
+Text (68 bytes): This is an example of ASCII text crunched to seven bits a character.
+Crunched to 60 bytes: A9 A3 4F 34 1A 79 A0 C3 B9 06 5F 18 76 F0 D9 95 06 FC C8 20 D3 87 26 4A 0E 99 7C 74 41 8F 97 5D D8 F4 65 C8 83 A6 F4 1C F2 F6 CB B9 06 2D 3D 39 A0 C2 83 1E 8C 3C B0 E3 E9 97 92 E0
+Decrunched: This is an example of ASCII text crunched to seven bits a character.
+Same text: true

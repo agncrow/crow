@@ -1,0 +1,66 @@
+--- Rosetta Code: Word ladder
+--- https://rosettacode.org/wiki/Word_ladder
+--- A breadth-first search from the first word, so the first ladder to reach the second
+--- word has the fewest steps. A word's neighbours are found through its patterns:
+--- boy is _oy, b_y and bo_, and every word of unixdict.txt is filed under each of its
+--- patterns, so the words one letter away are the other words filed with it. Each
+--- word reached remembers the word it was reached from, and the ladder is read back
+--- from the goal. The words are the dictionary's words of the letters a to z.
+
+fn patterns[word]
+    open = []
+    i = 0
+    while i lt len[word]
+        open = push[open, '`slice[word, 0, i]`_`slice[word, i + 1, len[word]]`']
+        i = i + 1
+    return open
+
+fn filed[words]
+    by_pattern = map[]
+    for w in words
+        for p in patterns[w]
+            if p in by_pattern
+                by_pattern[p] = push[by_pattern[p], w]
+            else
+                by_pattern[p] = [w]
+    return by_pattern
+
+--- the shortest ladder from start to goal, the words in order, or [] where none is
+fn ladder[start, goal, by_pattern]
+    previous = map[]
+    previous[start] = start
+    queue = [start]
+    head = 0
+    found = start eq goal
+    while head lt len[queue] and not found
+        w = queue[head]
+        head = head + 1
+        for p in patterns[w]
+            if p in by_pattern
+                for v in by_pattern[p]
+                    if v not in previous
+                        previous[v] = w
+                        queue = push[queue, v]
+                        if v eq goal
+                            found = true
+    if not found
+        return []
+    steps = [goal]
+    w = goal
+    while w ne start
+        w = previous[w]
+        steps = push[steps, w]
+    return reverse[steps]
+
+words = for w in split[read['unixdict.txt'], '\n']
+    if matches[w, '^[a-z]+$']
+        w
+by_pattern = filed[words]
+pairs = [['boy', 'man'], ['girl', 'lady'], ['john', 'jane'], ['child', 'adult'], ['cold', 'warm'], ['lead', 'gold'], ['alien', 'drool']]
+for pair in pairs
+    steps = ladder[pair[0], pair[1], by_pattern]
+    if len[steps] eq 0
+        log['`pair[0]` cannot be turned into `pair[1]`']
+    else
+        shown = join[steps, ' -> ']
+        log['`shown` (`len[steps] - 2` words between)']

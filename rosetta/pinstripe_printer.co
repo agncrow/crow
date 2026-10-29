@@ -1,0 +1,73 @@
+--- Rosetta Code: Pinstripe/Printer
+--- https://rosettacode.org/wiki/Pinstripe/Printer
+--- Crow has no printer of its own, so the page is an image file: a US Letter page
+--- (8.5 x 11 inches) at a resolution in dots an inch (the first argument; 72 when none is
+--- given, a dot then being a point), written as a plain PGM (pinstripe_printer.pgm in the
+--- current directory). Each inch down the page holds vertical stripes, white then black,
+--- one point wide in the first inch, two in the second and so on, across the whole width
+--- (the last stripe cut where the page ends); at another resolution a stripe of k points
+--- is k * dpi / 72 dots, fractions kept by placing each stripe's edges exactly. With the
+--- argument print the page goes to the default printer through lp (CUPS reads PGM), which
+--- ejects it when done; otherwise the file is described and removed. Also shown: the
+--- first 78 points of each inch in characters (# black, . white).
+
+--- A row of the band whose stripes are k points wide, as PGM values (1 white, 0 black),
+--- 35 to a line.
+fn band_row[k, width, dpi]
+    dots = for x in range[width]
+        if (x * 72 / (k * dpi)) % 2 eq 0
+            '1'
+        else
+            '0'
+    lines = for start in range[0, width, 35]
+        join[slice[dots, start, start + 35], ' ']
+    join[lines, '\n']
+
+--- The page as a plain PGM: a band an inch tall for each stripe width, down the page.
+fn page[width, height, dpi]
+    bands = for k in range[1, ceil[float[height] / float[dpi]] + 1]
+        rows = min[dpi, height - (k - 1) * dpi]
+        row = band_row[k, width, dpi]
+        repeat['`row`\n', rows]
+    body = join[bands, '']
+    concat[['P2\n# Pinstripe test page\n', '`width` `height`\n1\n', body]]
+
+--- The first points of the band whose stripes are k points wide, in characters.
+fn preview[k, points]
+    marks = for x in range[points]
+        if (x / k) % 2 eq 0
+            '.'
+        else
+            '#'
+    join[marks, '']
+
+given = args[]
+dpi = 72
+if len[given] gt 0 and given[0] ne 'print'
+    dpi = int[given[0]]
+width = 17 * dpi / 2
+height = 11 * dpi
+file = 'pinstripe_printer.pgm'
+text = page[width, height, dpi]
+written = write[file, text]
+log['A US Letter page at `dpi` dots an inch: `width` x `height` dots.']
+digest = hash[text, 'sha256']
+log['Written `file`: `fmt[len[text], commas = true]` bytes, sha256 `digest`.']
+log['']
+log['Each inch of the page, its stripes and how many there are across:']
+for k in range[1, 12]
+    across = (width * 72 + k * dpi - 1) / (k * dpi)
+    cut = ''
+    if (width * 72) % (k * dpi) ne 0
+        cut = ', the last one cut by the edge'
+    log['  inch `fmt[k, width = 2]`: `k` point stripes, `across` of them`cut`']
+log['']
+log['The first 78 points of each inch:']
+for k in range[1, 12]
+    log['  `fmt[k, width = 2]` `preview[k, 78]`']
+log['']
+if 'print' in given
+    sent = shell['lp `file`']
+    log['Sent to the printer: `trim[sent.stdout]``trim[sent.stderr]`']
+_gone = rm[file]
+log['Removed `file`.']

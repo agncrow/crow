@@ -1,0 +1,24 @@
+Usage: thingy [OPTIONS]
+     -h                        Display this usage message
+     -H hostname               Hostname to connect to
+
+|  I'll let you be in my dream,|
+|    if I can be in yours.|
+|          -- Bob Dylan|
+
+some line
+color: green
+lamps lit: 3, hands to hold them: 6
+another line
+
+In a shell, `date` runs a command and '$HOME' names a directory;
+here they are only text, and so is C:\Users\crow.
+
+Dear Ada,
+    your order of 4 items has shipped.
+Regards,
+    the warehouse
+
+heredoc.txt holds 4 lines, the same text: true
+HERE DOCUMENTS
+REACH THE SHELL TOO

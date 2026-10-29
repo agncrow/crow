@@ -1,0 +1,57 @@
+--- Rosetta Code: Random number generator (device)
+--- https://rosettacode.org/wiki/Random_number_generator_(device)
+--- A Crow program reads no bytes from a device itself (read takes text, and
+--- the byte layer belongs to the standard library), so the device is read
+--- through the shell: od writes four bytes of /dev/urandom as numbers, and
+--- they are joined here into one 32-bit number. The device answers anew on
+--- every run, so it is read only when the program is given the argument
+--- device; otherwise four bytes come from the seeded generator, joined the
+--- same way, and the output is the same on every run.
+
+use math
+
+--- four bytes, the first the highest, as one unsigned 32-bit number
+fn joined[bytes]
+    value = 0
+    for b in bytes
+        value = value * 256 + b
+    return value
+
+--- four bytes from the operating system's random device
+fn device_bytes[]
+    r = shell['od -An -N4 -tu1 /dev/urandom']
+    if r.status ne 0
+        return error['od could not read /dev/urandom: `r.stderr`', 'device']
+    found = []
+    for piece in split[trim[r.stdout], ' ']
+        if piece ne ''
+            found = push[found, int[piece]]
+    return found
+
+--- four bytes from the program's own generator
+fn generator_bytes[]
+    found = for k in range[4]
+        rand[256]
+    return found
+
+--- a byte as two hex digits
+fn hex_byte[b]
+    digits = '0123456789abcdef'
+    return '`digits[b / 16]``digits[b % 16]`'
+
+fn show[source, bytes]
+    numbers = for b in bytes
+        str[b]
+    hexes = for b in bytes
+        hex_byte[b]
+    listed = join[numbers, ' ']
+    hex = join[hexes, '']
+    log['`source`: the bytes `listed` (hex `hex`) make the 32-bit number `joined[bytes]`']
+
+if 'device' in args[]
+    show['/dev/urandom', device_bytes[]]
+else
+    seed[32]
+    show['seeded generator', generator_bytes[]]
+    show['seeded generator', generator_bytes[]]
+    log['(run with the argument device to read /dev/urandom)']

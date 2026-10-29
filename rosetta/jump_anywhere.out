@@ -1,0 +1,31 @@
+break: the first square above 50 is 64
+continue: the numbers to 20 that 2 and 3 do not divide sum to 73
+return: in [3, 9, 4, 12, 7], 16 is 9 + 7
+Three calls down, nothing failing:
+  entering level 0
+  entering level 1
+  entering level 2
+  entering level 3
+  leaving level 2
+  leaving level 1
+  leaving level 0
+  back at the top, 3 levels up
+A failure three calls down unwinds them all:
+  entering level 0
+  entering level 1
+  entering level 2
+  entering level 3
+  caught at the top: no way down past level 3
+goto, as a loop over labels:
+  1
+  2
+  Oops - forgot to define the message! Start again.
+  1
+  2
+  3
+  Hello world
+exit:
+  n = 0
+  n = 1
+  n = 2
+  leaving the program at n = 3

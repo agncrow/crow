@@ -1,0 +1,58 @@
+--- Rosetta Code: Execute HQ9+
+--- https://rosettacode.org/wiki/Execute_HQ9+
+--- An HQ9+ interpreter: H prints "Hello, world!", Q prints the program's own
+--- source, 9 prints the lyrics of 99 Bottles of Beer and + adds one to the
+--- accumulator, which nothing shows (so it is shown here after each run). H and
+--- Q are read in either case, as many implementations read them; any other
+--- character is ignored.
+
+struct Ran [lines, accumulator]
+
+fn bottles[n]
+    if n eq 0
+        return 'No more bottles'
+    if n eq 1
+        return '1 bottle'
+    return '`n` bottles'
+
+fn song[]
+    lines = []
+    n = 99
+    while n gt 0
+        if n lt 99
+            lines = push[lines, '']
+        lines = push[lines, '`bottles[n]` of beer on the wall']
+        lines = push[lines, '`bottles[n]` of beer']
+        lines = push[lines, 'Take one down, pass it around']
+        lines = push[lines, '`bottles[n - 1]` of beer on the wall']
+        n = n - 1
+    return lines
+
+fn execute[source]
+    --- the lines the program prints, and its accumulator at the end
+    lines = []
+    accumulator = 0
+    chars = split[source, '']
+    i = 0
+    while i lt len[chars]
+        c = upper[chars[i]]
+        if c eq 'H'
+            lines = push[lines, 'Hello, world!']
+        else if c eq 'Q'
+            lines = push[lines, source]
+        else if c eq '9'
+            lines = concat[lines, song[]]
+        else if c eq '+'
+            accumulator = accumulator + 1
+        i = i + 1
+    return Ran[lines, accumulator]
+
+for source in ['H', 'qQ', '++h+', 'HQ9+']
+    ran = execute[source]
+    log['Running `source`:']
+    for line in ran.lines
+        if line eq ''
+            log['']
+        else
+            log['    `line`']
+    log['(the accumulator ends at `ran.accumulator`)']

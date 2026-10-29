@@ -1,0 +1,8 @@
+line through [0, 0, 10] along [0, -1, -1], plane through [0, 0, 5] with normal [0, 0, 1]:
+    they meet at [0, -5, 5]
+line through [1, 2, 3] along [1, 1, 1], plane through [0, 0, 0] with normal [1, 1, 1]:
+    they meet at [-1, 0, 1]
+line through [0, 0, 10] along [1, 1, 0], plane through [0, 0, 5] with normal [0, 0, 1]:
+    the line runs beside the plane and never meets it
+line through [0, 0, 5] along [1, 1, 0], plane through [0, 0, 5] with normal [0, 0, 1]:
+    the line lies in the plane

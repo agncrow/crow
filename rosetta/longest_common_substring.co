@@ -1,0 +1,97 @@
+--- Rosetta Code: Longest common substring
+--- https://rosettacode.org/wiki/Longest_common_substring
+--- Dynamic programming, a row at a time: run[j] is the length of the longest common
+--- suffix of a's first i characters and b's first j. A matching character extends
+--- the run on the diagonal, any other ends it, and the longest runs end the answers
+--- (every one of the greatest length, each once). For several strings, the pieces of
+--- the shortest, longest first, are asked of each of the others with in.
+
+--- Every longest common substring of a and b, in the order they end in a.
+fn longest_common_substrings[a, b]
+    xs = split[a, '']
+    ys = split[b, '']
+    above = for j in range[len[ys] + 1]
+        0
+    best = 0
+    finishes = []
+    i = 1
+    while i lte len[xs]
+        row = [0]
+        j = 1
+        while j lte len[ys]
+            run = 0
+            if xs[i - 1] eq ys[j - 1]
+                run = above[j - 1] + 1
+            if run gt best
+                best = run
+                finishes = []
+            if run gt 0 and run eq best
+                finishes = push[finishes, i]
+            row = push[row, run]
+            j = j + 1
+        above = row
+        i = i + 1
+    found = []
+    for e in finishes
+        piece = slice[a, e - best, e]
+        if not (piece in found)
+            found = push[found, piece]
+    return found
+
+fn longest_common_substring[a, b]
+    found = longest_common_substrings[a, b]
+    if len[found] eq 0
+        return ''
+    return found[0]
+
+fn in_every[texts, piece]
+    k = 0
+    while k lt len[texts]
+        if not (piece in texts[k])
+            return false
+        k = k + 1
+    return true
+
+--- A longest substring common to every one of texts.
+fn longest_common_substring_of[texts]
+    shortest = texts[0]
+    for t in texts
+        if len[t] lt len[shortest]
+            shortest = t
+    size = len[shortest]
+    while size gt 0
+        start = 0
+        while start + size lte len[shortest]
+            piece = slice[shortest, start, start + size]
+            if in_every[texts, piece]
+                return piece
+            start = start + 1
+        size = size - 1
+    return ''
+
+fn quoted[texts]
+    shown = for t in texts
+        '"`t`"'
+    return join[shown, ', ']
+
+fn show[a, b]
+    found = longest_common_substrings[a, b]
+    if len[found] eq 0
+        log['"`a`" and "`b`": none']
+    else if len[found] eq 1
+        log['"`a`" and "`b`": "`found[0]`"']
+    else
+        log['"`a`" and "`b`": `quoted[found]`, `len[found]` of length `len[found[0]]`']
+
+a = 'thisisatest'
+b = 'testing123testing'
+log['The longest common substring of "`a`" and "`b`": "`longest_common_substring[a, b]`"']
+log['']
+show['thisisatest_stinger', 'testing123testingthing']
+show['thisisatest_stinger', 'thisis']
+show['xyzzy', 'zyzzyva']
+show['abcxyz', 'xyzabc']
+show['abc', 'xyz']
+log['']
+three = ['thisisatest_stinger', 'testing123testingthing', 'thisis']
+log['Common to `quoted[three]`: "`longest_common_substring_of[three]`"']

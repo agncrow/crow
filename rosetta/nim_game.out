@@ -1,0 +1,22 @@
+Nim: take 1, 2 or 3 tokens in turn; whoever takes the last token wins. You go first.
+
+12 tokens on the table.
+How many tokens will you take (1, 2 or 3; q quits)? You take 2 tokens: 10 tokens left.
+The computer takes 2 tokens: 8 tokens left.
+How many tokens will you take (1, 2 or 3; q quits)? You take 1 token: 7 tokens left.
+The computer takes 3 tokens: 4 tokens left.
+How many tokens will you take (1, 2 or 3; q quits)? 'abc' is not a number of tokens.
+How many tokens will you take (1, 2 or 3; q quits)? You may take 1, 2 or 3 tokens, not 0.
+How many tokens will you take (1, 2 or 3; q quits)? You may take 1, 2 or 3 tokens, not 4.
+How many tokens will you take (1, 2 or 3; q quits)? You take 3 tokens: 1 token left.
+The computer takes 1 token: 0 tokens left.
+The computer took the last token: the computer wins.
+Another game? (y/n) 
+12 tokens on the table.
+How many tokens will you take (1, 2 or 3; q quits)? You take 3 tokens: 9 tokens left.
+The computer takes 1 token: 8 tokens left.
+How many tokens will you take (1, 2 or 3; q quits)? '2.5' is not a number of tokens.
+How many tokens will you take (1, 2 or 3; q quits)? You take 1 token: 7 tokens left.
+The computer takes 3 tokens: 4 tokens left.
+How many tokens will you take (1, 2 or 3; q quits)? You leave the game with 4 tokens on the table.
+Goodbye.

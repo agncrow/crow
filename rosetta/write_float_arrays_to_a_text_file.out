@@ -1,0 +1,18 @@
+The file filename (a tab between the columns):
+1	1
+2	1.4142
+3	1.7321
+1e+11	3.1623e+05
+Read back: each number is its array's, to its precision.
+
+The formatting at work (C writes these the same with %.*g):
+  %.3g   0.000123
+  %.3g   1.23e-05
+  %.3g   1.23e+05
+  %.4g   1000
+  %.1g   2
+  %.1g   4
+  %.1g   -0.1
+  %.17g  0.33333333333333331
+  %.5g   4.9407e-324
+  %.17g  1.7976931348623157e+308

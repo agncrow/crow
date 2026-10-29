@@ -1,0 +1,60 @@
+--- Rosetta Code: Draw a sphere
+--- https://rosettacode.org/wiki/Draw_a_sphere
+--- A sphere in characters, lit from the upper left and in front: each cell of
+--- the disc is shaded by how squarely its point of the sphere faces the light (the
+--- cosine raised to a power k, which narrows the highlight, plus ambient light),
+--- on the ramp .:!*oe&#%@ from brightest to darkest. A character is about twice as
+--- tall as it is wide, so a row is two columns tall. Two spheres, as in the C entry.
+
+use math
+
+struct Vec3 [x, y, z]
+
+fn unit[v]
+    n = sqrt[v.x * v.x + v.y * v.y + v.z * v.z]
+    return Vec3[v.x / n, v.y / n, v.z / n]
+
+fn dot3[a, b]
+    return a.x * b.x + a.y * b.y + a.z * b.z
+
+--- how bright the surface is where it faces `facing_to`, the light shining along `light`
+fn brightness[facing_to, light, k, ambient]
+    facing = -dot3[light, facing_to]
+    if facing lt 0.0
+        facing = 0.0
+    return facing ^ k + ambient
+
+--- the shade for a brightness: 1 or more is the first, `ambient` alone the last
+fn shade[shades, b]
+    i = floor[(1.0 - b) * len[shades]]
+    return shades[max[0, min[i, len[shades] - 1]]]
+
+--- the cells of a row, without the blanks at its end
+fn row_text[cells]
+    last = len[cells] - 1
+    while last gte 0 and cells[last] eq ' '
+        last = last - 1
+    return join[slice[cells, 0, last + 1], '']
+
+--- x runs right and y down from the centre, z toward the viewer; each cell is
+--- sampled at its centre, 2r rows of 4r cells
+fn sphere[r, k, ambient, light]
+    shades = split['.:!*oe&#%@', '']
+    lines = for row in range[-r, r]
+        y = row + 0.5
+        cells = for col in range[-2 * r, 2 * r]
+            x = (col + 0.5) / 2.0
+            if x * x + y * y lte r * r
+                n = unit[Vec3[x, y, sqrt[r * r - x * x - y * y]]]
+                shade[shades, brightness[n, light, k, ambient]]
+            else
+                ' '
+        row_text[cells]
+    return lines
+
+light = unit[Vec3[30.0, 30.0, -50.0]]
+for line in sphere[20, 4, 0.1, light]
+    log[line]
+log['']
+for line in sphere[10, 2, 0.4, light]
+    log[line]

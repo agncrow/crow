@@ -1,0 +1,16 @@
+QNRBBNKR  105
+RNBQKBNR  518
+RQNBBKRN  601
+RNQBBKRN  617
+♕♘♖♗♗♘♔♖  105
+♛♞♜♝♝♞♚♜  105
+rnbqkbnr  518
+
+RNBQK  not a Chess960 position: 8 pieces are needed, not 5
+RNBQKBNX  not a Chess960 position: X is no piece
+RNBQKBNQ  not a Chess960 position: 2 of Q, where there must be 1
+RNBQKNBR  not a Chess960 position: the bishops stand on squares of one colour
+KRNBBNQR  not a Chess960 position: the king does not stand between the rooks
+
+id 0 is BBQNNRKR, id 518 is RNBQKBNR, id 959 is RKRNNQBB
+960 different positions from the ids 0..959; 0 read back to another id

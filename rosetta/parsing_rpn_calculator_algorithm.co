@@ -1,0 +1,49 @@
+--- Rosetta Code: Parsing/RPN calculator algorithm
+--- https://rosettacode.org/wiki/Parsing/RPN_calculator_algorithm
+--- The stack is a list of floats, its top at the end: a number is pushed, an operator
+--- pops its two operands and pushes what it makes of them. A row of the table shows each
+--- token, what was done with it and the stack after it.
+
+fn apply_op[op, a, b]
+    if op eq '+'
+        return a + b
+    if op eq '-'
+        return a - b
+    if op eq '*'
+        return a * b
+    if op eq '/'
+        return a / b
+    return a ^ b
+
+fn shown[stack]
+    parts = for x in stack
+        str[x]
+    return join[parts, ' ']
+
+fn row[token, action, stack]
+    return '`fmt[token, width = 6]` `fmt[action, width = 27]` `stack`'
+
+--- the expression's value, its stack shown as each token is processed
+fn evaluate[rpn]
+    log['For RPN expression: `rpn`']
+    log['']
+    log[row['Token', 'Action', 'Stack']]
+    stack = []
+    for token in split[rpn, ' ']
+        if token in ['+', '-', '*', '/', '^']
+            b = stack[-1]
+            a = stack[-2]
+            stack = push[slice[stack, 0, -2], apply_op[token, a, b]]
+            log[row[token, 'Apply op to top of stack', shown[stack]]]
+        else
+            stack = push[stack, float[token]]
+            log[row[token, 'Push num onto top of stack', shown[stack]]]
+    return stack[-1]
+
+value = evaluate['3 4 2 * 1 5 - 2 3 ^ ^ / +']
+log['']
+log['The final value is `value`']
+log['']
+value = evaluate['5 1 2 + 4 * + 3 -']
+log['']
+log['The final value is `value`']

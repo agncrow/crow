@@ -1,0 +1,45 @@
+--- Rosetta Code: De Polignac numbers
+--- https://rosettacode.org/wiki/De_Polignac_numbers
+--- Sieve the primes below a limit, mark every prime plus a power of 2, and the odd
+--- numbers left unmarked are the de Polignac numbers. The ten thousandth is below
+--- 300,000, so that is the limit.
+
+fn sieve[limit]
+    --- whether each number below limit is prime
+    is_prime = for i in range[limit]
+        i gte 2
+    p = 2
+    while p * p lt limit
+        if is_prime[p]
+            multiple = p * p
+            while multiple lt limit
+                is_prime[multiple] = false
+                multiple = multiple + p
+        p = p + 1
+    return is_prime
+
+fn de_polignac[limit]
+    --- the odd numbers below limit that are no prime plus a power of 2
+    is_prime = sieve[limit]
+    reached = for i in range[limit]
+        false
+    for p in range[2, limit]
+        if is_prime[p]
+            power = 1
+            while p + power lt limit
+                reached[p + power] = true
+                power = power * 2
+    found = for n in range[1, limit, 2]
+        if not reached[n]
+            n
+    return found
+
+numbers = de_polignac[300000]
+log['The first 50 de Polignac numbers:']
+for row in range[0, 50, 10]
+    cells = for n in slice[numbers, row, row + 10]
+        fmt[n, width = 5]
+    log[join[cells, '']]
+log['']
+log['The one thousandth: `fmt[numbers[999], commas = true]`']
+log['The ten thousandth: `fmt[numbers[9999], commas = true]`']

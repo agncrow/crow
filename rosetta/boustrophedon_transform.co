@@ -1,0 +1,91 @@
+--- Rosetta Code: Boustrophedon transform
+--- https://rosettacode.org/wiki/Boustrophedon_transform
+--- The triangle row by row: T(k, 0) = a(k) and T(k, n) = T(k, n - 1) + T(k - 1, k - n),
+--- only the row before kept; b(k) = T(k, k). Ints grow without limit, so the stretch's
+--- 1000th terms come out whole.
+
+fn boustrophedon[a]
+    b = []
+    above = []
+    for k in range[len[a]]
+        row = push[[], a[k]]
+        for n in range[1, k + 1]
+            row = push[row, row[n - 1] + above[k - n]]
+        b = push[b, row[k]]
+        above = row
+    return b
+
+fn one_then_zeros[n]
+    xs = []
+    for i in range[n]
+        if i eq 0
+            xs = push[xs, 1]
+        else
+            xs = push[xs, 0]
+    return xs
+
+fn ones[n]
+    xs = []
+    for i in range[n]
+        xs = push[xs, 1]
+    return xs
+
+fn alternating[n]
+    xs = []
+    for i in range[n]
+        if i % 2 eq 0
+            xs = push[xs, 1]
+        else
+            xs = push[xs, -1]
+    return xs
+
+fn primes[n]
+    found = []
+    candidate = 2
+    while len[found] lt n
+        is_prime = true
+        i = 0
+        while is_prime and i lt len[found] and found[i] * found[i] lte candidate
+            if candidate % found[i] eq 0
+                is_prime = false
+            i = i + 1
+        if is_prime
+            found = push[found, candidate]
+        candidate = candidate + 1
+    return found
+
+fn fibonacci[n]
+    xs = []
+    a = 1
+    b = 1
+    for i in range[n]
+        xs = push[xs, a]
+        a, b = b, a + b
+    return xs
+
+fn factorials[n]
+    xs = []
+    f = 1
+    for i in range[n]
+        xs = push[xs, f]
+        f = f * (i + 1)
+    return xs
+
+fn show[name, a]
+    b = boustrophedon[a]
+    first = for x in slice[b, 0, 15]
+        str[x]
+    shown = join[first, ' ']
+    digits = str[b[999]]
+    head = slice[digits, 0, 20]
+    tail = slice[digits, len[digits] - 20, len[digits]]
+    log['`name`:']
+    log['  `shown`']
+    log['  1000th: `head` ... `tail` (`len[digits]` digits)']
+
+show['One followed by zeros', one_then_zeros[1000]]
+show['All ones', ones[1000]]
+show['Alternating 1, -1', alternating[1000]]
+show['The primes', primes[1000]]
+show['The Fibonacci numbers', fibonacci[1000]]
+show['The factorials', factorials[1000]]

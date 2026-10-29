@@ -1,0 +1,179 @@
+--- Rosetta Code: Johnson's algorithm
+--- https://rosettacode.org/wiki/Johnson's_algorithm
+--- Bellman-Ford from a vertex added with an edge of weight 0 to every vertex
+--- gives each vertex a potential h, or finds a negative cycle; every edge
+--- reweighted w + h[u] - h[v] is then non-negative, so Dijkstra, over a binary
+--- heap, runs from each vertex, and a distance it finds is turned back by
+--- subtracting h[source] and adding h[target]. No path shows as INF. Each
+--- matrix is checked against Floyd-Warshall's.
+
+use math
+
+struct Edge [from, to, weight]
+
+--- a heap's entry: a vertex and the distance it was reached at
+struct Entry [dist, vertex]
+
+--- the shortest distances from source over n vertices, or an error value
+--- when a negative cycle can be reached
+fn bellman_ford[n, edges, source]
+    dist = for v in range[n]
+        inf
+    dist[source] = 0.0
+    changed = true
+    rounds = 0
+    while changed and rounds lt n - 1
+        changed = false
+        for edge in edges
+            if dist[edge.from] + edge.weight lt dist[edge.to]
+                dist[edge.to] = dist[edge.from] + edge.weight
+                changed = true
+        rounds = rounds + 1
+    for edge in edges
+        if dist[edge.from] + edge.weight lt dist[edge.to]
+            return error['the graph has a negative cycle', 'graph']
+    return dist
+
+--- the heap with an entry added: each entry's distance is at most its children's
+fn heap_push[heap, entry]
+    heap = push[heap, entry]
+    i = len[heap] - 1
+    while i gt 0
+        parent = (i - 1) / 2
+        if heap[parent].dist lte heap[i].dist
+            break
+        held = heap[parent]
+        heap[parent] = heap[i]
+        heap[i] = held
+        i = parent
+    return heap
+
+--- the heap without its top entry
+fn heap_pop[heap]
+    last = heap[-1]
+    heap = pop[heap]
+    if len[heap] eq 0
+        return heap
+    heap[0] = last
+    i = 0
+    while true
+        least = i
+        left = 2 * i + 1
+        right = left + 1
+        if left lt len[heap] and heap[left].dist lt heap[least].dist
+            least = left
+        if right lt len[heap] and heap[right].dist lt heap[least].dist
+            least = right
+        if least eq i
+            break
+        held = heap[least]
+        heap[least] = heap[i]
+        heap[i] = held
+        i = least
+    return heap
+
+--- the edges leaving u
+fn leaving[edges, u]
+    out = for edge in edges
+        if edge.from eq u
+            edge
+    return out
+
+--- Dijkstra's shortest distances from source over n vertices, INF where none
+fn dijkstra[n, edges, source]
+    dist = for v in range[n]
+        inf
+    settled = for v in range[n]
+        false
+    dist[source] = 0.0
+    heap = [Entry[0.0, source]]
+    while len[heap] gt 0
+        u = heap[0].vertex
+        heap = heap_pop[heap]
+        if not settled[u]
+            settled[u] = true
+            for edge in leaving[edges, u]
+                if dist[u] + edge.weight lt dist[edge.to]
+                    dist[edge.to] = dist[u] + edge.weight
+                    heap = heap_push[heap, Entry[dist[edge.to], edge.to]]
+    return dist
+
+--- the potentials h: Bellman-Ford's distances from an added vertex n
+fn potentials[n, edges]
+    added = for v in range[n]
+        Edge[n, v, 0.0]
+    dist = bellman_ford[n + 1, concat[edges, added], n]
+    if not dist.ok
+        return dist
+    return slice[dist, 0, n]
+
+--- each edge's weight w from u to v made w + h[u] - h[v], never negative
+fn reweighted[edges, h]
+    out = for edge in edges
+        Edge[edge.from, edge.to, edge.weight + h[edge.from] - h[edge.to]]
+    return out
+
+--- the matrix of shortest distances between every pair of n vertices
+fn johnson[n, edges]
+    h = potentials[n, edges]
+    if not h.ok
+        return h
+    rows = for u in range[n]
+        found = dijkstra[n, reweighted[edges, h], u]
+        row = for v in range[n]
+            found[v] - h[u] + h[v]
+        row
+    return rows
+
+--- the same matrix by Floyd-Warshall, for the check
+fn floyd_warshall[n, edges]
+    d = for i in range[n]
+        row = for j in range[n]
+            if i eq j
+                0.0
+            else
+                inf
+        row
+    for edge in edges
+        d[edge.from][edge.to] = min[d[edge.from][edge.to], edge.weight]
+    for k in range[n]
+        for i in range[n]
+            for j in range[n]
+                if d[i][k] + d[k][j] lt d[i][j]
+                    d[i][j] = d[i][k] + d[k][j]
+    return d
+
+fn shown[x]
+    if x eq inf
+        return '  INF'
+    return fmt[str[x], width = 5, align = 'right']
+
+fn report[name, n, edges]
+    log['`name`:']
+    h = potentials[n, edges]
+    if not h.ok
+        log['  `h.reason`']
+        return
+    hs = for x in h
+        str[x]
+    h_text = join[hs, ', ']
+    log['  potentials h: [`h_text`]']
+    arcs = for edge in reweighted[edges, h]
+        '`edge.from`->`edge.to` `edge.weight`'
+    arcs_text = join[arcs, ', ']
+    log['  reweighted edges: `arcs_text`']
+    d = johnson[n, edges]
+    for row in d
+        cells = for x in row
+            shown[x]
+        line = join[cells, '']
+        log['  [`line` ]']
+    log['  same as Floyd-Warshall: `d eq floyd_warshall[n, edges]`']
+
+--- the test case the task's other entries run
+report['The task\'s test case', 4, [Edge[0, 1, -5.0], Edge[0, 2, 2.0], Edge[0, 3, 3.0], Edge[1, 2, 4.0], Edge[2, 3, 1.0]]]
+log['']
+--- Cormen, Leiserson, Rivest and Stein's example, its vertices 1 to 5 here 0 to 4
+report['Introduction to Algorithms, figure 25.6', 5, [Edge[0, 1, 3.0], Edge[0, 2, 8.0], Edge[0, 4, -4.0], Edge[1, 3, 1.0], Edge[1, 4, 7.0], Edge[2, 1, 4.0], Edge[3, 0, 2.0], Edge[3, 2, -5.0], Edge[4, 3, 6.0]]]
+log['']
+report['A negative cycle', 3, [Edge[0, 1, 1.0], Edge[1, 2, -2.0], Edge[2, 0, 0.5]]]

@@ -1,0 +1,115 @@
+--- Rosetta Code: Gotchas
+--- https://rosettacode.org/wiki/Gotchas
+--- Crow's surprises, each shown with what it answers and the defense against it.
+--- Most slips a newcomer makes are refused before the program runs, with words that
+--- name the fix: `==` and `<` (comparison is words, eq and lt), double quotes, a
+--- bare `push[xs, 4]` (it answers a new list: xs = push[xs, 4]), a list of two
+--- kinds, a variable given another kind (x = 1, then x = 'a'), a `for` over text
+--- (walk split[s, '']), `break` in a `for` (a while has one), a function reading a
+--- top-level variable (it sees its parameters), a variable read after the block
+--- that set it, a parameter named like a function of a module imported (`code`
+--- after use bits), and a number written with an exponent (1e10: write 10.0 ^ 10).
+--- The ones below run, and mean something other than a reflex from another
+--- language expects.
+use bits
+
+fn shows[written, value]
+    log['    `fmt[written, width = 50]` `value`']
+
+fn heading[n, title]
+    log['']
+    log['`n`. `title`']
+
+fn defense[text]
+    log['    --- `text`']
+
+log['Twelve gotchas of Crow: each line is code, then what it answers']
+heading[1, '^ is the power, not exclusive or, and it binds tighter than a minus']
+shows['2 ^ 3', str[2 ^ 3]]
+shows['2 ^ 3 ^ 2', str[2 ^ 3 ^ 2]]
+shows['-3 ^ 2', str[-3 ^ 2]]
+shows['bitxor[2, 3]', str[bitxor[2, 3]]]
+defense['the bit operations are named functions of use bits']
+
+heading[2, '/ between ints cuts toward zero, and % keeps the sign of the left']
+shows['7 / 2', str[7 / 2]]
+shows['-7 / 2', str[-7 / 2]]
+shows['-7 % 2', str[-7 % 2]]
+shows['7 / 2.0', str[7 / 2.0]]
+shows['floor[-7 / 2.0]', str[floor[-7 / 2.0]]]
+defense['write a float where a fraction is wanted; floor for Python\'s //']
+
+heading[3, 'a variable given a float anywhere is a float on every line']
+x = 7
+half = x / 2
+x = 2.5
+shows['x = 7, then half = x / 2, then x = 2.5', str[half]]
+defense['give the float a name of its own']
+
+heading[4, 'a list of numbers is a tensor to the operators']
+shows['[1, 2] + [3, 4]', str[[1, 2] + [3, 4]]]
+shows['[1, 2] * 2', str[[1, 2] * 2]]
+shows['[[1, 2], [3, 4]] * [[1, 2], [3, 4]]', str[[[1, 2], [3, 4]] * [[1, 2], [3, 4]]]]
+shows['[[1, 2], [3, 4]] .* [[1, 2], [3, 4]]', str[[[1, 2], [3, 4]] .* [[1, 2], [3, 4]]]]
+shows['concat[[1, 2], [3, 4]]', str[concat[[1, 2], [3, 4]]]]
+defense['concat joins lists; * of two matrices is their product, .* item by item']
+
+heading[5, 'a whole float shows as an int']
+shows['2.0', str[2.0]]
+shows['[1.0, 2.5]', str[[1.0, 2.5]]]
+shows['type[2.0]', type[2.0]]
+shows['fmt[2.0, decimals = 1]', fmt[2.0, decimals = 1]]
+defense['type says what a number is; fmt shows its decimals']
+
+heading[6, 'a float is binary, and round takes a half away from zero']
+shows['0.1 + 0.2', str[0.1 + 0.2]]
+shows['0.1 + 0.2 eq 0.3', str[0.1 + 0.2 eq 0.3]]
+shows['decimal[\'0.1\'] + decimal[\'0.2\'] eq decimal[\'0.3\']', str[decimal['0.1'] + decimal['0.2'] eq decimal['0.3']]]
+shows['round[2.5], round[-2.5]', '`round[2.5]`, `round[-2.5]`']
+shows['int[-3.7], floor[-3.7]', '`int[-3.7]`, `floor[-3.7]`']
+defense['decimal or fraction for exact numbers; round is not Python\'s round']
+
+heading[7, 'int of text reads an int as written, and its failure is a value']
+n = int['3.7']
+shows['int[\'3.7\'].ok', str[n.ok]]
+shows['int[\'3.7\'].reason', n.reason]
+shows['int[\' 42\'].ok', str[int[' 42'].ok]]
+shows['int[float[\'3.7\']]', str[int[float['3.7']]]]
+defense['ask .ok where the text comes from outside; trim it first']
+
+heading[8, 'a key in a map literal is a name, not a variable, and keys come in order']
+k = 'x'
+shows['k = \'x\', then keys[map[k = 1]]', str[keys[map[k = 1]]]]
+shows['keys[set[map[], k, 1]]', str[keys[set[map[], k, 1]]]]
+shows['keys[map[b = 1, a = 2]]', str[keys[map[b = 1, a = 2]]]]
+defense['set[m, k, v] keys by a value; keep a list where order matters']
+
+heading[9, 'text compares and sorts by character code']
+shows['\'10\' lt \'9\'', str['10' lt '9']]
+shows['sort[[\'b\', \'B\', \'a\']]', str[sort[['b', 'B', 'a']]]]
+shows['sort[[\'10\', \'9\', \'100\']]', str[sort[['10', '9', '100']]]]
+defense['compare numbers as numbers (int[t]) and words after lower[t]']
+
+heading[10, 'str of a list is the list as code shows it']
+shows['str[[\'a\', \'b\']]', str[['a', 'b']]]
+shows['join[[\'a\', \'b\'], \' \']', join[['a', 'b'], ' ']]
+defense['join the items, or interpolate each one']
+
+heading[11, 'a collecting for whose body ends in an if with no else filters']
+evens = for i in range[6]
+    if i % 2 eq 0
+        i
+shows['for i in range[6] / if i % 2 eq 0 / i', str[evens]]
+defense['an else gives every round an item']
+
+heading[12, 'an index past the end and a missing key stop the program']
+--- not every failure is a value: int, read and find answer error values, while
+--- these two stop the program where they are read (so they are not run here)
+xs = [1, 2, 3]
+m = map[a = 1]
+at = 5
+shows['xs[5]', 'stops: index 5 is out of range for an array of 3 items']
+shows['m[\'b\']', 'stops: map has no key \'b\'']
+shows['at lt len[xs] and xs[at] gt 0', str[at lt len[xs] and xs[at] gt 0]]
+shows['\'b\' in m', str['b' in m]]
+defense['and decides from the left, so a guard before it keeps the read safe']

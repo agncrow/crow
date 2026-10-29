@@ -1,0 +1,152 @@
+--- Rosetta Code: Permutations by swapping
+--- https://rosettacode.org/wiki/Permutations_by_swapping
+--- The Steinhaus-Johnson-Trotter algorithm with Even's speedup: every item carries a
+--- direction, and the largest item still moving steps one place that way, so successive
+--- permutations differ by one swap of neighbours and the sign flips with each swap. The
+--- permutations with their signs give a determinant (and, unsigned, a permanent).
+
+struct Signed [items, sign]
+
+--- The largest item still moving, by its place (-1 when none moves).
+fn largest_moving[items, dirs]
+    at = -1
+    for i in range[len[items]]
+        if dirs[i] ne 0
+            if at eq -1 or items[i] gt items[at]
+                at = i
+    at
+
+--- Every permutation of 0..n-1 beside its sign, in the order the swaps make them.
+fn swap_permutations[n]
+    items = range[n]
+    dirs = for i in range[n]
+        if i eq 0
+            0
+        else
+            -1
+    sign = 1
+    made = [Signed[items, sign]]
+    while true
+        at = largest_moving[items, dirs]
+        if at eq -1
+            break
+        d = dirs[at]
+        to = at + d
+        moved = items[at]
+        items[at] = items[to]
+        items[to] = moved
+        dirs[at] = dirs[to]
+        dirs[to] = d
+        sign = -sign
+        --- it stops at the end of the row, or before a larger item
+        beyond = to + d
+        if beyond lt 0 or beyond gt n - 1 or items[beyond] gt moved
+            dirs[to] = 0
+        made = push[made, Signed[items, sign]]
+        --- every larger item starts moving toward the one that moved
+        for i in range[n]
+            if items[i] gt moved
+                if i lt to
+                    dirs[i] = 1
+                else
+                    dirs[i] = -1
+    made
+
+fn shown[items]
+    parts = for x in items
+        str[x]
+    join[parts, ' ']
+
+fn counted[n, word]
+    if n eq 1
+        return '1 `word`'
+    '`n` `word`s'
+
+fn sign_text[sign]
+    if sign gt 0
+        return '+1'
+    '-1'
+
+--- The places two neighbouring permutations differ at: one swap of neighbours.
+fn swapped[a, b]
+    places = []
+    for i in range[len[a]]
+        if a[i] ne b[i]
+            places = push[places, i]
+    places
+
+fn show[n]
+    log['The permutations of `n` items, each with its sign:']
+    made = swap_permutations[n]
+    for k in range[len[made]]
+        p = made[k]
+        line = '  `shown[p.items]`   `sign_text[p.sign]`'
+        if k gt 0
+            places = swapped[made[k - 1].items, p.items]
+            line = '`line`   (places `places[0]` and `places[1]` swapped)'
+        log[line]
+
+--- The sign by counting inversions, to check the swaps' signs against.
+fn parity_sign[items]
+    inversions = 0
+    for i in range[len[items]]
+        for j in range[i + 1, len[items]]
+            if items[i] gt items[j]
+                inversions = inversions + 1
+    if inversions % 2 eq 0
+        return 1
+    -1
+
+fn check[n]
+    made = swap_permutations[n]
+    seen = map[]
+    neighbours = true
+    signs = true
+    for k in range[len[made]]
+        p = made[k]
+        seen = set[seen, shown[p.items], true]
+        if parity_sign[p.items] ne p.sign
+            signs = false
+        if k gt 0
+            places = swapped[made[k - 1].items, p.items]
+            if len[places] ne 2 or places[1] - places[0] ne 1
+                neighbours = false
+    count = 1
+    for i in range[1, n + 1]
+        count = count * i
+    items = counted[n, 'item']
+    perms = counted[len[made], 'permutation']
+    log['  `items`: `perms` (`n`! = `count`), `len[seen]` distinct; swaps of neighbours: `neighbours`; signs right: `signs`']
+
+--- The determinant: each permutation's product of entries m[i][p[i]], signed; the
+--- permanent: the same products unsigned.
+fn determinant_and_permanent[m]
+    det = 0
+    per = 0
+    for p in swap_permutations[len[m]]
+        product = 1
+        for i in range[len[m]]
+            product = product * m[i][p.items[i]]
+        det = det + p.sign * product
+        per = per + product
+    [det, per]
+
+fn report[m]
+    r = determinant_and_permanent[m]
+    log['  `m`: determinant `r[0]`, permanent `r[1]`']
+
+show[3]
+log['']
+show[4]
+log['']
+log['Checked: every permutation made once, each one swap of neighbours from the one before,']
+log['and each sign the parity of its count of inversions:']
+for n in range[1, 8]
+    check[n]
+log['']
+log['Used for determinants and permanents:']
+report[[[1, 2], [3, 4]]]
+report[[[2, 9, 4], [7, 5, 3], [6, 1, 8]]]
+report[[[-2, 2, -3], [-1, 1, 3], [2, 0, -1]]]
+report[[[1, 2, 3, 4], [4, 5, 6, 7], [7, 8, 9, 10], [10, 11, 12, 13]]]
+report[[[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [10, 11, 12, 13, 14], [15, 16, 17, 18, 19], [20, 21, 22, 23, 24]]]

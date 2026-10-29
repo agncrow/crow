@@ -1,0 +1,11 @@
+43/48 = 1/2 + 1/3 + 1/16
+5/121 = 1/25 + 1/757 + 1/763309 + 1/873960180913 + 1/1527612795642093418846225
+2014/59 = [34] + 1/8 + 1/95 + 1/14947 + 1/670223480
+
+For proper fractions with one or two digits:
+    the most terms, 8: 44/53, 8/97
+    the largest denominator, 57950458706754280171...62011424993909789665 (150 digits): 8/97
+
+For proper fractions with one, two or three digits:
+    the most terms, 13: 641/796, 529/914
+    the largest denominator, 83901882683345018663...38431266995525592705 (2847 digits): 36/457, 529/914

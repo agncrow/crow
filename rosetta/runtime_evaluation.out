@@ -1,0 +1,62 @@
+== statements and a function, run as a program
+    | fn fib[n]
+    |     a, b = 0, 1
+    |     i = 0
+    |     while i lt n
+    |         a, b = b, a + b
+    |         i = i + 1
+    |     a
+    |
+    | for n in [10, 50, 100]
+    |     log[fib[n]]
+  status 0
+  out: 55
+  out: 12586269025
+  out: 354224848179261915075
+
+== values in as arguments, out as JSON
+    | numbers = for a in args[]
+    |     int[a]
+    | total = 0
+    | for n in numbers
+    |     total = total + n
+    | log[encode[map[count = len[numbers], total = total]]]
+  status 0
+  out: {"count":4,"total":42}
+
+  read back: 4 numbers, total 42; twice that here is 84
+
+== the running program's own functions are not there
+    | log[twice[21]]
+  status 1
+  err: runtime_evaluation_text.co:1:5: undefined function 'twice'
+
+== a stop while it runs
+    | log['before']
+    | log[10 / 0]
+    | log['after']
+  status 1
+  out: before
+  err: runtime error: line 2: division by zero
+
+== a limit of one second of processor time
+    | n = 0
+    | while true
+    |     n = n + 1
+  status 152: ended by signal 24
+
+== fragments given to the REPL, each value shown
+    | x = 6
+    | x * 7
+    | fn square[n]
+    |     n * n
+    |
+    | square[x + 1]
+    | [x, square[x]]
+    | 2 ^ 70
+  status 0
+  out: 42
+  out: 49
+  out: [6, 36]
+  out: 1180591620717411303424
+

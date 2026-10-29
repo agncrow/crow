@@ -1,0 +1,85 @@
+--- Rosetta Code: Munchausen numbers
+--- https://rosettacode.org/wiki/Munchausen_numbers
+--- A number is checked by summing d ^ d over its digits (0 ^ 0 is 1 here, as Crow's
+--- ^ has it). Beyond the task: every Munchausen number there is, with 0 ^ 0 as 1
+--- and as 0 (Wikipedia's convention). A sum of d ^ d over n digits is at most
+--- n * 9 ^ 9, which has fewer than n digits from n = 11 on, so they all have 10
+--- digits or fewer; and the sum depends only on which digits occur, so each
+--- multiset of digits is tried once (184,755 of them) and its sum kept where its
+--- own digits are that multiset.
+
+fn self_powers[zero]
+    --- d ^ d for each digit d, with 0 ^ 0 given
+    table = for d in range[10]
+        d ^ d
+    table[0] = zero
+    return table
+
+fn digit_power_sum[n, table]
+    total = 0
+    m = n
+    while m gt 0
+        total = total + table[m % 10]
+        m = m / 10
+    return total
+
+fn is_munchausen[n, table]
+    return digit_power_sum[n, table] eq n
+
+fn sorted_digits[n, count]
+    --- n's digits in ascending order, or [] where n has not count digits
+    ds = []
+    m = n
+    while m gt 0
+        ds = push[ds, m % 10]
+        m = m / 10
+    if len[ds] ne count
+        return []
+    return sort[ds]
+
+fn every_munchausen[table]
+    --- each multiset of 1 to 10 digits, as a non-decreasing list, tried once
+    found = []
+    size = 1
+    while size lte 10
+        ds = for i in range[size]
+            0
+        going = true
+        while going
+            total = 0
+            for d in ds
+                total = total + table[d]
+            if total gt 0 and sorted_digits[total, size] eq ds
+                found = push[found, total]
+            --- the next non-decreasing list: raise the last digit below 9 and
+            --- set every digit after it to the same
+            i = size - 1
+            while i gte 0 and ds[i] eq 9
+                i = i - 1
+            if i lt 0
+                going = false
+            else
+                raised = ds[i] + 1
+                j = i
+                while j lt size
+                    ds[j] = raised
+                    j = j + 1
+        size = size + 1
+    return sort[found]
+
+fn listed[ns]
+    shown = for n in ns
+        str[n]
+    return join[shown, ', ']
+
+table = self_powers[1]
+found = for n in range[1, 5001]
+    if is_munchausen[n, table]
+        n
+for n in found
+    log[n]
+
+with_one = listed[every_munchausen[table]]
+log['Every Munchausen number, taking 0 ^ 0 as 1: `with_one`']
+with_zero = listed[every_munchausen[self_powers[0]]]
+log['Every Munchausen number, taking 0 ^ 0 as 0: `with_zero`']

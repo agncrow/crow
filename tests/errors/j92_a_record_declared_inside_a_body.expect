@@ -1,0 +1,3 @@
+j92_a_record_declared_inside_a_body.co:5:12: 'P' is a record declared inside a body — records are declared at the top of the file: move it out
+  5 │     struct P [x]
+    │            ^

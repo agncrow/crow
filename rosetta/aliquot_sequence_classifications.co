@@ -1,0 +1,61 @@
+--- Rosetta Code: Aliquot sequence classifications
+--- https://rosettacode.org/wiki/Aliquot_sequence_classifications
+--- The sum of proper divisors comes from the prime factorization (sigma is
+--- multiplicative); the sequence is grown until a term repeats, reaches 0, or the limits.
+
+struct Aliquot [class, terms]
+
+fn divisor_sum[n]
+    if n eq 1
+        return 0
+    sigma = 1
+    rest = n
+    p = 2
+    while p * p lte rest
+        if rest % p eq 0
+            term = 1
+            power = 1
+            while rest % p eq 0
+                rest = rest / p
+                power = power * p
+                term = term + power
+            sigma = sigma * term
+        p = p + 1
+    if rest gt 1
+        sigma = sigma * (rest + 1)
+    return sigma - n
+
+fn repeat_class[terms, next]
+    if next eq terms[0]
+        length = len[terms]
+        if length eq 1
+            return 'perfect'
+        if length eq 2
+            return 'amicable'
+        return 'sociable of length `length`'
+    if next eq terms[-1]
+        return 'aspiring'
+    return 'cyclic back to `next`'
+
+fn classify[k]
+    terms = [k]
+    while len[terms] lte 16
+        next = divisor_sum[terms[-1]]
+        if next eq 0
+            return Aliquot['terminating', push[terms, 0]]
+        if next in terms
+            return Aliquot[repeat_class[terms, next], terms]
+        terms = push[terms, next]
+        if next gte 2 ^ 47
+            return Aliquot['non-terminating', terms]
+    return Aliquot['non-terminating', terms]
+
+fn show[k]
+    a = classify[k]
+    log['`a.class`: `a.terms`']
+
+for k in range[1, 11]
+    show[k]
+log['']
+for k in [11, 12, 28, 496, 220, 1184, 12496, 1264460, 790, 909, 562, 1064, 1488, 15355717786080]
+    show[k]

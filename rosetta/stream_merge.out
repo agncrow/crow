@@ -1,0 +1,12 @@
+merge of 2: 2 3 14 15 17 18
+merge of 4: 2 2 3 3 5 7 14 15 17 18
+
+pile1.txt:  29551 bytes read in 4 blocks of at most 1000 lines
+pile2.txt:  29043 bytes read in 4 blocks of at most 1000 lines
+pile3.txt:  29684 bytes read in 4 blocks of at most 1000 lines
+pile4.txt:  29261 bytes read in 4 blocks of at most 1000 lines
+pile5.txt:  29465 bytes read in 4 blocks of at most 1000 lines
+pile6.txt:  30051 bytes read in 4 blocks of at most 1000 lines
+pile7.txt:  29348 bytes read in 4 blocks of at most 1000 lines
+merged: 25104 lines written in 26 blocks to merged.txt
+merged.txt is unixdict.txt again, byte for byte

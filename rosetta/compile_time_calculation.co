@@ -1,0 +1,17 @@
+--- Rosetta Code: Compile-time calculation
+--- https://rosettacode.org/wiki/Compile-time_calculation
+--- Crow has no way to ask for a computation at compile time: no macros, no
+--- constant functions, no comptime. The compiled program gets one from the
+--- compiler under it: Crow compiles to Rust, where this line is
+---     let factorial: i64 = (((((((((1_i64 * 2_i64) * 3_i64) * 4_i64) * … * 10_i64);
+--- (crow build --rs shows it), and rustc folds a product of literals in an
+--- optimized build, so the binary crow build makes holds 3628800 as a constant
+--- and multiplies nothing (on arm64: mov w8, #0x5f00 then movk w8, #0x37, lsl #16).
+--- The limits: only what rustc sees as constant folds — the literals and their
+--- operators here. A factorial written as a function with a loop is an int that
+--- may grow past 64 bits, held as a big number, and runs with the program; the
+--- dev build crow run makes is not optimized, and multiplies as it runs; and the
+--- interpreter (crow run -i) has no compile time at all.
+
+factorial = 1 * 2 * 3 * 4 * 5 * 6 * 7 * 8 * 9 * 10
+log['10! = `factorial`']

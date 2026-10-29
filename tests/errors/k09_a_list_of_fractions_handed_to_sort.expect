@@ -1,0 +1,3 @@
+k09_a_list_of_fractions_handed_to_sort.co:7:5: sort[] takes a list of ints, a list of numbers, a list of text or numbers, got a list of fractions
+  7 │ log[sort[xs]]
+    │     ^^^^

@@ -1,0 +1,74 @@
+--- Rosetta Code: Continued fraction
+--- https://rosettacode.org/wiki/Continued_fraction
+--- a0 + b1 / (a1 + b2 / (a2 + ...)) cut after n terms and summed from the last term
+--- back, the terms given by two functions of n handed in by name. Each constant is
+--- shown as a float for growing n, then exactly, summed as a fraction, to many places.
+use math
+
+fn sqrt2_a[n]
+    if n eq 0
+        return 1
+    return 2
+
+fn sqrt2_b[n]
+    return 1
+
+fn napier_a[n]
+    if n eq 0
+        return 2
+    return n
+
+fn napier_b[n]
+    if n eq 1
+        return 1
+    return n - 1
+
+fn pi_a[n]
+    if n eq 0
+        return 3
+    return 6
+
+fn pi_b[n]
+    return (2 * n - 1) ^ 2
+
+--- the fraction cut after `terms` terms, as a float
+fn approximate[a, b, terms]
+    x = 0.0
+    n = terms
+    while n gt 0
+        x = b[n] / (a[n] + x)
+        n = n - 1
+    return a[0] + x
+
+--- the same, exactly, as a fraction
+fn exact[a, b, terms]
+    x = fraction[0, 1]
+    n = terms
+    while n gt 0
+        x = fraction[b[n], 1] / (a[n] + x)
+        n = n - 1
+    return a[0] + x
+
+--- a fraction of 1 or more written to `count` places, cut, not rounded
+fn places[x, count]
+    s = str[floor[x * 10 ^ count]]
+    whole = slice[s, 0, len[s] - count]
+    part = slice[s, len[s] - count, len[s]]
+    return '`whole`.`part`'
+
+fn row[label, root, napier, circle]
+    cells = [fmt[label, width = 7], fmt[str[root], width = 21], fmt[str[napier], width = 21], str[circle]]
+    return join[cells, '']
+
+log[row['terms', 'sqrt 2', 'e', 'pi']]
+for terms in [10, 100, 1000, 10000]
+    r2 = approximate[sqrt2_a, sqrt2_b, terms]
+    e2 = approximate[napier_a, napier_b, terms]
+    p2 = approximate[pi_a, pi_b, terms]
+    log[row[str[terms], r2, e2, p2]]
+log[row['math', sqrt[2.0], e, pi]]
+log['']
+log['Summed exactly over 950 terms (pi converges slowly: its 950 terms hold 9 places):']
+log['sqrt 2 = `places[exact[sqrt2_a, sqrt2_b, 950], 200]`']
+log['e      = `places[exact[napier_a, napier_b, 950], 200]`']
+log['pi     = `places[exact[pi_a, pi_b, 950], 10]`']

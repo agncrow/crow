@@ -1,0 +1,58 @@
+--- Rosetta Code: Deceptive numbers
+--- https://rosettacode.org/wiki/Deceptive_numbers
+--- n divides the repunit R(n-1) = (10^(n-1) - 1) / 9 exactly when 10^(n-1) mod n is 1,
+--- for n prime to 2, 3 and 5 (R(n-1) is odd, ends in 1, and its digit sum n - 1 is no
+--- multiple of 3 when n is one). So the search takes the power by repeated squaring
+--- and keeps the composite n that pass. Ints grow, so the task's examples are shown
+--- by dividing the repunits themselves.
+
+fn power_mod[b, e, m]
+    --- b^e mod m by repeated squaring
+    result = 1
+    b = b % m
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    d = 2
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 1
+    return true
+
+fn is_deceptive[n]
+    if n % 2 eq 0 or n % 3 eq 0 or n % 5 eq 0
+        return false
+    return power_mod[10, n - 1, n] eq 1 and not is_prime[n]
+
+fn deceptive[count]
+    --- the first `count` deceptive numbers
+    found = []
+    n = 9
+    while len[found] lt count
+        if is_deceptive[n]
+            found = push[found, n]
+        n = n + 2
+    return found
+
+fn repunit[n]
+    --- the number written with n ones
+    return (10 ^ n - 1) / 9
+
+for n in [7, 43, 91]
+    log['R`n - 1` / `n` = `repunit[n - 1] / n`, remainder `repunit[n - 1] % n`']
+log['']
+
+numbers = deceptive[100]
+log['The first 100 deceptive numbers:']
+for row in range[0, 100, 10]
+    cells = for n in slice[numbers, row, row + 10]
+        fmt[n, width = 7]
+    log[join[cells, '']]

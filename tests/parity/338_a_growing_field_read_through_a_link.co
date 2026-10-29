@@ -1,0 +1,21 @@
+--- A field holding a growing int, read through a record-or-none link, is
+--- read at its own range: it had been read as a 64-bit int, and the
+--- compiled program did not build (Rosetta Code, AVL tree, Church
+--- numerals).
+struct Box [n, next]
+
+fn get[t]
+    return t.n
+
+b = Box[2 ^ 70, 0]
+c = Box[1, b]
+log[get[c.next]]
+
+struct Num [next, n]
+
+fn grow[x]
+    return Num[0, x.n + 1]
+
+one = Num[0, 7]
+two = Num[one, 0]
+log[grow[two.next].n]

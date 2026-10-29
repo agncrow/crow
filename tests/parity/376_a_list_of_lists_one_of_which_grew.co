@@ -1,0 +1,30 @@
+--- a list of lists one of whose lists holds growing ints (`int[text]`, a
+--- sum past 64 bits) holds growing lists, the others converted: the
+--- literal had stayed a list of 64-bit lists holding a growing one, and
+--- the lowered program disagreed with itself (Rosetta Code, Maximum
+--- triangle path sum, Longest common subsequence)
+
+fn parts[text]
+    big = []
+    big = push[big, int[text]]
+    small = [0]
+    return [big, small]
+
+log[parts['12']]
+
+row = [int['1'], int['2']]
+best = [row]
+log[best]
+
+first = range[3]
+rows = [first]
+row2 = [0]
+j = 1
+while j lt 3
+    row2 = push[row2, rows[0][j] + row2[j - 1]]
+    j = j + 1
+rows = push[rows, row2]
+log[rows]
+
+wide = [2 ^ 70]
+log[[wide, [1, 2], [3]]]

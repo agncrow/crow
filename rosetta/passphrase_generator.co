@@ -1,0 +1,51 @@
+--- Rosetta Code: Passphrase generator
+--- https://rosettacode.org/wiki/Passphrase_generator
+--- Words of 4 to 9 letters drawn from unixdict.txt, each capitalized and followed by a
+--- number from 10 to 99, joined by hyphens. The draws are seeded (seed[2026]) so that
+--- every run prints the same passphrases: take the seed out for fresh ones. A number of
+--- words given on the command line (crow run passphrase_generator.co 7) makes one
+--- passphrase of that many words instead of the samples.
+
+use math
+
+fn word_list[path]
+    words = for w in split[read[path], '\n']
+        if matches[w, '^[a-z]{4,9}$']
+            w
+    return words
+
+fn capitalized[w]
+    rest = slice[w, 1, len[w]]
+    return '`upper[w[0]]``rest`'
+
+--- `n` words drawn at random, each capitalized with a two-digit number after it
+fn passphrase[words, n]
+    parts = for i in range[n]
+        w = words[rand[len[words]]]
+        '`capitalized[w]``rand[10, 99]`'
+    return join[parts, '-']
+
+seed[2026]
+words = word_list['unixdict.txt']
+given = args[]
+if len[given] gt 0
+    n = int[given[0]]
+    if n.ok and n gt 0
+        log[passphrase[words, n]]
+    else
+        log['usage: crow run passphrase_generator.co [number of words]']
+else
+    log['`fmt[len[words], commas = true]` words of 4 to 9 letters in unixdict.txt']
+    log['']
+    log['n = 5: `passphrase[words, 5]`']
+    for n in [5, 8, 12]
+        log['']
+        log['Ten of `n` words:']
+        for k in range[10]
+            log['    `passphrase[words, n]`']
+    --- what an attacker who knows the method must search: a word and a number per word
+    bits = ln[len[words] * 90.0] / ln[2.0]
+    log['']
+    log['Each word adds log2(`len[words]` x 90) = `fmt[bits, decimals = 1]` bits of entropy:']
+    for n in [5, 8, 12]
+        log['    `n` words: `fmt[n * bits, decimals = 1]` bits']

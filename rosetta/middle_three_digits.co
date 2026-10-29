@@ -1,0 +1,27 @@
+--- Rosetta Code: Middle three digits
+--- https://rosettacode.org/wiki/Middle_three_digits
+--- The digits of the number's size, as text: an odd count of three or more has
+--- a middle three; any other answers an error value saying why.
+
+fn middle_three[n]
+    digits = str[abs[n]]
+    count = len[digits]
+    if count lt 3
+        return error['`n` has fewer than three digits', 'too short']
+    if count % 2 eq 0
+        return error['`n` has an even number of digits', 'even']
+    start = (count - 3) / 2
+    return slice[digits, start, start + 3]
+
+fn show[numbers]
+    for n in numbers
+        middle = middle_three[n]
+        number = fmt[n, width = 10]
+        if middle.ok
+            log['`number`  `middle`']
+        else
+            log['`number`  error: `middle.reason`']
+
+show[[123, 12345, 1234567, 987654321, 10001, -10001, -123, -100, 100, -12345]]
+log['']
+show[[1, 2, -1, -10, 2002, -2002, 0]]

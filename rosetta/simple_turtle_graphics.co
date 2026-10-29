@@ -1,0 +1,207 @@
+--- Rosetta Code: Simple turtle graphics
+--- https://rosettacode.org/wiki/Simple_turtle_graphics
+--- A turtle is a record of where it stands, the way it faces (degrees counterclockwise
+--- from east), whether its pen is down and the lines it has drawn; each move answers
+--- the turtle after the move. house draws a square with a roof, a door and two windows,
+--- bar_chart draws bars scaled to fill a square of the given side exactly, and both
+--- leave the turtle where it was, facing the way it faced. The drawing is written as
+--- an SVG image, simple_turtle_graphics.svg, to the current directory and removed at
+--- the end unless the program is given the argument keep; Crow draws on no screen of
+--- its own, so the console shows the drawing in braille.
+
+use math, bits
+
+struct Point [x, y]
+struct Line [from, to]
+struct Turtle [at, heading, down, lines]
+
+--- the turtle at the origin facing north, its pen down, nothing drawn yet
+fn turtle[]
+    lines = []
+    return Turtle[Point[0.0, 0.0], 90.0, true, lines]
+
+fn forward[t, distance]
+    angle = t.heading * pi / 180.0
+    to = Point[t.at.x + distance * cos[angle], t.at.y + distance * sin[angle]]
+    lines = t.lines
+    if t.down
+        lines = push[lines, Line[t.at, to]]
+    return Turtle[to, t.heading, t.down, lines]
+
+fn left[t, degrees]
+    heading = t.heading + degrees
+    while heading gte 360.0
+        heading = heading - 360.0
+    while heading lt 0.0
+        heading = heading + 360.0
+    return Turtle[t.at, heading, t.down, t.lines]
+
+fn right[t, degrees]
+    return left[t, -degrees]
+
+fn pen[t, down]
+    return Turtle[t.at, t.heading, down, t.lines]
+
+--- moved with the pen up, ahead and then to the right, facing as before
+fn jump[t, ahead, across]
+    down = t.down
+    t = pen[t, false]
+    t = forward[t, ahead]
+    t = right[t, 90.0]
+    t = forward[t, across]
+    t = left[t, 90.0]
+    return pen[t, down]
+
+--- a rectangle going ahead and to the right of the turtle, back where it began
+fn rectangle[t, width, height]
+    for side in range[2]
+        t = forward[t, height]
+        t = right[t, 90.0]
+        t = forward[t, width]
+        t = right[t, 90.0]
+    return t
+
+--- a house of the given size standing on the turtle's place, ahead and to the right
+fn house[t, size]
+    t = rectangle[t, size, size]
+    --- the roof, an equilateral triangle on the walls
+    t = jump[t, size, 0.0]
+    t = right[t, 30.0]
+    for side in range[3]
+        t = forward[t, size]
+        t = right[t, 120.0]
+    t = left[t, 30.0]
+    t = jump[t, -size, 0.0]
+    --- the door, in the middle
+    t = jump[t, 0.0, 0.4 * size]
+    t = rectangle[t, 0.2 * size, 0.4 * size]
+    t = jump[t, 0.0, -0.4 * size]
+    --- two windows
+    t = jump[t, 0.55 * size, 0.15 * size]
+    t = rectangle[t, 0.2 * size, 0.2 * size]
+    t = jump[t, 0.0, 0.5 * size]
+    t = rectangle[t, 0.2 * size, 0.2 * size]
+    t = jump[t, -0.55 * size, -0.65 * size]
+    return t
+
+--- a bar for each value, side by side, the tallest as tall as the square
+fn bar_chart[t, data, size]
+    tallest = 0.0
+    for v in data
+        tallest = max[tallest, v]
+    width = size / len[data]
+    for v in data
+        height = 0.0
+        if tallest gt 0.0
+            height = v / tallest * size
+        t = rectangle[t, width, height]
+        t = jump[t, 0.0, width]
+    return jump[t, 0.0, -size]
+
+--- a number to three decimals, as it shows
+fn near[v]
+    return round[v * 1000.0] / 1000.0
+
+fn place[t]
+    x = near[t.at.x]
+    y = near[t.at.y]
+    heading = near[t.heading]
+    return '(`x`, `y`) facing `heading`°'
+
+fn same_place[a, b]
+    return abs[a.at.x - b.at.x] lt 0.000000001 and abs[a.at.y - b.at.y] lt 0.000000001 and abs[a.heading - b.heading] lt 0.000000001
+
+--- the smallest and largest x and y the lines reach
+fn bounds[lines]
+    low = Point[lines[0].from.x, lines[0].from.y]
+    high = low
+    for line in lines
+        for p in [line.from, line.to]
+            low = Point[min[low.x, p.x], min[low.y, p.y]]
+            high = Point[max[high.x, p.x], max[high.y, p.y]]
+    return [low, high]
+
+--- the lines as SVG, y downwards, with a margin round them
+fn svg[lines, margin]
+    corners = bounds[lines]
+    low = corners[0]
+    high = corners[1]
+    width = round[high.x - low.x + 2.0 * margin]
+    height = round[high.y - low.y + 2.0 * margin]
+    pieces = for line in lines
+        x1 = fmt[line.from.x - low.x + margin, decimals = 2]
+        y1 = fmt[high.y - line.from.y + margin, decimals = 2]
+        x2 = fmt[line.to.x - low.x + margin, decimals = 2]
+        y2 = fmt[high.y - line.to.y + margin, decimals = 2]
+        '<line x1="`x1`" y1="`y1`" x2="`x2`" y2="`y2`"/>'
+    body = join[pieces, '\n']
+    head = '<svg xmlns="http://www.w3.org/2000/svg" width="`width`" height="`height`" viewBox="0 0 `width` `height`">'
+    background = '<rect width="100%" height="100%" fill="white"/>'
+    group = '<g stroke="darkgreen" stroke-width="2" stroke-linecap="round">'
+    return '`head`\n`background`\n`group`\n`body`\n</g>\n</svg>\n'
+
+--- the lines in braille, the drawing as wide as the given number of characters: a
+--- character holds two dots across and four down, U+2800 (10240) and a bit for each
+--- dot that is set
+fn sketch[lines, columns]
+    corners = bounds[lines]
+    low = corners[0]
+    high = corners[1]
+    across = 2 * columns
+    scale = (across - 1) / (high.x - low.x)
+    rows = (floor[(high.y - low.y) * scale] + 4) / 4
+    down = 4 * rows
+    dots = for i in range[across * down]
+        false
+    for line in lines
+        ax = (line.from.x - low.x) * scale
+        ay = (high.y - line.from.y) * scale
+        bx = (line.to.x - low.x) * scale
+        by = (high.y - line.to.y) * scale
+        steps = 1 + floor[max[abs[bx - ax], abs[by - ay]]]
+        for k in range[steps + 1]
+            x = round[ax + (bx - ax) * k / steps]
+            y = round[ay + (by - ay) * k / steps]
+            if x gte 0 and x lt across and y gte 0 and y lt down
+                dots[y * across + x] = true
+    weights = [1, 8, 2, 16, 4, 32, 64, 128]
+    shown = for r in range[rows]
+        cells = for c in range[columns]
+            pattern = 0
+            for d in range[8]
+                if dots[(4 * r + d / 2) * across + 2 * c + d % 2]
+                    pattern = pattern + weights[d]
+            pattern
+        last = columns - 1
+        while last gte 0 and cells[last] eq 0
+            last = last - 1
+        text = for pattern in slice[cells, 0, last + 1]
+            char[10240 + pattern]
+        join[text, '']
+    return shown
+
+t = turtle[]
+log['The turtle starts at `place[t]`.']
+before = t
+t = house[t, 150.0]
+log['house[t, 150]: from `place[before]` back to `place[t]`: `same_place[before, t]`']
+t = jump[t, 0.0, 170.0]
+before = t
+t = bar_chart[t, [0.5, 1.0 / 3.0, 2.0, 1.3, 0.5], 200.0]
+log['bar_chart[t, [0.5, 1/3, 2, 1.3, 0.5], 200]: from `place[before]` back to `place[t]`: `same_place[before, t]`']
+t = jump[t, 0.0, -170.0]
+log['The turtle drew `len[t.lines]` lines and ends at `place[t]`.']
+
+saved = write['simple_turtle_graphics.svg', svg[t.lines, 20.0]]
+if not saved.ok
+    halt['simple_turtle_graphics.svg could not be written: `saved.reason`']
+log['']
+log['The drawing is in simple_turtle_graphics.svg; in braille:']
+log['']
+for line in sketch[t.lines, 60]
+    log[line]
+given = args[]
+if 'keep' not in given
+    removed = rm['simple_turtle_graphics.svg']
+    if not removed.ok
+        halt['simple_turtle_graphics.svg could not be removed: `removed.reason`']

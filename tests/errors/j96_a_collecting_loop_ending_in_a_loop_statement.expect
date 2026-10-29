@@ -1,0 +1,3 @@
+j96_a_collecting_loop_ending_in_a_loop_statement.co:7:5: a collecting loop's last line is its item, and a `for` statement is no value, which 'h' cannot hold — end the body with the value to collect (an inner list is a collecting loop held by a name: `row = for b in …`, then `row`)
+  7 │     for b in [3]
+    │     ^^^^^^^^^^^^

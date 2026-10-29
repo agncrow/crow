@@ -1,0 +1,9 @@
+To err is human, but to really foul things up you need a computer.
+    -- Paul R. Ehrlich
+
+Decoded by hand, the same: true
+Encoded again, the same text, padding and all: true
+Written to ehrlich.txt and read back, the same: true
+
+UTF-8 of one to four bytes a character, by hand: Ça coûte 5 €, señor — ok? 🦅
+Bytes that are no text, an icon file's header: 00 00 01 00 01 00 10 10 00 00 01 00 20 00 68 04 00 00 16 00 00 00

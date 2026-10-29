@@ -1,0 +1,66 @@
+--- Rosetta Code: Conjugate transpose
+--- https://rosettacode.org/wiki/Conjugate_transpose
+--- A complex matrix is held as two real matrices, its real parts and its imaginary
+--- parts (math's complex numbers are single values), so its conjugate transpose is
+--- the transposes with the imaginary parts negated, and a product of two is
+--- (A + iB)(C + iD) = (AC - BD) + i(AD + BC) over real matrix products. Two matrices
+--- are taken as equal when no entry differs by more than 1e-12.
+use math
+
+--- a complex matrix: the real parts and the imaginary parts, two real matrices
+struct CMatrix [re, im]
+
+fn conjugate_transpose[m]
+    return CMatrix[transpose[m.re], -transpose[m.im]]
+
+fn product[a, b]
+    return CMatrix[a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re]
+
+fn identity[n]
+    return CMatrix[eye[n], zeros[n, n]]
+
+fn near[a, b]
+    tolerance = 10.0 ^ -12
+    return max[abs[a.re - b.re]] lte tolerance and max[abs[a.im - b.im]] lte tolerance
+
+fn is_hermitian[m, ct]
+    return near[m, ct]
+
+fn is_normal[m, ct]
+    return near[product[m, ct], product[ct, m]]
+
+fn is_unitary[m, ct]
+    one = identity[len[m.re]]
+    return near[product[m, ct], one] and near[product[ct, m], one]
+
+--- one entry as text: the real part, then the imaginary part with its sign
+fn entry[re, im]
+    sign = '+'
+    if im lt 0.0
+        sign = '-'
+    return '`fmt[re, decimals = 4]``sign``fmt[abs[im], decimals = 4]`i'
+
+fn show[title, m]
+    log[title]
+    for i in range[len[m.re]]
+        row = for j in range[len[m.re[i]]]
+            fmt[entry[m.re[i][j], m.im[i][j]], width = 14, align = 'right']
+        log[join[row, '  ']]
+
+half = sqrt[2.0] / 2.0
+matrices = [
+    CMatrix[[[3.0, 2.0], [2.0, 1.0]], [[0.0, 1.0], [-1.0, 0.0]]],
+    CMatrix[[[1.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 0.0, 1.0]], zeros[3, 3]],
+    CMatrix[[[half, half, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], [[0.0, 0.0, 0.0], [half, -half, 0.0], [0.0, 0.0, 1.0]]],
+    CMatrix[[[1.0, 0.0], [0.0, 1.0]], [[0.0, 1.0], [0.0, 0.0]]]
+]
+for k in range[len[matrices]]
+    if k gt 0
+        log['']
+    m = matrices[k]
+    show['Matrix:', m]
+    ct = conjugate_transpose[m]
+    show['Its conjugate transpose:', ct]
+    log['Hermitian? `is_hermitian[m, ct]`']
+    log['Normal?    `is_normal[m, ct]`']
+    log['Unitary?   `is_unitary[m, ct]`']

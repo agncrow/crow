@@ -1,0 +1,98 @@
+--- Rosetta Code: Quaternion
+--- https://rosettacode.org/wiki/Quaternion
+--- A quaternion is a record of its four parts, and each operation a function
+--- answering a new one. Each is shown in list form and as a + bi + cj + dk.
+
+struct Quat [a, b, c, d]
+
+fn norm[q]
+    return sqrt[q.a ^ 2 + q.b ^ 2 + q.c ^ 2 + q.d ^ 2]
+
+fn neg[q]
+    return Quat[-q.a, -q.b, -q.c, -q.d]
+
+fn conj[q]
+    return Quat[q.a, -q.b, -q.c, -q.d]
+
+fn add_real[q, r]
+    return Quat[q.a + r, q.b, q.c, q.d]
+
+fn add[p, q]
+    return Quat[p.a + q.a, p.b + q.b, p.c + q.c, p.d + q.d]
+
+fn mul_real[q, r]
+    return Quat[q.a * r, q.b * r, q.c * r, q.d * r]
+
+--- the Hamilton product: the order of p and q matters
+fn mul[p, q]
+    a = p.a * q.a - p.b * q.b - p.c * q.c - p.d * q.d
+    b = p.a * q.b + p.b * q.a + p.c * q.d - p.d * q.c
+    c = p.a * q.c - p.b * q.d + p.c * q.a + p.d * q.b
+    d = p.a * q.d + p.b * q.c - p.c * q.b + p.d * q.a
+    return Quat[a, b, c, d]
+
+--- the list form, (a, b, c, d)
+fn listed[q]
+    return '(`q.a`, `q.b`, `q.c`, `q.d`)'
+
+--- one imaginary term with its sign, as ' + 2i' or ' - 3j'
+fn term[x, unit]
+    if x lt 0
+        return ' - `-x``unit`'
+    return ' + `x``unit`'
+
+--- the written form, a + bi + cj + dk
+fn written[q]
+    bi = term[q.b, 'i']
+    cj = term[q.c, 'j']
+    dk = term[q.d, 'k']
+    return '`q.a``bi``cj``dk`'
+
+fn show[name, q]
+    log['`name` = `listed[q]` = `written[q]`']
+
+q = Quat[1, 2, 3, 4]
+q1 = Quat[2, 3, 4, 5]
+q2 = Quat[3, 4, 5, 6]
+r = 7
+
+show['q ', q]
+show['q1', q1]
+show['q2', q2]
+log['r  = `r`']
+log['']
+log['norm of q = `norm[q]`']
+show['-q', neg[q]]
+show['conjugate of q', conj[q]]
+show['r + q = q + r', add_real[q, r]]
+show['q1 + q2', add[q1, q2]]
+show['qr = rq', mul_real[q, r]]
+q1q2 = mul[q1, q2]
+q2q1 = mul[q2, q1]
+show['q1q2', q1q2]
+show['q2q1', q2q1]
+log['q1q2 equals q2q1: `q1q2 eq q2q1`']
+log['']
+
+--- r as a quaternion commutes with q, where q1 and q2 do not
+real = Quat[r, 0, 0, 0]
+log['r as a quaternion: rq equals qr: `mul[real, q] eq mul[q, real]`, and both are `listed[mul[real, q]]`']
+
+--- the defining rule: ii = jj = kk = ijk = -1
+i = Quat[0, 1, 0, 0]
+j = Quat[0, 0, 1, 0]
+k = Quat[0, 0, 0, 1]
+show['ii', mul[i, i]]
+show['jj', mul[j, j]]
+show['kk', mul[k, k]]
+show['ijk', mul[mul[i, j], k]]
+show['ij', mul[i, j]]
+show['ji', mul[j, i]]
+log['']
+
+--- the parts are real numbers: fractions of a whole work alike
+h = Quat[0.5, 1.5, -2.0, 0.25]
+show['h', h]
+log['norm of h = `norm[h]`']
+show['qh', mul[q, h]]
+show['hq', mul[h, q]]

@@ -1,0 +1,10 @@
+The golden ratio is 1.618033988749895, derived as follows:
+initial value: 5
+square root: 2.23606797749979
+add one: 3.23606797749979
+half: 1.618033988749895
+
+unit and bind, starting from unit[5] with nothing logged:
+square root: 2.23606797749979
+add one: 3.23606797749979
+half: 1.618033988749895

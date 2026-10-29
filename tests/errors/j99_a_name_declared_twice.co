@@ -1,0 +1,11 @@
+--- a name declared twice means two things: refused at the second, naming
+--- the first — the later function had silently replaced the earlier in
+--- both modes (Rosetta Code, Sealed classes and methods)
+
+fn greet[x]
+    return 'hello `x`'
+
+fn greet[x]
+    return 'hi `x`'
+
+log[greet['crow']]

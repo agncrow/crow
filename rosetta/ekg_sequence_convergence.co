@@ -1,0 +1,61 @@
+--- Rosetta Code: EKG sequence convergence
+--- https://rosettacode.org/wiki/EKG_sequence_convergence
+--- Each term is the smallest number not yet used that shares a factor with the
+--- last (a gcd above 1). Two sequences have converged at a term when they agree
+--- there and have used the same numbers so far: from there on they are one.
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+fn used_already[used, k]
+    k lt len[used] and used[k]
+
+fn mark[used, k]
+    while len[used] lte k
+        used = push[used, false]
+    used[k] = true
+    return used
+
+fn ekg[start, count]
+    seq = [1, start]
+    used = mark[[true, true], start]
+    last = start
+    while len[seq] lt count
+        k = 2
+        while used_already[used, k] or gcd[k, last] eq 1
+            k = k + 1
+        seq = push[seq, k]
+        used = mark[used, k]
+        last = k
+    return seq
+
+fn shown[xs]
+    parts = for x in xs
+        str[x]
+    join[parts, ', ']
+
+--- The first term (counting from 1) where the two agree on the term and on the
+--- numbers used up to it, or 0 when they do not within their length.
+fn convergence[a, b]
+    i = 2
+    while i lt len[a]
+        if a[i] eq b[i] and sort[slice[a, 0, i]] eq sort[slice[b, 0, i]]
+            return i + 1
+        i = i + 1
+    return 0
+
+for start in [2, 5, 7, 9, 10]
+    terms = shown[ekg[start, 10]]
+    log['EKG(`start`): `terms`']
+
+log['']
+log['EKG(5) and EKG(7) converge at term `convergence[ekg[5, 100], ekg[7, 100]]`']
+
+--- They agree from term 4 to term 10 but have used different numbers there,
+--- and part again before they meet for good.
+log['']
+for start in [5, 7]
+    terms = shown[ekg[start, 21]]
+    log['EKG(`start`) to term 21: `terms`']

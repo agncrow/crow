@@ -472,6 +472,9 @@ pub enum Prop {
     /// revision): found by this property (`table::revises`), so neither
     /// backend names the form.
     Revises,
+    /// The program ends at the call — `halt`, `exit` — so no path goes on
+    /// past it: a function's body may end there without its answer.
+    Ends,
 }
 
 /// The shape of the tensor a row answers, declared on the row from a fixed
@@ -2177,9 +2180,9 @@ pub static ROWS: &[Row] = &[
     Row { props: &[Prop::Does(crate::effects::Effect::Process)], ..row!("core.env_or", "", "env", crow_runtime::core::env_or, (Str, Cell) -> Str, value "env") },
     Row { props: &[Prop::Does(crate::effects::Effect::Input), Prop::Does(crate::effects::Effect::Waits)], ..row!("core.input", "", "input", crow_runtime::core::input, () -> Str, value "io") },
     Row { props: &[Prop::Does(crate::effects::Effect::Input), Prop::Does(crate::effects::Effect::Waits)], ..row!("core.input_prompt", "", "input", crow_runtime::core::input_prompt, (Str) -> Str, value "io") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Exit)], ..row!("core.exit", "", "exit", crow_runtime::core::exit, () -> Unit, never) },
-    Row { props: &[Prop::Does(crate::effects::Effect::Exit)], ..row!("core.exit_code", "", "exit", crow_runtime::core::exit_code, (Whole) -> Unit, never) },
-    row!("core.halt", "", "halt", crow_runtime::core::halt, (Str) -> Unit, stops),
+    Row { props: &[Prop::Does(crate::effects::Effect::Exit), Prop::Ends], ..row!("core.exit", "", "exit", crow_runtime::core::exit, () -> Unit, never) },
+    Row { props: &[Prop::Does(crate::effects::Effect::Exit), Prop::Ends], ..row!("core.exit_code", "", "exit", crow_runtime::core::exit_code, (Whole) -> Unit, never) },
+    Row { props: &[Prop::Ends], ..row!("core.halt", "", "halt", crow_runtime::core::halt, (Str) -> Unit, stops) },
     Row { props: &[Prop::Does(crate::effects::Effect::Waits)], ..row!("core.sleep_ms", "", "sleep", crow_runtime::core::sleep_ms, (Whole) -> Unit, stops) },
     Row { props: &[Prop::Does(crate::effects::Effect::Waits)], ..row!("core.sleep", "", "sleep", crow_runtime::core::sleep_secs, (Float) -> Unit, stops) },
     // (the lowering's: a loaded frame held to the columns the program's
@@ -2236,8 +2239,11 @@ pub static ROWS: &[Row] = &[
     row!("hash.hash", "", "hash", crow_runtime::hash::hash, (Str, Str) -> Str, value "hash"),
     // fmt: a number's or a text's options, or a moment's time style, which
     // can fail (kind 'time'; compiled, the failure was the text "[fmt: …]")
-    Row { options: &[("decimals", Preset::Int(-1)), ("commas", Preset::Bool(false)), ("width", Preset::Int(0)), ("align", Preset::Str("")), ("fill", Preset::Str(" ")), ("percent", Preset::Bool(false))], ..row!("display.fmt", "", "fmt", crow_runtime::display::fmt_value, (Cell, Int, Bool, Int, Str, Str, Bool) -> Str, stops) },
+    Row { big: Some("display.__fmt_big"), options: &[("decimals", Preset::Int(-1)), ("commas", Preset::Bool(false)), ("width", Preset::Int(0)), ("align", Preset::Str("")), ("fill", Preset::Str(" ")), ("percent", Preset::Bool(false))], ..row!("display.fmt", "", "fmt", crow_runtime::display::fmt_value, (Cell, Int, Bool, Int, Str, Str, Bool) -> Str, stops) },
     Row { written: "fmt", options: &[("style", Preset::Asked), ("tz", Preset::Str(""))], ..row!("display.fmt_time", "", "__fmt_time", crow_runtime::moments::fmt_time_of, (Moment, Str, Str) -> Str, value "time") },
+    // a decimal and a fraction laid out as numbers (their digits kept)
+    Row { options: &[("decimals", Preset::Int(-1)), ("commas", Preset::Bool(false)), ("width", Preset::Int(0)), ("align", Preset::Str("")), ("fill", Preset::Str(" ")), ("percent", Preset::Bool(false))], ..row!("display.fmt_decimal", "", "fmt", crow_runtime::display::fmt_decimal, (Decimal, Int, Bool, Int, Str, Str, Bool) -> Str, stops) },
+    Row { options: &[("decimals", Preset::Int(-1)), ("commas", Preset::Bool(false)), ("width", Preset::Int(0)), ("align", Preset::Str("")), ("fill", Preset::Str(" ")), ("percent", Preset::Bool(false))], ..row!("display.fmt_fraction", "", "fmt", crow_runtime::display::fmt_fraction, (Fraction, Int, Bool, Int, Str, Str, Bool) -> Str, stops) },
     // conversions: of a number or a bool, plain; of text or a JSON value,
     // fallible (kind 'parse'), read by one rule (compiled, JSON text was
     // trimmed and a JSON bool refused)
@@ -2263,6 +2269,8 @@ pub static ROWS: &[Row] = &[
     Row { range: IntRange::Any, ..row!("core.__ceil_big", "", "__ceil_big", crow_runtime::int::ceil, (Float) -> Big, stops) },
     Row { range: IntRange::Any, ..row!("core.__round_big", "", "__round_big", crow_runtime::int::round, (Float) -> Big, stops) },
     Row { range: IntRange::Abs, ..row!("core.__abs_big", "", "__abs_big", crow_runtime::int::abs, (Big) -> Big, never) },
+    // `fmt` of an int past 64 bits, every digit laid out
+    row!("display.__fmt_big", "", "__fmt_big", crow_runtime::display::fmt_big, (Big, Int, Bool, Int, Str, Str, Bool) -> Str, stops),
     Row { range: IntRange::Keeps, ..row!("core.__whole_big", "", "__whole_big", crow_runtime::int::itself, (Big) -> Big, never) },
     Row { range: IntRange::Min, ..row!("core.__min_big", "", "__min_big", crow_runtime::int::min, (Big, Big) -> Big, never) },
     Row { range: IntRange::And, ..row!("core.__bitand_big", "", "__bitand_big", crow_runtime::bits::and_big, (Big, Big) -> Big, never) },
@@ -2392,6 +2400,7 @@ pub static ROWS: &[Row] = &[
     Row { shape: Shape::Flat(0), props: &[Prop::Differentiable], ..row!("math.flatten", "math", "flatten", crow_runtime::math::flatten, (Tensor) -> Tensor, never) },
     Row { shape: Shape::Transposed(0), props: &[Prop::Differentiable], ..row!("math.transpose", "math", "transpose", crow_runtime::math::transpose, (Tensor) -> Tensor, stops) },
     Row { shape: Shape::Same(0), props: &[Prop::Differentiable], ..row!("math.clip", "math", "clip", crow_runtime::math::clip, (Tensor, Float, Float) -> Tensor, never) },
+    row!("math.atan2_n", "math", "atan2", crow_runtime::math::atan2_n, (Float, Float) -> Float, never),
     Row { shape: Shape::Broadcast(&[0, 1]), ..row!("math.atan2", "math", "atan2", crow_runtime::math::atan2, (Tensor, Tensor) -> Tensor, stops) },
     // element-wise: a number and a tensor share one rule (the number's row
     // first, so a number never reaches the tensor's)
@@ -3338,6 +3347,18 @@ pub fn refusal(modules: &[&str], name: &str, args: &[Arg]) -> Option<String> {
     Some(format!("{} takes {}, got {}{}", form(name), listed(&forms, "or"), got, read))
 }
 
+/// `refusal`, what was handed told by its types where a class names no
+/// kind of item (`Arg::said`).
+pub fn refusal_typed(modules: &[&str], name: &str, args: &[Arg], types: &[Ty]) -> Option<String> {
+    let e = refusal(modules, name, args)?;
+    let words = format!("got {}", listed(&args.iter().map(|a| a.words().to_string()).collect::<Vec<_>>(), "and"));
+    let said = format!("got {}", listed(&args.iter().enumerate().map(|(i, a)| types.get(i).map_or_else(|| a.words().to_string(), |t| a.said(t))).collect::<Vec<_>>(), "and"));
+    Some(match e.rfind(&words) {
+        Some(at) if said != words => format!("{}{}{}", &e[..at], said, &e[at + words.len()..]),
+        _ => e,
+    })
+}
+
 /// `a`, `a and b`, `a, b or c`.
 fn listed(items: &[String], last: &str) -> String {
     match items.split_last() {
@@ -3489,6 +3510,30 @@ impl Arg {
             Arg::AnyList => "a list",
             Arg::Unknown => "a value",
         }
+    }
+
+    /// What the argument is, as a refusal names it, a list the classes do
+    /// not name told by its items' kind: `a list of fractions` (a list of
+    /// fractions handed to `sort` had been refused as `a list`, naming no
+    /// kind; Rosetta Code, Rational calculator).
+    pub fn said(self, t: &Ty) -> String {
+        // (the item's own words made plural: `a fraction` → `fractions`,
+        // `a list of ints` → `lists of ints`)
+        let items = |item: &Ty| -> Option<String> {
+            if !matches!(item.payload(), Ty::Fraction | Ty::Decimal | Ty::List(_) | Ty::Map(..) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Moment) {
+                return None;
+            }
+            let words = Arg::of_type(item.payload()).words();
+            let noun = words.strip_prefix("a ").or_else(|| words.strip_prefix("an ")).unwrap_or(words);
+            let (head, rest) = noun.split_once(' ').map_or((noun, ""), |(h, r)| (h, r));
+            Some(if rest.is_empty() { format!("{}s", head) } else { format!("{}s {}", head, rest) })
+        };
+        match (self, t.payload()) {
+            (Arg::Items, Ty::List(item)) if !item.is_result() => items(item).map(|w| format!("a list of {}", w)),
+            (Arg::Fallible, Ty::List(item)) => items(item).map(|w| format!("a list of {} that can fail", w)),
+            _ => None,
+        }
+        .unwrap_or_else(|| self.words().to_string())
     }
 
     pub fn of_type(t: &Ty) -> Arg {
@@ -4261,6 +4306,14 @@ impl Row {
     /// (a core row's list or map, sys's bytes).
     pub fn takes_in_place(&self) -> bool {
         self.props.contains(&Prop::InPlace) && self.params.first().is_some_and(|k| k.taken_whole())
+    }
+
+    /// Whether the row grows what a place holds where it lies: one it
+    /// takes whole, or a tensor (`b.xs = push[b.xs, i]` of a vector held in
+    /// a field had copied the vector at every push; Rosetta Code, Universal
+    /// lambda machine).
+    pub fn grows_in_place(&self) -> bool {
+        self.props.contains(&Prop::InPlace) && self.params.first().is_some_and(|k| k.taken_whole() || matches!(k, Kind::Tensor))
     }
 }
 

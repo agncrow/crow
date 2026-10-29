@@ -1,0 +1,148 @@
+--- Rosetta Code: Lucky and even lucky numbers
+--- https://rosettacode.org/wiki/Lucky_and_even_lucky_numbers
+--- The sieve as the task states it gives every lucky (or even lucky) number up to
+--- a value; the j-th number is found from the sieving numbers up to j + 1 alone,
+--- by tracing its place back through each sieve to its place among the odd (or
+--- even) numbers. Run with arguments, it answers them:
+---     crow run lucky_and_even_lucky_numbers.co j [k | ,] [lucky | evenLucky]
+--- with none, it shows the task's command lines and the common mistakes.
+
+struct Request [first, j, k, mode]
+
+fn sieve[first, top]
+    --- the lucky (first 1) or even lucky (first 2) numbers up to top: the odd or
+    --- even numbers listed, then for the 2nd, 3rd, … number m, every m-th removed
+    numbers = range[first, top + 1, 2]
+    n = 1
+    while n lt len[numbers] and numbers[n] lte len[numbers]
+        m = numbers[n]
+        numbers = for i in range[len[numbers]]
+            if (i + 1) % m ne 0
+                numbers[i]
+        n = n + 1
+    numbers
+
+fn traced[sieving, first, place]
+    --- the number at `place` (from 1): the number a sieve by l leaves at place p
+    --- (from 0) stood at p + p / (l - 1) before it, so undo the sieves from the
+    --- last to the first, back to a place among the odd (or even) numbers
+    p = place - 1
+    i = len[sieving] - 1
+    while i gte 1
+        l = sieving[i]
+        p = p + p / (l - 1)
+        i = i - 1
+    2 * p + first
+
+fn by_place[first, j, k]
+    --- the j-th through k-th numbers: only sieves by numbers up to k + 1 move them
+    sieving = sieve[first, k + 1]
+    found = for place in range[j, k + 1]
+        traced[sieving, first, place]
+    found
+
+fn by_value[first, low, high]
+    found = for x in sieve[first, high]
+        if x gte low
+            x
+    found
+
+fn kind_name[first]
+    if first eq 1
+        return 'lucky'
+    'even lucky'
+
+fn spaced[numbers]
+    shown = for x in numbers
+        str[x]
+    join[shown, ' ']
+
+fn words_of[given]
+    --- the arguments as words, a comma a word of its own however it was written
+    line = replace[join[given, ' '], ',', ' , ']
+    words = for w in split[line, ' ']
+        if w ne ''
+            w
+    words
+
+fn kind_of[word]
+    --- 1 for lucky, 2 for even lucky, 0 for neither; any mix of cases
+    w = lower[word]
+    if w eq 'lucky'
+        return 1
+    if w eq 'evenlucky'
+        return 2
+    0
+
+fn number_of[word, name]
+    n = int[word]
+    if not n.ok
+        return error['`name` must be a whole number, not \'`word`\'', 'argument']
+    n
+
+fn request_of[given]
+    --- the command line read into a request, or an error saying what is wrong
+    words = words_of[given]
+    count = len[words]
+    if count eq 0
+        return error['missing arguments: give at least j', 'argument']
+    if count gt 3
+        return error['too many arguments: `count` given, at most 3', 'argument']
+    j = number_of[words[0], 'j']
+    if j lt 1 or j gt 100000
+        return error['j must be 1 to 100000, not `j`', 'argument']
+    first = 1
+    k = 0
+    if count gte 2
+        second = words[1]
+        if second ne ','
+            if count eq 2 and kind_of[second] gt 0
+                first = kind_of[second]
+            else
+                k = number_of[second, 'k']
+                if k eq 0 or abs[k] gt 100000
+                    return error['k must be 1 to 100000 or -1 to -100000, not `k`', 'argument']
+                if abs[k] lt j
+                    return error['|k| must not be below j: `abs[k]` is less than `j`', 'argument']
+    if count eq 3
+        first = kind_of[words[2]]
+        if first eq 0
+            return error['\'`words[2]`\' is neither lucky nor evenLucky', 'argument']
+    mode = 'one'
+    if k gt 0
+        mode = 'places'
+    else if k lt 0
+        mode = 'values'
+    Request[first, j, abs[k], mode]
+
+fn answer[given]
+    r = request_of[given]
+    if not r.ok
+        return 'error: `r.reason`'
+    name = kind_name[r.first]
+    if r.mode eq 'one'
+        return '`name` number `r.j`: `traced[sieve[r.first, r.j + 1], r.first, r.j]`'
+    if r.mode eq 'places'
+        found = spaced[by_place[r.first, r.j, r.k]]
+        return '`name` numbers `r.j` through `r.k`: `found`'
+    found = spaced[by_value[r.first, r.j, r.k]]
+    '`name` numbers from `r.j` to `r.k`: `found`'
+
+given = args[]
+if len[given] gt 0
+    log[answer[given]]
+else
+    log['usage: crow run lucky_and_even_lucky_numbers.co j [k | ,] [lucky | evenLucky]']
+    log['  j          the j-th number']
+    log['  j k        the j-th through the k-th']
+    log['  j -k       those from j to |k| in value']
+    log['']
+    lines = [
+        '1 20 lucky', '1 20 evenLucky', '6000 -6100 lucky', '6000 -6100 evenLucky',
+        '10000', '10000 , lucky', '10000 , evenLucky', '10000,evenlucky', '5 EVENLUCKY',
+        '', '1 20 lucky 30', '1 x lucky', '0 20', '20 10', '6100 -6000', '1 20 lucki',
+        '1.5'
+    ]
+    for line in lines
+        log['args: `line`']
+        log['    `answer[split[line, \' \']]`']

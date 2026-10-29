@@ -1,0 +1,41 @@
+--- Rosetta Code: Stern-Brocot sequence
+--- https://rosettacode.org/wiki/Stern-Brocot_sequence
+--- The task's method: start from 1, 1 and consider the second member; each round
+--- appends the considered member plus the one before it, then the considered member,
+--- and moves on to the next. The first places of 1 to 10 and of 100 are read from the
+--- first 2,000 members, and Euclid's algorithm checks the consecutive pairs.
+
+fn stern_brocot[n]
+    xs = [1, 1]
+    considered = 1
+    while len[xs] lt n
+        xs = push[xs, xs[considered] + xs[considered - 1]]
+        xs = push[xs, xs[considered]]
+        considered = considered + 1
+    return slice[xs, 0, n]
+
+--- the 1-based place where v first appears in xs
+fn first_place[xs, v]
+    i = 0
+    while xs[i] ne v
+        i = i + 1
+    return i + 1
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+sb = stern_brocot[2000]
+first = join[slice[sb, 0, 15], ', ']
+log['The first 15 members: `first`']
+log['']
+log['The 1-based place where each number first appears:']
+for v in concat[range[1, 11], [100]]
+    log['  `fmt[v, width = 3]` at `first_place[sb, v]`']
+log['']
+--- the places among the first 1,000 members whose pair's greatest common divisor is not 1
+shared = for i in range[999]
+    if gcd[sb[i], sb[i + 1]] ne 1
+        i
+log['Every two consecutive members up to the 1,000th have greatest common divisor 1: `len[shared] eq 0`']

@@ -1,0 +1,65 @@
+--- Rosetta Code: Multiton
+--- https://rosettacode.org/wiki/Multiton
+--- Crow has no classes, private constructors or object identity, and a program
+--- keeps no state between calls but what it holds -- a value is a value -- so the
+--- closest honest form is a registry the program holds and hands on: a record of
+--- the instances made, by key, for the keys the multiton allows. requested[reg, key]
+--- is its only way in: it answers the registry with the key's instance asked for --
+--- made at the first request (numbered in the order made), the same instance at
+--- every later one -- and a key outside the set is an error value. Thread safety
+--- comes with the form: a registry is a value, which no two threads can change
+--- under each other.
+
+struct Instance [key, made, asked, note]
+
+struct Registry [instances, made]
+
+fn keys_allowed[]
+    return ['zero', 'one', 'two']
+
+fn requested[reg, key]
+    --- the registry with the key's instance asked for once more, or made
+    if key not in keys_allowed[]
+        return error['no multiton instance for \'`key`\' (the keys are zero, one and two)', 'multiton']
+    held = reg.instances
+    if key in held
+        i = held[key]
+        held[key] = Instance[i.key, i.made, i.asked + 1, i.note]
+        return Registry[held, reg.made]
+    made = reg.made + 1
+    held[key] = Instance[key, made, 1, 'made for `key`']
+    return Registry[held, made]
+
+fn annotated[reg, key, note]
+    --- a change to the instance's state, which every later request sees
+    held = reg.instances
+    i = held[key]
+    held[key] = Instance[i.key, i.made, i.asked, note]
+    return Registry[held, reg.made]
+
+fn times[n]
+    if n eq 1
+        return 'once'
+    return '`n` times'
+
+fn shown[m]
+    return 'instance `m.made` (\'`m.key`\'), asked for `times[m.asked]`, note: `m.note`'
+
+reg = Registry[map[], 0]
+for key in ['zero', 'one', 'zero', 'two', 'one', 'zero']
+    reg = requested[reg, key]
+    log['requested[reg, \'`key`\'] holds `shown[reg.instances[key]]`']
+
+reg = requested[reg, 'zero']
+alpha = reg.instances['zero']
+reg = requested[reg, 'zero']
+beta = reg.instances['zero']
+log['alpha and beta are instances `alpha.made` and `beta.made`: one instance, `alpha.made eq beta.made`']
+reg = annotated[reg, 'one', 'changed through one request']
+reg = requested[reg, 'one']
+one = reg.instances['one']
+log['after a change, the instance for \'one\' is `shown[one]`']
+
+wrong = requested[reg, 'three']
+log['requested[reg, \'three\'] fails (ok is `wrong.ok`): `wrong.reason`']
+log['instances made: `reg.made`']

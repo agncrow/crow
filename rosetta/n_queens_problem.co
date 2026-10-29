@@ -1,0 +1,72 @@
+--- Rosetta Code: N-queens problem
+--- https://rosettacode.org/wiki/N-queens_problem
+--- One queen a row, placed by backtracking. The first solution of the eight
+--- queens is found with a list of columns, a row at a time, and drawn; the
+--- solutions for each N are counted with bit masks (use bits): the columns and the
+--- two diagonals already attacked are three masks, and each free square of a row
+--- is taken in turn, lowest bit first. N runs to 12 here (a second interpreted);
+--- 13 (73,712 solutions) takes five times as long.
+use bits
+
+fn safe[queens, row, col]
+    --- whether no queen in the rows above attacks (row, col)
+    r = 0
+    while r lt row
+        q = queens[r]
+        if q eq col or abs[q - col] eq row - r
+            return false
+        r = r + 1
+    return true
+
+fn first_solution[n]
+    --- queens[r] is the column of row r's queen; -1 where none is placed yet
+    queens = for i in range[n]
+        -1
+    row = 0
+    while row gte 0 and row lt n
+        col = queens[row] + 1
+        while col lt n and not safe[queens, row, col]
+            col = col + 1
+        if col lt n
+            queens[row] = col
+            row = row + 1
+        else
+            queens[row] = -1
+            row = row - 1
+    return queens
+
+fn board[queens]
+    n = len[queens]
+    for q in queens
+        cells = for c in range[n]
+            if c eq q
+                'Q'
+            else
+                '.'
+        log[join[cells, ' ']]
+
+fn placements[full, cols, left, right]
+    --- how many ways the rows still empty can be filled
+    if cols eq full
+        return 1
+    count = 0
+    free = bitand[full, bitxor[full, bitor[cols, bitor[left, right]]]]
+    while free ne 0
+        bit = bitand[free, -free]
+        free = free - bit
+        count = count + placements[full, cols + bit, bitand[shift[left + bit, 1], full], shift[right + bit, -1]]
+    return count
+
+fn solutions[n]
+    return placements[2 ^ n - 1, 0, 0, 0]
+
+queens = first_solution[8]
+columns = for q in queens
+    str[q]
+shown = join[columns, ', ']
+log['The first solution of the eight queens (the column of each row\'s queen): `shown`']
+board[queens]
+log['']
+log['Solutions on an N x N board:']
+for n in range[1, 13]
+    log['`fmt[n, width = 3]`: `fmt[solutions[n], width = 6]`']

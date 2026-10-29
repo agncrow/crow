@@ -1,0 +1,19 @@
+Read as ints (Maybe Int), then >>= plus_one >>= currency:
+  1 -> Just 1 -> Just $2.00
+  99 -> Just 99 -> Just $100.00
+  x -> Nothing (cannot convert 'x' to int)
+  4 -> Just 4 -> Just $5.00
+
+unit[n] >>= half >>= roman:
+  3998 -> Just MCMXCIX
+  7 -> Nothing (7 is odd)
+  0 -> Nothing (no Roman numeral for 0)
+  10000 -> Nothing (no Roman numeral for 5000)
+  2024 -> Just MXII
+
+A function after Nothing does not run (announced_half says when it runs):
+  12 >>= announced_half:
+    (half runs on 12)
+    Just 6
+  twelve >>= announced_half:
+    Nothing (cannot convert 'twelve' to int)

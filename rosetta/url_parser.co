@@ -1,0 +1,224 @@
+--- Rosetta Code: URL parser
+--- https://rosettacode.org/wiki/URL_parser
+--- By hand, after RFC 3986: scheme ':' ['//' [username [':' password] '@'] domain
+--- [':' port]] path ['?' query] ['#' fragment]. The fragment is cut at the first
+--- '#', the query at the first '?' before it, the scheme at the first ':', the
+--- authority after '//' up to the path's '/'. The scheme and the domain are read
+--- without case (written in lower case), the rest as written. A text that breaks
+--- the syntax is an error value whose reason says what is wrong and where.
+
+struct Url [scheme, username, password, domain, port, path, query, fragment]
+
+struct Authority [username, password, domain, port]
+
+fn letters[]
+    return 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+
+fn digits[]
+    return '0123456789'
+
+--- What a URL may hold as it is: RFC 3986's unreserved characters, its
+--- delimiters, and the % that begins an escape.
+fn may_stand[c]
+    return c in concat[[letters[], digits[], '-._~!$&\'()*+,;=:/?#[]@%']]
+
+fn is_hex[c]
+    return c in '0123456789abcdefABCDEF'
+
+--- A reason, and the character it is about, counted from 1.
+fn problem[why, at]
+    return error['`why` (character `at + 1`)', 'url']
+
+fn bracket[at]
+    return problem['\'[\' and \']\' stand only around an IP address in the domain', at]
+
+--- The first place from `from` on, before `to`, whose character is one of
+--- `stops`; `to` where there is none.
+fn upto[text, from, to, stops]
+    i = from
+    while i lt to and text[i] not in stops
+        i = i + 1
+    return i
+
+--- The first place from `from` on, before `to`, whose character is not one of
+--- `kept`; `to` where there is none.
+fn past[text, from, to, kept]
+    i = from
+    while i lt to and text[i] in kept
+        i = i + 1
+    return i
+
+--- Why the URL's characters are not a URL's, or '' where they are: each one a
+--- URL may hold, and each % followed by two hex digits.
+fn characters[text]
+    i = 0
+    while i lt len[text]
+        c = text[i]
+        if not may_stand[c]
+            escaped = encode[c, 'url']
+            return '\'`c`\' may not stand in a URL: write it `escaped` (character `i + 1`)'
+        if c eq '%'
+            pair = slice[text, i + 1, i + 3]
+            if len[pair] lt 2
+                return '\'%\' begins an escape, and the URL ends before two hex digits follow it (character `i + 1`)'
+            if not is_hex[pair[0]] or not is_hex[pair[1]]
+                return '\'%\' begins an escape, and two hex digits follow it, not \'`pair`\' (character `i + 1`)'
+        i = i + 1
+    return ''
+
+--- The authority, text[from, to): [username [':' password] '@'] domain [':' port],
+--- the domain a name or an IP address in brackets, the port digits (or none).
+fn authority[text, from, to]
+    username = ''
+    password = ''
+    at = from
+    sign = upto[text, from, to, '@']
+    if sign lt to
+        second = upto[text, sign + 1, to, '@']
+        if second lt to
+            return problem['a second \'@\': the first ends the username and password, so a \'@\' in them is written %40', second]
+        stray = upto[text, from, sign, '[]']
+        if stray lt sign
+            return bracket[stray]
+        colon = upto[text, from, sign, ':']
+        username = slice[text, from, colon]
+        if colon lt sign
+            password = slice[text, colon + 1, sign]
+        at = sign + 1
+    domain = ''
+    after = at
+    if at lt to and text[at] eq '['
+        close = upto[text, at, to, ']']
+        if close eq to
+            return problem['the \'[\' that opens an IP address is never closed', at]
+        inside = past[text, at + 1, close, concat[digits[], 'abcdefABCDEF:.']]
+        if inside lt close
+            return problem['an IP address in brackets holds hex digits, \':\' and \'.\', not \'`text[inside]`\'', inside]
+        domain = slice[text, at, close + 1]
+        after = close + 1
+        if after lt to and text[after] ne ':'
+            return problem['only a \':\' and the port may follow an IP address, not \'`text[after]`\'', after]
+    else
+        after = upto[text, at, to, ':']
+        domain = slice[text, at, after]
+        stray = upto[text, at, after, '[]']
+        if stray lt after
+            return bracket[stray]
+    port = slice[text, after + 1, to]
+    wrong = past[text, after + 1, to, digits[]]
+    if wrong lt to
+        return problem['the port is digits, not \'`port`\'', wrong]
+    return Authority[username, password, lower[domain], port]
+
+--- The URL's parts, or why the text is not a URL.
+fn parse_url[text]
+    if text eq ''
+        return error['an empty text is no URL', 'url']
+    why = characters[text]
+    if why ne ''
+        return error[why, 'url']
+    n = len[text]
+    colon = upto[text, 0, n, ':/?#']
+    if colon eq n or text[colon] ne ':'
+        return error['no scheme: a URL begins with its scheme and a colon, as http: does', 'url']
+    if colon eq 0
+        return problem['the scheme before the \':\' is empty', 0]
+    if text[0] not in letters[]
+        return problem['the scheme begins with a letter, not \'`text[0]`\'', 0]
+    odd = past[text, 1, colon, concat[[letters[], digits[], '+-.']]]
+    if odd lt colon
+        return problem['the scheme holds letters, digits, \'+\', \'-\' and \'.\', not \'`text[odd]`\'', odd]
+    scheme = lower[slice[text, 0, colon]]
+    sharp = upto[text, colon, n, '#']
+    fragment = ''
+    if sharp lt n
+        fragment = slice[text, sharp + 1, n]
+        second = upto[text, sharp + 1, n, '#']
+        if second lt n
+            return problem['a second \'#\': a fragment holds none, so it is written %23', second]
+    mark = upto[text, colon, sharp, '?']
+    query = ''
+    if mark lt sharp
+        query = slice[text, mark + 1, sharp]
+    start = colon + 1
+    parts = Authority['', '', '', '']
+    if slice[text, start, start + 2] eq '//'
+        end = upto[text, start + 2, mark, '/']
+        parts = authority[text, start + 2, end]
+        start = end
+    stray = upto[text, start, n, '[]']
+    if stray lt n
+        return bracket[stray]
+    path = slice[text, start, mark]
+    return Url[scheme, parts.username, parts.password, parts.domain, parts.port, path, query, fragment]
+
+--- Each part the URL has, one to a line; a path that is itself a URL with a
+--- domain (jdbc's) is parsed again, below it.
+fn show[url, indent]
+    names = ['scheme', 'username', 'password', 'domain', 'port', 'path', 'query', 'fragment']
+    held = [url.scheme, url.username, url.password, url.domain, url.port, url.path, url.query, url.fragment]
+    for i in range[len[names]]
+        if held[i] ne ''
+            log['`indent``fmt[names[i], width = 8]` = `held[i]`']
+    if url.domain eq ''
+        inner = parse_url[url.path]
+        if inner.ok
+            if inner.domain ne ''
+                log['`indent`the path is itself a URL:']
+                show[inner, '`indent`    ']
+
+fn report[text]
+    shown = text
+    if text eq ''
+        shown = '(an empty text)'
+    log[shown]
+    url = parse_url[text]
+    if url.ok
+        show[url, '    ']
+    else
+        log['    not a URL: `url.reason`']
+    log['']
+
+wellformed = [
+    'foo://example.com:8042/over/there?name=ferret#nose',
+    'urn:example:animal:ferret:nose',
+    'jdbc:mysql://test_user:ouupppssss@localhost:3306/sakila?profileSQL=true',
+    'ftp://ftp.is.co.za/rfc/rfc1808.txt',
+    'http://www.ietf.org/rfc/rfc2396.txt#header1',
+    'ldap://[2001:db8::7]/c=GB?objectClass=one&objectClass=two',
+    'mailto:John.Doe@example.com',
+    'news:comp.infosystems.www.servers.unix',
+    'tel:+1-816-555-1212',
+    'telnet://192.0.2.16:80/',
+    'urn:oasis:names:specification:docbook:dtd:xml:4.1.2',
+    'ssh://alice@example.com',
+    'https://bob:pass@example.com/place',
+    'http://example.com/?a=1&b=2+2&c=3&c=4&d=%65%6e%63%6F%64%65%64',
+    'HTTP://Example.COM:8080/Over/There?Name=Ferret#Nose'
+]
+for text in wellformed
+    report[text]
+
+log['Texts that are not URLs, and why:']
+log['']
+broken = [
+    '',
+    'example.com/over/there',
+    'http://exa[mple.com/',
+    '://example.com',
+    '8ball://example.com',
+    'my_scheme://example.com',
+    'http://exa mple.com/',
+    'http://example.com/café',
+    'http://example.com/100%',
+    'http://example.com/%zz',
+    'http://example.com:80a/',
+    'http://[2001:db8::7/c=GB',
+    'http://[2001:db8::g]/',
+    'http://[::1]x/',
+    'http://bob@alice@example.com/',
+    'http://example.com/a#b#c',
+    'http://example.com/a[1]'
+]
+for text in broken
+    report[text]

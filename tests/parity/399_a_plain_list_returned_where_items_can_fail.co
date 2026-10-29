@@ -1,0 +1,26 @@
+--- a list of plain items returned where the function answers a list
+--- whose items can fail (`[turned]` of a value that can fail on one path)
+--- is that list, each item the success it is: compiled, the return had
+--- handed on an empty list, a wrong answer the interpreter did not give
+--- (Rosetta Code, Weiler-Atherton polygon clipping)
+
+fn maybe_reversed[words]
+    if len[words] gt 9
+        return error['too many']
+    return reverse[words]
+
+fn split_up[words]
+    out = []
+    for w in words
+        out = push[out, [w]]
+    return out
+
+fn pieces[words]
+    turned = maybe_reversed[words]
+    if len[words] eq 1
+        return [turned]
+    return split_up[turned]
+
+log[pieces[['a', 'b', 'c']]]
+log[pieces[['a']]]
+log[pieces[['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']].ok]

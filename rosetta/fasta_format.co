@@ -1,0 +1,28 @@
+--- Rosetta Code: FASTA format
+--- https://rosettacode.org/wiki/FASTA_format
+--- Reads standard input a line at a time and holds one record's lines, no more: a
+--- record is printed when the next name, or the end of the input, arrives.
+
+fn show[name, pieces]
+    if name ne ''
+        sequence = join[pieces, '']
+        log['`name`: `sequence`']
+
+--- the name on a header line: the first word after the '>'
+fn name_of[header]
+    words = split[trim[slice[header, 1, len[header]]], ' ']
+    return words[0]
+
+name = ''
+pieces = []
+line = input[]
+while line.ok
+    text = trim[line]
+    if starts[text, '>']
+        show[name, pieces]
+        name = name_of[text]
+        pieces = []
+    else if name ne '' and text ne ''
+        pieces = push[pieces, text]
+    line = input[]
+show[name, pieces]

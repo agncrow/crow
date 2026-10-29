@@ -1,0 +1,78 @@
+--- Rosetta Code: Prime numbers whose neighboring pairs are tetraprimes
+--- https://rosettacode.org/wiki/Prime_numbers_whose_neighboring_pairs_are_tetraprimes
+--- One sieve, to 10 million and 2, counts the distinct prime factors of every number,
+--- and sets every number with a square factor apart by giving it 5, more than four: a
+--- tetraprime is a number whose count is 4, and a prime one whose count is 1. Each
+--- search walks the primes below its limit and reads the counts of the pair before or
+--- after it; the stretch (10 million) is done too.
+
+use math
+
+--- for every n below size, how many distinct primes divide it, or 5 or more where a
+--- square divides it; the counts are held in a tensor, eight bytes a number (as a list
+--- of ten million ints, they took 1.6 GB interpreted)
+fn factor_counts[size]
+    counts = zeros[size]
+    for p in range[2, size]
+        if counts[p] eq 0
+            m = p
+            while m lt size
+                counts[m] = counts[m] + 1
+                m = m + p
+            square = p * p
+            m = square
+            while m lt size
+                counts[m] = 5
+                m = m + square
+    return counts
+
+--- the primes below limit whose pair at p + first and p + second are tetraprimes, and
+--- how many of those pairs hold a multiple of 7
+struct Found [primes, sevens]
+
+fn search[counts, limit, first, second]
+    primes = []
+    sevens = 0
+    for p in range[3, limit]
+        if counts[p] eq 1 and counts[p + first] eq 4 and counts[p + second] eq 4
+            primes = push[primes, p]
+            if (p + first) % 7 eq 0 or (p + second) % 7 eq 0
+                sevens = sevens + 1
+    return Found[primes, sevens]
+
+--- the median of a sorted list; gaps between odd primes are even, so the mean of the
+--- middle two of an even count is whole
+fn median[sorted]
+    n = len[sorted]
+    if n % 2 eq 1
+        return sorted[n / 2]
+    return (sorted[n / 2 - 1] + sorted[n / 2]) / 2
+
+fn commas[n]
+    return fmt[n, commas = true]
+
+fn report[counts, limit, side, first, second, listed]
+    found = search[counts, limit, first, second]
+    primes = found.primes
+    count = commas[len[primes]]
+    if listed
+        log['Found `count` primes under `commas[limit]` whose `side` neighboring pair are tetraprimes:']
+        for row in range[0, len[primes], 10]
+            cells = for p in slice[primes, row, min[row + 10, len[primes]]]
+                fmt[p, width = 6]
+            log[join[cells, ' ']]
+    else
+        log['Found `count` primes under `commas[limit]` whose `side` neighboring pair are tetraprimes']
+    log['of which `commas[found.sevens]` have a neighboring pair one of whose factors is 7.']
+    gaps = for i in range[1, len[primes]]
+        primes[i] - primes[i - 1]
+    gaps = sort[gaps]
+    log['Minimum gap between those `count` primes : `commas[gaps[0]]`']
+    log['Median  gap between those `count` primes : `commas[median[gaps]]`']
+    log['Maximum gap between those `count` primes : `commas[gaps[len[gaps] - 1]]`']
+    log['']
+
+counts = factor_counts[10000003]
+for limit in [100000, 1000000, 10000000]
+    report[counts, limit, 'preceding', -2, -1, limit eq 100000]
+    report[counts, limit, 'following', 1, 2, limit eq 100000]

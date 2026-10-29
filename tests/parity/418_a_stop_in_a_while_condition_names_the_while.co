@@ -1,0 +1,11 @@
+--- A stop in a `while` condition is placed on the `while` line in every
+--- round: the interpreter's walker (the top level) had placed one met
+--- after the first round on the body's last line, where the compiled
+--- program named the `while` (Rosetta Code, Primes: n*2^m+1).
+
+xs = [1, 2, 3]
+i = 0
+while xs[i] gt 0
+    i = i + 1
+    log[i]
+log['not reached']

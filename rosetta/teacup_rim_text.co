@@ -1,0 +1,43 @@
+--- Rosetta Code: Teacup rim text
+--- https://rosettacode.org/wiki/Teacup_rim_text
+--- A word's rotations (its first letter moved to the end, again and again, until the
+--- word comes back) are a teacup's rim when every one of them is a word of
+--- unixdict.txt; words of three letters or more, not all one letter. A rim is shown
+--- once, from the word of it the dictionary lists first.
+
+fn rotated[w]
+    rest = slice[w, 1, len[w]]
+    first = w[0]
+    return '`rest``first`'
+
+--- the word's distinct rotations, the word first
+fn ring_of[w]
+    ring = [w]
+    r = rotated[w]
+    while r ne w
+        ring = push[ring, r]
+        r = rotated[r]
+    return ring
+
+fn all_known[ring, known]
+    i = 0
+    while i lt len[ring] and ring[i] in known
+        i = i + 1
+    return i eq len[ring]
+
+fn one_letter[w]
+    return w eq repeat[w[0], len[w]]
+
+text = read['unixdict.txt']
+words = for line in split[text, '\n']
+    if trim[line] ne ''
+        trim[line]
+known = map[words, range[len[words]]]
+shown = map[]
+for w in words
+    if len[w] gt 2 and not one_letter[w] and w not in shown
+        ring = ring_of[w]
+        if all_known[ring, known]
+            log[join[ring, ' ']]
+            for r in ring
+                shown[r] = true

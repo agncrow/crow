@@ -79,9 +79,9 @@ fn refund_allowed[call]
 
 --- a run written down: its row in runs, and its steps' rows, each with
 --- the run's id; the id
-fn record[c, question, model, done]
+fn record[c, question, used, done]
     total = sum[done.steps.ms]
-    row = query[c, 'INSERT INTO runs (at, question, model, answer, stop, rounds, input, output, ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id', [str[now[]], question, model, done.text, done.stop, done.rounds, int[done.usage.input], int[done.usage.output], total]]
+    row = query[c, 'INSERT INTO runs (at, question, model, answer, stop, rounds, input, output, ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id', [str[now[]], question, used, done.text, done.stop, done.rounds, int[done.usage.input], int[done.usage.output], total]]
     id = int[row.id[0]]
     steps = done.steps
     steps.run = id

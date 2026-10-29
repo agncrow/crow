@@ -1,0 +1,14 @@
+--- a member of a list of functions handed where another call hands a
+--- function by name: the parameter is that function's, and the member is
+--- its name in the list's dispatch — refused with the fix, where it had
+--- been an internal error in both modes (Rosetta Code, Deming's funnel)
+
+fn double[x]
+    x * 2
+
+fn apply_to[f, v]
+    f[v]
+
+log[apply_to[double, 5]]
+fs = [double]
+log[apply_to[fs[0], 5]]

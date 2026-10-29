@@ -1,0 +1,84 @@
+--- Rosetta Code: Four bit adder
+--- https://rosettacode.org/wiki/Four_bit_adder
+--- A bit is a bool, and the three allowed gates are Crow's not, and, or. Each block is a
+--- function of the blocks below it: xor of two nots, two ands and an or; a half adder of
+--- an xor and an and; a full adder of two half adders and an or; the four-bit adder of
+--- four full adders, each one's carry out the next one's carry in. A bus is a list of
+--- bits, the least significant first.
+
+--- what a half or a full adder answers
+struct Out [bit, carry]
+
+--- what the four-bit adder answers: the sum's four bits and the carry out
+struct Sum4 [bits, carry]
+
+fn gate_not[a]
+    return not a
+
+fn gate_and[a, b]
+    return a and b
+
+fn gate_or[a, b]
+    return a or b
+
+fn gate_xor[a, b]
+    return gate_or[gate_and[a, gate_not[b]], gate_and[gate_not[a], b]]
+
+fn half_adder[a, b]
+    return Out[gate_xor[a, b], gate_and[a, b]]
+
+fn full_adder[a, b, carry_in]
+    first = half_adder[carry_in, a]
+    second = half_adder[first.bit, b]
+    return Out[second.bit, gate_or[first.carry, second.carry]]
+
+fn four_bit_adder[a, b]
+    fa0 = full_adder[a[0], b[0], false]
+    fa1 = full_adder[a[1], b[1], fa0.carry]
+    fa2 = full_adder[a[2], b[2], fa1.carry]
+    fa3 = full_adder[a[3], b[3], fa2.carry]
+    return Sum4[[fa0.bit, fa1.bit, fa2.bit, fa3.bit], fa3.carry]
+
+--- the bus of a number from 0 to 15
+fn bus_of[n]
+    bus = for i in range[4]
+        (n / 2 ^ i) % 2 eq 1
+    return bus
+
+--- the number a sum stands for, its carry out the bit worth 16
+fn value_of[sum]
+    total = 0
+    for i in range[4]
+        if sum.bits[i]
+            total = total + 2 ^ i
+    if sum.carry
+        total = total + 16
+    return total
+
+fn bit_text[b]
+    if b
+        return '1'
+    return '0'
+
+--- a bus written as binary, its most significant bit first
+fn bus_text[bus]
+    digits = for b in reverse[bus]
+        bit_text[b]
+    return join[digits, '']
+
+for pair in [[5, 3], [15, 1], [10, 5], [9, 13], [7, 7], [12, 6], [0, 0], [15, 15]]
+    a = bus_of[pair[0]]
+    b = bus_of[pair[1]]
+    s = four_bit_adder[a, b]
+    shown = '`bus_text[a]` + `bus_text[b]` = `bus_text[s.bits]`, carry `bit_text[s.carry]`'
+    as_numbers = '`fmt[pair[0], width = 2]` + `fmt[pair[1], width = 2]` = `fmt[value_of[s], width = 2]`'
+    log['`shown`    (`as_numbers`)']
+
+--- every pair of four-bit numbers, checked against integer addition
+wrong = for x in range[256]
+    a = x / 16
+    b = x % 16
+    if value_of[four_bit_adder[bus_of[a], bus_of[b]]] ne a + b
+        x
+log['']
+log['All 256 sums of two four-bit numbers checked against integer addition: `len[wrong]` wrong.']

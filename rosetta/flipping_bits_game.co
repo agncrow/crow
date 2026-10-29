@@ -1,0 +1,124 @@
+--- Rosetta Code: Flipping bits game
+--- https://rosettacode.org/wiki/Flipping_bits_game
+--- A random n x n target, and a start made from it by random flips of whole rows
+--- and columns, so the target can always be reached, drawn again until it differs
+--- from the target. Moves are read from standard input, one a line: a row's number,
+--- a column's letter, T to show the target again or X to stop; the moves so far are
+--- shown with the board. n is the first argument, 3 when none is given. The draws
+--- are seeded, so a game is the same every run (flipping_bits_game.in holds moves
+--- that win the 3 x 3 one).
+
+use math
+
+fn random_board[n]
+    board = for i in range[n]
+        row = for j in range[n]
+            rand[2]
+        row
+    return board
+
+fn flip_row[board, r]
+    row = for bit in board[r]
+        1 - bit
+    board[r] = row
+    return board
+
+fn flipped_at[row, c]
+    row[c] = 1 - row[c]
+    return row
+
+fn flip_column[board, c]
+    flipped = for row in board
+        flipped_at[row, c]
+    return flipped
+
+fn random_flip[board, n]
+    if rand[2] eq 0
+        return flip_row[board, rand[n]]
+    return flip_column[board, rand[n]]
+
+--- the target flipped 2n times at random, and again while it is still the target
+fn scrambled[target, n]
+    board = target
+    k = 0
+    while k lt 2 * n or board eq target
+        board = random_flip[board, n]
+        k = k + 1
+    return board
+
+fn letters[n]
+    return slice[split['abcdefghijklmnopqrstuvwxyz', ''], 0, n]
+
+fn show[title, board]
+    log[title]
+    head = join[letters[len[board]], ' ']
+    log['     `head`']
+    for i in range[len[board]]
+        cells = join[board[i], ' ']
+        log['  `fmt[i + 1, width = 2]` `cells`']
+
+fn moves_made[count]
+    if count eq 1
+        return '1 move'
+    return '`count` moves'
+
+--- where the item first is in the list
+fn position[items, item]
+    i = 0
+    while items[i] ne item
+        i = i + 1
+    return i
+
+--- the board's size: the first argument, from 1 to 26 (a column is a letter), or 3
+fn size_given[]
+    given = args[]
+    if len[given] eq 0
+        return 3
+    n = int[given[0]]
+    if n.ok
+        if n gte 1 and n lte 26
+            return n
+    return error['the size is a number from 1 to 26, not `given[0]`', 'size']
+
+seed[7]
+n = size_given[]
+if not n.ok
+    halt[n.reason]
+target = random_board[n]
+board = scrambled[target, n]
+columns = letters[n]
+last = columns[-1]
+show['Target:', target]
+moves = 0
+while board ne target
+    log['']
+    show['After `moves_made[moves]`:', board]
+    log['Flip a row (1-`n`) or a column (a-`last`), T shows the target, X stops:']
+    line = input[]
+    if not line.ok
+        log['(the input ended)']
+        break
+    move = trim[line]
+    log['> `move`']
+    row = int[move]
+    if move in columns
+        board = flip_column[board, position[columns, move]]
+        moves = moves + 1
+    else if row.ok
+        if row gte 1 and row lte n
+            board = flip_row[board, row - 1]
+            moves = moves + 1
+        else
+            log['There is no row `move`.']
+    else if upper[move] eq 'T'
+        show['Target:', target]
+    else if upper[move] eq 'X'
+        break
+    else
+        log['`move` is neither a row nor a column.']
+if board eq target
+    log['']
+    show['After `moves_made[moves]`:', board]
+    log['Solved in `moves_made[moves]`.']
+else
+    log['Stopped after `moves_made[moves]`, the target not reached.']

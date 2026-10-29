@@ -1,0 +1,169 @@
+--- Rosetta Code: Suffixation of decimal numbers
+--- https://rosettacode.org/wiki/Suffixation_of_decimal_numbers
+--- The number is read exactly — its sign as written, its digits and its exponent — as a
+--- ratio of two whole numbers, so every step is exact: the suffix is the largest power of
+--- 1000 (metric) or of 1024 ("binary" metric) not above the number, a googol first in
+--- metric, and the quotient is rounded half away from zero to the places asked, or shown
+--- with every digit it has (a quotient by a power of 10 or of 2 always ends). A rounding
+--- that reaches the next power moves to the next suffix (999,999.6 to no places is 1M).
+
+--- a number read from text: its sign as written ('+', '-' or ''), and top / bottom
+struct Exact [sign, top, bottom]
+
+--- the number a text writes, with or without commas, a point and an exponent
+fn exact[text]
+    plain = replace[trim[text], ',', '']
+    m = find[plain, '^([+-]?)([0-9]*)(\.([0-9]*))?([eE]([+-]?[0-9]+))?$']
+    if not m.ok
+        return error['\'`text`\' is no number', 'argument']
+    whole = m.groups[2]
+    places = m.groups[4]
+    if whole eq '' and places eq ''
+        return error['\'`text`\' has no digits', 'argument']
+    shift = 0 - len[places]
+    if m.groups[6] ne ''
+        shift = shift + int[m.groups[6]]
+    digits = int['`whole``places`']
+    if shift gte 0
+        return Exact[m.groups[1], digits * 10 ^ shift, 1]
+    return Exact[m.groups[1], digits, 10 ^ (0 - shift)]
+
+--- top / bottom times 10^places, rounded half away from zero
+fn rounded[top, bottom, places]
+    return (2 * top * 10 ^ places + bottom) / (2 * bottom)
+
+--- the whole number `scaled` with a point put before its last `places` digits
+fn pointed[scaled, places]
+    text = fmt[scaled, width = places + 1, fill = '0']
+    if places eq 0
+        return text
+    cut = len[text] - places
+    head = slice[text, 0, cut]
+    tail = slice[text, cut, len[text]]
+    return '`head`.`tail`'
+
+--- top / bottom with every digit it has: the fewest places that hold it exactly
+fn every_digit[top, bottom]
+    places = 0
+    while top * 10 ^ places % bottom ne 0
+        places = places + 1
+    return pointed[top * 10 ^ places / bottom, places]
+
+--- the number with a metric (base 10) or "binary" metric (base 2) suffix, rounded to
+--- `digits` places past the point; left out (or below 0), every digit is shown
+fn suffize[number, digits = -1, base = 10]
+    if base ne 10 and base ne 2
+        return error['the base is 10 (metric) or 2 ("binary" metric), not `base`', 'argument']
+    n = exact[number]
+    if not n.ok
+        return n
+    letters = ['', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y', 'X', 'W', 'V', 'U']
+    step = 1000
+    binary = ''
+    if base eq 2
+        step = 1024
+        binary = 'i'
+    suffix = 'googol'
+    divisor = 10 ^ 100
+    if base eq 10 and n.top gte n.bottom * divisor
+        suffix = 'googol'
+        divisor = 10 ^ 100
+    else
+        j = 0
+        while j lt 12 and n.top gte n.bottom * step ^ (j + 1)
+            j = j + 1
+        if digits gte 0 and j lt 12
+            --- a rounding up to the next power is the next suffix's 1
+            if rounded[n.top, n.bottom * step ^ j, digits] gte step * 10 ^ digits
+                j = j + 1
+        suffix = letters[j]
+        if j gt 0
+            suffix = '`suffix``binary`'
+        divisor = step ^ j
+    shown = ''
+    if digits lt 0
+        shown = every_digit[n.top, n.bottom * divisor]
+    else
+        shown = pointed[rounded[n.top, n.bottom * divisor, digits], digits]
+    return '`n.sign``shown``suffix`'
+
+fn row[number, digits, base]
+    places = 'all'
+    if digits gte 0
+        places = str[digits]
+    kind = 'metric'
+    if base eq 2
+        kind = '"binary" metric'
+    else if base ne 10
+        kind = 'base `base`'
+    result = suffize[number, digits, base]
+    shown = result
+    if not result.ok
+        shown = 'refused: `result.reason`'
+    cells = [fmt[number, width = 32], fmt[places, width = 7], fmt[kind, width = 17], shown]
+    return join[cells, ' ']
+
+--- a test case as the task writes it: the number, then the places past the point
+--- (left out, or a comma, for every digit), then the base (left out for 10)
+fn case_row[line]
+    words = split[trim[sub[line, ' +', ' ']], ' ']
+    digits = -1
+    base = 10
+    if len[words] gt 1 and words[1] ne ','
+        digits = int[words[1]]
+    if len[words] gt 2
+        base = int[words[2]]
+    return row[words[0], digits, base]
+
+--- the free space on the disk holding / (the task's optional case), in bytes: df's
+--- fourth column is the space available, in blocks of 1024 bytes
+fn free_space[]
+    r = shell['df -k /']
+    lines = split[trim[r.stdout], '\n']
+    words = split[trim[sub[lines[1], ' +', ' ']], ' ']
+    return str[int[words[3]] * 1024]
+
+heads = [fmt['input number', width = 32], fmt['places', width = 7], fmt['suffixes', width = 17], 'new number']
+log[join[heads, ' ']]
+log[repeat['─', 72]]
+--- the task's test cases, as it writes them
+cases = [
+    '87,654,321',
+    '-998,877,665,544,332,211,000      3',
+    '+112,233                          0',
+    '16,777,216                        1',
+    '456,789,100,000,000               2',
+    '456,789,100,000,000               2      10',
+    '456,789,100,000,000               5       2',
+    '456,789,100,000.000e+00           0      10',
+    '+16777216                         ,       2',
+    '1.2e101'
+]
+for line in cases
+    log[case_row[line]]
+log['']
+log['The task\'s pseudo-code:']
+a = '456,789,100,000,000'
+log[' aa= `suffize[a]`']
+log['  n= `suffize[a, 1]`']
+log['  f= `suffize[a, 1, 2]`']
+log['bin= `suffize[a, 5, 2]`']
+log['win= `suffize[a, 0, 2]`']
+xvi = ' +16777216 '
+log['big= `suffize[xvi, base = 2]`']
+log['']
+log['More cases:']
+log[join[heads, ' ']]
+log[repeat['─', 72]]
+more = ['-123.7e-01', '1,000,000 , 2', '1e36', '1e39', '999,999.6 0', '1,048,575.9 0 2', '0', '-0.000456 5', '1.2e101 3 2', 'twelve', '1e3 1 16']
+for line in more
+    log[case_row[line]]
+
+--- the disk's free space changes from run to run, so it is shown only when asked:
+--- crow run suffixation_of_decimal_numbers.co disk
+if 'disk' in args[]
+    space = free_space[]
+    log['']
+    log['The free space on the disk holding /:']
+    log[row[space, 1, 10]]
+    log[row[space, 1, 2]]

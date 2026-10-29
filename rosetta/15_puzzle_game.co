@@ -1,0 +1,113 @@
+--- Rosetta Code: 15 puzzle game
+--- https://rosettacode.org/wiki/15_puzzle_game
+--- The board is a list of sixteen tiles, 0 for the gap. It is scrambled by
+--- seeded random slides from the solved board, so it can always be solved;
+--- the player types the number of a tile beside the gap to slide it in.
+--- q quits, and so do an empty line and the end of the input.
+
+use math
+
+fn solved_board[]
+    push[range[1, 16], 0]
+
+fn show[board]
+    log['']
+    for row in range[4]
+        cells = for col in range[4]
+            tile = board[row * 4 + col]
+            if tile eq 0
+                '  .'
+            else
+                fmt[tile, width = 3]
+        log[join[cells, '']]
+
+fn place_of[board, tile]
+    i = 0
+    while board[i] ne tile
+        i = i + 1
+    i
+
+fn beside[gap]
+    --- the places next to the gap: above, below, left and right
+    row = gap / 4
+    col = gap % 4
+    places = []
+    if row gt 0
+        places = push[places, gap - 4]
+    if row lt 3
+        places = push[places, gap + 4]
+    if col gt 0
+        places = push[places, gap - 1]
+    if col lt 3
+        places = push[places, gap + 1]
+    places
+
+fn slide[board, from, gap]
+    board[gap] = board[from]
+    board[from] = 0
+    board
+
+fn scrambled[board, slides]
+    gap = place_of[board, 0]
+    last_gap = -1
+    done = 0
+    while done lt slides
+        options = beside[gap]
+        from = options[rand[len[options]]]
+        if from ne last_gap
+            board = slide[board, from, gap]
+            last_gap = gap
+            gap = from
+            done = done + 1
+    board
+
+fn direction[from, gap]
+    if from eq gap - 4
+        return 'down'
+    if from eq gap + 4
+        return 'up'
+    if from eq gap - 1
+        return 'right'
+    'left'
+
+fn counted[n, word]
+    if n eq 1
+        return '1 `word`'
+    '`n` `word`s'
+
+fn play[board]
+    goal = solved_board[]
+    moves = 0
+    show[board]
+    while board ne goal
+        line = input['Move `moves + 1`, the tile to slide (q quits): ']
+        if not line.ok
+            break
+        text = trim[line]
+        if text eq '' or lower[text] eq 'q'
+            break
+        tile = int[text]
+        if not tile.ok
+            log['\'`text`\' is not a tile number.']
+            continue
+        if tile lt 1 or tile gt 15
+            log['There is no tile `tile`: the tiles are 1 to 15.']
+            continue
+        gap = place_of[board, 0]
+        from = place_of[board, tile]
+        if from not in beside[gap]
+            log['Tile `tile` is not next to the gap.']
+            continue
+        log['Tile `tile` slides `direction[from, gap]`.']
+        board = slide[board, from, gap]
+        moves = moves + 1
+        show[board]
+    if board eq goal
+        log['Solved in `counted[moves, \'move\']`!']
+    else
+        log['You quit after `counted[moves, \'move\']`.']
+
+seed[15]
+start = scrambled[solved_board[], 30]
+log['The 15 puzzle: put the tiles in order, 1 to 15 with the gap last.']
+play[start]

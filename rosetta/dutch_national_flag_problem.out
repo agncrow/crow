@@ -1,0 +1,8 @@
+Drawn:    white red white blue red white red red white white white blue white blue red
+In order: false
+
+Dijkstra: red red red red red white white white white white white white blue blue blue
+In order: true
+
+Sorted:   red red red red red white white white white white white white blue blue blue
+In order: true

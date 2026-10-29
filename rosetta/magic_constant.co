@@ -1,0 +1,35 @@
+--- Rosetta Code: Magic constant
+--- https://rosettacode.org/wiki/Magic_constant
+--- The constant of an order n square is n(n^2 + 1) / 2. The smallest order whose
+--- constant passes a bound is found by doubling, then halving the gap; ints grow
+--- past 64 bits where 10^20 needs them. Counting order 3 as the first, the 1,000th
+--- constant is order 1,002's (the task's "order 1003" is the 1,001st).
+
+fn magic[n]
+    n * (n * n + 1) / 2
+
+fn smallest_order_above[x]
+    --- the smallest order, 3 or more, whose magic constant is greater than x
+    low = 3
+    high = 3
+    while magic[high] lte x
+        high = high * 2
+    while low lt high
+        middle = (low + high) / 2
+        if magic[middle] gt x
+            high = middle
+        else
+            low = middle + 1
+    low
+
+first = for n in range[3, 23]
+    fmt[magic[n], commas = true]
+log['The first 20 magic constants (orders 3 to 22):']
+log[join[first, ' ']]
+log['']
+log['The 1,000th magic constant (order 1,002): `fmt[magic[1002], commas = true]`']
+log['']
+log['The smallest order whose magic constant is greater than']
+for k in range[1, 21]
+    order = smallest_order_above[10 ^ k]
+    log['    10^`fmt[k, width = 2, align = \'left\']`  `fmt[order, commas = true, width = 9]`']

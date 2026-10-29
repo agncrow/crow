@@ -1,0 +1,193 @@
+--- Rosetta Code: Word search
+--- https://rosettacode.org/wiki/Word_search
+--- The message's letters go in first, one in each run of nine cells at a random place
+--- in the run, in upper case: no word can use their cells. Then, while a cell is empty,
+--- one is chosen at random and a word is put through it: the lines through the cell
+--- (eight directions, lengths 3 to 10, the cell anywhere along the line) are tried in a
+--- random order, each read as a pattern, the letters already there and a dot for each
+--- empty cell, and looked for among the unused words of its length (one text for each
+--- length, a word a line, shuffled, so a regular expression finds a random match). A
+--- cell no line can take starts the grid again, as does one of fewer than 25 words.
+--- The words are unixdict.txt's of 3 to 10 letters a to z. Seeded: the same every run.
+
+use math
+
+struct Placed [word, from_col, from_row, to_col, to_row]
+
+struct Puzzle [cells, placed, attempts]
+
+fn shuffled[items]
+    xs = items
+    i = len[xs] - 1
+    while i gt 0
+        j = rand[i + 1]
+        held = xs[i]
+        xs[i] = xs[j]
+        xs[j] = held
+        i = i - 1
+    return xs
+
+--- for each length, the words of that length a line each, a line break at each end
+fn word_lines[words]
+    texts = []
+    for n in range[11]
+        of_n = for w in words
+            if len[w] eq n
+                w
+        lines = join[of_n, '\n']
+        texts = push[texts, '\n`lines`\n']
+    return texts
+
+fn inside[r, c]
+    return r gte 0 and r lt 10 and c gte 0 and c lt 10
+
+--- every line through the cell: its step down and across, its length, its first cell
+fn lines_through[cell]
+    steps = [[0, 1], [1, 0], [1, 1], [1, -1], [0, -1], [-1, 0], [-1, -1], [-1, 1]]
+    r = cell / 10
+    c = cell % 10
+    found = []
+    for d in steps
+        n = 3
+        while n lte 10
+            k = 0
+            while k lt n
+                r0 = r - k * d[0]
+                c0 = c - k * d[1]
+                if inside[r0, c0] and inside[r0 + (n - 1) * d[0], c0 + (n - 1) * d[1]]
+                    found = push[found, [d[0], d[1], n, r0, c0]]
+                k = k + 1
+            n = n + 1
+    return found
+
+fn cells_of[line]
+    at = []
+    i = 0
+    while i lt line[2]
+        at = push[at, (line[3] + i * line[0]) * 10 + line[4] + i * line[1]]
+        i = i + 1
+    return at
+
+--- the letters along the line with a dot for an empty cell, or '' if a message letter
+--- is in the way
+fn pattern_of[cells, at]
+    pattern = ''
+    i = 0
+    while i lt len[at]
+        c = cells[at[i]]
+        if c eq ''
+            pattern = '`pattern`.'
+        else if c eq lower[c]
+            pattern = '`pattern``c`'
+        else
+            return ''
+        i = i + 1
+    return pattern
+
+fn empty_cells[cells]
+    empty = for i in range[100]
+        if cells[i] eq ''
+            i
+    return empty
+
+--- one grid, or an error value where a cell no line can take was met
+fn attempt[words, message]
+    cells = for i in range[100]
+        ''
+    letters = split[message, '']
+    gap = 100 / len[letters]
+    for i in range[len[letters]]
+        cells[i * gap + rand[gap]] = letters[i]
+    texts = word_lines[shuffled[words]]
+    placed = []
+    empty = empty_cells[cells]
+    while len[empty] gt 0
+        cell = empty[rand[len[empty]]]
+        lines = shuffled[lines_through[cell]]
+        done = false
+        k = 0
+        while k lt len[lines] and not done
+            line = lines[k]
+            n = line[2]
+            at = cells_of[line]
+            pattern = pattern_of[cells, at]
+            if pattern ne ''
+                m = find[texts[n], '(?m)^`pattern`$']
+                if m.ok
+                    w = m.groups[0]
+                    spelled = split[w, '']
+                    for i in range[n]
+                        cells[at[i]] = spelled[i]
+                    texts[n] = replace[texts[n], '\n`w`\n', '\n']
+                    last = at[n - 1]
+                    placed = push[placed, Placed[w, line[4], line[3], last % 10, last / 10]]
+                    done = true
+            k = k + 1
+        if not done
+            return error['no word can go through cell `cell`', 'dead end']
+        empty = empty_cells[cells]
+    return Puzzle[cells, placed, 1]
+
+fn word_search[words, message, fewest]
+    attempts = 1
+    puzzle = attempt[words, message]
+    while not puzzle.ok or len[puzzle.placed] lt fewest
+        attempts = attempts + 1
+        puzzle = attempt[words, message]
+    return Puzzle[puzzle.cells, puzzle.placed, attempts]
+
+--- each word read back from the grid along its line, and the message from the rest
+fn checked[puzzle, message]
+    for p in puzzle.placed
+        dr = sign_of[p.to_row - p.from_row]
+        dc = sign_of[p.to_col - p.from_col]
+        read_back = for i in range[len[p.word]]
+            puzzle.cells[(p.from_row + i * dr) * 10 + p.from_col + i * dc]
+        if join[read_back, ''] ne p.word
+            return false
+    rest = for c in puzzle.cells
+        if c ne lower[c]
+            c
+    return join[rest, ''] eq message
+
+fn sign_of[x]
+    if x gt 0
+        return 1
+    if x lt 0
+        return -1
+    return 0
+
+seed[2026]
+message = replace[upper['Rosetta Code'], ' ', '']
+words = for w in split[read['unixdict.txt'], '\n']
+    if matches[w, '^[a-z]{3,10}$']
+        w
+puzzle = word_search[words, message, 25]
+
+log['Attempts: `puzzle.attempts`']
+log['Number of words: `len[puzzle.placed]`']
+log['']
+numbers = for c in range[10]
+    str[c]
+heading = join[numbers, '  ']
+log['     `heading`']
+log['']
+for r in range[10]
+    row = slice[puzzle.cells, r * 10, r * 10 + 10]
+    shown = join[row, '  ']
+    log['`r`    `shown`']
+log['']
+entries = for p in puzzle.placed
+    '`fmt[p.word, width = 10]` (`p.from_col`,`p.from_row`)(`p.to_col`,`p.to_row`)'
+i = 0
+while i lt len[entries]
+    if i + 1 lt len[entries]
+        log['`fmt[entries[i], width = 22]`   `entries[i + 1]`']
+    else
+        log[entries[i]]
+    i = i + 2
+log['']
+if checked[puzzle, message]
+    log['Each word reads back from the grid where the list puts it, and the other cells spell `message`.']
+else
+    log['The grid does not hold what the list says.']

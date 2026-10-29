@@ -1,0 +1,80 @@
+--- Rosetta Code: Fusc sequence
+--- https://rosettacode.org/wiki/Fusc_sequence
+--- The first terms are made by the definition: an even term is the term at half its
+--- index, an odd one the sum of the two around its half. The records are searched with
+--- Newman's recurrence, which needs only the two terms before: fusc(n + 1) = fusc(n) +
+--- fusc(n - 1) - 2 (fusc(n - 1) mod fusc(n)); it is checked against the definition first.
+
+struct Record [index, value]
+
+--- the terms from fusc(0) to fusc(n - 1), by the definition
+fn fusc_terms[n]
+    terms = [0, 1]
+    i = 2
+    while i lt n
+        if i % 2 eq 0
+            terms = push[terms, terms[i / 2]]
+        else
+            terms = push[terms, terms[(i - 1) / 2] + terms[(i + 1) / 2]]
+        i = i + 1
+    return terms
+
+--- the terms from fusc(0) to fusc(n - 1), by Newman's recurrence
+fn newman_terms[n]
+    terms = [0, 1]
+    while len[terms] lt n
+        k = len[terms]
+        before = terms[k - 2]
+        last = terms[k - 1]
+        terms = push[terms, last + before - 2 * (before % last)]
+    return terms
+
+--- n's binary digits reversed (6 = 110 gives 011 = 3)
+fn reversed_bits[n]
+    r = 0
+    m = n
+    while m gt 0
+        r = r * 2 + m % 2
+        m = m / 2
+    return r
+
+--- each term with more digits than every term before it, below the index limit
+fn records[limit]
+    found = [Record[0, 0]]
+    longer = 10
+    before = 0
+    current = 1
+    n = 1
+    while n lt limit
+        if current gte longer
+            found = push[found, Record[n, current]]
+            longer = longer * 10
+        next = current + before - 2 * (before % current)
+        before = current
+        current = next
+        n = n + 1
+    return found
+
+first = fusc_terms[61]
+shown = for f in first
+    str[f]
+log['The first 61 fusc numbers:']
+log[join[shown, ' ']]
+log['']
+
+checked = 100000
+terms = fusc_terms[checked]
+agree = terms eq newman_terms[checked]
+log['The definition and Newman\'s recurrence agree on the first `fmt[checked, commas = true]` terms: `agree`']
+--- every A below 2^16 has its reversal below 2^16 too
+unlike = for a in range[65536]
+    if terms[a] ne terms[reversed_bits[a]]
+        a
+log['fusc(A) = fusc(B), B the binary digits of A reversed, for every A below 65,536: `len[unlike] eq 0`']
+log['']
+
+limit = 20000000
+log['The fusc numbers longer than every one before, for indices below `fmt[limit, commas = true]`:']
+log['     Index      Value']
+for r in records[limit]
+    log['`fmt[r.index, width = 10, commas = true]` `fmt[r.value, width = 10, commas = true]`']

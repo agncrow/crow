@@ -348,6 +348,7 @@ pub fn main_guard(f: impl FnOnce() + Send + 'static) {
             std::process::exit(1);
         }
     };
+    crate::cores::deep_stacks();
     match std::thread::Builder::new().name("main".to_string()).stack_size(STACK).spawn(run) {
         Ok(h) => {
             if h.join().is_err() {

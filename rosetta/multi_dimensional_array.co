@@ -1,0 +1,53 @@
+--- Rosetta Code: Multi-dimensional array
+--- https://rosettacode.org/wiki/Multi-dimensional_array
+--- Crow has multi-dimensional arrays in its syntax: a list of lists of numbers, to
+--- any depth, is a tensor, and zeros[5, 4, 3, 2] (use math) makes one of four axes
+--- of 5, 4, 3 and 2. An index reads one axis at a time, a[i][j][k][l], each from 0
+--- (there is no other lower bound); a write names the same positions,
+--- a[i][j][k][l] = x, and fewer positions name a part (a[i][j] is a 3 x 2 matrix),
+--- read and written whole. A tensor is one contiguous block of 64-bit floats in
+--- row-major (C) order, with its shape and strides beside it, allocated at once at
+--- its full size; reshape keeps the block, and a slice or a transpose is a view of
+--- it. Indices are checked: an int only (a[1.0] is refused before the program
+--- runs), a negative one counts from the end, one past the end stops the program
+--- ("index 5 is out of range for a tensor of 5 rows"), and a part written in
+--- another shape is refused before the program runs. Lists of anything else (text,
+--- records) nest the same way, each list an allocation of its own.
+
+use math
+
+--- a four-deep list of text, each item naming its own position
+fn labels[]
+    cube = for i in range[5]
+        plane = for j in range[4]
+            line = for k in range[3]
+                pair = for l in range[2]
+                    '`i``j``k``l`'
+                pair
+            line
+        plane
+    return cube
+
+a = zeros[5, 4, 3, 2]
+log['a = zeros[5, 4, 3, 2]: shape `a.shape`, `len[flatten[a]]` numbers, all 0']
+a[4][3][2][1] = 42
+log['a[4][3][2][1] = 42, then a[4][3][2][1] is `a[4][3][2][1]`']
+a[4][3][2][1] = 7.5
+log['a[4][3][2][1] = 7.5, then a[4][3][2][1] is `a[4][3][2][1]`']
+log['the same item from the end, a[-1][-1][-1][-1]: `a[-1][-1][-1][-1]`']
+log['the part a[4][3], a 3 x 2 matrix: `a[4][3]`']
+a[1][2] = [[1, 2], [3, 4], [5, 6]]
+log['a[1][2] written whole: `a[1][2]`']
+
+log['']
+flat = flatten[a]
+log['row-major: a[1][2][2][0] = `a[1][2][2][0]` is number ((1 * 4 + 2) * 3 + 2) * 2 + 0 = 40 of the block, flatten[a][40] = `flat[40]`']
+b = reshape[a, 2, 3, 4, 5]
+log['the block reshaped to `b.shape`: b[0][1][3] = `b[0][1][3]`, b[0][2][0][0] = `b[0][2][0][0]`']
+log['a slice of the first axis, slice[a, 1, 3]: shape `slice[a, 1, 3].shape`; transpose[a] (the last two axes): shape `transpose[a].shape`']
+
+log['']
+g = labels[]
+log['a 5 x 4 x 3 x 2 list of text: g[4][3][2][1] is `g[4][3][2][1]`']
+g[4][3][2][1] = 'changed'
+log['g[4][3][2][1] = \'changed\', then g[4][3] is `g[4][3]`']

@@ -1,0 +1,37 @@
+--- Rosetta Code: Map range
+--- https://rosettacode.org/wiki/Map_range
+--- t = b1 + (s - a1)(b2 - b1) / (a2 - a1), one function for every kind of number:
+--- floats, exact fractions and exact decimals; then a whole list mapped at once,
+--- since a list of numbers is a tensor to the arithmetic operators.
+
+fn map_range[a, b, s]
+    return b[0] + (s - a[0]) * (b[1] - b[0]) / (a[1] - a[0])
+
+log['From [0, 10] to [-1, 0], in floats:']
+for s in range[11]
+    t = map_range[[0.0, 10.0], [-1.0, 0.0], float[s]]
+    log['`fmt[s, width = 2]` maps to `fmt[t, decimals = 2, width = 5]`']
+
+log['']
+log['In exact fractions:']
+for s in range[11]
+    t = map_range[[fraction[0, 1], fraction[10, 1]], [fraction[-1, 1], fraction[0, 1]], fraction[s, 1]]
+    log['`fmt[s, width = 2]` maps to `t`']
+
+log['']
+log['In exact decimals:']
+for s in range[11]
+    t = map_range[[decimal[0], decimal[10]], [decimal[-1], decimal[0]], decimal[s]]
+    log['`fmt[s, width = 2]` maps to `t`']
+
+--- The formula written once over a list: each operator works item by item.
+--- (The list is written down: `range[11]` met in arithmetic is a tensor of no known
+--- rank, which a loop is refused, findings/map_range-1.co.)
+log['']
+log['The whole range at once:']
+a1, a2, b1, b2 = 0.0, 10.0, -1.0, 0.0
+ss = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+ts = b1 + (ss - a1) * (b2 - b1) / (a2 - a1)
+shown = for t in ts
+    fmt[t, decimals = 2]
+log[join[shown, ' ']]

@@ -1,0 +1,53 @@
+foobar.txt as made:
+     1 |one
+     2 |two
+     3 |three
+     4 |
+     5 |five
+     6 |six
+     7 |
+     8 |eight
+    as written: "one\ntwo\nthree\n\nfive\nsix\n\neight\n"
+remove_lines['foobar.txt', 1, 2]:
+     1 |three
+     2 |
+     3 |five
+     4 |six
+     5 |
+     6 |eight
+    as written: "three\n\nfive\nsix\n\neight\n"
+remove_lines['foobar.txt', 2, 1]:
+     1 |three
+     2 |five
+     3 |six
+     4 |
+     5 |eight
+    as written: "three\nfive\nsix\n\neight\n"
+remove_lines['foobar.txt', 4, 3]:
+    refused: foobar.txt has 5 lines, so lines 4 to 6 reach past its end: nothing removed
+remove_lines['foobar.txt', 6, 1]:
+    refused: foobar.txt has 5 lines, so line 6 is past its end: nothing removed
+remove_lines['foobar.txt', 0, 1]:
+    refused: lines are counted from 1, and one or more is removed
+remove_lines['foobar.txt', 4, 2]:
+     1 |three
+     2 |five
+     3 |six
+    as written: "three\nfive\nsix\n"
+remove_lines['foobar.txt', 1, 3]:
+    as written: ""
+remove_lines['nosuch.txt', 1, 1]:
+    refused: cannot read 'nosuch.txt': No such file or directory (os error 2)
+
+crlf.txt as made:
+     1 |a
+     2 |b
+     3 |c
+    as written: "a\r\nb\r\nc"
+remove_lines['crlf.txt', 3, 1]:
+     1 |a
+     2 |b
+    as written: "a\r\nb\r\n"
+remove_lines['crlf.txt', 1, 1]:
+     1 |b
+    as written: "b\r\n"

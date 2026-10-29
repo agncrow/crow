@@ -1,0 +1,62 @@
+--- Rosetta Code: Specific characters
+--- https://rosettacode.org/wiki/Specific_characters
+--- A character of a string is specific when it occurs exactly twice in it and
+--- in no other string of the list. Each string's characters are counted in a
+--- map; its distinct characters, in the order they first occur, are then split
+--- into the specific ones and the rest (the extra credit counts the rest).
+
+fn counts_of[text]
+    --- how many times each character occurs
+    counts = map[]
+    for c in split[text, '']
+        if c in counts
+            counts[c] = counts[c] + 1
+        else
+            counts[c] = 1
+    return counts
+
+fn distinct[text]
+    --- the characters of text, each once, in the order they first occur
+    seen = []
+    for c in split[text, '']
+        if c not in seen
+            seen = push[seen, c]
+    return seen
+
+fn is_specific[c, i, tables]
+    --- whether c occurs twice in string i and in no other string
+    if tables[i][c] ne 2
+        return false
+    for j in range[len[tables]]
+        if j ne i and c in tables[j]
+            return false
+    return true
+
+fn report[strings]
+    tables = for s in strings
+        counts_of[s]
+    quoted = for s in strings
+        '"`s`"'
+    shown = join[quoted, ', ']
+    log['[`shown`]']
+    specific = []
+    others = []
+    for i in range[len[strings]]
+        chars = distinct[strings[i]]
+        yes = for c in chars
+            if is_specific[c, i, tables]
+                c
+        no = for c in chars
+            if not is_specific[c, i, tables]
+                c
+        said_yes = join[yes, ' ']
+        said_no = join[no, ' ']
+        log['  `strings[i]`: `len[yes]` specific (`said_yes`), `len[no]` not (`said_no`)']
+        specific = push[specific, len[yes]]
+        others = push[others, len[no]]
+    log['  distinct specific characters: `specific`']
+    log['  distinct characters that are not (extra credit): `others`']
+
+report[['ahwiueshaiu', 'ajxxfioaaf', 'ajrdsfroiwr']]
+log['']
+report[['mississippi', 'committee', 'balloon', 'bookkeeper']]

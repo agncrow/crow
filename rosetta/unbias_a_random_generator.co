@@ -1,0 +1,43 @@
+--- Rosetta Code: Unbias a random generator
+--- https://rosettacode.org/wiki/Unbias_a_random_generator
+--- rand_n[n] answers 1 one time in n. unbiased draws two bits from the biased
+--- generator it is handed until they differ and answers the first: 10 and 01
+--- are equally likely, P1 x P0 each (von Neumann's extractor). Seeded, so every
+--- run prints the same counts.
+
+use math
+
+fn rand_n[n]
+    if rand[n] eq 0
+        return 1
+    return 0
+
+fn unbiased[biased, n]
+    this = biased[n]
+    that = biased[n]
+    while this eq that
+        this = biased[n]
+        that = biased[n]
+    return this
+
+fn right[text, width]
+    return fmt[text, width = width, align = 'right']
+
+fn row[label, hits, draws]
+    zeros = draws - hits
+    share = right[fmt[100.0 * hits / draws, decimals = 3], 8]
+    return '`fmt[label, width = 12]` `fmt[hits, width = 9, commas = true]` `fmt[zeros, width = 9, commas = true]` `share`%'
+
+seed[2026]
+draws = 100000
+heads = [fmt['generator', width = 12], right['ones', 9], right['zeros', 9], right['% ones', 9]]
+log[join[heads, ' ']]
+for n in range[3, 7]
+    biased_ones = 0
+    unbiased_ones = 0
+    for i in range[draws]
+        biased_ones = biased_ones + rand_n[n]
+    for i in range[draws]
+        unbiased_ones = unbiased_ones + unbiased[rand_n, n]
+    log[row['rand_n[`n`]', biased_ones, draws]]
+    log[row['unbiased', unbiased_ones, draws]]

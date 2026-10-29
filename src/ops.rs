@@ -887,6 +887,9 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
         }
         match arg_vals[0].unwrap_or_propagate()? {
             Value::Str(s) => stops::key(map, s).cloned(),
+            // (an open map read at an int: no key yet, as the compiled
+            // program's map of ints says it)
+            Value::Int(n) if map.is_empty() => stops::key(&std::collections::BTreeMap::<i64, CrowValue>::new(), n).cloned(),
             Value::Int(n) => Err(format!("the map's keys are text, not ints: {}", n)),
             other => Err(format!("a map's key is text or an int, got {}", other.type_name())),
         }

@@ -1,0 +1,74 @@
+--- Rosetta Code: Burrows–Wheeler transform
+--- https://rosettacode.org/wiki/Burrows–Wheeler_transform
+--- The text is marked with STX in front and ETX behind; the transform is the last column
+--- of its sorted rotations. The inverse follows the last-to-first mapping: the character
+--- ending a row comes just before the one starting it, and the row starting with it is
+--- found by counting, so no table of rotations is built.
+
+use bits
+
+fn stx[]
+    return char[2]
+
+fn etx[]
+    return char[3]
+
+fn transform[s]
+    if stx[] in s or etx[] in s
+        return error['the text holds STX or ETX', 'bwt']
+    t = '`stx[]``s``etx[]`'
+    n = len[t]
+    rotations = for i in range[n]
+        '`slice[t, i, n]``slice[t, 0, i]`'
+    last = for row in sort[rotations]
+        row[-1]
+    return join[last, '']
+
+fn inverse[r]
+    chars = split[r, '']
+    --- each character's rank among the equal characters before it
+    rank = []
+    counts = map[]
+    for c in chars
+        if c in counts
+            rank = push[rank, counts[c]]
+            counts = set[counts, c, counts[c] + 1]
+        else
+            rank = push[rank, 0]
+            counts = set[counts, c, 1]
+    --- how many characters sort below each one: where its rows begin
+    below = map[]
+    total = 0
+    for c in keys[counts]
+        below = set[below, c, total]
+        total = total + counts[c]
+    --- the text's own row is the one ending with ETX; walk it backward
+    row = 0
+    for i in range[len[chars]]
+        if chars[i] eq etx[]
+            row = i
+    backward = []
+    for k in range[len[chars]]
+        c = chars[row]
+        backward = push[backward, c]
+        row = below[c] + rank[row]
+    t = join[reverse[backward], '']
+    return slice[t, 1, len[t] - 1]
+
+--- STX shown as ^ and ETX as |
+fn printable[s]
+    return replace[replace[s, stx[], '^'], etx[], '|']
+
+tests = [
+    'banana', 'appellee', 'dogwood', 'TO BE OR NOT TO BE OR WANT TO BE OR NOT?',
+    'SIX.MIXED.PIXIES.SIFT.SIXTY.PIXIE.DUST.BOXES', 'héllo wörld — ñandú', '`stx[]`ABC`etx[]`'
+]
+for s in tests
+    log[printable[s]]
+    t = transform[s]
+    if t.ok
+        log[' --> `printable[t]`']
+        log[' --> `inverse[t]`']
+    else
+        log[' --> ERROR: `t.reason`']
+    log['']

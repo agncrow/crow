@@ -1,0 +1,110 @@
+--- Rosetta Code: Boyer-Moore string search
+--- https://rosettacode.org/wiki/Boyer-Moore_string_search
+--- The pattern is compared from its end backward; on a mismatch it moves by the larger of
+--- the bad-character rule (the last place of each character in the pattern) and the strong
+--- good-suffix rule (from the pattern's borders). Every match is found, overlapping ones too.
+
+struct Searcher [pattern, last, shift]
+
+struct Result [found, alignments, comparisons]
+
+struct Query [pattern, text]
+
+--- the bad-character rule: where each character last appears in the pattern
+fn last_places[p]
+    last = map[]
+    for i in range[len[p]]
+        last = set[last, p[i], i]
+    return last
+
+--- the strong good-suffix rule: shift[j + 1] is how far the pattern moves when it
+--- mismatches at j after matching all that follows j, and shift[0] how far after a match
+fn good_suffix_shifts[p]
+    m = len[p]
+    shift = for i in range[m + 1]
+        0
+    border = for i in range[m + 1]
+        0
+    i = m
+    j = m + 1
+    border[i] = j
+    while i gt 0
+        while j lte m and p[i - 1] ne p[j - 1]
+            if shift[j] eq 0
+                shift[j] = j - i
+            j = border[j]
+        i = i - 1
+        j = j - 1
+        border[i] = j
+    j = border[0]
+    for i in range[m + 1]
+        if shift[i] eq 0
+            shift[i] = j
+        if i eq j
+            j = border[j]
+    return shift
+
+fn searcher[p]
+    return Searcher[p, last_places[p], good_suffix_shifts[p]]
+
+--- every place the pattern starts in the text, with the alignments tried and the
+--- characters compared on the way
+fn search[s, text]
+    p = s.pattern
+    m = len[p]
+    found = []
+    alignments = 0
+    comparisons = 0
+    i = 0
+    while i lte len[text] - m
+        alignments = alignments + 1
+        j = m - 1
+        matching = true
+        while matching and j gte 0
+            comparisons = comparisons + 1
+            if p[j] eq text[i + j]
+                j = j - 1
+            else
+                matching = false
+        if j lt 0
+            found = push[found, i]
+            i = i + s.shift[0]
+        else
+            c = text[i + j]
+            bad = j + 1
+            if c in s.last
+                bad = j - s.last[c]
+            i = i + max[s.shift[j + 1], bad]
+    return Result[found, alignments, comparisons]
+
+fn show[places]
+    shown = for x in places
+        str[x]
+    return join[shown, ', ']
+
+texts = [
+    'GCTAGCTCTACGAGTCTA',
+    'GGCTATAATGCGTA',
+    'there would have been a time for such a word',
+    'needle need noodle needle',
+    'InhisbookseriesTheArtofComputerProgrammingpublishedbyAddisonWesleyDKnuthusesanimaginarycomputertheMIXanditsassociatedmachinecodeandassemblylanguagestoillustratetheconceptsandalgorithmsastheyarepresented',
+    'Nearby farms grew a half acre of alfalfa on the dairy\'s behalf, with bales of all that alfalfa exchanged for milk.',
+    'Due to a malfunction, alfredo halfheartedly wore calfskin severalfold on behalf of alfa.',
+    'alfredo, behalf, calfskin, halfhearted, malfunction, severalfold, alfalfa',
+    'alfalfalfa',
+    'zzzzzz'
+]
+--- each pattern, and the text (counted from 0) it is looked for in
+queries = [
+    Query['TCTA', 0], Query['TAATAAA', 1], Query['word', 2], Query['needle', 3],
+    Query['put', 4], Query['and', 4], Query['alfalfa', 5], Query['alfa', 6],
+    Query['alfalfa', 7], Query['alfa', 8], Query['zzz', 9]
+]
+
+for k in range[len[texts]]
+    log['text`k + 1` = `texts[k]`']
+log['']
+for q in queries
+    r = search[searcher[q.pattern], texts[q.text]]
+    places = show[r.found]
+    log['\'`q.pattern`\' in text`q.text + 1`: at [`places`] after `r.alignments` alignments and `r.comparisons` comparisons']

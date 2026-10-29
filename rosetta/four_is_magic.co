@@ -1,0 +1,70 @@
+--- Rosetta Code: Four is magic
+--- https://rosettacode.org/wiki/Four_is_magic
+--- Name the number in English (the short scale, hyphens from twenty-one to ninety-nine,
+--- no 'and' and no commas), then name the count of its characters, and so on until four,
+--- which is magic. An int grows without limit; the names reach the vigintillions (10^63).
+
+fn small_name[n]
+    names = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+    return names[n]
+
+fn tens_name[n]
+    names = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+    return names[n]
+
+--- the name of each power of a thousand, the units first
+fn scale_names[]
+    return ['', ' thousand', ' million', ' billion', ' trillion', ' quadrillion', ' quintillion', ' sextillion', ' septillion', ' octillion', ' nonillion', ' decillion', ' undecillion', ' duodecillion', ' tredecillion', ' quattuordecillion', ' quindecillion', ' sexdecillion', ' septendecillion', ' octodecillion', ' novemdecillion', ' vigintillion']
+
+--- the name of a number from 1 to 999
+fn name_below_thousand[n]
+    if n lt 20
+        return small_name[n]
+    if n lt 100
+        if n % 10 eq 0
+            return tens_name[n / 10]
+        return '`tens_name[n / 10]`-`small_name[n % 10]`'
+    hundreds = '`small_name[n / 100]` hundred'
+    if n % 100 eq 0
+        return hundreds
+    return '`hundreds` `name_below_thousand[n % 100]`'
+
+--- the cardinal name of any int below 10^66 in size
+fn number_name[n]
+    if n lt 0
+        return 'negative `number_name[-n]`'
+    if n eq 0
+        return 'zero'
+    scales = scale_names[]
+    groups = []
+    left = n
+    i = 0
+    while left gt 0
+        if i gte len[scales]
+            halt['`n` is too large to name']
+        group = left % 1000
+        if group gt 0
+            groups = push[groups, '`name_below_thousand[group]``scales[i]`']
+        left = left / 1000
+        i = i + 1
+    return join[reverse[groups], ' ']
+
+fn capitalized[s]
+    return '`upper[slice[s, 0, 1]]``slice[s, 1, len[s]]`'
+
+fn magic[n]
+    phrases = []
+    current = n
+    while current ne 4
+        name = number_name[current]
+        count = len[name]
+        phrases = push[phrases, '`name` is `number_name[count]`']
+        current = count
+    phrases = push[phrases, 'four is magic']
+    sentence = join[phrases, ', ']
+    return '`capitalized[sentence]`.'
+
+for n in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 23, 75, 100, 337, 1000, 20140, 999999, -7, -164, 9223372036854775807]
+    log[magic[n]]
+log[magic[2 ^ 100]]
+log[magic[-(10 ^ 63)]]

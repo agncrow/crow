@@ -1,0 +1,45 @@
+--- Rosetta Code: Musical scale
+--- https://rosettacode.org/wiki/Musical_scale
+--- Crow has no sound device, and a program writes text only: the bytes a MIDI or a
+--- WAV file holds belong to the standard library's own layer (use sys), which a
+--- program may not import. So the scale is shown as what would be played -- each
+--- note's MIDI number and its frequency in 12-tone equal temperament with A4 at
+--- 440 Hz, f = 440 * 2 ^ ((m - 69) / 12), from middle C (MIDI 60) -- and written
+--- as a score in ABC notation, text that an ABC tool renders as a sheet or plays.
+
+struct Note [name, solfege, midi]
+
+fn frequency[midi]
+    return 440.0 * 2.0 ^ ((midi - 69) / 12.0)
+
+fn c_major[]
+    --- the semitone steps of the major scale, from middle C
+    names = ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5']
+    solfege = ['Do', 'Re', 'Mi', 'Fa', 'Sol', 'La', 'Si', 'Do']
+    steps = [0, 2, 2, 1, 2, 2, 2, 1]
+    notes = []
+    midi = 60
+    for i in range[8]
+        midi = midi + steps[i]
+        notes = push[notes, Note[names[i], solfege[i], midi]]
+    return notes
+
+fn abc_score[notes]
+    --- the scale as ABC notation: C is middle C, c the C an octave above
+    letters = for n in notes
+        if n.midi lt 72
+            slice[n.name, 0, 1]
+        else
+            lower[slice[n.name, 0, 1]]
+    first = join[slice[letters, 0, 4], ' ']
+    second = join[slice[letters, 4, 8], ' ']
+    return ['X:1', 'T:C major scale, from middle C', 'M:4/4', 'L:1/4', 'Q:1/4=120', 'K:C', '`first` | `second` |]']
+
+notes = c_major[]
+log['note  solfege  MIDI  frequency (Hz)']
+for n in notes
+    log['`fmt[n.name, width = 6]``fmt[n.solfege, width = 9]``fmt[n.midi, width = 4]``fmt[frequency[n.midi], width = 16, decimals = 3]`']
+log['']
+log['The scale as a score (ABC notation):']
+for line in abc_score[notes]
+    log[line]

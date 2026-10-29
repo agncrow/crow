@@ -1,0 +1,13 @@
+1            (base 10) sums to 1; read as text, 1
+1234         (base 10) sums to 10; read as text, 10
+fe           (base 16) sums to 29; read as text, 29
+f0e          (base 16) sums to 29; read as text, 29
+
+12345        (base 10) sums to 15; read as text, 15
+11111111     (base 2) sums to 8; read as text, 8
+zz           (base 36) sums to 70; read as text, 70
+2^1000 has digits summing to 1366
+100! has digits summing to 648
+-123045 sums to 15
+f0e read in base 16 sums to 29
+19 read in base 8: '9' is no digit in base 8

@@ -1,0 +1,63 @@
+--- Rosetta Code: Honaker primes
+--- https://rosettacode.org/wiki/Honaker_primes
+--- A sieve of Eratosthenes to 4.1 million; the primes are walked in order with
+--- their positions, and a prime is kept when its digit sum is its position's.
+
+struct Honaker [count, position, prime]
+
+fn digit_sum[n]
+    total = 0
+    rest = n
+    while rest gt 0
+        total = total + rest % 10
+        rest = rest / 10
+    return total
+
+--- the routine the task asks for: is the prime p, at this position, a Honaker prime?
+fn is_honaker[position, p]
+    return digit_sum[position] eq digit_sum[p]
+
+fn sieve[limit]
+    prime = for i in range[limit]
+        i gte 2
+    p = 2
+    while p * p lt limit
+        if prime[p]
+            k = p * p
+            while k lt limit
+                prime[k] = false
+                k = k + p
+        p = p + 1
+    return prime
+
+--- the first `wanted` Honaker primes among the primes below limit
+fn honakers[wanted, limit]
+    prime = sieve[limit]
+    found = []
+    position = 0
+    n = 2
+    while n lt limit and len[found] lt wanted
+        if prime[n]
+            position = position + 1
+            if is_honaker[position, n]
+                found = push[found, Honaker[len[found] + 1, position, n]]
+        n = n + 1
+    return found
+
+fn shown[h]
+    cell = '(`h.count`, `h.position`, `h.prime`)'
+    return fmt[cell, width = 16]
+
+found = honakers[10000, 4100000]
+log['First 50 Honaker primes (count, position, prime):']
+row = []
+for h in slice[found, 0, 50]
+    row = push[row, shown[h]]
+    if len[row] eq 5
+        log[trim[join[row, '']]]
+        row = []
+last = found[-1]
+position = fmt[last.position, commas = true]
+prime = fmt[last.prime, commas = true]
+log['']
+log['The 10,000th Honaker prime is the `position`th prime, which is `prime`.']

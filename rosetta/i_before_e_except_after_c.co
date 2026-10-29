@@ -1,0 +1,91 @@
+--- Rosetta Code: I before E except after C
+--- https://rosettacode.org/wiki/I_before_E_except_after_C
+--- The words of unixdict.txt are counted by the features each holds: 'ie' or
+--- 'ei', after a c or not (at the start of a word is not after a c). A rule is
+--- plausible when the words that keep it are more than twice those that break
+--- it. The stretch goal weighs each word of the British National Corpus list
+--- (1_2_all_freq.txt, its rows of three fields) by its frequency per million;
+--- that file is Latin-1, which iconv converts where read refuses it.
+
+struct Counts [cei, cie, ie, ei]
+
+fn tally[words, weights]
+    --- cei and cie: after a c; ie and ei: not after a c
+    cei = 0
+    cie = 0
+    ie = 0
+    ei = 0
+    for i in range[len[words]]
+        word = words[i]
+        weight = weights[i]
+        if 'cei' in word
+            cei = cei + weight
+        if 'cie' in word
+            cie = cie + weight
+        if matches[word, '(^|[^c])ie']
+            ie = ie + weight
+        if matches[word, '(^|[^c])ei']
+            ei = ei + weight
+    return Counts[cei, cie, ie, ei]
+
+fn plausible[rule, keep, break_count, unit]
+    --- more than twice as many keep the rule as break it
+    ratio = fmt[float[keep] / break_count, decimals = 1]
+    verdict = 'implausible'
+    if keep gt 2 * break_count
+        verdict = 'plausible'
+    else if keep lt break_count
+        verdict = 'implausible, and contra-indicated'
+    log['  `rule`: `keep` `unit` for, `break_count` against, a ratio of `ratio`: `verdict`']
+    return keep gt 2 * break_count
+
+fn judge[counts, unit]
+    first = plausible['I before E when not preceded by C', counts.ie, counts.ei, unit]
+    second = plausible['E before I when preceded by C', counts.cei, counts.cie, unit]
+    if first and second
+        log['  So "I before E except after C" is plausible.']
+    else
+        log['  So "I before E except after C" is implausible.']
+
+fn word_list[path]
+    lines = split[lower[read[path]], '\n']
+    words = for line in lines
+        word = trim[line]
+        if word ne ''
+            word
+    return words
+
+fn latin1_text[path]
+    --- the corpus list is Latin-1 (four of its lines hold a pound sign), and
+    --- read takes UTF-8 only: where it refuses the file, iconv converts it
+    text = read[path]
+    if text.ok
+        return text
+    converted = shell['iconv -f ISO-8859-1 -t UTF-8 `path`']
+    return converted.stdout
+
+fn ones[count]
+    weights = for i in range[count]
+        1
+    return weights
+
+words = word_list['unixdict.txt']
+log['Counting the words of unixdict.txt:']
+judge[tally[words, ones[len[words]]], 'words']
+
+--- the stretch goal: each word weighted by its frequency in the corpus
+corpus_words = []
+frequencies = []
+header = true
+for line in split[latin1_text['1_2_all_freq.txt'], '\n']
+    fields = split[trim[sub[line, '\s+', ' ']], ' ']
+    if len[fields] eq 3
+        if header
+            --- the first row names the columns: Word, PoS, Freq
+            header = false
+        else
+            corpus_words = push[corpus_words, lower[fields[0]]]
+            frequencies = push[frequencies, int[fields[2]]]
+log['']
+log['Weighting the words of the British National Corpus by their frequencies:']
+judge[tally[corpus_words, frequencies], 'per million words']

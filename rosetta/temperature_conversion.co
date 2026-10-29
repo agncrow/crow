@@ -1,0 +1,30 @@
+--- Rosetta Code: Temperature conversion
+--- https://rosettacode.org/wiki/Temperature_conversion
+--- Kelvin values are read from standard input, one a line, and each is shown in
+--- kelvin, Celsius, Fahrenheit and Rankine: Celsius is kelvin less 273.15, Rankine
+--- is kelvin times 9/5, and Fahrenheit is Rankine less 459.67.
+
+fn show[scale, degrees]
+    log['`scale`  `fmt[degrees, decimals = 2]`']
+
+fn convert[kelvin]
+    rankine = kelvin * 9.0 / 5.0
+    show['K', kelvin]
+    show['C', kelvin - 273.15]
+    show['F', rankine - 459.67]
+    show['R', rankine]
+
+line = input[]
+count = 0
+while line.ok
+    if count gt 0
+        log['']
+    count = count + 1
+    kelvin = float[trim[line]]
+    if not kelvin.ok
+        log['`trim[line]` is not a number of kelvin']
+    else if kelvin lt 0.0
+        log['`trim[line]` K is below absolute zero']
+    else
+        convert[kelvin]
+    line = input[]

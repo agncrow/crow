@@ -1,0 +1,71 @@
+--- Rosetta Code: Validate International Securities Identification Number
+--- https://rosettacode.org/wiki/Validate_International_Securities_Identification_Number
+--- The format first (two letters, nine letters or digits, a check digit), then
+--- every character read in base 36 (0-9 as themselves, A as 10 ... Z as 35), the
+--- digits of those values written in a row, and the row put to the Luhn test
+--- (written here, as in the task Luhn test of credit card numbers).
+
+fn figures[]
+    return '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+fn is_letter[c]
+    return c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+fn is_digit[c]
+    return c in '0123456789'
+
+fn is_letter_or_digit[c]
+    return is_letter[c] or is_digit[c]
+
+--- A character's value in base 36.
+fn value36[c]
+    all36 = figures[]
+    i = 0
+    while all36[i] ne c
+        i = i + 1
+    return i
+
+fn well_formed[isin]
+    if len[isin] ne 12
+        return false
+    chars = split[isin, '']
+    return all[slice[chars, 0, 2], is_letter] and all[slice[chars, 2, 11], is_letter_or_digit] and is_digit[chars[11]]
+
+--- The digits of every character's base-36 value, in a row:
+--- AU0000XVGZA3 is 10 30 0 0 0 0 33 31 16 35 10 3.
+fn base10[isin]
+    parts = for c in split[isin, '']
+        str[value36[c]]
+    return join[parts, '']
+
+--- The Luhn test: from the right, every second digit is doubled (a double past 9
+--- has 9 taken off, the sum of its two digits), and the total is a multiple of 10.
+fn luhn[digits]
+    n = len[digits]
+    total = 0
+    for i in range[n]
+        d = value36[digits[n - 1 - i]]
+        if i % 2 eq 1
+            d = d * 2
+            if d gt 9
+                d = d - 9
+        total = total + d
+    return total % 10 eq 0
+
+fn is_isin[text]
+    return well_formed[text] and luhn[base10[text]]
+
+tests = ['US0378331005', 'US0373831005', 'U50378331005', 'US03378331005', 'AU0000XVGZA3', 'AU0000VXGZA3', 'FR0000988040']
+for isin in tests
+    verdict = 'not valid: its format is not an ISIN\'s'
+    if well_formed[isin]
+        digits = base10[isin]
+        verdict = 'not valid: `digits` fails the Luhn test'
+        if is_isin[isin]
+            verdict = 'valid: `digits` passes the Luhn test'
+    log['`fmt[isin, width = 14]``verdict`']
+
+answers = for isin in tests
+    is_isin[isin]
+log['']
+log['is_isin of the seven: `answers`']

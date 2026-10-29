@@ -1,0 +1,12 @@
+Lowercase letters (Basic Latin, codes 0 to 127):
+abcdefghijklmnopqrstuvwxyz
+Uppercase letters (Basic Latin, codes 0 to 127):
+ABCDEFGHIJKLMNOPQRSTUVWXYZ
+
+The lowercase letters raised, and the uppercase lowered:
+ABCDEFGHIJKLMNOPQRSTUVWXYZ
+abcdefghijklmnopqrstuvwxyz
+
+Beyond the English alphabet, the Latin-1 Supplement (codes 128 to 255):
+lowercase: µßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ
+uppercase: ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞ

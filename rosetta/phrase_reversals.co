@@ -1,0 +1,23 @@
+--- Rosetta Code: Phrase reversals
+--- https://rosettacode.org/wiki/Phrase_reversals
+--- reverse of text reverses its characters; split into words, a word reversed each, or
+--- the list of words reversed, and joined again with spaces.
+
+fn each_word_reversed[phrase]
+    words = for w in split[phrase, ' ']
+        reverse[w]
+    join[words, ' ']
+
+fn word_order_reversed[phrase]
+    join[reverse[split[phrase, ' ']], ' ']
+
+fn show[phrase]
+    log['The phrase:          `phrase`']
+    log['Reversed:            `reverse[phrase]`']
+    log['Each word reversed:  `each_word_reversed[phrase]`']
+    log['Word order reversed: `word_order_reversed[phrase]`']
+
+show['rosetta code phrase reversal']
+log['']
+--- characters, not bytes: a word with accents reverses as it reads
+show['crème brûlée à la carte']

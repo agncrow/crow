@@ -1,0 +1,19 @@
+--- Rosetta Code: 99 bottles of beer
+--- https://rosettacode.org/wiki/99_bottles_of_beer
+--- A verse for each count from 99 down to 1, with "1 bottle" and "No more
+--- bottles" spelled as they are sung.
+
+fn bottles[n]
+    if n eq 0
+        return 'No more bottles'
+    if n eq 1
+        return '1 bottle'
+    '`n` bottles'
+
+for n in range[99, 0, -1]
+    if n lt 99
+        log['']
+    log['`bottles[n]` of beer on the wall']
+    log['`bottles[n]` of beer']
+    log['Take one down, pass it around']
+    log['`bottles[n - 1]` of beer on the wall']

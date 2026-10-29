@@ -1,0 +1,28 @@
+--- Rosetta Code: CSV data manipulation
+--- https://rosettacode.org/wiki/CSV_data_manipulation
+--- frame.load reads a CSV file into a frame, each column typed by what it
+--- holds (here ints); where changes the cells a mask picks, a column is written
+--- by the dot, and save writes the frame back as CSV. Arithmetic over columns
+--- is done in floats, so the sums are made whole again with int[]. The task's
+--- file is written first, and removed at the end.
+
+use frame
+
+path = 'csv_data_manipulation.csv'
+_written = write[path, 'C1,C2,C3,C4,C5\n1,5,9,13,17\n2,6,10,14,18\n3,7,11,15,19\n4,8,12,16,20\n']
+log['The file as it was:']
+log[trim[read[path]]]
+
+t = frame.load[path]
+--- change some values: C4 of the first row, and every C2 above 6
+t.C4 = where[t.C1 eq 1, 99, t.C4]
+t.C2 = where[t.C2 gt 6, 0, t.C2]
+--- add a column of the sums of the rows
+t.SUM = t.C1 + t.C2 + t.C3 + t.C4 + t.C5
+t.SUM = int[t.SUM]
+_saved = save[t, path]
+
+log['']
+log['The file as it was saved:']
+log[trim[read[path]]]
+_removed = rm[path]

@@ -1,0 +1,114 @@
+--- Rosetta Code: K-d tree
+--- https://rosettacode.org/wiki/K-d_tree
+--- The tree is built by the median: the points sorted along the splitting
+--- axis (argsort), the middle one the node and the halves its subtrees, the
+--- axes taken in turn; a missing child is 0. The search goes down the side the
+--- target lies on first and crosses the splitting plane only when the plane
+--- is nearer than the best point found so far; every node whose fields are
+--- read counts as visited. Each answer is checked against every point.
+
+use math
+
+struct KdNode [point, axis, left, right]
+
+--- the nearest point found so far, its squared distance, and the nodes visited
+struct Search [point, dist2, visited]
+
+--- the points at the positions given, in that order
+fn picked[points, positions]
+    out = []
+    i = 0
+    while i lt len[positions]
+        out = push[out, points[positions[i]]]
+        i = i + 1
+    return out
+
+fn build[points, axis]
+    tree = 0
+    if len[points] gt 0
+        along = []
+        i = 0
+        while i lt len[points]
+            along = push[along, points[i][axis]]
+            i = i + 1
+        order = argsort[along]
+        middle = len[points] / 2
+        below = picked[points, slice[order, 0, middle]]
+        above = picked[points, slice[order, middle + 1, len[order]]]
+        next_axis = (axis + 1) % len[points[0]]
+        tree = KdNode[points[order[middle]], axis, build[below, next_axis], build[above, next_axis]]
+    return tree
+
+fn squared_distance[p, q]
+    total = 0.0
+    for i in range[len[p]]
+        total = total + (p[i] - q[i]) * (p[i] - q[i])
+    return total
+
+fn nearest[node, target, found]
+    if node eq 0
+        return found
+    found = Search[found.point, found.dist2, found.visited + 1]
+    d2 = squared_distance[node.point, target]
+    if d2 lt found.dist2
+        found = Search[node.point, d2, found.visited]
+    across = target[node.axis] - node.point[node.axis]
+    near = node.left
+    far = node.right
+    if across gt 0
+        near = node.right
+        far = node.left
+    found = nearest[near, target, found]
+    if across * across lt found.dist2
+        found = nearest[far, target, found]
+    return found
+
+--- the nearest point by trying every one
+fn nearest_by_trying_all[points, target]
+    best = points[0]
+    for p in points
+        if squared_distance[p, target] lt squared_distance[best, target]
+            best = p
+    return best
+
+fn point_text[p, places]
+    parts = for x in p
+        if places eq 0
+            str[x]
+        else
+            fmt[x, decimals = places]
+    joined = join[parts, ', ']
+    return '(`joined`)'
+
+--- the tree written out: a node, then its subtrees in brackets
+fn tree_text[node]
+    if node eq 0
+        return '-'
+    if node.left eq 0 and node.right eq 0
+        return point_text[node.point, 0]
+    return '`point_text[node.point, 0]` [`tree_text[node.left]` `tree_text[node.right]`]'
+
+fn show[heading, points, target, places]
+    tree = build[points, 0]
+    found = nearest[tree, target, Search[target, inf, 0]]
+    log['`heading`:']
+    log['  point searched for: `point_text[target, places]`']
+    log['  nearest neighbour:  `point_text[found.point, places]`']
+    log['  distance:           `sqrt[found.dist2]`']
+    log['  nodes visited:      `found.visited` of `len[points]`']
+    log['  trying every point finds the same: `nearest_by_trying_all[points, target] eq found.point`']
+
+--- every point's coordinates are floats, the example's whole numbers too
+wikipedia = [[2.0, 3.0], [5.0, 4.0], [9.0, 6.0], [4.0, 7.0], [8.0, 1.0], [7.0, 2.0]]
+log['The tree of the Wikipedia example: `tree_text[build[wikipedia, 0]]`']
+show['Wikipedia example data', wikipedia, [9.0, 2.0], 0]
+log['']
+
+seed[42]
+cube = for i in range[1000]
+    [rand[], rand[], rand[]]
+show['1000 random points in the unit cube', cube, [rand[], rand[], rand[]], 6]
+log['']
+many = for i in range[100000]
+    [rand[], rand[], rand[]]
+show['100,000 random points in the unit cube', many, [rand[], rand[], rand[]], 6]

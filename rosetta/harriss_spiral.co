@@ -1,0 +1,147 @@
+--- Rosetta Code: Harriss Spiral
+--- https://rosettacode.org/wiki/Harriss_Spiral
+--- A rectangle in the plastic ratio ρ (the real root of x³ = x + 1) splits into a
+--- similar rectangle turned a quarter (scale 1/ρ), a square (side 1/ρ²) and a
+--- similar rectangle the same way round (scale 1/ρ³). Each square gets a quarter
+--- circle from corner to adjacent corner, along the side it shares with the turned
+--- rectangle, bulging into the square: the turned rectangles' squares chain into a
+--- spiral, and each other rectangle's spiral joins its parent's where the three
+--- pieces meet, through one arc more (the arc of the square that would come before
+--- its first). As Harriss did, the largest arc is left out. The picture is drawn
+--- twice: in braille characters on stdout, and as an SVG image written to
+--- harriss_spiral.svg in the current directory (removed at the end; take out the
+--- rm line at the bottom to keep it).
+
+use math
+use bits
+
+struct Arc [from, to, out]
+
+--- the plastic ratio, by Newton's method on x³ - x - 1
+fn plastic[]
+    x = 1.5
+    i = 0
+    while i lt 30
+        x = x - (x ^ 3 - x - 1.0) / (3.0 * x ^ 2 - 1.0)
+        i = i + 1
+    return x
+
+--- the arcs of the rectangle with corner p and sides u (long) and v (short), as
+--- 2-vectors, down to squares of side smallest: its square's arc from s on the
+--- edge to j, where the three pieces meet; the turned rectangle's spiral from j on;
+--- and the other rectangle's, which joins at j
+fn add_arcs[arcs, p, u, v, rho, smallest]
+    if norm[v] / rho ^ 2 lt smallest
+        return arcs
+    s = p + u / rho ^ 2
+    j = s + v / rho ^ 2
+    arcs = push[arcs, Arc[s, j, u]]
+    arcs = add_arcs[arcs, s, v, u / -(rho ^ 2), rho, smallest]
+    ub = u / rho ^ 3
+    vb = v / rho ^ 3
+    if norm[vb] / rho ^ 2 gte smallest
+        arcs = push[arcs, Arc[j, j + ub / rho ^ 2, vb * -1.0]]
+    return add_arcs[arcs, j, ub, vb, rho, smallest]
+
+--- points along an arc (a quarter circle on the chord from-to, bulging toward
+--- out), about one to each dot of a picture at the given scale
+fn arc_points[a, scale]
+    chord = norm[a.to - a.from]
+    r = chord / sqrt[2.0]
+    n = a.out / norm[a.out]
+    centre = (a.from + a.to) / 2.0 - n * (chord / 2.0)
+    ea = (a.from - centre) / r
+    ep = n * sqrt[2.0] - ea
+    count = max[2, ceil[2.0 * r * scale]]
+    points = for k in range[count + 1]
+        f = pi / 2.0 * k / count
+        centre + (ea * cos[f] + ep * sin[f]) * r
+    return points
+
+--- text without the blank braille cells at its end
+fn trimmed[cells]
+    last = len[cells] - 1
+    while last gte 0 and cells[last] eq char[10240]
+        last = last - 1
+    return join[slice[cells, 0, last + 1], '']
+
+--- the arcs in braille, cols characters wide: a character holds 2 x 4 dots;
+--- the rows left blank above and below are left out
+fn braille[arcs, w, h, cols]
+    across = 2 * cols
+    scale = (across - 1) / w
+    rows = floor[h * scale / 4.0] + 1
+    dots = for i in range[across * 4 * rows]
+        false
+    for a in arcs
+        for p in arc_points[a, scale]
+            dots[round[p[1] * scale] * across + round[p[0] * scale]] = true
+    weights = [[1, 8], [2, 16], [4, 32], [64, 128]]
+    lines = for r in range[rows]
+        cells = for c in range[cols]
+            code = 0
+            for dy in range[4]
+                for dx in range[2]
+                    if dots[(4 * r + dy) * across + 2 * c + dx]
+                        code = code + weights[dy][dx]
+            char[10240 + code]
+        trimmed[cells]
+    first = 0
+    while first lt rows and lines[first] eq ''
+        first = first + 1
+    last = rows - 1
+    while last gt first and lines[last] eq ''
+        last = last - 1
+    return slice[lines, first, last + 1]
+
+--- an arc as an SVG path: a radius of chord/√2, the sweep flag picking the side
+--- it bulges to, the line wider for a larger arc
+fn svg_path[a]
+    span = a.to - a.from
+    r = fmt[norm[span] / sqrt[2.0], decimals = 2]
+    sweep = 0
+    if span[0] * a.out[1] - span[1] * a.out[0] lt 0.0
+        sweep = 1
+    width = fmt[max[0.6, norm[span] / 40.0], decimals = 2]
+    x0 = fmt[a.from[0], decimals = 2]
+    y0 = fmt[a.from[1], decimals = 2]
+    x1 = fmt[a.to[0], decimals = 2]
+    y1 = fmt[a.to[1], decimals = 2]
+    return '<path d="M `x0` `y0` A `r` `r` 0 0 `sweep` `x1` `y1`" stroke-width="`width`"/>'
+
+fn svg[arcs, w, h, margin]
+    side_w = fmt[w + 2.0 * margin, decimals = 0]
+    side_h = fmt[h + 2.0 * margin, decimals = 0]
+    head = '<svg xmlns="http://www.w3.org/2000/svg" width="`side_w`" height="`side_h`" viewBox="-`margin` -`margin` `side_w` `side_h`">'
+    ground = '<rect x="-`margin`" y="-`margin`" width="100%" height="100%" fill="white"/>'
+    paths = for a in arcs
+        svg_path[a]
+    body = join[paths, '\n']
+    group = '<g fill="none" stroke="darkred" stroke-linecap="round">'
+    return '`head`\n`ground`\n`group`\n`body`\n</g>\n</svg>\n'
+
+rho = plastic[]
+w = 1000.0
+h = w / rho
+--- the rectangle's corner, long side and short side, in the image's coordinates
+--- (y downwards), down to squares of 2 units; the first arc, the largest, is
+--- left out
+every = add_arcs[[], [0.0, h], [w, 0.0], [0.0, -h], rho, 2.0]
+arcs = slice[every, 1, len[every]]
+
+log['Harriss spiral: plastic ratio ρ = `rho`, `len[arcs]` arcs']
+log['']
+--- the characters show the arcs whose chords are 10 units or more
+coarse = for a in arcs
+    if norm[a.to - a.from] gte 10.0
+        a
+for line in braille[coarse, w, h, 100]
+    log[line]
+
+margin = 20.0
+image = svg[arcs, w, h, margin]
+written = write['harriss_spiral.svg', image]
+size = '`fmt[w + 2.0 * margin, decimals = 0]` x `fmt[h + 2.0 * margin, decimals = 0]`'
+log['']
+log['The same spiral, as an SVG image of `size`, was written to harriss_spiral.svg']
+removed = rm['harriss_spiral.svg']

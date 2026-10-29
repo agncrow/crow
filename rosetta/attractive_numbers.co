@@ -1,0 +1,39 @@
+--- Rosetta Code: Attractive numbers
+--- https://rosettacode.org/wiki/Attractive_numbers
+--- Count a number's prime factors by trial division, each as often as it divides,
+--- and keep the numbers whose count is itself prime.
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    d = 2
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 1
+    return true
+
+--- how many prime factors n has, counted with multiplicity
+fn prime_factor_count[n]
+    count = 0
+    d = 2
+    while d * d lte n
+        while n % d eq 0
+            n = n / d
+            count = count + 1
+        d = d + 1
+    if n gt 1
+        count = count + 1
+    return count
+
+fn is_attractive[n]
+    return is_prime[prime_factor_count[n]]
+
+attractive = for n in range[1, 121]
+    if is_attractive[n]
+        n
+log['The `len[attractive]` attractive numbers up to 120:']
+for start in range[0, len[attractive], 20]
+    cells = for n in slice[attractive, start, start + 20]
+        fmt[n, width = 4]
+    log[join[cells, '']]

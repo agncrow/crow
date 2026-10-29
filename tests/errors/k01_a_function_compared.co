@@ -1,0 +1,12 @@
+--- a function is no value to compare: refused before the program runs —
+--- interpreted it had compared by name, compiled by address or not built
+--- at all, so `same[one, one]` was false in one mode and true in the
+--- other (Rosetta Code, Stair-climbing puzzle)
+
+fn one[]
+    return 1
+
+fn same[a, b]
+    return a eq b
+
+log[same[one, one]]

@@ -1,0 +1,18 @@
+http://foo bar/
+  default    http%3A%2F%2Ffoo%20bar%2F
+  RFC 3986   http%3A%2F%2Ffoo%20bar%2F
+  HTML 5     http%3A%2F%2Ffoo+bar%2F
+  encodeURI  http://foo%20bar/
+  RFC 3986 agrees with encode[s, 'url']: true
+google.com/search?q=`Abdu'l-Bahá
+  default    google%2Ecom%2Fsearch%3Fq%3D%60Abdu%27l%2DBah%C3%A1
+  RFC 3986   google.com%2Fsearch%3Fq%3D%60Abdu%27l-Bah%C3%A1
+  HTML 5     google.com%2Fsearch%3Fq%3D%60Abdu%27l-Bah%C3%A1
+  encodeURI  google.com/search?q=%60Abdu'l-Bah%C3%A1
+  RFC 3986 agrees with encode[s, 'url']: true
+mailto:crow@example.org?subject=¿Qué tal? 🐦
+  default    mailto%3Acrow%40example%2Eorg%3Fsubject%3D%C2%BFQu%C3%A9%20tal%3F%20%F0%9F%90%A6
+  RFC 3986   mailto%3Acrow%40example.org%3Fsubject%3D%C2%BFQu%C3%A9%20tal%3F%20%F0%9F%90%A6
+  HTML 5     mailto%3Acrow%40example.org%3Fsubject%3D%C2%BFQu%C3%A9+tal%3F+%F0%9F%90%A6
+  encodeURI  mailto:crow@example.org?subject=%C2%BFQu%C3%A9%20tal?%20%F0%9F%90%A6
+  RFC 3986 agrees with encode[s, 'url']: true

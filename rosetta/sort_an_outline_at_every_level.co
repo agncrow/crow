@@ -1,0 +1,158 @@
+--- Rosetta Code: Sort an outline at every level
+--- https://rosettacode.org/wiki/Sort_an_outline_at_every_level
+--- The indent of the first indented line is the outline's unit, whatever it
+--- is made of. A line is refused where its indent holds another character (a
+--- tab among spaces, a space among tabs), where its width is no whole number of
+--- units, or where it goes more than one level below the line before it; every
+--- such line is reported, and the outline is left unsorted. Otherwise each line
+--- is a level and a text: the siblings of every level are sorted, each with the
+--- lines beneath it, by the comparison the sort is given (a function:
+--- ascending, descending and shorter first here), and written back with the
+--- outline's own unit.
+
+fn ascending[a, b]
+    return a lt b
+
+fn descending[a, b]
+    return a gt b
+
+fn shortest[a, b]
+    --- shorter first, then ascending
+    if len[a] ne len[b]
+        return len[a] lt len[b]
+    return a lt b
+
+fn leading[line]
+    --- the spaces and tabs a line begins with
+    chars = split[line, '']
+    n = 0
+    while n lt len[chars] and (chars[n] eq ' ' or chars[n] eq '\t')
+        n = n + 1
+    return slice[line, 0, n]
+
+fn visible[line]
+    --- a line with its tabs shown as \t
+    return replace[line, '\t', '\\t']
+
+fn kind_of[char]
+    if char eq '\t'
+        return 'tabs'
+    return 'spaces'
+
+fn unit_of[lines]
+    --- the indent of the first indented line, or '' where none is
+    for line in lines
+        if leading[line] ne ''
+            return leading[line]
+    return ''
+
+fn problems[lines, unit]
+    --- what makes the indentation unclear, a line each
+    found = []
+    if unit eq ''
+        return found
+    mark = split[unit, ''][0]
+    size = len[unit]
+    level = -1
+    for i in range[len[lines]]
+        indent = leading[lines[i]]
+        width = len[indent]
+        where = 'line `i + 1` ("`visible[lines[i]]`")'
+        if indent ne repeat[mark, width]
+            if repeat[' ', width] eq indent or repeat['\t', width] eq indent
+                other = kind_of[split[indent, ''][0]]
+                found = push[found, '`where`: indented with `other` where the outline is indented with `kind_of[mark]`']
+            else
+                found = push[found, '`where`: indented with tabs and spaces mixed']
+        else if width % size ne 0
+            found = push[found, '`where`: an indent of `width` `kind_of[mark]`, in an outline whose unit is `size`']
+        else if width / size gt level + 1
+            found = push[found, '`where`: more than one level below the line before it']
+        else
+            level = width / size
+    return found
+
+fn order_by[words, comes_first]
+    --- the places of words in the order comes_first gives them, equal ones kept in turn
+    order = []
+    for i in range[len[words]]
+        place = len[order]
+        while place gt 0 and comes_first[words[i], words[order[place - 1]]]
+            place = place - 1
+        order = concat[concat[slice[order, 0, place], [i]], slice[order, place, len[order]]]
+    return order
+
+fn sorted_lines[levels, texts, from, to, unit, comes_first]
+    --- the lines from … to - 1: siblings, each with the lines beneath it, sorted
+    --- at every level and indented by the unit
+    if from gte to
+        return []
+    heads = []
+    for i in range[from, to]
+        if levels[i] eq levels[from]
+            heads = push[heads, i]
+    blocks = for k in range[len[heads]]
+        start = heads[k]
+        stop = to
+        if k + 1 lt len[heads]
+            stop = heads[k + 1]
+        own = '`repeat[unit, levels[start]]``texts[start]`'
+        concat[[own], sorted_lines[levels, texts, start + 1, stop, unit, comes_first]]
+    names = for h in heads
+        texts[h]
+    sorted = []
+    for k in order_by[names, comes_first]
+        sorted = concat[sorted, blocks[k]]
+    return sorted
+
+fn sorted_outline[outline, comes_first]
+    --- the outline sorted at every level, or an error naming its unclear lines
+    lines = for line in split[outline, '\n']
+        if trim[line] ne ''
+            line
+    unit = unit_of[lines]
+    found = problems[lines, unit]
+    if len[found] gt 0
+        return error[join[found, '\n'], 'indentation']
+    levels = for line in lines
+        if unit eq ''
+            0
+        else
+            len[leading[line]] / len[unit]
+    texts = for line in lines
+        slice[line, len[leading[line]], len[line]]
+    return join[sorted_lines[levels, texts, 0, len[lines], unit, comes_first], '\n']
+
+fn show[name, outline]
+    log['`name`:']
+    log[outline]
+    log['']
+    up = sorted_outline[outline, ascending]
+    if up.ok
+        log['Sorted ascending:']
+        log[up]
+        log['']
+        log['Sorted descending:']
+        log[sorted_outline[outline, descending]]
+    else
+        log['Not sorted, the indentation is unclear:']
+        log[up.reason]
+    log['']
+    log[repeat['-', 40]]
+
+spaces = join[['zeta', '    beta', '    gamma', '        lambda', '        kappa', '        mu', '    delta', 'alpha', '    theta', '    iota', '    epsilon'], '\n']
+tabs = join[['zeta', '\tgamma', '\t\tmu', '\t\tlambda', '\t\tkappa', '\tdelta', '\tbeta', 'alpha', '\ttheta', '\tiota', '\tepsilon'], '\n']
+mixed = join[['alpha', '    epsilon', '\tiota', '    theta', 'zeta', '    beta', '    delta', '    gamma', '    \tkappa', '        lambda', '        mu'], '\n']
+ragged = join[['zeta', '    beta', '   gamma', '        lambda', '         kappa', '        mu', '    delta', 'alpha', '    theta', '    iota', '    epsilon'], '\n']
+show['An outline indented by 4 spaces', spaces]
+show['The same indented by tabs', tabs]
+show['An outline of tabs among spaces', mixed]
+show['An outline of uneven indents', ragged]
+two = join[['fruit', '  cherry', '  apple', '    granny smith', '    fuji', '    gala', '  fig', 'nuts', '  walnut', '  pecan', '  almond'], '\n']
+show['Extra: an outline indented by 2 spaces', two]
+log['The same sorted shorter first:']
+log[sorted_outline[two, shortest]]
+log['']
+log[repeat['-', 40]]
+jump = join[['fruit', '  apple', '      fuji', '  fig'], '\n']
+show['Extra: an outline that skips a level', jump]

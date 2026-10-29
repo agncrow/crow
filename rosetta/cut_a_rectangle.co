@@ -1,0 +1,143 @@
+--- Rosetta Code: Cut a rectangle
+--- https://rosettacode.org/wiki/Cut_a_rectangle
+--- A cut runs along the square edges through the rectangle's centre, and its two
+--- halves are each other turned half a turn about the centre. So a cut is a path
+--- from the centre to the border that never meets itself or its own turned copy:
+--- a depth-first walk over the grid's points marks each point it passes and the
+--- point opposite, and counts the paths that reach the border.
+
+fn on_border[h, w, y, x]
+    return y eq 0 or y eq h or x eq 0 or x eq w
+
+fn walk[grid, h, w, y, x]
+    --- how many ways the path can go on from point (y, x) to the border; grid marks
+    --- the points the path and its turned copy hold (the walk's own copy of it)
+    if on_border[h, w, y, x]
+        return 1
+    t = y * (w + 1) + x
+    grid[t] = true
+    grid[len[grid] - 1 - t] = true
+    count = 0
+    if not grid[t + w + 1]
+        count = count + walk[grid, h, w, y + 1, x]
+    if not grid[t - w - 1]
+        count = count + walk[grid, h, w, y - 1, x]
+    if not grid[t - 1]
+        count = count + walk[grid, h, w, y, x - 1]
+    if not grid[t + 1]
+        count = count + walk[grid, h, w, y, x + 1]
+    return count
+
+fn cuts[m, n]
+    --- the number of ways to cut an m x n rectangle into two pieces of one shape
+    h, w = m, n
+    if h % 2 eq 1
+        h, w = w, h
+    if h % 2 eq 1
+        return 0
+    if w eq 1
+        return 1
+    grid = for i in range[(h + 1) * (w + 1)]
+        false
+    t = h / 2 * (w + 1) + w / 2
+    if w % 2 eq 1
+        --- the centre is the middle of the edge from t to t + 1: every cut holds
+        --- that edge, and goes on from t left, up or down (up and down are mirror images)
+        grid[t] = true
+        grid[t + 1] = true
+        return walk[grid, h, w, h / 2, w / 2 - 1] + 2 * walk[grid, h, w, h / 2 - 1, w / 2]
+    --- the centre is the point t: a cut leaves it left or up, its copy right or down
+    grid[t] = true
+    left = walk[grid, h, w, h / 2, w / 2 - 1]
+    if h eq w
+        return 2 * left
+    return left + walk[grid, h, w, h / 2 - 1, w / 2]
+
+fn halves[grid, h, w, path]
+    --- every path from the end of `path` on to the border, as walk counts them
+    p = path[-1]
+    if on_border[h, w, p / (w + 1), p % (w + 1)]
+        return [path]
+    grid[p] = true
+    grid[len[grid] - 1 - p] = true
+    found = []
+    for q in [p + w + 1, p - w - 1, p - 1, p + 1]
+        if not grid[q]
+            found = concat[found, halves[grid, h, w, push[path, q]]]
+    return found
+
+fn edge[p, q]
+    --- the edge between two neighbouring points, as one number
+    return min[p, q] * 1000 + max[p, q]
+
+fn cut_edges[path, last, centre_edge]
+    --- the edges of a cut: the path's, its turned copy's, and the centre's edge
+    edges = centre_edge
+    for i in range[len[path] - 1]
+        edges = push[edges, edge[path[i], path[i + 1]]]
+        edges = push[edges, edge[last - path[i], last - path[i + 1]]]
+    return edges
+
+fn all_cuts[h, w]
+    --- every cut of an h x w rectangle, h even, each as its list of edges
+    last = (h + 1) * (w + 1) - 1
+    grid = for i in range[last + 1]
+        false
+    t = h / 2 * (w + 1) + w / 2
+    found = []
+    if w % 2 eq 1
+        grid[t] = true
+        grid[t + 1] = true
+        for path in halves[grid, h, w, [t]]
+            found = push[found, cut_edges[path, last, [edge[t, t + 1]]]]
+    else
+        for path in halves[grid, h, w, [t]]
+            if path[1] eq t - 1 or path[1] eq t - w - 1
+                found = push[found, cut_edges[path, last, []]]
+    return found
+
+fn picture[h, w, edges]
+    --- the rectangle's border and the cut, drawn with + - and |
+    lines = []
+    for y in range[h + 1]
+        row = '+'
+        for x in range[w]
+            p = y * (w + 1) + x
+            if y eq 0 or y eq h or edge[p, p + 1] in edges
+                row = '`row`---+'
+            else
+                row = '`row`   +'
+        lines = push[lines, row]
+        if y lt h
+            row = ''
+            for x in range[w + 1]
+                p = y * (w + 1) + x
+                if x eq 0 or x eq w or edge[p, p + w + 1] in edges
+                    row = '`row`|'
+                else
+                    row = '`row` '
+                if x lt w
+                    row = '`row`   '
+            lines = push[lines, row]
+    return lines
+
+fn show_cuts[h, w, per_row]
+    pictures = for edges in all_cuts[h, w]
+        picture[h, w, edges]
+    log['The `len[pictures]` cuts of a rectangle of `h` rows and `w` columns:']
+    for first in range[0, len[pictures], per_row]
+        group = slice[pictures, first, first + per_row]
+        for j in range[2 * h + 1]
+            parts = for pic in group
+                pic[j]
+            log[join[parts, '   ']]
+        log['']
+
+show_cuts[2, 2, 6]
+show_cuts[4, 3, 5]
+
+log['The number of cuts of an m x n rectangle:']
+for m in range[1, 10]
+    for n in range[1, m + 1]
+        if m * n % 2 eq 0
+            log['`m` x `n`: `cuts[m, n]`']

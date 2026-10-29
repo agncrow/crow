@@ -1,0 +1,40 @@
+--- Rosetta Code: Abundant odd numbers
+--- https://rosettacode.org/wiki/Abundant_odd_numbers
+--- An odd number has only odd divisors: its proper divisor sum pairs each odd
+--- d up to its square root with n / d. Odd n is abundant when the sum passes n.
+
+fn proper_divisor_sum[n]
+    total = 1
+    d = 3
+    while d * d lte n
+        if n % d eq 0
+            total = total + d
+            other = n / d
+            if other ne d
+                total = total + other
+        d = d + 2
+    return total
+
+fn show[n, s]
+    log['`fmt[n, width = 13, commas = true]`   proper divisor sum `fmt[s, width = 13, commas = true]`']
+
+log['The first 25 abundant odd numbers:']
+found = 0
+n = 1
+while found lt 1000
+    n = n + 2
+    s = proper_divisor_sum[n]
+    if s gt n
+        found = found + 1
+        if found lte 25
+            show[n, s]
+log['']
+log['The one thousandth abundant odd number:']
+show[n, proper_divisor_sum[n]]
+
+n = 10 ^ 9 + 1
+while proper_divisor_sum[n] lte n
+    n = n + 2
+log['']
+log['The first abundant odd number above one billion:']
+show[n, proper_divisor_sum[n]]

@@ -1,0 +1,78 @@
+--- Rosetta Code: Generate Chess960 starting position
+--- https://rosettacode.org/wiki/Generate_Chess960_starting_position
+--- A bishop on a random dark square and one on a random light square, the queen and the
+--- knights each on a random empty square, then rook, king, rook on the three left, so the
+--- king stands between the rooks. Seeded, so every run draws the same positions.
+
+use math
+
+--- the empty squares of a rank being set up (a while loop: a collecting for over eight
+--- squares, run a hundred thousand times, is slow)
+fn empties[squares]
+    found = []
+    i = 0
+    while i lt 8
+        if squares[i] eq '-'
+            found = push[found, i]
+        i = i + 1
+    return found
+
+fn chess960[]
+    squares = split['--------', '']
+    squares[2 * rand[4]] = 'B'
+    squares[2 * rand[4] + 1] = 'B'
+    squares[empties[squares][rand[6]]] = 'Q'
+    squares[empties[squares][rand[5]]] = 'N'
+    squares[empties[squares][rand[4]]] = 'N'
+    free = empties[squares]
+    squares[free[0]] = 'R'
+    squares[free[1]] = 'K'
+    squares[free[2]] = 'R'
+    return join[squares, '']
+
+--- where letter stands in a position
+fn places[position, letter]
+    pieces = split[position, '']
+    found = []
+    i = 0
+    while i lt 8
+        if pieces[i] eq letter
+            found = push[found, i]
+        i = i + 1
+    return found
+
+--- whether a position keeps Chess960's rules
+fn valid[position]
+    bishops = places[position, 'B']
+    rooks = places[position, 'R']
+    king = places[position, 'K']
+    if len[bishops] ne 2 or len[rooks] ne 2 or len[king] ne 1
+        return false
+    if len[places[position, 'Q']] ne 1 or len[places[position, 'N']] ne 2
+        return false
+    return bishops[0] % 2 ne bishops[1] % 2 and rooks[0] lt king[0] and king[0] lt rooks[1]
+
+--- the white pieces' chess symbols
+fn symbols[position]
+    shown = map[K = '♔', Q = '♕', R = '♖', B = '♗', N = '♘']
+    pieces = for p in split[position, '']
+        shown[p]
+    return join[pieces, '']
+
+seed[960]
+log['Ten random starting positions:']
+for i in range[10]
+    position = chess960[]
+    log['`position`  `symbols[position]`']
+log['']
+seen = map[]
+wrong = 0
+draws = 20000
+i = 0
+while i lt draws
+    position = chess960[]
+    if not valid[position]
+        wrong = wrong + 1
+    seen = set[seen, position, true]
+    i = i + 1
+log['`draws` more draws: `len[seen]` different positions, `wrong` breaking the rules']

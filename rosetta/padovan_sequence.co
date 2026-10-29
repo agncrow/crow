@@ -1,0 +1,61 @@
+--- Rosetta Code: Padovan sequence
+--- https://rosettacode.org/wiki/Padovan_sequence
+--- Three ways to the sequence: the recurrence P(n) = P(n - 2) + P(n - 3), the floor
+--- of a power of the plastic ratio p, floor(p^(n - 1) / s + 0.5), and the lengths of
+--- the strings the L-system A -> B, B -> C, C -> AB makes from A.
+
+fn padovan_recurrence[count]
+    --- the first count terms, from P(0) = P(1) = P(2) = 1
+    terms = [1, 1, 1]
+    while len[terms] lt count
+        k = len[terms]
+        terms = push[terms, terms[k - 2] + terms[k - 3]]
+    return slice[terms, 0, count]
+
+fn padovan_floor[n]
+    --- term n by rounding a power of the plastic ratio
+    p = 1.324717957244746025960908854
+    s = 1.0453567932525329623
+    return floor[p ^ (n - 1) / s + 0.5]
+
+fn rewrite[letter]
+    if letter eq 'A'
+        return 'B'
+    if letter eq 'B'
+        return 'C'
+    return 'AB'
+
+fn l_system[count]
+    --- the first count strings, each made from the one before by the rules
+    strings = ['A']
+    while len[strings] lt count
+        parts = for letter in split[strings[-1], '']
+            rewrite[letter]
+        strings = push[strings, join[parts, '']]
+    return strings
+
+fn verdict[same]
+    if same
+        return 'agree'
+    return 'DIFFER'
+
+recurrence = padovan_recurrence[64]
+floors = for n in range[64]
+    padovan_floor[n]
+
+shown = for v in slice[recurrence, 0, 20]
+    str[v]
+log['The first twenty terms of the sequence:']
+log[join[shown, ', ']]
+log['']
+log['The recurrence and floor based functions `verdict[recurrence eq floors]` for the first 64 terms.']
+log['']
+
+strings = l_system[32]
+log['The first 10 L-system strings and their lengths:']
+for s in slice[strings, 0, 10]
+    log['`fmt[len[s], width = 4]`  `s`']
+lengths = for s in strings
+    len[s]
+log['']
+log['The lengths of the first 32 L-system strings and the sequence `verdict[lengths eq slice[recurrence, 0, 32]]`.']

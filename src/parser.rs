@@ -24,11 +24,25 @@ pub struct Parser {
     /// How many bodies a `return` may leave the statement is inside (a
     /// function's, a view's, a derivation's).
     bodies: usize,
+    /// The names the program has assigned so far: one spelled like another
+    /// language's keyword (`match`, `from`, `print`) is a variable, and a
+    /// statement beginning with it gets no lesson about the keyword.
+    assigned: std::collections::HashSet<String>,
+    /// Parsing an interpolation's expression, which is no statement: no
+    /// keyword lesson applies (`'`match[0]`'` of a variable had been taught
+    /// pattern matching, at line 1 of the file).
+    fragment: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<SpannedToken>) -> Self {
-        Parser { tokens, pos: 0, lone: None, loops: Vec::new(), bodies: 0 }
+        Parser { tokens, pos: 0, lone: None, loops: Vec::new(), bodies: 0, assigned: std::collections::HashSet::new(), fragment: false }
+    }
+
+    /// A parser for an interpolation's expression (`'`x[0]`'`), whose
+    /// names are the program's: no statement-level lesson applies.
+    pub fn for_fragment(tokens: Vec<SpannedToken>) -> Self {
+        Parser { fragment: true, ..Parser::new(tokens) }
     }
 
     pub fn parse(&mut self) -> Result<Vec<Stmt>, String> {
@@ -273,6 +287,25 @@ impl Parser {
                 return format!("{}Crow collects with a for block, not inside brackets: ys = for x in xs, its item's expression indented under it", self.at());
             }
         }
+        // (a word left on the condition's line — `if k ge 0`, where Crow's
+        // word is `gte` — ends the condition, not the line: it had been told
+        // the block has no body; Rosetta Code, Imaginary base numbers)
+        if let (Some(Token::Indent), Token::Ident(word)) = (expected, got)
+            && self.pos > 0
+            && self.tokens.get(self.pos).map(|t| t.line) == Some(self.tokens[self.pos - 1].line)
+        {
+            let meant = match word.as_str() {
+                "ge" | "geq" => Some("gte"),
+                "le" | "leq" => Some("lte"),
+                "neq" => Some("ne"),
+                "equals" => Some("eq"),
+                _ => None,
+            };
+            return match meant {
+                Some(m) => format!("{}'{}' is no comparison in Crow — it is written {}: `x {} y`", self.at(), word, m, m),
+                None => format!("{}'{}' follows the condition on its line — a condition is one expression, its block indented under it", self.at(), word),
+            };
+        }
         if let (Some(Token::Indent), _) = (expected, got) {
             let opened = before.map(|_| self.tokens[self.pos.saturating_sub(1)].line).unwrap_or(0);
             return format!("{}the block opened on line {} has no indented body — indent its lines under it", self.at(), opened.max(1));
@@ -498,8 +531,11 @@ impl Parser {
         // form rather than letting them fail as stray identifiers. Skip when the
         // name is being assigned to (`from = x`, `print = 5`) — then it's just a
         // variable that happens to share a Python keyword's spelling.
+        // (Nor when the name is the program's own variable, assigned before:
+        // `match = [1, 2]`, then `match[0] = 5` — Rosetta Code, Blossom
+        // algorithm.)
         if let Token::Ident(name) = self.peek() {
-            if !matches!(self.peek_ahead(1), Token::Assign) {
+            if !matches!(self.peek_ahead(1), Token::Assign) && !self.fragment && !self.assigned.contains(name) {
                 if let Some(hint) = python_keyword_hint(name) {
                     return Err(format!("{}{}", self.at(), hint));
                 }
@@ -572,6 +608,13 @@ impl Parser {
     fn parse_fn_decl(&mut self, is_view: bool) -> Result<Stmt, String> {
         self.advance(); // skip 'fn' or 'view'
         let name = self.expect_ident()?;
+        // (`contains` and `has` are how `x in xs` is asked: a call of either
+        // is refused below, so a function of the name could never be called
+        // — refused here, where it is named; Rosetta Code, Set of real
+        // numbers)
+        if MEMBERSHIP.contains(&name.as_str()) {
+            return Err(format!("line {}: '{}' is how `x in xs` asks — pick another name for this function", self.current_line(), name));
+        }
         self.expect(&Token::LBracket)?;
         let (params, defaults) = self.parse_param_list()?;
         self.expect(&Token::RBracket)?;
@@ -859,6 +902,7 @@ impl Parser {
             match expr {
                 Expr::Ident(name) => {
                     self.advance(); // skip '='
+                    self.assigned.insert(name.clone());
                     // check for 'for' expression
                     if self.check(&Token::For) {
                         let for_expr = self.parse_for_expr()?;

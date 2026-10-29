@@ -1,0 +1,90 @@
+--- Rosetta Code: Calkin-Wilf sequence
+--- https://rosettacode.org/wiki/Calkin-Wilf_sequence
+--- The terms are exact fractions: a(n+1) = 1 / (2 floor(a(n)) + 1 - a(n)). A term's place is
+--- read off its continued fraction, made odd in length, as the run lengths of the place's
+--- binary digits, the first term's run lowest; the same runs read back give the term.
+
+--- the first count terms
+fn terms[count]
+    a = fraction[1, 1]
+    found = []
+    for i in range[count]
+        found = push[found, a]
+        a = 1 / (2 * floor[a] + 1 - a)
+    return found
+
+--- the continued fraction of n/d, made odd in length: [.., a] is [.., a - 1, 1]
+fn continued[n, d]
+    cf = []
+    while d ne 0
+        cf = push[cf, n / d]
+        n, d = d, n % d
+    if len[cf] % 2 eq 0
+        last = len[cf] - 1
+        cf[last] = cf[last] - 1
+        cf = push[cf, 1]
+    return cf
+
+--- the place of n/d: a run of ones as long as the first term, then of zeros, and so on
+fn place_of[cf]
+    place = 0
+    power = 1
+    digit = 1
+    for a in cf
+        for k in range[a]
+            place = place + digit * power
+            power = power * 2
+        digit = 1 - digit
+    return place
+
+--- the runs of a place's binary digits, the lowest first: the term's continued fraction
+fn runs_of[place]
+    cf = []
+    bit = 1
+    count = 0
+    while place gt 0
+        if place % 2 eq bit
+            count = count + 1
+            place = place / 2
+        else
+            cf = push[cf, count]
+            count = 0
+            bit = 1 - bit
+    return push[cf, count]
+
+fn value_of[cf]
+    v = fraction[cf[-1], 1]
+    i = len[cf] - 2
+    while i gte 0
+        v = cf[i] + 1 / v
+        i = i - 1
+    return v
+
+fn binary[n]
+    digits = []
+    while n gt 0
+        digits = push[digits, str[n % 2]]
+        n = n / 2
+    return join[reverse[digits], '']
+
+fn shown[cf]
+    rest = for a in slice[cf, 1, len[cf]]
+        str[a]
+    tail = join[rest, ', ']
+    return '[`cf[0]`; `tail`]'
+
+fn report[n, d]
+    cf = continued[n, d]
+    place = place_of[cf]
+    log['`n`/`d` has the continued fraction `shown[cf]`, binary `binary[place]`: it is term `fmt[place, commas = true]`']
+    log['and the term the runs of `binary[place]` give back is `value_of[runs_of[place]]`']
+
+log['Terms 1 to 20 of the Calkin-Wilf sequence:']
+shown_terms = for t in terms[20]
+    str[t]
+log[join[shown_terms, ', ']]
+log['']
+report[9, 4]
+log['the 35th term computed one by one is `terms[35][34]`']
+log['']
+report[83116, 51639]

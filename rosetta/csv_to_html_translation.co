@@ -1,0 +1,50 @@
+--- Rosetta Code: CSV to HTML translation
+--- https://rosettacode.org/wiki/CSV_to_HTML_translation
+--- The CSV text is split into lines and each line at its commas; a view lays
+--- the rows out as an HTML table, for the extra credit with the first row as
+--- its header (thead and th). A view escapes text as HTML needs (&, < and >),
+--- so Brians mother's <angry> shows as text. A view called outside a page
+--- answers its markup, laid out here a row to a line.
+
+use web, ui
+
+view csv_table[rows, header]
+    start = 0
+    top = []
+    if header
+        start = 1
+        names = for name in rows[0]
+            th[name]
+        top = [thead[tr[names]]]
+    body = for row in slice[rows, start, len[rows]]
+        cells = for cell in row
+            td[cell]
+        tr[cells]
+    return table[top, tbody[body]]
+
+--- the markup with each row on a line of its own
+fn laid_out[markup]
+    for tag in ['<thead>', '</thead>', '<tbody>', '</tbody>']
+        markup = replace[markup, tag, '\n  `tag`']
+    markup = replace[markup, '<tr>', '\n    <tr>']
+    return replace[markup, '</table>', '\n</table>']
+
+--- CSV text as an HTML table, its first row a header when header is true
+fn csv_to_html[csv, header]
+    rows = for line in split[trim[csv], '\n']
+        split[line, ',']
+    markup = csv_table[rows, header]
+    return laid_out[markup]
+
+lines = [
+    'Character,Speech',
+    'The multitude,The messiah! Show us the messiah!',
+    'Brians mother,<angry>Now you listen here! He\'s not the messiah; he\'s a very naughty boy! Now go away!</angry>',
+    'The multitude,Who are you?',
+    'Brians mother,I\'m his mother; that\'s who!',
+    'The multitude,Behold his mother! Behold his mother!'
+]
+csv = join[lines, '\n']
+log[csv_to_html[csv, false]]
+log['']
+log[csv_to_html[csv, true]]

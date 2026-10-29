@@ -1,0 +1,114 @@
+--- Rosetta Code: Lyndon word
+--- https://rosettacode.org/wiki/Lyndon_word
+--- Duval's step from one Lyndon word to the next, on words held as places in the
+--- ordered alphabet: repeat the word to length n, drop the alphabet's last symbol
+--- from the end, and step the final symbol on. Each list is then checked against
+--- the definition (every word strictly before each of its rotations, in order)
+--- and its size against the count of Lyndon words, (1/k) sum of mu(d) a^(k/d).
+
+fn next_word[w, n, size]
+    --- the word after w among those of length 1 to n over `size` symbols, or []
+    --- after the last
+    x = for i in range[n]
+        w[i % len[w]]
+    end = n
+    while end gt 0 and x[end - 1] eq size - 1
+        end = end - 1
+    if end eq 0
+        return []
+    x = slice[x, 0, end]
+    x[end - 1] = x[end - 1] + 1
+    x
+
+fn lyndon_words[n, size]
+    words = []
+    w = [0]
+    while len[w] gt 0
+        words = push[words, w]
+        w = next_word[w, n, size]
+    words
+
+fn spelled[w, alphabet]
+    symbols = for i in w
+        alphabet[i]
+    join[symbols, '']
+
+fn before[a, b]
+    --- a strictly before b in lexicographic order, a prefix before a longer word
+    i = 0
+    while i lt len[a] and i lt len[b]
+        if a[i] ne b[i]
+            return a[i] lt b[i]
+        i = i + 1
+    len[a] lt len[b]
+
+fn is_lyndon[w]
+    --- strictly before each of its proper rotations
+    k = 1
+    while k lt len[w]
+        turned = concat[slice[w, k, len[w]], slice[w, 0, k]]
+        if not before[w, turned]
+            return false
+        k = k + 1
+    true
+
+fn mobius[n]
+    --- 0 when a square divides n, else -1 to the number of n's primes
+    result = 1
+    m = n
+    p = 2
+    while p * p lte m
+        if m % p eq 0
+            m = m / p
+            if m % p eq 0
+                return 0
+            result = -result
+        p = p + 1
+    if m gt 1
+        result = -result
+    result
+
+fn counted[size, n]
+    --- how many Lyndon words of length 1 to n there are over `size` symbols
+    total = 0
+    for k in range[1, n + 1]
+        terms = 0
+        for d in range[1, k + 1]
+            if k % d eq 0
+                terms = terms + mobius[d] * size ^ (k / d)
+        total = total + terms / k
+    total
+
+fn checked[words]
+    --- whether every word is a Lyndon word and each comes after the one before
+    i = 0
+    while i lt len[words]
+        if not is_lyndon[words[i]]
+            return false
+        if i gt 0 and not before[words[i - 1], words[i]]
+            return false
+        i = i + 1
+    true
+
+fn verify[n, alphabet, words]
+    expected = counted[len[alphabet], n]
+    verdict = 'no'
+    if checked[words]
+        verdict = 'yes'
+    log['`len[words]` words; Lyndon words of length 1 to `n` over `len[alphabet]` symbols number `expected`']
+    log['each word strictly before all its rotations, and after the word before it: `verdict`']
+
+fn report[n, alphabet]
+    shown = join[alphabet, ', ']
+    log['Lyndon words of length 1 to `n` over {`shown`}:']
+    words = lyndon_words[n, len[alphabet]]
+    for w in words
+        log['    `spelled[w, alphabet]`']
+    verify[n, alphabet, words]
+    log['']
+
+report[5, ['0', '1']]
+report[3, ['a', 'b', 'c']]
+alphabet = ['0', '1', '2', '3']
+log['Lyndon words of length 1 to 7 over {0, 1, 2, 3}, not listed:']
+verify[7, alphabet, lyndon_words[7, len[alphabet]]]

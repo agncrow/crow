@@ -1,0 +1,157 @@
+--- Rosetta Code: Solve a Hopido puzzle
+--- https://rosettacode.org/wiki/Solve_a_Hopido_puzzle
+--- A hop goes over two tiles across or down, or over one tile diagonally. The
+--- path may start on any tile: each is tried in turn, and from it a depth-first
+--- search hops first to the tile with the fewest free tiles onward (Warnsdorff's
+--- order, ties to the lower tile). A hop is not tried where it would leave a
+--- free tile with no way in, or two that could each only be the path's last.
+--- Each path is checked tile by tile. A board is written a row a line: 0 for a
+--- tile, . for none. Extra credit: the 10 x 10 square, the old puzzle of
+--- numbering a hundred squares by these hops.
+
+struct Board [rows, cols, open, near, total]
+
+fn hops[]
+    return [[-3, 0], [3, 0], [0, -3], [0, 3], [-2, -2], [-2, 2], [2, -2], [2, 2]]
+
+fn board_of[lines]
+    rows = len[lines]
+    cols = len[split[lines[0], ' ']]
+    open = []
+    for line in lines
+        for w in split[line, ' ']
+            open = push[open, w ne '.']
+    near = for s in range[rows * cols]
+        r = s / cols
+        c = s % cols
+        found = for m in hops[]
+            rr = r + m[0]
+            cc = c + m[1]
+            if rr gte 0 and rr lt rows and cc gte 0 and cc lt cols and open[rr * cols + cc]
+                rr * cols + cc
+        found
+    total = 0
+    for free in open
+        if free
+            total = total + 1
+    return Board[rows, cols, open, near, total]
+
+fn onward[b, seen, s]
+    --- how many free tiles a hop from s
+    count = 0
+    for t in b.near[s]
+        if not seen[t]
+            count = count + 1
+    return count
+
+fn ranked[b, seen, here]
+    --- the free tiles a hop from here, in Warnsdorff's order
+    weighed = []
+    for s in b.near[here]
+        if not seen[s]
+            weighed = push[weighed, onward[b, seen, s] * 1000 + s]
+    order = for w in sort[weighed]
+        w % 1000
+    return order
+
+fn stranded[b, seen, here]
+    --- whether the tiles left can no longer all be reached from here: one with
+    --- no way in, or two that could each only be the path's last
+    lasts = 0
+    for t in range[len[seen]]
+        if b.open[t] and not seen[t]
+            ways = onward[b, seen, t]
+            if here in b.near[t]
+                ways = ways + 1
+            if ways eq 0
+                return true
+            if ways eq 1
+                lasts = lasts + 1
+    return lasts gt 1
+
+fn extended[b, seen, path]
+    --- the path over every tile that goes on from path, or [] where none does
+    if len[path] eq b.total
+        return path
+    choices = ranked[b, seen, path[-1]]
+    i = 0
+    while i lt len[choices]
+        s = choices[i]
+        next = seen
+        next[s] = true
+        if not stranded[b, next, s]
+            found = extended[b, next, push[path, s]]
+            if len[found] gt 0
+                return found
+        i = i + 1
+    return []
+
+fn solved[b]
+    --- the first path found, the tiles tried as its start in order
+    start = 0
+    while start lt len[b.open]
+        if b.open[start]
+            seen = for s in range[len[b.open]]
+                s eq start
+            path = extended[b, seen, [start]]
+            if len[path] gt 0
+                return path
+        start = start + 1
+    return []
+
+fn is_path[b, path]
+    --- every tile once, each step a hop
+    if len[path] ne b.total
+        return false
+    seen = for s in range[len[b.open]]
+        false
+    for s in path
+        if not b.open[s] or seen[s]
+            return false
+        seen[s] = true
+    for i in range[1, len[path]]
+        if path[i] not in b.near[path[i - 1]]
+            return false
+    return true
+
+fn shown[b, path]
+    --- the board with each tile's place in the path
+    place = for s in range[b.rows * b.cols]
+        0
+    for i in range[len[path]]
+        place[path[i]] = i + 1
+    width = len[str[b.total]] + 1
+    lines = for r in range[b.rows]
+        parts = for c in range[b.cols]
+            s = r * b.cols + c
+            if b.open[s]
+                fmt[place[s], width = width]
+            else
+                repeat[' ', width]
+        sub[join[parts, ''], ' +$', '']
+    return join[lines, '\n']
+
+fn solve[name, lines]
+    b = board_of[lines]
+    log['`name` (`b.total` tiles):']
+    for line in lines
+        log['  `line`']
+    path = solved[b]
+    if len[path] eq 0
+        log['No solution.']
+    else
+        log[shown[b, path]]
+        log['Every tile once, each step a hop: `is_path[b, path]`']
+    log['']
+
+solve['The task\'s board', [
+    '. 0 0 . 0 0 .',
+    '0 0 0 0 0 0 0',
+    '0 0 0 0 0 0 0',
+    '. 0 0 0 0 0 .',
+    '. . 0 0 0 . .',
+    '. . . 0 . . .'
+]]
+full = for r in range[10]
+    '0 0 0 0 0 0 0 0 0 0'
+solve['The 10 x 10 square', full]

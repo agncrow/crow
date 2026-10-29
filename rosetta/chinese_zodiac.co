@@ -1,0 +1,39 @@
+--- Rosetta Code: Chinese zodiac
+--- https://rosettacode.org/wiki/Chinese_zodiac
+--- A year's place in the 60-year cycle (one began in 1984, the Wood Rat) is a
+--- stem of ten and a branch of twelve at once: the stem gives the element and
+--- yin or yang, the branch the animal.
+
+struct Sign [year, stem, branch, cycle_year]
+
+fn sign_of[year]
+    place = ((year - 4) % 60 + 60) % 60
+    return Sign[year, place % 10, place % 12, place + 1]
+
+fn animal[s]
+    animals = ['Rat', 'Ox', 'Tiger', 'Rabbit', 'Dragon', 'Snake', 'Horse', 'Goat', 'Monkey', 'Rooster', 'Dog', 'Pig']
+    return animals[s.branch]
+
+fn element[s]
+    wuxing = ['Wood', 'Fire', 'Earth', 'Metal', 'Water']
+    return wuxing[s.stem / 2]
+
+fn aspect[s]
+    if s.stem % 2 eq 0
+        return 'yang'
+    return 'yin'
+
+fn han[s]
+    stems = split['甲乙丙丁戊己庚辛壬癸', '']
+    branches = split['子丑寅卯辰巳午未申酉戌亥', '']
+    return '`stems[s.stem]``branches[s.branch]`'
+
+fn pinyin[s]
+    stems = ['jia3', 'yi3', 'bing3', 'ding1', 'wu4', 'ji3', 'geng1', 'xin1', 'ren2', 'gui3']
+    branches = ['zi3', 'chou3', 'yin2', 'mao3', 'chen2', 'si4', 'wu3', 'wei4', 'shen1', 'you3', 'xu1', 'hai4']
+    return '`stems[s.stem]`-`branches[s.branch]`'
+
+for year in [1935, 1938, 1968, 1972, 1976, 1984, 2017, 2025, 2026]
+    s = sign_of[year]
+    name = '`element[s]` `animal[s]`'
+    log['`year`: `fmt[name, width = 14]` `fmt[aspect[s], width = 5]` `fmt[s.cycle_year, width = 2]`/60  `han[s]` `pinyin[s]`']

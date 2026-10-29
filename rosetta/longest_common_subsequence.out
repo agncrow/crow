@@ -1,0 +1,27 @@
+"1234" and "1224533324": "1234", 4 characters
+  1234
+  ^^^^
+  1224533324
+  ^ ^    ^ ^
+
+"thisisatest" and "testing123testing": "tsitest", 7 characters
+  thisisatest
+  ^  ^^  ^^^^
+  testing123testing
+  ^ ^ ^     ^^^^
+
+"AGGTAB" and "GXTXAYB": "GTAB", 4 characters
+  AGGTAB
+   ^ ^^^
+  GXTXAYB
+  ^ ^ ^ ^
+
+"ABCBDAB" and "BDCABA": "BCBA", 4 characters
+  ABCBDAB
+   ^^^ ^
+  BDCABA
+  ^ ^ ^^
+
+"abc" and "xyz": "", 0 characters
+  abc
+  xyz

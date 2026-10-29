@@ -355,15 +355,24 @@ impl TypeContext {
             "keys" => match args.first().map(arg_ty).map(Self::walked) {
                 Some(Ty::Map(crate::ir::Key::Open, _)) => Ty::List(Box::new(Ty::Unknown)),
                 Some(Ty::Map(key, _)) => Ty::List(Box::new(key.ty())),
+                // (nor does a value not known yet — a function's answer
+                // before its body is typed: guessed as text, an int-keyed
+                // map's keys bound at the top level were refused as a
+                // reassignment; Rosetta Code, Achilles numbers)
+                Some(Ty::Unknown) | None => Ty::List(Box::new(Ty::Unknown)),
                 _ => Ty::List(Box::new(Ty::Str)),
             },
             "has" => Ty::Bool,
             "values" => {
-                if let Some(arg) = args.first() {
-                    let map_type = arg_ty(arg);
-                    if let Ty::Map(_, inner) = map_type {
-                        return Ty::List(inner);
-                    }
+                // (through a failure: `values[f[t]]` of a function that can
+                // fail is the map's values, the call's step wrapping them as
+                // one that can fail — read as nothing known, the compiled
+                // failure had held a list of text; Rosetta Code, Graph
+                // colouring)
+                if let Some(arg) = args.first()
+                    && let Ty::Map(_, inner) = arg_ty(arg).payload()
+                {
+                    return Ty::List(inner.clone());
                 }
                 Ty::List(Box::new(Ty::Unknown))
             }
@@ -759,7 +768,12 @@ impl TypeContext {
             || element
             || (self.in_view && crate::lower::is_ui_control(name, matches!(arg_types.first().cloned().map(Self::walked), Some(Ty::Frame(_)))))
             || self.views.contains(name);
-        if !skip && !matches!(base, Ty::Result(_) | Ty::Unit) {
+        // (a call that answers nothing, handed a value that can fail,
+        // answers that failure when it failed: typed as nothing, the
+        // failure had vanished — dropped by its line in both modes, and the
+        // compiled program had not built where the call was a function's
+        // last line; Rosetta Code, Hex dump)
+        if !skip && !matches!(base, Ty::Result(_)) {
             let has_result_arg = arg_types.iter().any(|t| matches!(t, Ty::Result(_)));
             if has_result_arg {
                 return Ty::Result(Box::new(base));

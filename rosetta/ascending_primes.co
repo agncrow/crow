@@ -1,0 +1,37 @@
+--- Rosetta Code: Ascending primes
+--- https://rosettacode.org/wiki/Ascending_primes
+--- The 511 numbers whose digits strictly ascend are made breadth first, each by
+--- appending a larger digit to a shorter one, so they come in increasing order
+--- and only those 511 are tested for primality.
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    if n % 2 eq 0
+        return n eq 2
+    d = 3
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 2
+    return true
+
+--- every number whose digits strictly ascend, smallest first
+fn ascending_numbers[]
+    found = range[1, 10]
+    i = 0
+    while i lt len[found]
+        n = found[i]
+        for digit in range[n % 10 + 1, 10]
+            found = push[found, n * 10 + digit]
+        i = i + 1
+    return found
+
+primes = for n in ascending_numbers[]
+    if is_prime[n]
+        n
+log['The `len[primes]` primes with strictly ascending digits:']
+for start in range[0, len[primes], 10]
+    cells = for p in slice[primes, start, start + 10]
+        fmt[p, width = 9]
+    log[join[cells, '']]

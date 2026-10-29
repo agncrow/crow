@@ -1,0 +1,13 @@
+1 2 Fizz 4 Buzz Fizz 7 8 Fizz Buzz 11 Fizz 13 14 FizzBuzz
+
+12 is a multiple of 2 and of 3
+8 is a multiple of 2, not of 3
+9 is a multiple of 3, not of 2
+35 is a multiple of neither 2 nor 3, but of 5 and of 7
+25 is a multiple of neither 2 nor 3, but of 5
+49 is a multiple of neither 2 nor 3, but of 7
+11 is a multiple of none of 2, 3, 5 and 7
+
+4 is positive: 100 / 4 = 25
+-5 is negative: 100 / -5 = -20
+0 is zero: 100 / 0 is never computed

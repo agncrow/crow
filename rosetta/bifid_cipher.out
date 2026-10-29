@@ -1,0 +1,51 @@
+1. The task example:
+    A B C D E
+    F G H I K
+    L M N O P
+    Q R S T U
+    V W X Y Z
+  Message  : ATTACKATDAWN
+  Encrypted: DQBDAXDQPDQH
+  Decrypted: ATTACKATDAWN
+
+2. The Wikipedia example:
+    B G W K Z
+    Q P N D S
+    I O A X E
+    F C L U M
+    T H Y V R
+  Message  : FLEEATONCE
+  Encrypted: UAEOLWRINS
+  Decrypted: FLEEATONCE
+
+3. The task example with the Wikipedia square:
+    B G W K Z
+    Q P N D S
+    I O A X E
+    F C L U M
+    T H Y V R
+  Message  : ATTACKATDAWN
+  Encrypted: EYFENGIWDILA
+  Decrypted: ATTACKATDAWN
+
+4. A square of my own (J read as I):
+    P L A Y F
+    I R E X M
+    B C D G H
+    K N O Q S
+    T U V W Z
+  Message  : The invasion will start on the first of January
+  Encrypted: VRSYXSIYTMQVIRSKISLPVLDTCKRTCAIVTMATCEX
+  Decrypted: THEINVASIONWILLSTARTONTHEFIRSTOFIANUARY
+
+Bonus: a 6 x 6 square holds all 26 letters and the 10 digits, so J stays J:
+    A B C D E F
+    G H I J K L
+    M N O P Q R
+    S T U V W X
+    Y Z 0 1 2 3
+    4 5 6 7 8 9
+  Message  : The invasion will start on the first of January
+  Encrypted: TBPDIPHJSPOTAIVMGPCZKNSCN09BFIHK64I7BM4
+  Decrypted: THEINVASIONWILLSTARTONTHEFIRSTOFJANUARY
+

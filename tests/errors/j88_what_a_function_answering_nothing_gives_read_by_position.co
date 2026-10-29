@@ -1,0 +1,9 @@
+--- what a function that answers nothing gives, held for whether it
+--- failed, read by position: it holds no value — the interpreter had
+--- stopped, "not indexable", and the compiled program had not built
+fn f[t]
+    if t eq ''
+        return error['empty']
+
+x = f['1']
+log[x[0]]

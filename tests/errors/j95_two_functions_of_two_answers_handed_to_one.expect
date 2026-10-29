@@ -1,0 +1,3 @@
+j95_two_functions_of_two_answers_handed_to_one.co:16:1: `applied` takes a function, so one `applied` serves every call, and its 'f' answers an int here where another call's answers text — a function taking a function is not copied per kind (spec, Specialization): write one for each kind
+  16 │ log[applied[3, twice]]
+     │ ^^^^^^^^^^^^^^^^^^^^^^

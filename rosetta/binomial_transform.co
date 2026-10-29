@@ -1,0 +1,98 @@
+--- Rosetta Code: Binomial transform
+--- https://rosettacode.org/wiki/Binomial_transform
+--- OEIS's pair of transforms, b(n) = sum C(n, k) a(k) and its inverse
+--- a(n) = sum (-1)^(n-k) C(n, k) b(k), in exact ints over the first 20 terms
+--- of four generated sequences.
+
+fn binomial[n, k]
+    c = 1
+    for i in range[k]
+        c = c * (n - i) / (i + 1)
+    return c
+
+fn forward[a]
+    b = for n in range[len[a]]
+        total = 0
+        for k in range[n + 1]
+            total = total + binomial[n, k] * a[k]
+        total
+    return b
+
+fn inverse[b]
+    a = for n in range[len[b]]
+        total = 0
+        for k in range[n + 1]
+            term = binomial[n, k] * b[k]
+            if (n - k) % 2 eq 0
+                total = total + term
+            else
+                total = total - term
+        total
+    return a
+
+fn catalan[count]
+    xs = []
+    c = 1
+    for n in range[count]
+        xs = push[xs, c]
+        c = c * 2 * (2 * n + 1) / (n + 2)
+    return xs
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    d = 2
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 1
+    return true
+
+fn prime_flip_flop[count]
+    xs = for n in range[count]
+        if is_prime[n]
+            1
+        else
+            0
+    return xs
+
+fn fibonacci[count]
+    xs = []
+    a = 0
+    b = 1
+    for n in range[count]
+        xs = push[xs, a]
+        a, b = b, a + b
+    return xs
+
+fn padovan[count]
+    --- P(n) = P(n-2) + P(n-3), starting 1, 0, 0
+    xs = []
+    for n in range[count]
+        if n lt 3
+            xs = push[xs, max[0, 1 - n]]
+        else
+            xs = push[xs, xs[n - 2] + xs[n - 3]]
+    return xs
+
+fn spaced[xs]
+    parts = for x in xs
+        str[x]
+    return join[parts, ' ']
+
+fn show[name, a]
+    log['`name`:']
+    log['  `spaced[a]`']
+    log['Forward binomial transform:']
+    log['  `spaced[forward[a]]`']
+    log['Inverse binomial transform:']
+    log['  `spaced[inverse[a]]`']
+    log['Inverse of the forward transform:']
+    log['  `spaced[inverse[forward[a]]]`']
+    log['']
+
+count = 20
+show['Catalan numbers', catalan[count]]
+show['Prime flip-flop sequence', prime_flip_flop[count]]
+show['Fibonacci numbers', fibonacci[count]]
+show['Padovan sequence', padovan[count]]

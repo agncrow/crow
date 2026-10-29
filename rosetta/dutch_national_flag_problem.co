@@ -1,0 +1,83 @@
+--- Rosetta Code: Dutch national flag problem
+--- https://rosettacode.org/wiki/Dutch_national_flag_problem
+--- Balls are drawn at random (seeded, so every run draws the same ones), again
+--- while they happen to lie in the flag's order already, then sorted two ways:
+--- Dijkstra's one pass, which swaps each red to the front and each blue to the back
+--- and leaves the whites between, looking at each ball's colour once; and Crow's
+--- own sort, of each ball's place in the flag. Both are checked to be in order.
+
+use math
+
+fn flag[]
+    return ['red', 'white', 'blue']
+
+--- a colour's place in the flag, from the top
+fn place[ball]
+    if ball eq 'red'
+        return 0
+    if ball eq 'white'
+        return 1
+    return 2
+
+fn in_order[balls]
+    ok = true
+    i = 1
+    while ok and i lt len[balls]
+        ok = place[balls[i - 1]] lte place[balls[i]]
+        i = i + 1
+    return ok
+
+fn draw[n]
+    colours = flag[]
+    balls = for i in range[n]
+        colours[rand[3]]
+    return balls
+
+fn swapped[xs, i, j]
+    t = xs[i]
+    xs[i] = xs[j]
+    xs[j] = t
+    return xs
+
+--- Dijkstra's partition: balls[0, lo) are red, [lo, mid) white, (hi, end) blue,
+--- and [mid, hi] not yet looked at
+fn dutch_sort[balls]
+    lo = 0
+    mid = 0
+    hi = len[balls] - 1
+    while mid lte hi
+        if balls[mid] eq 'red'
+            balls = swapped[balls, lo, mid]
+            lo = lo + 1
+            mid = mid + 1
+        else if balls[mid] eq 'white'
+            mid = mid + 1
+        else
+            balls = swapped[balls, mid, hi]
+            hi = hi - 1
+    return balls
+
+--- sorted by Crow's sort, of each ball's place in the flag
+fn by_place[balls]
+    colours = flag[]
+    places = for b in balls
+        place[b]
+    sorted = for p in sort[places]
+        colours[p]
+    return sorted
+
+--- the balls on a line, and whether they lie in the flag's order
+fn show[label, balls]
+    line = join[balls, ' ']
+    log['`label` `line`']
+    log['In order: `in_order[balls]`']
+
+seed[1953]
+balls = draw[15]
+while in_order[balls]
+    balls = draw[15]
+show['Drawn:   ', balls]
+log['']
+show['Dijkstra:', dutch_sort[balls]]
+log['']
+show['Sorted:  ', by_place[balls]]

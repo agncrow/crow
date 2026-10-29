@@ -83,14 +83,25 @@ pub fn run<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     }
 }
 
+/// The shared pool's threads with the program's own stack
+/// ([`crate::stops::STACK`]), made before anything runs on it: a recursion
+/// inside a parallel loop reaches the depth the program's thread does, and
+/// stops past it with the same words — on rayon's two megabytes it had
+/// aborted the process, 643 calls deep interpreted (Rosetta Code, Find
+/// limit of recursion). Asked again, or once a pool exists, it does nothing.
+pub fn deep_stacks() {
+    let _ = rayon::ThreadPoolBuilder::new().stack_size(crate::stops::STACK).build_global();
+}
+
 /// The pool of `n` threads, made the first time it is asked for (none if
-/// the system refuses the threads: the loop then runs where it is).
+/// the system refuses the threads: the loop then runs where it is), its
+/// threads with the program's stack as the shared pool's are.
 fn pool(n: usize) -> Option<&'static rayon::ThreadPool> {
     let mut pools = POOLS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((_, p)) = pools.iter().find(|(k, _)| *k == n) {
         return Some(*p);
     }
-    let p: &'static rayon::ThreadPool = Box::leak(Box::new(rayon::ThreadPoolBuilder::new().num_threads(n).build().ok()?));
+    let p: &'static rayon::ThreadPool = Box::leak(Box::new(rayon::ThreadPoolBuilder::new().num_threads(n).stack_size(crate::stops::STACK).build().ok()?));
     pools.push((n, p));
     Some(p)
 }

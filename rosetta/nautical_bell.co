@@ -1,0 +1,57 @@
+--- Rosetta Code: Nautical bell
+--- https://rosettacode.org/wiki/Nautical_bell
+--- A ship's bell is struck at every half hour of a four-hour watch: one stroke at
+--- the first half hour, one more at each after it, eight at the watch's end, the
+--- strokes struck in pairs. The two dog watches (16:00-20:00) share one count of
+--- eight, as in the simpler system. The bells of one fixed day, Greenwich Mean Time,
+--- are shown as written notices ("Two bells gone", which the task allows): no wall
+--- clock is read and no sound is made, so every run prints the same.
+
+fn number_word[n]
+    words = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight']
+    return words[n]
+
+--- The strokes of a bell, in pairs: ding-ding for each pair, a lone ding for an odd one.
+fn strokes[bells]
+    pairs = repeat['ding-ding ', bells / 2]
+    if bells % 2 eq 1
+        return '`pairs`ding'
+    return trim[pairs]
+
+--- The watch a half hour belongs to, by the half hour's start (0 is 00:00, 47 is 23:30).
+fn watch_of[slot]
+    hour = slot / 2
+    if hour lt 4
+        return 'middle watch'
+    if hour lt 8
+        return 'morning watch'
+    if hour lt 12
+        return 'forenoon watch'
+    if hour lt 16
+        return 'afternoon watch'
+    if hour lt 18
+        return 'first dog watch'
+    if hour lt 20
+        return 'last dog watch'
+    return 'first watch'
+
+--- The bell struck at a moment on the hour or the half hour: it closes the half hour
+--- before it, and counts that half hour's place in its watch.
+fn bell_at[t]
+    closing = (2 * t.hour + t.minute / 30 + 47) % 48
+    bells = closing % 8 + 1
+    watch = watch_of[closing]
+    plural = 's'
+    if bells eq 1
+        plural = ''
+    gone = '`number_word[bells]` bell`plural` gone'
+    if bells eq 8
+        watch = 'end of the `watch`'
+    clock = '`fmt[t.hour, width = 2, fill = \'0\']`:`fmt[t.minute, width = 2, fill = \'0\']`'
+    return '`clock`  `fmt[gone, width = 17]` `fmt[strokes[bells], width = 40]` `watch`'
+
+day = moment[2026, 10, 28]
+log['The ship\'s bells of `fmt[day, style = \'date\']`, Greenwich Mean Time']
+log['']
+for i in range[48]
+    log[bell_at[day + 1800 * i]]

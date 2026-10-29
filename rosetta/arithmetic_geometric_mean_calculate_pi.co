@@ -1,0 +1,47 @@
+--- Rosetta Code: Arithmetic-geometric mean/Calculate Pi
+--- https://rosettacode.org/wiki/Arithmetic-geometric_mean/Calculate_Pi
+--- pi ~ 4 a_N^2 / (1 - sum of 2^(k+1) (a_k^2 - g_k^2)), in decimals of 1010 digits
+--- (Crow's big float). a_k^2 - g_k^2 is ((a_(k-1) - g_(k-1)) / 2)^2, which loses
+--- no digits to cancellation. Each step about doubles the places that are right.
+
+--- the approximations of pi, rounded to `places`, step by step until one
+--- changes nothing
+fn approximations[places]
+    work = places + 10
+    one = decimal[1, digits = work]
+    a = one
+    g = one / sqrt[decimal[2, digits = work]]
+    total = decimal[0, digits = work]
+    power = 4
+    found = []
+    while true
+        c = (a - g) / 2
+        a, g = (a + g) / 2, sqrt[a * g]
+        total = total + power * c * c
+        power = power * 2
+        estimate = round[4 * a * a / (1 - total), places]
+        if len[found] gt 0 and estimate eq found[-1]
+            break
+        found = push[found, estimate]
+    return found
+
+--- how many decimal places two numbers' texts share
+fn places_agreeing[x, y]
+    i = 0
+    while i lt len[x] and i lt len[y] and x[i] eq y[i]
+        i = i + 1
+    return max[i - 2, 0]
+
+places = 1000
+steps = approximations[places]
+pi = str[steps[-1]]
+log['pi by the AGM, step by step (the first 60 places shown):']
+log['step  places right  approximation']
+for k in range[len[steps]]
+    right = places_agreeing[str[steps[k]], pi]
+    log['`fmt[k + 1, width = 4]`  `fmt[right, width = 12]`  `round[steps[k], 60]`']
+log['']
+log['pi to `places` decimal places:']
+log[slice[pi, 0, 2]]
+for start in range[2, len[pi], 100]
+    log[slice[pi, start, start + 100]]

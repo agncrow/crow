@@ -1,0 +1,10 @@
+--- Rosetta Code: Averages/Root mean square
+--- https://rosettacode.org/wiki/Averages/Root_mean_square
+--- A list of numbers is a tensor to the operators: square it item by item with
+--- .*, take the mean, then the square root.
+use math
+
+fn rms[xs]
+    return sqrt[mean[xs .* xs]]
+
+log[rms[range[1, 11]]]

@@ -1,0 +1,64 @@
+--- Rosetta Code: Globally replace text in several files
+--- https://rosettacode.org/wiki/Globally_replace_text_in_several_files
+--- Each file is read whole, its instances counted with occurs and all replaced with
+--- replace, and the file written back only when it held one. The files are the
+--- program's arguments; given none, it makes three in the current directory,
+--- replaces in them (with a fourth name that is no file, to show the report of one
+--- that cannot be read), shows them, and removes them at its end.
+
+fn replace_in_file[path, old, new]
+    --- how many instances of old the file held, every one now new
+    text = read[path]
+    if not text.ok
+        return error[text.reason, 'io']
+    count = occurs[text, old]
+    if count gt 0
+        written = write[path, replace[text, old, new]]
+        if not written.ok
+            return error[written.reason, 'io']
+    return count
+
+fn replace_in_files[paths, old, new]
+    for path in paths
+        count = replace_in_file[path, old, new]
+        if count.ok
+            log['`path`: `count` replaced']
+        else
+            log[count.reason]
+
+fn show[paths]
+    for path in paths
+        log['--- `path`']
+        log[trim[read[path]]]
+
+fn sample_files[]
+    return [
+        ['london_1.txt', 'Goodbye London!\nWe said Goodbye London! and then Goodbye London! again.\n'],
+        ['london_2.txt', 'Nothing to change here:\nGoodbye, London! has a comma, and goodbye london! no capitals.\n'],
+        ['london_3.txt', 'Goodbye London!Goodbye London!Goodbye London!\n']
+    ]
+
+old = 'Goodbye London!'
+new = 'Hello New York!'
+given = args[]
+if len[given] gt 0
+    replace_in_files[given, old, new]
+else
+    samples = sample_files[]
+    paths = for sample in samples
+        sample[0]
+    for sample in samples
+        made = write[sample[0], sample[1]]
+        if not made.ok
+            halt['cannot make `sample[0]`']
+    log['Before:']
+    show[paths]
+    log['']
+    replace_in_files[push[paths, 'london_4.txt'], old, new]
+    log['']
+    log['After:']
+    show[paths]
+    for path in paths
+        gone = rm[path]
+        if not gone.ok
+            halt['cannot remove `path`']

@@ -1,0 +1,98 @@
+--- Rosetta Code: Kosaraju
+--- https://rosettacode.org/wiki/Kosaraju
+--- Two depth-first searches, each with a stack of its own: the first lists the
+--- nodes in the order their searches finish, the second walks the transposed
+--- graph from each node in the reverse of that order, and everything it reaches
+--- that no earlier walk did is that node's component (named by the node, as the
+--- Python entry names them).
+
+--- each node's successors, from an edge list given as two lists
+fn adjacency[n, sources, targets]
+    g = for u in range[n]
+        outs = for i in range[len[sources]]
+            if sources[i] eq u
+                targets[i]
+        outs
+    return g
+
+fn transposed[g]
+    t = for v in range[len[g]]
+        ins = for u in range[len[g]]
+            if v in g[u]
+                u
+        ins
+    return t
+
+--- the nodes in the order their depth-first searches finish
+fn finishing_order[g]
+    visited = for u in range[len[g]]
+        false
+    next_edge = for u in range[len[g]]
+        0
+    order = []
+    for root in range[len[g]]
+        if not visited[root]
+            visited[root] = true
+            stack = [root]
+            while len[stack] gt 0
+                u = stack[-1]
+                if next_edge[u] lt len[g[u]]
+                    v = g[u][next_edge[u]]
+                    next_edge[u] = next_edge[u] + 1
+                    if not visited[v]
+                        visited[v] = true
+                        stack = push[stack, v]
+                else
+                    order = push[order, u]
+                    stack = pop[stack]
+    return order
+
+--- each node's strongly connected component, named by its first node in the
+--- reversed finishing order
+fn kosaraju[g]
+    t = transposed[g]
+    component = for u in range[len[g]]
+        -1
+    for root in reverse[finishing_order[g]]
+        if component[root] lt 0
+            component[root] = root
+            stack = [root]
+            while len[stack] gt 0
+                u = stack[-1]
+                stack = pop[stack]
+                for v in t[u]
+                    if component[v] lt 0
+                        component[v] = root
+                        stack = push[stack, v]
+    return component
+
+--- the components, each as its nodes' names, in the order of their names
+fn grouped[component, names]
+    groups = []
+    for root in range[len[component]]
+        if component[root] eq root
+            members = for u in range[len[component]]
+                if component[u] eq root
+                    names[u]
+            listed = join[members, ', ']
+            groups = push[groups, '{`listed`}']
+    return join[groups, ' ']
+
+--- the task's graph: an edge from sources[i] to targets[i]
+sources = [0, 1, 2, 3, 3, 3, 4, 4, 5, 5, 6, 7, 7, 7]
+targets = [1, 2, 0, 1, 2, 4, 3, 5, 2, 6, 5, 4, 6, 7]
+g = adjacency[8, sources, targets]
+component = kosaraju[g]
+log['The component of each node 0 to 7: `component`']
+numbers = for u in range[8]
+    str[u]
+log['The components: `grouped[component, numbers]`']
+
+--- the graph of Wikipedia's "Strongly connected component" picture, nodes a to h
+letters = split['abcdefgh', '']
+sources = [0, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6, 7, 7]
+targets = [1, 2, 4, 5, 3, 6, 2, 7, 0, 5, 6, 5, 3, 6]
+pictured = kosaraju[adjacency[8, sources, targets]]
+log['']
+log['Wikipedia\'s picture of strongly connected components, nodes a to h:']
+log['The components: `grouped[pictured, letters]`']

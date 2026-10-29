@@ -1,0 +1,43 @@
+--- Rosetta Code: Harmonic series
+--- https://rosettacode.org/wiki/Harmonic_series
+--- Harmonic numbers as exact fractions (an int grows, so no digit is lost): the
+--- first 20 as fractions and decimals, H(100), then one running sum finds the
+--- first term above each integer 1 to 5, and 6 to 10 for the stretch.
+
+--- the n-th harmonic number, 1 + 1/2 + ... + 1/n
+fn harmonic[n]
+    h = fraction[0, 1]
+    for k in range[1, n + 1]
+        h = h + fraction[1, k]
+    return h
+
+--- the position of the first harmonic number above each limit (ascending)
+fn first_above[limits]
+    found = []
+    h = fraction[0, 1]
+    n = 0
+    i = 0
+    while i lt len[limits]
+        n = n + 1
+        h = h + fraction[1, n]
+        while i lt len[limits] and h gt limits[i]
+            found = push[found, n]
+            i = i + 1
+    return found
+
+log['The first 20 harmonic numbers:']
+for n in range[1, 21]
+    h = harmonic[n]
+    name = fmt['H(`n`)', width = 6]
+    exact = fmt[str[h], width = 18]
+    log['`name` = `exact` ≈ `fmt[h, decimals = 6]`']
+
+log['']
+log['H(100) = `harmonic[100]`']
+
+log['']
+log['The first harmonic number above each integer:']
+limits = range[1, 11]
+places = first_above[limits]
+for i in range[len[limits]]
+    log['  above `fmt[limits[i], width = 2]`: H(`places[i]`)']

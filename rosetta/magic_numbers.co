@@ -1,0 +1,53 @@
+--- Rosetta Code: Magic numbers
+--- https://rosettacode.org/wiki/Magic_numbers
+--- The magic (polydivisible) numbers are grown a digit at a time: a magic number
+--- of n digits, followed by a digit that makes the first n + 1 digits divisible
+--- by n + 1, is one of n + 1 digits. The digits that do are every (n + 1)-th one
+--- from the first that does. Zero is counted, among those of one digit. The ints
+--- grow past 64 bits for the longest, of 25 digits.
+
+fn next_level[numbers, length]
+    --- the magic numbers of length + 1 digits, from those of `length` digits
+    found = []
+    divisor = length + 1
+    for x in numbers
+        if x gt 0
+            first = (divisor - 10 * x % divisor) % divisor
+            for d in range[first, 10, divisor]
+                found = push[found, 10 * x + d]
+    found
+
+fn magic_levels[]
+    --- every magic number, a list for each count of digits, each list in order
+    levels = []
+    level = range[10]
+    length = 1
+    while len[level] gt 0
+        levels = push[levels, level]
+        level = next_level[level, length]
+        length = length + 1
+    levels
+
+fn uses_once[x, digits]
+    --- whether x's digits are those of `digits`, each once
+    join[sort[split[str[x], '']], ''] eq digits
+
+fn pandigital[numbers, digits]
+    found = for x in numbers
+        if uses_once[x, digits]
+            str[x]
+    join[found, ' ']
+
+levels = magic_levels[]
+total = 0
+counts = []
+for level in levels
+    total = total + len[level]
+    counts = push[counts, '`len[counts] + 1`: `len[level]`']
+log['There are `total` magic numbers, 0 among them.']
+log['The largest is `levels[-1][-1]`.']
+log['By their count of digits:']
+log['    `join[slice[counts, 0, 13], \'  \']`']
+log['    `join[slice[counts, 13, len[counts]], \'  \']`']
+log['Minimally pandigital in 1 to 9: `pandigital[levels[8], \'123456789\']`']
+log['Minimally pandigital in 0 to 9: `pandigital[levels[9], \'0123456789\']`']

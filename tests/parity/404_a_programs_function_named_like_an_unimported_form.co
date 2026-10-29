@@ -1,0 +1,18 @@
+--- a function of the program's named like a module's form the program
+--- does not import — `connect` without `use db`, `fits` and `box` without
+--- `use web` — is the program's: its calls had been checked against the
+--- form, refused by the form's count or as a test's word (Rosetta Code,
+--- Kirkpatrick-Seidel algorithm)
+
+fn connect[a, b, c]
+    return a + b + c
+
+fn fits[w, h]
+    return w * h lt 100
+
+fn box[n]
+    return '[`n`]'
+
+log[connect[1, 2, 3]]
+log[fits[3, 4]]
+log[box[7]]

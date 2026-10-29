@@ -1,0 +1,10 @@
+requested[reg, 'zero'] holds instance 1 ('zero'), asked for once, note: made for zero
+requested[reg, 'one'] holds instance 2 ('one'), asked for once, note: made for one
+requested[reg, 'zero'] holds instance 1 ('zero'), asked for 2 times, note: made for zero
+requested[reg, 'two'] holds instance 3 ('two'), asked for once, note: made for two
+requested[reg, 'one'] holds instance 2 ('one'), asked for 2 times, note: made for one
+requested[reg, 'zero'] holds instance 1 ('zero'), asked for 3 times, note: made for zero
+alpha and beta are instances 1 and 1: one instance, true
+after a change, the instance for 'one' is instance 2 ('one'), asked for 3 times, note: changed through one request
+requested[reg, 'three'] fails (ok is false): no multiton instance for 'three' (the keys are zero, one and two)
+instances made: 3

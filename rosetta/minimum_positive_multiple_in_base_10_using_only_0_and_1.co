@@ -1,0 +1,51 @@
+--- Rosetta Code: Minimum positive multiple in base 10 using only 0 and 1
+--- https://rosettacode.org/wiki/Minimum_positive_multiple_in_base_10_using_only_0_and_1
+--- Numbers of 0s and 1s, grown breadth first from 1 by a digit 0 or 1 at the
+--- right, are met in increasing order; only their remainders mod n matter, so
+--- each remainder is kept the first time it is met (by its least number) with
+--- the remainder it came from and the digit added. The first number met with
+--- remainder 0 is B10(n), read back digit by digit. No magic numbers: at most n
+--- remainders, so at most n numbers are grown. The multiplier is B10 / n.
+
+fn b10[n]
+    from = for r in range[n]
+        -1
+    digit = for r in range[n]
+        0
+    root = 1 % n
+    from[root] = n
+    digit[root] = 1
+    queue = [root]
+    head = 0
+    while from[0] lt 0
+        r = queue[head]
+        head = head + 1
+        for d in [0, 1]
+            next = (r * 10 + d) % n
+            if from[next] lt 0
+                from[next] = r
+                digit[next] = d
+                queue = push[queue, next]
+    digits = []
+    r = 0
+    while r ne n
+        digits = push[digits, str[digit[r]]]
+        r = from[r]
+    return join[reverse[digits], '']
+
+fn report[numbers]
+    for n in numbers
+        found = b10[n]
+        multiplier = int[found] / n
+        number = fmt[n, width = 5]
+        shown = fmt[found, width = 29, align = 'right']
+        log['`number`  `shown`  `multiplier`']
+
+title = fmt['B10', width = 29, align = 'right']
+log['    n  `title`  multiplier']
+report[concat[range[1, 11], range[95, 106]]]
+report[[297, 576, 594, 891, 909, 999]]
+log['Optional:']
+report[[1998, 2079, 2251, 2277]]
+log['Stretch:']
+report[[2439, 2997, 4878]]

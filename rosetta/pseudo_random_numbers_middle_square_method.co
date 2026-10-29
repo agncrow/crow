@@ -1,0 +1,37 @@
+--- Rosetta Code: Pseudo-random numbers/Middle-square method
+--- https://rosettacode.org/wiki/Pseudo-random_numbers/Middle-square_method
+--- The square of the six-digit seed, written with twelve digits (zeros in front), keeps
+--- its middle six: that is the next number and the next seed. The same middle six are
+--- the square divided by 1,000, modulo 1,000,000, which the program checks; it also
+--- follows the sequence until a number repeats.
+
+fn next_number[seed]
+    square = fmt[seed * seed, width = 12, fill = '0']
+    return int[slice[square, 3, 9]]
+
+seed = 675248
+log['Seed 675248, the first five numbers:']
+k = 0
+while k lt 5
+    seed = next_number[seed]
+    log[seed]
+    k = k + 1
+
+--- the numbers from the seed until one comes again
+seen = map[]
+seed = 675248
+same = true
+count = 0
+while seed not in seen
+    seen = set[seen, seed, count]
+    following = next_number[seed]
+    if following ne seed * seed / 1000 % 1000000
+        same = false
+    seed = following
+    count = count + 1
+log['']
+log['Each number was also the square divided by 1,000, modulo 1,000,000: `same`']
+first = seen[seed]
+square = fmt[seed * seed, width = 12, fill = '0']
+log['Number `first` after the seed is `seed`, and the sequence repeats from there']
+log['in a cycle of `count - first`: `seed` squared is `square`.']

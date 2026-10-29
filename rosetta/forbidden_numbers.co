@@ -1,0 +1,68 @@
+--- Rosetta Code: Forbidden numbers
+--- https://rosettacode.org/wiki/Forbidden_numbers
+--- By Legendre's three-square theorem a number needs four squares exactly when it is
+--- 4^a(8b + 7): take out the factors of four and look at what is left modulo 8. The
+--- counts are made by testing every number, then again by counting those forms directly.
+
+fn forbidden[n]
+    m = n
+    while m gt 0 and m % 4 eq 0
+        m = m / 4
+    return m % 8 eq 7
+
+--- how many 4^a(8b + 7) are at most limit: for each power of four p, the b with
+--- p(8b + 7) <= limit
+fn count_by_form[limit]
+    total = 0
+    p = 1
+    while 7 * p lte limit
+        total = total + (limit / p - 7) / 8 + 1
+        p = p * 4
+    return total
+
+--- the count of forbidden numbers up to each limit (in increasing order), in one pass
+fn count_by_testing[limits]
+    counts = []
+    count = 0
+    n = 1
+    i = 0
+    while i lt len[limits]
+        if forbidden[n]
+            count = count + 1
+        if n eq limits[i]
+            counts = push[counts, count]
+            i = i + 1
+        n = n + 1
+    return counts
+
+fn first_forbidden[how_many]
+    found = []
+    n = 0
+    while len[found] lt how_many
+        n = n + 1
+        if forbidden[n]
+            found = push[found, n]
+    return found
+
+fn show_count[count, limit]
+    log['There are `fmt[count, commas = true]` forbidden numbers <= `fmt[limit, commas = true]`.']
+
+log['The first fifty forbidden numbers:']
+firsts = first_forbidden[50]
+for row in range[5]
+    cells = for i in range[10]
+        fmt[firsts[row * 10 + i], width = 4]
+    log[join[cells, '']]
+
+log['']
+log['Counted by testing each number:']
+limits = [500, 5000, 50000, 500000]
+counts = count_by_testing[limits]
+for i in range[len[limits]]
+    show_count[counts[i], limits[i]]
+
+log['']
+log['Counted from the form 4^a(8b + 7) alone:']
+for k in range[2, 16]
+    limit = 5 * 10 ^ k
+    show_count[count_by_form[limit], limit]

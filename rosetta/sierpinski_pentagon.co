@@ -1,0 +1,143 @@
+--- Rosetta Code: Sierpinski pentagon
+--- https://rosettacode.org/wiki/Sierpinski_pentagon
+--- The pentaflake of order n is five pentaflakes of order n - 1, each scaled by
+--- (3 - sqrt 5) / 2 = 1 / (2 + 2 cos 72°) toward one corner of the pentagon, so that
+--- neighbours touch; order 1 is the pentagon itself. Order 5 (625 pentagons) is
+--- drawn as an SVG image, sierpinski_pentagon.svg, written to the current directory
+--- and removed at the end unless the program is given the argument keep, each of the
+--- five order-4 flakes in a colour of its own. Crow draws on no screen of its own,
+--- so the console shows orders 1 to 4 in characters, each wider than the last: a
+--- cell is filled where its centre lies in a pentagon, found by descending only into
+--- the flakes whose circle holds it.
+
+use math
+
+--- a regular pentagon by its centre and the radius to its corners, one corner up
+struct Pentagon [x, y, r]
+
+fn shrink[]
+    return (3.0 - sqrt[5.0]) / 2.0
+
+--- the direction of corner k, y upwards
+fn corner_angle[k]
+    return pi / 2.0 + 2.0 * pi * k / 5.0
+
+fn corners[p]
+    found = for k in range[5]
+        a = corner_angle[k]
+        [p.x + p.r * cos[a], p.y + p.r * sin[a]]
+    return found
+
+--- the pentagon at corner k of the five a pentagon becomes at the next order
+fn part[p, k]
+    s = shrink[]
+    a = corner_angle[k]
+    return Pentagon[p.x + (1.0 - s) * p.r * cos[a], p.y + (1.0 - s) * p.r * sin[a], s * p.r]
+
+fn parts[p]
+    found = for k in range[5]
+        part[p, k]
+    return found
+
+--- the pentagons of the flake of the given order drawn in the pentagon p
+fn flake[p, order]
+    if order eq 1
+        return [p]
+    found = []
+    for q in parts[p]
+        found = concat[found, flake[q, order - 1]]
+    return found
+
+--- whether (x, y) lies in the pentagon p: within the apothem along each of the five
+--- directions across its sides
+fn in_pentagon[p, x, y]
+    apothem = p.r * cos[pi / 5.0]
+    k = 0
+    while k lt 5
+        a = corner_angle[k] + pi / 5.0
+        if (x - p.x) * cos[a] + (y - p.y) * sin[a] gt apothem
+            return false
+        k = k + 1
+    return true
+
+fn in_flake[p, order, x, y]
+    if order eq 1
+        return in_pentagon[p, x, y]
+    k = 0
+    while k lt 5
+        q = part[p, k]
+        if (x - q.x) ^ 2 + (y - q.y) ^ 2 lte q.r ^ 2 and in_flake[q, order - 1, x, y]
+            return true
+        k = k + 1
+    return false
+
+fn at[value]
+    return fmt[value, decimals = 1]
+
+--- the flake of the given order as SVG on a square of the given side, y downwards
+fn svg[order, side]
+    colours = ['#d62728', '#2ca02c', '#1f77b4', '#9467bd', '#ff7f0e']
+    --- as wide as the square less a margin, and as far below its middle as
+    --- the corner on top reaches higher than the side at the bottom lies lower
+    r = (side - 40.0) / (2.0 * sin[2.0 * pi / 5.0])
+    whole = Pentagon[side / 2.0, side / 2.0 - r * (1.0 - cos[pi / 5.0]) / 2.0, r]
+    groups = [[whole]]
+    if order gt 1
+        groups = for q in parts[whole]
+            flake[q, order - 1]
+    lines = ['<svg xmlns="http://www.w3.org/2000/svg" width="`side`" height="`side`" viewBox="0 0 `side` `side`">']
+    lines = push[lines, '<rect width="100%" height="100%" fill="white"/>']
+    for g in range[len[groups]]
+        lines = push[lines, '<g fill="`colours[g]`">']
+        for p in groups[g]
+            points = for c in corners[p]
+                '`at[c[0]]`,`at[side - c[1]]`'
+            joined = join[points, ' ']
+            lines = push[lines, '<polygon points="`joined`"/>']
+        lines = push[lines, '</g>']
+    lines = push[lines, '</svg>']
+    text = join[lines, '\n']
+    return '`text`\n'
+
+--- the flake of the given order in characters, the given number of columns wide;
+--- a character is about twice as tall as it is wide, so a row is two columns high
+fn picture[order, columns]
+    whole = Pentagon[0.0, 0.0, 1.0]
+    unit = 2.0 / columns
+    top = 1.0
+    bottom = -cos[pi / 5.0]
+    rows = round[(top - bottom) / (2.0 * unit)]
+    lines = for row in range[rows]
+        y = top - (row + 0.5) * 2.0 * unit
+        cells = for col in range[columns]
+            x = -1.0 + (col + 0.5) * unit
+            if in_flake[whole, order, x, y]
+                '#'
+            else
+                ' '
+        line = join[cells, '']
+        while ends[line, ' ']
+            line = slice[line, 0, len[line] - 1]
+        line
+    return lines
+
+side = 640
+order = 5
+saved = write['sierpinski_pentagon.svg', svg[order, side]]
+if not saved.ok
+    halt['sierpinski_pentagon.svg could not be written: `saved.reason`']
+count = len[flake[Pentagon[0.0, 0.0, 1.0], order]]
+log['sierpinski_pentagon.svg: the pentaflake of order `order`, `count` pentagons on a square of `side` pixels']
+log['']
+widths = [20, 40, 60, 79]
+for n in range[1, 5]
+    log['Order `n`, `widths[n - 1]` characters wide:']
+    for line in picture[n, widths[n - 1]]
+        log[line]
+    log['']
+
+given = args[]
+if 'keep' not in given
+    removed = rm['sierpinski_pentagon.svg']
+    if not removed.ok
+        halt['sierpinski_pentagon.svg could not be removed: `removed.reason`']

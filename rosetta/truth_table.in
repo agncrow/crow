@@ -1,0 +1,9 @@
+A ^ B
+S | ( T ^ U )
+A ^ (B ^ (C ^ D))
+(p -> q) <-> (!q -> !p)
+not (rain and wind) = not rain or not wind
+a & b | !c
+x -> y -> z
+a & | b
+(a | b

@@ -1,0 +1,165 @@
+--- Rosetta Code: Solve a Holy Knight's tour
+--- https://rosettacode.org/wiki/Solve_a_Holy_Knight's_tour
+--- A knight's tour of the squares without pennies, from the square marked 1, by
+--- a depth-first search in Warnsdorff's order: from each square the knight
+--- tries first the free square with the fewest free squares onward (ties to the
+--- lower square), and backs up where it is stranded. A move is not tried where
+--- it would leave a free square with no way in, or two that could each only be
+--- the tour's last. Each tour is checked square by square. A board is written a
+--- row a line: 0 for a free square, . for a penny, 1 for the start. Extra
+--- credit: the 13 x 13 board other entries solve.
+
+struct Board [rows, cols, open, near, start, total]
+
+fn knight_moves[]
+    return [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]]
+
+fn board_of[lines]
+    rows = len[lines]
+    cols = len[split[lines[0], ' ']]
+    open = []
+    start = -1
+    for line in lines
+        for w in split[line, ' ']
+            if w eq '1'
+                start = len[open]
+            open = push[open, w ne '.']
+    near = for s in range[rows * cols]
+        r = s / cols
+        c = s % cols
+        found = for m in knight_moves[]
+            rr = r + m[0]
+            cc = c + m[1]
+            if rr gte 0 and rr lt rows and cc gte 0 and cc lt cols and open[rr * cols + cc]
+                rr * cols + cc
+        found
+    total = 0
+    for free in open
+        if free
+            total = total + 1
+    return Board[rows, cols, open, near, start, total]
+
+fn onward[b, seen, s]
+    --- how many squares not yet visited a knight's move from s
+    count = 0
+    for t in b.near[s]
+        if not seen[t]
+            count = count + 1
+    return count
+
+fn ranked[b, seen, here]
+    --- the squares not yet visited a move from here, in Warnsdorff's order
+    weighed = []
+    for s in b.near[here]
+        if not seen[s]
+            weighed = push[weighed, onward[b, seen, s] * 1000 + s]
+    order = for w in sort[weighed]
+        w % 1000
+    return order
+
+fn stranded[b, seen, here]
+    --- whether the squares left can no longer all be toured from here: one
+    --- with no way in, or two that could each only be the tour's last square
+    lasts = 0
+    for t in range[len[seen]]
+        if b.open[t] and not seen[t]
+            ways = onward[b, seen, t]
+            if here in b.near[t]
+                ways = ways + 1
+            if ways eq 0
+                return true
+            if ways eq 1
+                lasts = lasts + 1
+    return lasts gt 1
+
+fn extended[b, seen, path]
+    --- the tour that goes on from path, or [] where none does
+    if len[path] eq b.total
+        return path
+    choices = ranked[b, seen, path[-1]]
+    i = 0
+    while i lt len[choices]
+        s = choices[i]
+        next = seen
+        next[s] = true
+        if not stranded[b, next, s]
+            found = extended[b, next, push[path, s]]
+            if len[found] gt 0
+                return found
+        i = i + 1
+    return []
+
+fn tour[b]
+    seen = for s in range[b.rows * b.cols]
+        s eq b.start
+    return extended[b, seen, [b.start]]
+
+fn is_tour[b, path]
+    --- every free square once, from the start, each step a knight's move
+    if len[path] ne b.total or path[0] ne b.start
+        return false
+    seen = for s in range[b.rows * b.cols]
+        false
+    for s in path
+        if not b.open[s] or seen[s]
+            return false
+        seen[s] = true
+    for i in range[1, len[path]]
+        if path[i] not in b.near[path[i - 1]]
+            return false
+    return true
+
+fn shown[b, path]
+    --- the board with each square's place in the tour
+    place = for s in range[b.rows * b.cols]
+        0
+    for i in range[len[path]]
+        place[path[i]] = i + 1
+    lines = for r in range[b.rows]
+        parts = for c in range[b.cols]
+            s = r * b.cols + c
+            if b.open[s]
+                fmt[place[s], width = 3]
+            else
+                '   '
+        sub[join[parts, ''], ' +$', '']
+    return join[lines, '\n']
+
+fn solve[name, lines]
+    b = board_of[lines]
+    log['`name` (`b.total` squares):']
+    for line in lines
+        log['  `line`']
+    path = tour[b]
+    if len[path] eq 0
+        log['No tour.']
+    else
+        log[shown[b, path]]
+        log['A knight\'s tour of every free square: `is_tour[b, path]`']
+    log['']
+
+solve['The task\'s board', [
+    '. 0 0 0 . . . .',
+    '. 0 . 0 0 . . .',
+    '. 0 0 0 0 0 0 0',
+    '0 0 0 . . 0 . 0',
+    '0 . 0 . . 0 0 0',
+    '1 0 0 0 0 0 0 .',
+    '. . 0 0 . 0 . .',
+    '. . . 0 0 0 . .'
+]]
+solve['A 13 x 13 board', [
+    '. . . . . 1 . 0 . . . . .',
+    '. . . . . 0 . 0 . . . . .',
+    '. . . . 0 0 0 0 0 . . . .',
+    '. . . . . 0 0 0 . . . . .',
+    '. . 0 . . 0 . 0 . . 0 . .',
+    '0 0 0 0 0 . . . 0 0 0 0 0',
+    '. . 0 0 . . . . . 0 0 . .',
+    '0 0 0 0 0 . . . 0 0 0 0 0',
+    '. . 0 . . 0 . 0 . . 0 . .',
+    '. . . . . 0 0 0 . . . . .',
+    '. . . . 0 0 0 0 0 . . . .',
+    '. . . . . 0 . 0 . . . . .',
+    '. . . . . 0 . 0 . . . . .'
+]]

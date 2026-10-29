@@ -1,5 +1,11 @@
 use crate::token::{SpannedToken, Token};
 
+/// Follows a literal backslash written right before a backtick in a string
+/// (`'\\`x`'`): the backslash is text, and the backtick opens an
+/// interpolation. Read back by the interpolation splitter and taken out of
+/// a string with no interpolation (`lower_ir`).
+pub const BACKSLASH_MARK: char = '\u{E001}';
+
 /// The words the language keeps for itself — every one lexes as its own
 /// token, never a name (a test holds the two to each other). The language
 /// server completes them, and a refusal of a name one slip from one says it.
@@ -470,7 +476,18 @@ impl Lexer {
                         Some('n') => { s.push('\n'); self.advance(); }
                         Some('t') => { s.push('\t'); self.advance(); }
                         Some('r') => { s.push('\r'); self.advance(); }
-                        Some('\\') => { s.push('\\'); self.advance(); }
+                        // (a literal backslash right before a backtick is
+                        // marked: the interpolation splitter reads `\` and a
+                        // backtick as an escaped backtick, so `'\\`e`'` had
+                        // never closed its interpolation — Rosetta Code,
+                        // Compiler/lexical analyzer; `BACKSLASH_MARK`)
+                        Some('\\') => {
+                            s.push('\\');
+                            self.advance();
+                            if self.peek() == Some('`') {
+                                s.push(BACKSLASH_MARK);
+                            }
+                        }
                         Some('\'') => { s.push('\''); self.advance(); }
                         // Escaped backtick: kept as \` in the raw string so
                         // interpolation treats it as a literal character
@@ -539,6 +556,33 @@ impl Lexer {
                 }
             } else {
                 break;
+            }
+        }
+
+        // a number written with an exponent (`3.301e23`, `6.674e-11`, `1e10`):
+        // Crow writes none, and the exponent had been read as a second
+        // statement or a stray name, whose advice misled (Rosetta Code, the
+        // NKT law's masses)
+        if let Some(e @ ('e' | 'E')) = self.peek() {
+            let mut i = 1;
+            let mut sign = String::new();
+            if let Some(s @ ('+' | '-')) = self.peek_at(1) {
+                sign.push(s);
+                i = 2;
+            }
+            let mut digits = String::new();
+            while let Some(c) = self.peek_at(i).filter(|c| c.is_ascii_digit()) {
+                digits.push(c);
+                i += 1;
+            }
+            if !digits.is_empty() {
+                let written = format!("{}{}{}{}", num_str, e, sign, digits);
+                let mantissa = if is_float { num_str.clone() } else { format!("{}.0", num_str) };
+                let power = format!("{}{}", if sign == "-" { "-" } else { "" }, digits);
+                return Err(format!(
+                    "line {}, col {}: Crow writes no exponent in a number — {} is {} * 10.0 ^ {}, or float['{}'] for the float nearest it",
+                    line, col, written, mantissa, power, written
+                ));
             }
         }
 

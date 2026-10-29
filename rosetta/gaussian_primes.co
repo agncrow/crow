@@ -1,0 +1,93 @@
+--- Rosetta Code: Gaussian primes
+--- https://rosettacode.org/wiki/Gaussian_primes
+--- a + bi is a Gaussian prime when a and b are both non-zero and a^2 + b^2 is prime, or
+--- one is zero and the other's magnitude is a prime of the form 4n + 3. The primes come
+--- from a sieve; those of norm below 100 are listed by norm, and those within radius 50
+--- are plotted as a picture in characters, two points to a character (half blocks).
+
+--- whether each number from 0 to limit is prime
+fn sieve[limit]
+    prime = for i in range[limit + 1]
+        i gte 2
+    p = 2
+    while p * p lte limit
+        if prime[p]
+            m = p * p
+            while m lte limit
+                prime[m] = false
+                m = m + p
+        p = p + 1
+    return prime
+
+fn is_gaussian_prime[a, b, prime]
+    if a ne 0 and b ne 0
+        return prime[a * a + b * b]
+    n = abs[a] + abs[b]
+    return prime[n] and n % 4 eq 3
+
+--- a + bi written as 2+i, -1-2i, 3 or -3i
+fn written[a, b]
+    if b eq 0
+        return str[a]
+    size = ''
+    if abs[b] ne 1
+        size = str[abs[b]]
+    if a eq 0
+        if b lt 0
+            return '-`size`i'
+        return '`size`i'
+    if b lt 0
+        return '`a`-`size`i'
+    return '`a`+`size`i'
+
+--- the Gaussian primes of norm below limit, by norm, then by a, then by b
+fn below[limit, prime]
+    r = 1
+    while r * r lt limit
+        r = r + 1
+    order = []
+    for a in range[-r, r + 1]
+        for b in range[-r, r + 1]
+            if a * a + b * b lt limit and is_gaussian_prime[a, b, prime]
+                order = push[order, ((a * a + b * b) * 1000 + a + r) * 1000 + b + r]
+    found = for key in sort[order]
+        [(key / 1000) % 1000 - r, key % 1000 - r]
+    return found
+
+--- the points within radius r, a row of characters for each two rows of points
+fn plot[r, prime]
+    lines = []
+    y = r
+    while y gte -r
+        cells = for x in range[-r, r + 1]
+            top = x * x + y * y lte r * r and is_gaussian_prime[x, y, prime]
+            low = y gt -r and x * x + (y - 1) * (y - 1) lte r * r and is_gaussian_prime[x, y - 1, prime]
+            if top and low
+                '█'
+            else if top
+                '▀'
+            else if low
+                '▄'
+            else
+                ' '
+        last = len[cells] - 1
+        while last gte 0 and cells[last] eq ' '
+            last = last - 1
+        lines = push[lines, join[slice[cells, 0, last + 1], '']]
+        y = y - 2
+    return lines
+
+prime = sieve[2 * 50 * 50]
+found = below[100, prime]
+log['The `len[found]` Gaussian primes of norm below 100, by norm:']
+i = 0
+while i lt len[found]
+    row = for g in slice[found, i, i + 10]
+        fmt[written[g[0], g[1]], width = 7, align = 'right']
+    line = join[row, '']
+    log[line]
+    i = i + 10
+log['']
+log['The Gaussian primes within radius 50 of 0 (the real axis across, the imaginary up):']
+for line in plot[50, prime]
+    log[line]

@@ -1,0 +1,59 @@
+Loaded:
+{
+  "founded": 2007,
+  "languages": [
+    "Crow",
+    "Python",
+    "Go"
+  ],
+  "name": "Rosetta Code",
+  "wiki": {
+    "drafts": 290,
+    "logo": null,
+    "tasks": 1340
+  }
+}
+
+name: Rosetta Code
+founded: 2007
+the second language: Python
+languages: 3
+tasks and drafts: 1630
+a logo: false
+  founded holds a value of kind int
+  languages holds a value of kind array
+  name holds a value of kind str
+  wiki holds a value of kind map
+A malformed text: invalid JSON: expected value at line 1 column 37
+
+Written:
+{"closed":true,"corners":[{"x":0,"y":0},{"x":4,"y":0},{"x":0,"y":3}],"fill":{"blue":0,"green":128,"red":255},"name":"triangle","note":"half of a \"3-4-5\" rectangle's area: 6","tags":["right","small"]}
+read back: true, its corners: 3, the last corner: (0, 3)
+{
+  "closed": true,
+  "corners": [
+    {
+      "x": 0,
+      "y": 0
+    },
+    {
+      "x": 4,
+      "y": 0
+    },
+    {
+      "x": 0,
+      "y": 3
+    }
+  ],
+  "fill": {
+    "blue": 0,
+    "green": 128,
+    "red": 255
+  },
+  "name": "triangle",
+  "note": "half of a \"3-4-5\" rectangle's area: 6",
+  "tags": [
+    "right",
+    "small"
+  ]
+}

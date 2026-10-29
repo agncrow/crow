@@ -1,0 +1,15 @@
+--- a function answering a map whose values can fail (`map[keys, values]`
+--- of `float[…]`), called with an argument that can fail: the call's
+--- failure is a map of values that can fail, as the function answers it —
+--- compiled, its placeholder had been a map of plain floats, and the call
+--- site did not build (Rosetta Code, Associative array/Merging)
+
+fn pick[s]
+    return map[['a'], [float[s]]]
+
+s = json['"2.5"']
+log[pick[s]]
+t = json['"x"']
+log[pick[t]]
+v = json['oops']
+log[pick[v].ok]

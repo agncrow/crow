@@ -1,0 +1,150 @@
+--- Rosetta Code: Jury stability criterion
+--- https://rosettacode.org/wiki/Jury_stability_criterion
+--- P(z) = a0 z^n + a1 z^(n-1) + ... + an, its coefficients listed from a0 and
+--- made a0 > 0 by a change of sign. First the three necessary conditions,
+--- P(1) > 0, (-1)^n P(-1) > 0 and |an| < a0, which are enough for n of 2 or
+--- less; then the Jury table, each row b_k = a0 a_k - an a_(n-k) one shorter
+--- than the row above, written again reversed, down to a row of three, and
+--- |first| > |last| asked of each new row. The roots, the eigenvalues of the
+--- companion matrix, check each verdict.
+
+use math
+
+--- P(z) by Horner's rule
+fn value_at[coeffs, z]
+    total = 0.0
+    for a in coeffs
+        total = total * z + a
+    return total
+
+--- the next row of the table: b_k = a0 a_k - an a_(n-k), for k below n
+fn reduced[row]
+    n = len[row] - 1
+    next_row = for k in range[n]
+        row[0] * row[k] - row[n] * row[n - k]
+    return next_row
+
+fn shown[x]
+    if abs[x] lt 0.00005
+        return '0.0000'
+    return fmt[x, decimals = 4]
+
+fn row_text[row]
+    cells = for x in row
+        fmt[shown[x], width = 9, align = 'right']
+    return join[cells, '']
+
+--- the polynomial written out: z^3 + 3.3 z^2 + 4 z + 0.8
+fn poly_text[coeffs]
+    n = len[coeffs] - 1
+    parts = []
+    for i in range[len[coeffs]]
+        a = coeffs[i]
+        power = n - i
+        if a ne 0.0
+            sign = '+'
+            if a lt 0.0
+                sign = '-'
+            size = str[abs[a]]
+            if abs[a] eq 1.0 and power gt 0
+                size = ''
+            else if power gt 0
+                size = '`size` '
+            variable = ''
+            if power eq 1
+                variable = 'z'
+            else if power gt 1
+                variable = 'z^`power`'
+            if len[parts] eq 0 and sign eq '+'
+                parts = push[parts, '`size``variable`']
+            else if len[parts] eq 0
+                parts = push[parts, '-`size``variable`']
+            else
+                parts = push[parts, '`sign` `size``variable`']
+    return join[parts, ' ']
+
+--- the roots, the eigenvalues of the companion matrix, as text, and the
+--- greatest of their moduli
+struct Roots [text, largest]
+
+fn roots_of[coeffs]
+    n = len[coeffs] - 1
+    companion = for i in range[n]
+        row = for j in range[n]
+            if i eq 0
+                -coeffs[j + 1] / coeffs[0]
+            else if j eq i - 1
+                1.0
+            else
+                0.0
+        row
+    --- eigen answers the real parts and the imaginary parts, each a vector
+    pairs = eigen[companion]
+    re = flatten[real[pairs]]
+    im = flatten[imag[pairs]]
+    parts = for k in range[n]
+        if abs[im[k]] lt 0.000000001
+            shown[re[k]]
+        else if im[k] gt 0.0
+            '`shown[re[k]]` + `shown[im[k]]`i'
+        else
+            '`shown[re[k]]` - `shown[-im[k]]`i'
+    return Roots[join[parts, ', '], max[flatten[magnitude[pairs]]]]
+
+fn verdict[stable]
+    if stable
+        return 'stable'
+    return 'not stable'
+
+fn jury[coeffs]
+    n = len[coeffs] - 1
+    log['P(z) = `poly_text[coeffs]`, order `n`']
+    if coeffs[0] lt 0.0
+        coeffs = coeffs * -1.0
+        log['  times -1, a0 > 0: `poly_text[coeffs]`']
+    at_one = value_at[coeffs, 1.0]
+    at_minus_one = value_at[coeffs, -1.0]
+    if n % 2 eq 1
+        at_minus_one = -at_minus_one
+    first = at_one gt 0.0
+    log['  P(1) = `shown[at_one]` > 0: `first`']
+    second = at_minus_one gt 0.0
+    log['  (-1)^`n` P(-1) = `shown[at_minus_one]` > 0: `second`']
+    third = abs[coeffs[n]] lt coeffs[0]
+    log['  |a`n`| = `shown[abs[coeffs[n]]]` < a0 = `shown[coeffs[0]]`: `third`']
+    stable = first and second and third
+    if n gt 2 and stable
+        log['  the Jury table:']
+        letters = split['abcdefghijklmnopqrstuvwxy', '']
+        conditions = []
+        row = coeffs
+        level = 0
+        log['    a: `row_text[row]`']
+        log['       `row_text[reverse[row]]`']
+        while len[row] gt 3
+            row = reduced[row]
+            level = level + 1
+            name = letters[level]
+            log['    `name`: `row_text[row]`']
+            if len[row] gt 3
+                log['       `row_text[reverse[row]]`']
+            last = len[row] - 1
+            holds = abs[row[0]] gt abs[row[last]]
+            conditions = push[conditions, '  |`name`0| = `shown[abs[row[0]]]` > |`name``last`| = `shown[abs[row[last]]]`: `holds`']
+            stable = stable and holds
+        for line in conditions
+            log[line]
+    else if n gt 2
+        log['  a necessary condition fails: no table is needed']
+    found = roots_of[coeffs]
+    log['  `verdict[stable]`: the roots are `found.text`, the largest of modulus `shown[found.largest]`']
+    log['']
+
+jury[[1.0, 3.3, 4.0, 0.8]]
+jury[[1.0, 1.4, 0.71, 0.154, 0.012]]
+jury[[1.0, -1.2, 0.07, 0.3, -0.08]]
+jury[[2.0, -1.0, 0.8, -0.5]]
+jury[[1.0, 0.0, 0.0, 0.0, 0.0, 0.5]]
+jury[[1.0, 0.0, 0.0, 2.0]]
+jury[[-1.0, 0.5, -0.06]]
+jury[[1.0, 0.5, -0.5]]

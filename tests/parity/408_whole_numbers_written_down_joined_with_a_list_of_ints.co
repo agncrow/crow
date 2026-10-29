@@ -1,0 +1,12 @@
+--- whole numbers written down, joined with a list of ints by `concat`,
+--- are that list's kind: joined as a tensor, an int past 2^53 had lost
+--- its digits compiled and stopped the interpreter (Rosetta Code, Write
+--- float arrays to a text file)
+
+xs = [int['123456789012345678901234567890']]
+log[concat[[1], xs]]
+ys = [5]
+ys = push[ys, 6]
+log[concat[[1, 2], ys]]
+zs = concat[[7], [int['9']]]
+log[zs, type[zs[0]]]

@@ -1,0 +1,17 @@
+poly1 = [[0, 0], [0, 2], [1, 4], [2, 2], [2, 0]]
+poly2 = [[4, 0], [4, 2], [5, 4], [6, 2], [6, 0]]
+poly3 = [[1, 0], [1, 2], [5, 4], [9, 2], [9, 0]]
+
+poly1 and poly2 overlap? false
+poly1 and poly3 overlap? true
+poly2 and poly3 overlap? true
+
+A triangle inside poly3, one touching poly1 at a corner, an L and a square in its crook:
+inner = [[4, 1], [5, 2], [6, 1]]
+corner = [[2, 0], [3, -1], [4, 0]]
+ell = [[0, 0], [6, 0], [6, 2], [2, 2], [2, 6], [0, 6]]
+square = [[3, 3], [5, 3], [5, 5], [3, 5]]
+
+poly3 and inner overlap? true
+poly1 and corner overlap? true
+ell and square overlap? false

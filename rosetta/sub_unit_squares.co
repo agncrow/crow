@@ -1,0 +1,196 @@
+--- Rosetta Code: Sub-unit squares
+--- https://rosettacode.org/wiki/Sub-unit_squares
+--- Taking 1 from every digit of a k-digit number with no 0 is taking the repunit R(k) = 11…1,
+--- so a sub-unit square n² has n² − m² = R(k) for some m. First a search: each square m² with
+--- no digit 9, plus the repunit of its length, tested for a square — the first seven. Then
+--- every one of up to 32 digits: n − m and n + m are a factor pair f × g of R(k), so the
+--- repunits are factored (trial division, Miller–Rabin and Pollard's rho, on ints that grow)
+--- and each pair's n = (f + g) / 2 kept when n² has k digits and no 0. As OEIS A061844 and the
+--- Python entry read the task, m² has k digits too, so n² may not begin with 1 (1 itself
+--- apart); the squares that do are listed after.
+
+--- the whole square root of n: the largest r with r * r at most n (Newton's method on ints)
+fn isqrt[n]
+    if n lt 2
+        return n
+    x = n
+    y = (x + 1) / 2
+    while y lt x
+        x = y
+        y = (x + n / x) / 2
+    return x
+
+--- the repunit of k digits: 1, 11, 111, …
+fn repunit[k]
+    return (10 ^ k - 1) / 9
+
+--- the first `count` sub-unit squares, by trying m = 0, 1, 2, … in turn
+fn searched[count]
+    found = []
+    m = 0
+    while len[found] lt count
+        s = m * m
+        digits = str[s]
+        if '9' not in digits
+            t = s + repunit[len[digits]]
+            r = isqrt[t]
+            if r * r eq t
+                found = push[found, t]
+        m = m + 1
+    return found
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+--- b to the power e, modulo m
+fn pow_mod[b, e, m]
+    result = 1
+    b = b % m
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+--- whether the odd n passes the Miller–Rabin test to base a
+fn strong_probable_prime[n, a]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    x = pow_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return true
+    i = 1
+    while i lt s
+        x = x * x % n
+        if x eq n - 1
+            return true
+        i = i + 1
+    return false
+
+--- whether n is prime: the first thirteen primes as Miller–Rabin bases decide it below
+--- 3.3 × 10^24, and past that a number passing all thirteen is taken as prime
+fn is_prime[n]
+    bases = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41]
+    if n lt 2
+        return false
+    i = 0
+    while i lt len[bases]
+        p = bases[i]
+        if n eq p
+            return true
+        if n % p eq 0
+            return false
+        if not strong_probable_prime[n, p]
+            return false
+        i = i + 1
+    return true
+
+--- a factor of the composite n by Pollard's rho over x² + c: n itself when this c finds none
+fn rho[n, c]
+    x = 2
+    y = 2
+    d = 1
+    while d eq 1
+        x = (x * x + c) % n
+        y = (y * y + c) % n
+        y = (y * y + c) % n
+        d = gcd[abs[x - y], n]
+    return d
+
+--- the prime factors of n, smallest first, each as often as it divides n
+fn prime_factors[n]
+    factors = []
+    p = 2
+    while p lt 1000 and p * p lte n
+        while n % p eq 0
+            factors = push[factors, p]
+            n = n / p
+        p = p + 1
+    pending = []
+    if n gt 1
+        pending = push[pending, n]
+    while len[pending] gt 0
+        q = pending[-1]
+        pending = pop[pending]
+        if is_prime[q]
+            factors = push[factors, q]
+        else
+            c = 1
+            d = rho[q, c]
+            while d eq q
+                c = c + 1
+                d = rho[q, c]
+            pending = push[push[pending, d], q / d]
+    return sort[factors]
+
+--- every divisor of the number with these prime factors (sorted, with repeats)
+fn divisors[factors]
+    divs = [1]
+    i = 0
+    while i lt len[factors]
+        p = factors[i]
+        times = 0
+        while i lt len[factors] and factors[i] eq p
+            times = times + 1
+            i = i + 1
+        grown = []
+        for d in divs
+            q = d
+            for j in range[times + 1]
+                grown = push[grown, q]
+                q = q * p
+        divs = grown
+    return divs
+
+--- every square of k digits, none of them 0, that is R(k) more than a square: the n² of each
+--- factor pair f × g of R(k) with f at least g
+fn of_digits[k]
+    r = repunit[k]
+    found = []
+    for f in divisors[prime_factors[r]]
+        g = r / f
+        if f gte g
+            n = (f + g) / 2
+            square = n * n
+            text = str[square]
+            if len[text] eq k and '0' not in text
+                found = push[found, square]
+    return sort[found]
+
+--- n² with its root, then its digits each less 1 (a 0 in front kept) with theirs
+fn described[square]
+    text = str[square]
+    rest = square - repunit[len[text]]
+    whole = fmt[square, width = 32]
+    root = fmt['`isqrt[square]`²', width = 18]
+    less = fmt[fmt[rest, width = len[text], fill = '0'], width = 32, align = 'right']
+    return '`whole` = `root` → `less` = `isqrt[rest]`²'
+
+first = searched[7]
+log['The first seven sub-unit squares, by search:']
+log[join[first, ', ']]
+log['']
+
+kept = []
+leading_ones = []
+for k in range[1, 33]
+    for square in of_digits[k]
+        if k eq 1 or not starts[str[square], '1']
+            kept = push[kept, square]
+        else
+            leading_ones = push[leading_ones, square]
+log['Every sub-unit square of up to 32 digits, from the factor pairs of the repunits (`len[kept]`):']
+for square in kept
+    log[described[square]]
+same = slice[kept, 0, 7] eq first
+log['the first seven as the search found them: `same`']
+log['']
+log['Squares beginning with 1, whose digits less 1 begin with 0 (`len[leading_ones]` of up to 32 digits):']
+for square in leading_ones
+    log[described[square]]

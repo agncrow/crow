@@ -1,0 +1,14 @@
+--- A parsed JSON whole number past a signed 64-bit int, within 2^64, is an
+--- int with every digit: `type` says int, `int[…]` reads it exactly, and it
+--- shows as written. It had been read through a float — `type` said float
+--- and `int[…]` answered 18446744073709551616 — in both modes (Rosetta
+--- Code, JSON).
+
+d = json['[9007199254740993, 18446744073709551615, -9223372036854775808]']
+log[type[d[1]]]
+log[int[d[1]]]
+log[int[d[1]] - 1]
+log[d[1]]
+log[str[d[1]]]
+log[int[d[0]], int[d[2]]]
+log[float[d[1]]]

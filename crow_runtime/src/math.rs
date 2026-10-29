@@ -454,6 +454,13 @@ pub fn atan2(y: &CrowTensor, x: &CrowTensor) -> Result<CrowTensor, String> {
     Ok(y.atan2(x))
 }
 
+/// `atan2[y, x]` of two numbers, by the tensor's rule (two numbers had been
+/// refused, where `sin` of one is its number; Rosetta Code, Distance and
+/// Bearing).
+pub fn atan2_n(y: f64, x: f64) -> f64 {
+    y.atan2(x)
+}
+
 // ── element-wise ────────────────────────────────────────────────────
 // Each takes a number or a tensor, one rule for both: a number is the
 // tensor's rule applied to one value, not a Rust method of its own

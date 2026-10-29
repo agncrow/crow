@@ -1,0 +1,280 @@
+--- Rosetta Code: Find duplicate files
+--- https://rosettacode.org/wiki/Find_duplicate_files
+--- The tree is walked with ls (a path ls cannot list is a file). A Crow program has
+--- no stat and reads files only as text, so the shell measures each file: its inode
+--- (ls -di) and its CRC and size (cksum), POSIX tools on Linux and macOS alike.
+--- Files of one size and CRC are then compared byte for byte (cmp), so a set is
+--- exact; names of one inode are hard links, shown as one file. For the extra
+--- points, identical directory trees are found by a signature of each directory's
+--- names and contents, and reported where their parents are not identical too.
+--- Arguments: a minimum size and a directory. With none, a tree of fixed files is
+--- made in the current directory, searched for files of 100 bytes or more, and
+--- removed.
+
+struct Entry [path, is_dir]
+
+struct Facts [path, inode, size, crc]
+
+fn counted[n, thing]
+    if n eq 1
+        return '1 `thing`'
+    return '`n` `thing`s'
+
+--- the path in the shell's quotes
+fn quoted[path]
+    escaped = replace[path, '\'', '\'\\\'\'']
+    return '\'`escaped`\''
+
+fn words[line]
+    found = for w in split[line, ' ']
+        if w ne ''
+            w
+    return found
+
+fn joined[dir, name]
+    if dir eq ''
+        return name
+    if name eq ''
+        return dir
+    return '`dir`/`name`'
+
+fn parent_of[path]
+    parts = split[path, '/']
+    return join[slice[parts, 0, -1], '/']
+
+fn name_of[path]
+    return split[path, '/'][-1]
+
+fn depth_of[path]
+    if path eq ''
+        return 0
+    return len[split[path, '/']]
+
+--- every file and directory under root/rel, as paths from root
+fn walk[root, rel]
+    found = []
+    for name in ls[joined[root, rel]]
+        inner = joined[rel, name]
+        if ls[joined[root, inner]].ok
+            found = push[found, Entry[inner, true]]
+            found = concat[found, walk[root, inner]]
+        else
+            found = push[found, Entry[inner, false]]
+    return found
+
+--- what the shell tells of a file: its inode, its size and its CRC
+fn facts_of[root, rel]
+    path = quoted[joined[root, rel]]
+    r = shell['ls -di `path` && cksum < `path`']
+    if r.status ne 0
+        return error[trim[r.stderr], 'io']
+    lines = split[trim[r.stdout], '\n']
+    sums = words[lines[1]]
+    return Facts[rel, words[lines[0]][0], int[sums[1]], sums[0]]
+
+fn same_bytes[root, a, b]
+    first = quoted[joined[root, a]]
+    second = quoted[joined[root, b]]
+    return shell['cmp -s `first` `second`'].status eq 0
+
+--- files of one size and CRC split into the classes cmp finds alike
+fn split_by_bytes[root, files, members]
+    classes = []
+    for i in members
+        placed = false
+        k = 0
+        while k lt len[classes] and not placed
+            first = files[classes[k][0]]
+            if first.inode eq files[i].inode or same_bytes[root, first.path, files[i].path]
+                classes[k] = push[classes[k], i]
+                placed = true
+            k = k + 1
+        if not placed
+            classes = push[classes, [i]]
+    return classes
+
+--- every file's class of contents: files of one class are byte for byte alike
+fn content_classes[root, files]
+    by_key = map[]
+    for i in range[len[files]]
+        key = '`files[i].size` `files[i].crc`'
+        members = [i]
+        if key in by_key
+            members = push[by_key[key], i]
+        by_key = set[by_key, key, members]
+    classes = []
+    for key in keys[by_key]
+        for c in split_by_bytes[root, files, by_key[key]]
+            classes = push[classes, c]
+    return classes
+
+--- a set's names, those of one inode on one line as hard links to one file
+fn show_set[files, members]
+    inode_of = map[]
+    for i in members
+        inode_of = set[inode_of, files[i].path, files[i].inode]
+    paths = sort[keys[inode_of]]
+    shown = []
+    inodes = map[]
+    for path in paths
+        inode = inode_of[path]
+        if inode not in inodes
+            inodes = set[inodes, inode, 0]
+            same = for other in paths
+                if inode_of[other] eq inode
+                    other
+            names = join[same, ', ']
+            if len[same] gt 1
+                shown = push[shown, '  `names`  (hard links: one file)']
+            else
+                shown = push[shown, '  `names`']
+    size = fmt[files[members[0]].size, commas = true]
+    files_named = counted[len[inodes], 'file']
+    if len[members] gt len[inodes]
+        log['`size` bytes, `len[members]` names for `files_named`:']
+    else
+        log['`size` bytes, `files_named`:']
+    for line in shown
+        log[line]
+
+--- sorted as text, the key puts the largest first, then the first name
+fn order_key[size, first]
+    smaller = fmt[1000000000000000 - size, width = 16, fill = '0']
+    return '`smaller` `first`'
+
+fn report_duplicates[files, classes, smallest]
+    keyed = map[]
+    for k in range[len[classes]]
+        members = classes[k]
+        size = files[members[0]].size
+        if len[members] gt 1 and size gte smallest
+            paths = for i in members
+                files[i].path
+            keyed = set[keyed, order_key[size, sort[paths][0]], k]
+    if len[keyed] eq 0
+        least = counted[smallest, 'byte']
+        log['No files of `least` or more have the same contents.']
+    for key in sort[keys[keyed]]
+        show_set[files, classes[keyed[key]]]
+
+--- directories with the same names holding the same contents, all the way down
+fn report_trees[entries, files, classes]
+    class_of = map[]
+    for k in range[len[classes]]
+        for i in classes[k]
+            class_of = set[class_of, files[i].path, k]
+    dirs = ['']
+    deepest = 0
+    for e in entries
+        if e.is_dir
+            dirs = push[dirs, e.path]
+            deepest = max[deepest, depth_of[e.path]]
+    signature = map[]
+    holds = map[]
+    depth = deepest
+    while depth gte 0
+        for d in dirs
+            if depth_of[d] eq depth
+                parts = []
+                count = 0
+                for e in entries
+                    if parent_of[e.path] eq d
+                        if e.is_dir
+                            parts = push[parts, '`name_of[e.path]`/`signature[e.path]`']
+                            count = count + holds[e.path]
+                        else
+                            parts = push[parts, '`name_of[e.path]`=`class_of[e.path]`']
+                            count = count + 1
+                joined_parts = join[sort[parts], ';']
+                signature = set[signature, d, hash[joined_parts, 'sha256']]
+                holds = set[holds, d, count]
+        depth = depth - 1
+    groups = map[]
+    for d in dirs
+        if holds[d] gt 0
+            members = [d]
+            if signature[d] in groups
+                members = push[groups[signature[d]], d]
+            groups = set[groups, signature[d], members]
+    found = 0
+    for s in keys[groups]
+        members = sort[groups[s]]
+        if len[members] gt 1 and not identical_parents[members, signature]
+            names = join[members, ' = ']
+            each = counted[holds[members[0]], 'file']
+            log['  `names`  (`each` each)']
+            found = found + 1
+    if found eq 0
+        log['  none']
+
+--- whether the directories' parents are different directories, themselves identical
+fn identical_parents[members, signature]
+    parents = map[]
+    for m in members
+        parents = set[parents, parent_of[m], signature[parent_of[m]]]
+    if len[parents] ne len[members]
+        return false
+    first = signature[parent_of[members[0]]]
+    for p in keys[parents]
+        if parents[p] ne first
+            return false
+    return true
+
+fn search[smallest, root]
+    entries = walk[root, '']
+    if not entries.ok
+        log['cannot search `root`: `entries.reason`']
+        return
+    files = []
+    for e in entries
+        if not e.is_dir
+            facts = facts_of[root, e.path]
+            if facts.ok
+                files = push[files, facts]
+            else
+                log['skipped `e.path`: `facts.reason`']
+    classes = content_classes[root, files]
+    least = counted[smallest, 'byte']
+    log['Files of at least `least` under `root` with the same contents, largest first:']
+    log['']
+    report_duplicates[files, classes, smallest]
+    log['']
+    log['Identical directory trees:']
+    report_trees[entries, files, classes]
+
+fn plant[root, path, text]
+    _made = mkdir[joined[root, parent_of[path]]]
+    _written = write[joined[root, path], text]
+
+fn make_demo[root]
+    plant[root, 'photos/beach.jpg', repeat['sand ', 600]]
+    plant[root, 'photos/beach copy.jpg', repeat['sand ', 600]]
+    plant[root, 'photos/sunset.jpg', repeat['dusk ', 400]]
+    plant[root, 'photos/night.jpg', repeat['dark ', 400]]
+    plant[root, 'docs/report.txt', repeat['the report ', 150]]
+    plant[root, 'docs/report-final.txt', repeat['the report ', 150]]
+    plant[root, 'docs/notes.txt', repeat['a note ', 60]]
+    plant[root, 'docs/empty.txt', '']
+    plant[root, 'docs/marker', '']
+    plant[root, 'small/a.txt', repeat['tiny ', 10]]
+    plant[root, 'small/b.txt', repeat['tiny ', 10]]
+    _made = mkdir['`root`/backup/photos']
+    for name in ['beach.jpg', 'beach copy.jpg', 'sunset.jpg', 'night.jpg']
+        _copied = cp['`root`/photos/`name`', '`root`/backup/photos/`name`']
+    _made_links = mkdir['`root`/links']
+    from = quoted['`root`/docs/report.txt']
+    to = quoted['`root`/links/report.txt']
+    _linked = shell['ln `from` `to`']
+
+given = args[]
+if len[given] gt 0
+    smallest = int[given[0]]
+    if len[given] ne 2 or not smallest.ok
+        log['usage: find_duplicate_files <minimum size in bytes> <directory>']
+    else
+        search[smallest, given[1]]
+else
+    root = 'find_duplicate_files_demo'
+    make_demo[root]
+    search[100, root]
+    _gone = rm[root]

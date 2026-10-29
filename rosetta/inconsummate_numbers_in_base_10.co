@@ -1,0 +1,83 @@
+--- Rosetta Code: Inconsummate numbers in base 10
+--- https://rosettacode.org/wiki/Inconsummate_numbers_in_base_10
+--- A sieve: every N far enough to matter, divided by its digit sum, marks its
+--- quotient as consummate, and the numbers never marked are inconsummate. The
+--- digit sums are walked ten at a time: N = 10q + r has the digit sum of q plus r.
+
+fn digit_sum[n]
+    total = 0
+    rest = n
+    while rest gt 0
+        total = total + rest % 10
+        rest = rest / 10
+    return total
+
+--- how far N must go for every quotient below `top`: an N of d digits has a
+--- digit sum of at most 9d, so its quotient is at least N / 9d
+fn reach[top]
+    d = 1
+    while 10 ^ d lt 9 * (d + 1) * top
+        d = d + 1
+    return min[10 ^ d, 9 * d * top]
+
+--- the inconsummate numbers below top
+fn inconsummate_below[top]
+    made = for k in range[top]
+        false
+    limit = reach[top]
+    q = 0
+    while 10 * q lt limit
+        base = digit_sum[q]
+        r = 0
+        while r lt 10
+            n = 10 * q + r
+            s = base + r
+            if s gt 0 and n % s eq 0 and n / s lt top
+                made[n / s] = true
+            r = r + 1
+        q = q + 1
+    found = for k in range[1, top]
+        if not made[k]
+            k
+    return found
+
+--- the first `count` inconsummate numbers, sieving further until there are enough
+fn first_inconsummate[count]
+    top = 7 * count
+    found = inconsummate_below[top]
+    while len[found] lt count
+        top = 2 * top
+        found = inconsummate_below[top]
+    return slice[found, 0, count]
+
+--- the least N that divided by its digit sum is k, or 0 when there is none: an N
+--- of d digits has a digit sum of at most 9d
+fn witness[k]
+    s = 1
+    while s lte 9 * len[str[k * s]]
+        if digit_sum[k * s] eq s
+            return k * s
+        s = s + 1
+    return 0
+
+for k in [47, 62]
+    n = witness[k]
+    if n eq 0
+        log['`k` is inconsummate: no number divided by its digit sum is `k`']
+    else
+        digits = join[split[str[n], ''], ' + ']
+        log['`k` is consummate: `n` / (`digits`) = `k`']
+log['']
+
+found = first_inconsummate[100000]
+log['The first 50 inconsummate numbers:']
+row = ''
+for i in range[50]
+    row = '`row``fmt[found[i], width = 6]`'
+    if (i + 1) % 10 eq 0
+        log[row]
+        row = ''
+log['']
+log['The 1,000th inconsummate number: `found[999]`']
+log['The 10,000th inconsummate number: `found[9999]`']
+log['The 100,000th inconsummate number: `found[99999]`']

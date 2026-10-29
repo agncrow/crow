@@ -1,0 +1,113 @@
+--- Rosetta Code: Bioinformatics/Global alignment
+--- https://rosettacode.org/wiki/Bioinformatics/Global_alignment
+--- Duplicates and sequences held inside another are dropped first; then a
+--- dynamic program over subsets (Held–Karp) finds, for every set of sequences
+--- and the one placed last, the shortest string that covers them, each new
+--- sequence laid on the last with their longest overlap. Ties go to the string
+--- first in alphabetical order, so the answer is the same on every run.
+
+use bits
+
+fn distinct[seqs]
+    out = []
+    for s in seqs
+        if s not in out
+            out = push[out, s]
+    return out
+
+fn inside_another[s, seqs]
+    for t in seqs
+        if t ne s and s in t
+            return true
+    return false
+
+fn needed[seqs]
+    --- the distinct sequences that no other sequence holds
+    unique = distinct[seqs]
+    kept = for s in unique
+        if not inside_another[s, unique]
+            s
+    return kept
+
+fn overlap[a, b]
+    --- the longest end of a that begins b
+    k = min[len[a], len[b]] - 1
+    while k gt 0
+        if ends[a, slice[b, 0, k]]
+            return k
+        k = k - 1
+    return 0
+
+fn better[a, b]
+    --- shorter first, then alphabetical; empty text is no candidate yet
+    if b eq ''
+        return true
+    if len[a] ne len[b]
+        return len[a] lt len[b]
+    return a lt b
+
+fn shortest_superstring[seqs]
+    s = needed[seqs]
+    n = len[s]
+    over = []
+    for a in s
+        for b in s
+            over = push[over, overlap[a, b]]
+    full = shift[1, n] - 1
+    best = []
+    for k in range[(full + 1) * n]
+        best = push[best, '']
+    for i in range[n]
+        best[shift[1, i] * n + i] = s[i]
+    for mask in range[1, full + 1]
+        for last in range[n]
+            sofar = best[mask * n + last]
+            if sofar ne ''
+                for next in range[n]
+                    if bitand[mask, shift[1, next]] eq 0
+                        rest = slice[s[next], over[last * n + next], len[s[next]]]
+                        candidate = '`sofar``rest`'
+                        key = bitor[mask, shift[1, next]] * n + next
+                        if better[candidate, best[key]]
+                            best[key] = candidate
+    answer = ''
+    for last in range[n]
+        if better[best[full * n + last], answer]
+            answer = best[full * n + last]
+    return answer
+
+fn count_line[label, count]
+    name = fmt[label, width = 10, align = 'right']
+    return '`name``fmt[count, width = 12]`'
+
+fn report[seqs]
+    superstring = shortest_superstring[seqs]
+    log['Shortest common superstring of `len[seqs]` sequences:']
+    log['  `superstring`']
+    other = len[superstring]
+    for base in ['A', 'C', 'G', 'T']
+        count = occurs[superstring, base]
+        other = other - count
+        log[count_line[base, count]]
+    log[count_line['Other', other]]
+    log['  ____________________']
+    log['  Total length`fmt[len[superstring], width = 8]`']
+    log['']
+
+report[['TA', 'AAG', 'TA', 'GAA', 'TA']]
+report[['CATTAGGG', 'ATTAG', 'GGG', 'TA']]
+report[['AAGAUGGA', 'GGAGCGCAUC', 'AUCGCAAUAAGGA']]
+report[[
+    'ATGAAATGGATGTTCTGAGTTGGTCAGTCCCAATGTGCGGGGTTTCTTTTAGTACGTCGGGAGTGGTATTAT',
+    'GGTCGATTCTGAGGACAAAGGTCAAGATGGAGCGCATCGAACGCAATAAGGATCATTTGATGGGACGTTTCGTCGACAAAGT',
+    'CTATGTTCTTATGAAATGGATGTTCTGAGTTGGTCAGTCCCAATGTGCGGGGTTTCTTTTAGTACGTCGGGAGTGGTATTATA',
+    'TGCTTTCCAATTATGTAAGCGTTCCGAGACGGGGTGGTCGATTCTGAGGACAAAGGTCAAGATGGAGCGCATC',
+    'AACGCAATAAGGATCATTTGATGGGACGTTTCGTCGACAAAGTCTTGTTTCGAGAGTAACGGCTACCGTCTT',
+    'GCGCATCGAACGCAATAAGGATCATTTGATGGGACGTTTCGTCGACAAAGTCTTGTTTCGAGAGTAACGGCTACCGTC',
+    'CGTTTCGTCGACAAAGTCTTGTTTCGAGAGTAACGGCTACCGTCTTCGATTCTGCTTATAACACTATGTTCT',
+    'TGCTTTCCAATTATGTAAGCGTTCCGAGACGGGGTGGTCGATTCTGAGGACAAAGGTCAAGATGGAGCGCATC',
+    'CGTAAAAAATTACAACGTCCTTTGGCTATCTCTTAAACTCCTGCTAAATGCTCGTGC',
+    'GATGGAGCGCATCGAACGCAATAAGGATCATTTGATGGGACGTTTCGTCGACAAAGTCTTGTTTCGAGAGTAACGGCTACCGTCTTCGATT',
+    'TTTCCAATTATGTAAGCGTTCCGAGACGGGGTGGTCGATTCTGAGGACAAAGGTCAAGATGGAGCGCATC',
+    'CTATGTTCTTATGAAATGGATGTTCTGAGTTGGTCAGTCCCAATGTGCGGGGTTTCTTTTAGTACGTCGGGAGTGGTATTATA',
+    'TCTCTTAAACTCCTGCTAAATGCTCGTGCTTTCCAATTATGTAAGCGTTCCGAGACGGGGTGGTCGATTCTGAGGACAAAGGTCAAGA']]

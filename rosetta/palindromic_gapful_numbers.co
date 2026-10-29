@@ -1,0 +1,51 @@
+--- Rosetta Code: Palindromic gapful numbers
+--- https://rosettacode.org/wiki/Palindromic_gapful_numbers
+--- A palindrome ending in d starts with d too, so it is gapful when 11d divides it.
+--- The palindromes starting with d are made in order, length by length, by mirroring
+--- each possible first half (its middle digit not repeated when the length is odd).
+
+fn reversed_number[n]
+    --- the digits of n in reverse order, as a number
+    r = 0
+    while n gt 0
+        r = r * 10 + n % 10
+        n = n / 10
+    return r
+
+fn palindromic_gapfuls[d, count]
+    --- the first count palindromic gapful numbers of three digits or more ending in d
+    found = []
+    digits = 3
+    while len[found] lt count
+        h = (digits + 1) / 2
+        scale = 10 ^ (digits - h)
+        half = d * 10 ^ (h - 1)
+        stop = (d + 1) * 10 ^ (h - 1)
+        while half lt stop and len[found] lt count
+            mirrored = half
+            if digits % 2 eq 1
+                mirrored = half / 10
+            p = half * scale + reversed_number[mirrored]
+            if p % (11 * d) eq 0
+                found = push[found, p]
+            half = half + 1
+        digits = digits + 1
+    return found
+
+fn show[label, lists, start, stop]
+    --- items start to stop - 1 of each digit's list
+    log[label]
+    d = 1
+    for numbers in lists
+        shown = for p in slice[numbers, start, stop]
+            str[p]
+        line = join[shown, ' ']
+        log['`d`: `line`']
+        d = d + 1
+    log['']
+
+lists = for d in range[1, 10]
+    palindromic_gapfuls[d, 1000]
+show['The first 20 palindromic gapful numbers ending in each digit:', lists, 0, 20]
+show['The last 15 of the first 100:', lists, 85, 100]
+show['The last 10 of the first 1000:', lists, 990, 1000]

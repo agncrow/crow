@@ -1,0 +1,30 @@
+--- Rosetta Code: Anti-primes
+--- https://rosettacode.org/wiki/Anti-primes
+--- Count each number's divisors in pairs up to its square root; a number is an
+--- anti-prime when it has more divisors than every number before it.
+
+fn divisor_count[n]
+    count = 0
+    d = 1
+    while d * d lte n
+        if n % d eq 0
+            count = count + 2
+            if d * d eq n
+                count = count - 1
+        d = d + 1
+    return count
+
+fn anti_primes[wanted]
+    found = []
+    most = 0
+    n = 1
+    while len[found] lt wanted
+        count = divisor_count[n]
+        if count gt most
+            most = count
+            found = push[found, n]
+        n = n + 1
+    return found
+
+log['The first 20 anti-primes:']
+log[join[anti_primes[20], ' ']]

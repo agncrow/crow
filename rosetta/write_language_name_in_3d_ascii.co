@@ -1,0 +1,66 @@
+--- Rosetta Code: Write language name in 3D ASCII
+--- https://rosettacode.org/wiki/Write_language_name_in_3D_ASCII
+--- The name is built of cubes. Each lit cell of a 5 x 7 font is a cube, drawn in an
+--- oblique view (its depth recedes up and to the right) from one small picture of a
+--- cube; a dot in the picture lets what is behind show through, and every other
+--- character, the spaces of its faces too, covers what was there. The cubes are drawn
+--- from the bottom row up and from left to right, the painter's way: a cube drawn
+--- later is nearer, so it hides the top face of the cube below it and the right face
+--- of the cube to its left, and what stays in sight is the solid's outside.
+
+fn font[]
+    letters = map[
+        C = [' ### ', '#   #', '#    ', '#    ', '#    ', '#   #', ' ### '],
+        R = ['#### ', '#   #', '#   #', '#### ', '# #  ', '#  # ', '#   #'],
+        O = [' ### ', '#   #', '#   #', '#   #', '#   #', '#   #', ' ### '],
+        W = ['#   #', '#   #', '#   #', '# # #', '# # #', '## ##', '#   #']
+    ]
+    return letters
+
+--- the word's cells, a row of text a line, a blank column between the letters
+fn cells_of[word, letters]
+    rows = []
+    for r in range[7]
+        parts = for ch in split[word, '']
+            letters[ch][r]
+        rows = push[rows, join[parts, ' ']]
+    return rows
+
+fn cube[]
+    picture = [
+        '..___.',
+        './  /|',
+        '/__/ |',
+        '|  | /',
+        '|__|/.'
+    ]
+    return picture
+
+--- each cube's front face is three columns on and two rows down from the last
+fn render[rows]
+    across = 3
+    down = 2
+    picture = cube[]
+    height = len[rows] * down + len[picture] - down
+    width = len[rows[0]] * across + len[picture[0]] - across
+    canvas = for y in range[height]
+        line = for x in range[width]
+            ' '
+        line
+    r = len[rows] - 1
+    while r gte 0
+        cells = split[rows[r], '']
+        for c in range[len[cells]]
+            if cells[c] eq '#'
+                for i in range[len[picture]]
+                    marks = split[picture[i], '']
+                    for j in range[len[marks]]
+                        if marks[j] ne '.'
+                            canvas[r * down + i][c * across + j] = marks[j]
+        r = r - 1
+    lines = for line in canvas
+        sub[join[line, ''], ' +$', '']
+    return lines
+
+for line in render[cells_of['CROW', font[]]]
+    log[line]

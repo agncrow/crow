@@ -1,0 +1,311 @@
+--- Rosetta Code: Schieber-Vishkin algorithm
+--- https://rosettacode.org/wiki/Schieber-Vishkin_algorithm
+--- Knuth's form of the algorithm (TAOCP 7.1.3, the gist the task links): one preorder walk
+--- numbers the nodes (pre) and gives each its inlabel (beta), the number of its subtree's
+--- range of preorder numbers with the most trailing zeros; tau holds the parent of each
+--- inlabel's topmost node, and a second walk gives each node, as bits (alfa), the heights
+--- of the inlabels above it. A query is then a few bit operations, the same for any pair.
+--- Shown on a small tree and held to walking up the ancestors on two seeded random trees;
+--- then the test case the other entries use: the most frequent value in a range of a
+--- sorted list (UVa 11235), where the common ancestor of two runs in a Cartesian tree of
+--- the run lengths is the longest run between them (also held to counting, at random).
+
+use bits, math
+
+--- a forest as a triply linked tree: first child, next sibling and parent of each node;
+--- node 0 is above the roots
+struct Tree [child, sib, parent]
+struct Labels [pre, beta, alfa, tau, lam]
+
+fn blank[n]
+    zeros = for i in range[n]
+        0
+    return zeros
+
+--- the tree of nodes 1..n from each node's parent (0 for a root), children in order
+fn linked[parents]
+    n = len[parents] - 1
+    child = blank[n + 1]
+    sib = blank[n + 1]
+    v = n
+    while v gt 0
+        p = parents[v]
+        sib[v] = child[p]
+        child[p] = v
+        v = v - 1
+    return Tree[child, sib, parents]
+
+--- the preprocessing: two walks of the tree, each node visited a bounded number of times
+fn labelled[t]
+    size = len[t.child]
+    pre = blank[size]
+    beta = blank[size]
+    alfa = blank[size]
+    tau = blank[size]
+    lam = blank[size]
+    --- first walk: preorder numbers, inlabels, and tau bottom-up
+    p = t.child[0]
+    n = 0
+    lam[0] = -1
+    while p ne 0
+        --- down the first children: numbered, and the inlabel of a leaf is its number
+        down = true
+        while down
+            n = n + 1
+            pre[p] = n
+            tau[n] = 0
+            lam[n] = 1 + lam[shift[n, -1]]
+            if t.child[p] ne 0
+                p = t.child[p]
+            else
+                beta[p] = n
+                down = false
+        --- up to the first node with a next sibling: a finished subtree's inlabel is
+        --- the number of its range pre[p]..n with the most trailing zeros
+        up = true
+        while up
+            tau[beta[p]] = t.parent[p]
+            if t.sib[p] ne 0
+                p = t.sib[p]
+                up = false
+            else
+                p = t.parent[p]
+                if p eq 0
+                    up = false
+                else
+                    h = lam[bitand[n, -pre[p]]]
+                    beta[p] = shift[bitor[shift[n, -h], 1], h]
+    --- second walk: alfa top-down, the lowest set bit of each inlabel on the way
+    lam[0] = lam[n]
+    p = t.child[0]
+    while p ne 0
+        alfa[p] = bitor[alfa[t.parent[p]], bitand[beta[p], -beta[p]]]
+        if t.child[p] ne 0
+            p = t.child[p]
+        else
+            up = true
+            while up
+                if t.sib[p] ne 0
+                    p = t.sib[p]
+                    up = false
+                else
+                    p = t.parent[p]
+                    if p eq 0
+                        up = false
+    return Labels[pre, beta, alfa, tau, lam]
+
+--- the node where x's ancestry enters the path of the inlabel j, h high
+fn entry[x, j, h, s]
+    bx = s.beta[x]
+    if j eq bx
+        return x
+    l = s.lam[bitand[s.alfa[x], shift[1, h] - 1]]
+    return s.tau[shift[bitor[shift[bx, -l], 1], l]]
+
+--- the lowest common ancestor of x and y, in constant time
+fn nca[x, y, s]
+    bx = s.beta[x]
+    by = s.beta[y]
+    --- the height of the common ancestor of the two inlabels in the binary tree
+    h = 0
+    if bx lte by
+        h = s.lam[bitand[by, -bx]]
+    else
+        h = s.lam[bitand[bx, -by]]
+    --- the height of the lowest inlabel above both nodes, then that inlabel
+    k = bitand[bitand[s.alfa[x], s.alfa[y]], -shift[1, h]]
+    h = s.lam[bitand[k, -k]]
+    j = shift[bitor[shift[bx, -h], 1], h]
+    xh = entry[x, j, h, s]
+    yh = entry[y, j, h, s]
+    if s.pre[xh] lte s.pre[yh]
+        return xh
+    return yh
+
+--- the slow way, for the check: walk up from the deeper node until the two meet
+fn climbed[x, y, parents, depth]
+    a = x
+    b = y
+    while depth[a] gt depth[b]
+        a = parents[a]
+    while depth[b] gt depth[a]
+        b = parents[b]
+    while a ne b
+        a = parents[a]
+        b = parents[b]
+    return a
+
+--- each node's depth, where every node's parent is numbered below it
+fn depths[parents]
+    depth = blank[len[parents]]
+    for v in range[1, len[parents]]
+        if parents[v] ne 0
+            depth[v] = depth[parents[v]] + 1
+    return depth
+
+--- n in binary, width digits
+fn binary[n, width]
+    digits = ''
+    m = n
+    for k in range[width]
+        digits = '`m % 2``digits`'
+        m = m / 2
+    return digits
+
+fn outline[t, v, indent]
+    pad = repeat['    ', indent]
+    log['`pad``v`']
+    c = t.child[v]
+    while c ne 0
+        outline[t, c, indent + 1]
+        c = t.sib[c]
+
+--- the task's test case: frequent values. The runs' lengths a[1..n] as a Cartesian tree:
+--- each run is below a longer or equal one, the runs before it in one subtree and those
+--- after in another, so the longest of the runs x..y is their lowest common ancestor
+fn cartesian[a]
+    n = len[a] - 1
+    child = blank[n + 1]
+    sib = blank[n + 1]
+    parent = blank[n + 1]
+    t = 0
+    v = n
+    while v gt 0
+        u = 0
+        while t ne 0 and a[v] gt a[t]
+            u = t
+            t = parent[t]
+        if u ne 0
+            sib[v] = sib[u]
+            sib[u] = 0
+            parent[u] = v
+            child[v] = u
+        else
+            sib[v] = child[t]
+        child[t] = v
+        parent[v] = t
+        t = v
+        v = v - 1
+    return Tree[child, sib, parent]
+
+--- how often the most frequent value of sorted[i..j] (counted from 1) occurs, for each query
+fn frequent[sorted, queries]
+    n = len[sorted]
+    --- runs: their lengths (counted from 1), where each finishes, and each position's run
+    lengths = [0]
+    finish = blank[n + 2]
+    run_of = blank[n + 2]
+    runs = 1
+    count = 0
+    for i in range[1, n + 1]
+        if i gt 1 and sorted[i - 1] ne sorted[i - 2]
+            lengths = push[lengths, count]
+            finish[runs] = i
+            runs = runs + 1
+            count = 0
+        run_of[i] = runs
+        count = count + 1
+    lengths = push[lengths, count]
+    finish[runs] = n + 1
+    s = labelled[cartesian[lengths]]
+    answers = []
+    for q in queries
+        i = q[0]
+        j = q[1]
+        x = run_of[i]
+        y = run_of[j]
+        z = j - i + 1
+        if x ne y
+            z = 0
+            if x + 1 ne y
+                z = lengths[nca[x + 1, y - 1, s]]
+            z = max[z, max[finish[x] - i, lengths[y] - finish[y] + j + 1]]
+        answers = push[answers, z]
+    return answers
+
+--- the slow way for frequent values: the longest run met in a walk from i to j
+fn counted[sorted, i, j]
+    best = 0
+    run = 0
+    for k in range[i - 1, j]
+        if k gt i - 1 and sorted[k] eq sorted[k - 1]
+            run = run + 1
+        else
+            run = 1
+        best = max[best, run]
+    return best
+
+--- a tree of 16 nodes
+parents = [0, 0, 1, 1, 1, 2, 2, 4, 4, 5, 5, 5, 7, 7, 12, 13, 8]
+t = linked[parents]
+s = labelled[t]
+log['A tree of 16 nodes, children indented below their parent:']
+outline[t, 1, 1]
+log['']
+log['node  pre  beta   alfa   tau[beta]']
+for v in range[1, len[parents]]
+    b = s.beta[v]
+    log['`fmt[v, width = 4]`  `fmt[s.pre[v], width = 3]`  `binary[b, 5]`  `binary[s.alfa[v], 5]`  `fmt[s.tau[b], width = 5]`']
+log['']
+depth = depths[parents]
+pairs = [[9, 11], [10, 6], [9, 3], [14, 15], [14, 16], [7, 15], [12, 12], [16, 1]]
+for q in pairs
+    z = nca[q[0], q[1], s]
+    log['  lowest common ancestor of `fmt[q[0], width = 2]` and `fmt[q[1], width = 2]`: `fmt[z, width = 2]`  (walking up: `climbed[q[0], q[1], parents, depth]`)']
+log['']
+
+--- seeded random trees of 2000 nodes, 20,000 random pairs each held to the slow way:
+--- one bushy (a node's parent drawn from all before it), one deep (from the last five)
+seed[7]
+size = 2000
+for reach in [size, 5]
+    tree = [0, 0]
+    for v in range[2, size + 1]
+        tree = push[tree, v - 1 - rand[min[v - 1, reach]]]
+    ts = labelled[linked[tree]]
+    tdepth = depths[tree]
+    agree = 0
+    for q in range[20000]
+        x = 1 + rand[size]
+        y = 1 + rand[size]
+        if nca[x, y, ts] eq climbed[x, y, tree, tdepth]
+            agree = agree + 1
+    log['Random tree of `size` nodes, deepest node at depth `fmt[max[tdepth], width = 3]`: `agree` of 20000 random pairs agree with walking up']
+
+--- the frequent values of a seeded random sorted list, 2000 random ranges held to counting
+sorted = []
+v = 0
+runs = 1
+for k in range[300]
+    if k gt 0 and rand[3] eq 0
+        v = v + 1 + rand[4]
+        runs = runs + 1
+    sorted = push[sorted, v]
+ranges = []
+for q in range[2000]
+    i = 1 + rand[300]
+    j = 1 + rand[300]
+    ranges = push[ranges, [min[i, j], max[i, j]]]
+answers = frequent[sorted, ranges]
+agree = 0
+for k in range[len[ranges]]
+    if answers[k] eq counted[sorted, ranges[k][0], ranges[k][1]]
+        agree = agree + 1
+log['Random sorted list of 300 values in `runs` runs: `agree` of 2000 random ranges agree with counting']
+log['']
+
+--- the test case of the other entries
+numbers = [-1, -1, 1, 1, 1, 1, 3, 10, 10, 10]
+queries = [[2, 3], [1, 10], [5, 10]]
+expected = [1, 4, 3]
+log['Test Case 1:']
+log['Size: `len[numbers]`, Queries: `len[queries]`']
+shown = join[numbers, ' ']
+log['Values: `shown`']
+results = frequent[numbers, queries]
+log['Queries and Results:']
+for k in range[len[queries]]
+    log['Query: `queries[k][0]` `queries[k][1]`']
+    log['Result: `results[k]` (Expected: `expected[k]`)']
+    if results[k] ne expected[k]
+        log['  WARNING: Result doesn\'t match expected output']

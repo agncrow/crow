@@ -1,0 +1,84 @@
+--- Rosetta Code: Draw a torus
+--- https://rosettacode.org/wiki/Draw_a_torus
+--- A torus in characters, after Andy Sloane's donut.c: points all round its
+--- surface are turned about two axes and projected in perspective; each cell keeps
+--- the point nearest the viewer (a depth buffer) and is shaded by how squarely that
+--- point faces a light above and behind the viewer, on the ramp .,-~:;=!*#$@ from
+--- dim to bright. A character is about twice as tall as it is wide, so rows are
+--- squeezed by half. The torus is drawn at two turns.
+
+use math
+
+--- the torus: a circle of radius `tube` whose centre is `reach` from the axis it
+--- sweeps round, `away` from the viewer, turned by a about the x axis and by b
+--- about the z axis
+struct Torus [tube, reach, away, a, b]
+
+--- the picture as lines of text, `cols` wide and `rows` tall
+fn draw[t, cols, rows]
+    ramp = split['.,-~:;=!*#$@', '']
+    cells = for i in range[cols * rows]
+        ' '
+    depth = for i in range[cols * rows]
+        0.0
+    --- the scale that makes the torus three quarters of the width
+    k = cols * t.away * 3.0 / (8.0 * (t.tube + t.reach))
+    ca = cos[t.a]
+    sa = sin[t.a]
+    cb = cos[t.b]
+    sb = sin[t.b]
+    for i in range[180]
+        --- theta goes round the tube's circle
+        theta = 2.0 * pi * i / 180.0
+        ct = cos[theta]
+        st = sin[theta]
+        for j in range[600]
+            --- phi sweeps the circle round the torus's axis
+            phi = 2.0 * pi * j / 600.0
+            cph = cos[phi]
+            sph = sin[phi]
+            cx = t.reach + t.tube * ct
+            cy = t.tube * st
+            x = cx * (cb * cph + sa * sb * sph) - cy * ca * sb
+            y = cx * (sb * cph - sa * cb * sph) + cy * ca * cb
+            z = t.away + ca * cx * sph + cy * sa
+            ooz = 1.0 / z
+            col = int[cols / 2.0 + k * ooz * x]
+            row = int[rows / 2.0 - k * ooz * y / 2.0]
+            --- the surface normal's part along the light, (0, 1, -1)
+            lum = cph * ct * sb - ca * ct * sph - sa * st + cb * (ca * st - ct * sa * sph)
+            if lum gt 0.0 and col gte 0 and col lt cols and row gte 0 and row lt rows
+                at = row * cols + col
+                if ooz gt depth[at]
+                    depth[at] = ooz
+                    cells[at] = ramp[int[lum * 8.0]]
+    lines = for r in range[rows]
+        row_text[slice[cells, r * cols, (r + 1) * cols]]
+    return lines
+
+--- the cells of a row, without the blanks at its end
+fn row_text[cells]
+    last = len[cells] - 1
+    while last gte 0 and cells[last] eq ' '
+        last = last - 1
+    return join[slice[cells, 0, last + 1], '']
+
+--- the lines from the first that holds a mark to the last
+fn trimmed[lines]
+    first = 0
+    while first lt len[lines] and lines[first] eq ''
+        first = first + 1
+    last = len[lines] - 1
+    while last gt first and lines[last] eq ''
+        last = last - 1
+    return slice[lines, first, last + 1]
+
+turns = [[1.0, 0.5], [1.5, 0.0]]
+for i in range[len[turns]]
+    a = fmt[turns[i][0], decimals = 1]
+    b = fmt[turns[i][1], decimals = 1]
+    if i gt 0
+        log['']
+    log['Turned `a` radians about the x axis and `b` about the z axis:']
+    for line in trimmed[draw[Torus[1.0, 2.0, 5.0, turns[i][0], turns[i][1]], 78, 40]]
+        log[line]

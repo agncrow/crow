@@ -1,0 +1,12 @@
+x = 2, v = 3, m = 4, dm/dt = -0.5
+    p = 12, NKTg1 = 24 NKTm, NKTg2 = -6 NKTm
+    moving away from the stable state; mass variation resists the movement
+x = -1.5, v = 2, m = 10, dm/dt = 0.25
+    p = 20, NKTg1 = -30 NKTm, NKTg2 = 5 NKTm
+    moving toward the stable state; mass variation supports the movement
+x = 4, v = -2.5, m = 6, dm/dt = 1.5
+    p = -15, NKTg1 = -60 NKTm, NKTg2 = -22.5 NKTm
+    moving toward the stable state; mass variation resists the movement
+x = 0, v = 7, m = 3, dm/dt = 0
+    p = 21, NKTg1 = 0 NKTm, NKTg2 = 0 NKTm
+    in stable equilibrium; no effect of mass variation

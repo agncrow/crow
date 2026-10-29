@@ -1,0 +1,7 @@
+Of the 128 ASCII characters, a name may start with these 53:
+ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz
+and hold these 63 after its first character:
+0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz
+
+Past ASCII, 13 of these 13 letters, digits, marks and spaces are refused anywhere in a name:
+é ß π Ж ك 中 ア ١ ² ℕ 𝑥 · <160>

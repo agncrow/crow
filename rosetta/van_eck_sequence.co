@@ -1,0 +1,29 @@
+--- Rosetta Code: Van Eck sequence
+--- https://rosettacode.org/wiki/Van_Eck_sequence
+--- A map from each term to the place it last stood: the next term is 0 when the
+--- last term is new, otherwise how many places back it stood before.
+
+fn van_eck[count]
+    terms = []
+    last_place = map[]
+    term = 0
+    n = 0
+    while n lt count
+        terms = push[terms, term]
+        following = 0
+        if term in last_place
+            following = n - last_place[term]
+        last_place[term] = n
+        term = following
+        n = n + 1
+    return terms
+
+fn shown[terms]
+    parts = for t in terms
+        str[t]
+    return join[parts, ' ']
+
+terms = van_eck[10000]
+log['Terms 1 - 10:       `shown[slice[terms, 0, 10]]`']
+log['Terms 991 - 1000:   `shown[slice[terms, 990, 1000]]`']
+log['Terms 9991 - 10000: `shown[slice[terms, 9990, 10000]]`']

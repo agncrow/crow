@@ -1,0 +1,146 @@
+--- Rosetta Code: JSON pointer
+--- https://rosettacode.org/wiki/JSON_pointer
+--- A pointer is cut at each '/' into tokens, each decoded (~1 is '/', ~0 is
+--- '~', and a '~' before anything else is malformed), and resolved against the
+--- parsed document a token at a time: an object's member by its name, an
+--- array's item by an index written as RFC 6901 writes one (0, or digits not
+--- beginning with 0), anything else an error value that says what went wrong.
+--- The value found is shown as JSON. JSON's null parses as a value that failed
+--- (its reason null), so it is asked for before anything reads it.
+
+--- a token decoded, or an error value where a '~' is not followed by 0 or 1
+fn decoded[piece]
+    chars = split[piece, '']
+    out = []
+    i = 0
+    while i lt len[chars]
+        if chars[i] ne '~'
+            out = push[out, chars[i]]
+        else if i + 1 lt len[chars] and chars[i + 1] eq '0'
+            out = push[out, '~']
+        else if i + 1 lt len[chars] and chars[i + 1] eq '1'
+            out = push[out, '/']
+        else
+            return error['a \'~\' is followed by neither 0 nor 1 in \'`piece`\'', 'pointer']
+        if chars[i] eq '~'
+            i = i + 2
+        else
+            i = i + 1
+    return join[out, '']
+
+--- the pointer's tokens, decoded, or an error value for a malformed pointer
+fn tokens_of[pointer]
+    pieces = split[pointer, '/']
+    if pointer ne '' and pieces[0] ne ''
+        return error['a pointer that is not empty begins with /', 'pointer']
+    tokens = []
+    for piece in slice[pieces, 1, len[pieces]]
+        token = decoded[piece]
+        if not token.ok
+            return token
+        tokens = push[tokens, token]
+    return tokens
+
+--- whether a token is an array index as the RFC writes one
+fn is_index[token]
+    if token eq '0'
+        return true
+    if token eq '' or starts[token, '0']
+        return false
+    digits = for c in split[token, '']
+        if c gte '0' and c lte '9'
+            c
+    return len[digits] eq len[token]
+
+--- what JSON calls the kind of a parsed value that is not null
+fn json_kind[value]
+    kind = type[value]
+    if kind eq 'map'
+        return 'an object'
+    if kind eq 'array'
+        return 'an array'
+    if kind eq 'str'
+        return 'a string'
+    if kind eq 'bool'
+        return 'a boolean'
+    return 'a number'
+
+--- the member or item a token names in a node: an error value of kind
+--- 'pointer' where there is none, and JSON's null where the node holds null
+fn child[node, token]
+    kind = json_kind[node]
+    if kind eq 'an array'
+        if not is_index[token]
+            return error['\'`token`\' is no index of an array', 'pointer']
+        if int[token] gte len[node]
+            return error['an array of `len[node]` items has no item `token`', 'pointer']
+        return node[int[token]]
+    if kind eq 'an object'
+        if token not in node
+            return error['the object has no member \'`token`\'', 'pointer']
+        return node[token]
+    return error['`kind` has no member \'`token`\'', 'pointer']
+
+--- the value a pointer names in the document, as JSON, or an error value
+fn resolve[document, pointer]
+    tokens = tokens_of[pointer]
+    if not tokens.ok
+        return tokens
+    node = document
+    i = 0
+    while i lt len[tokens]
+        found = child[node, tokens[i]]
+        if not found.ok
+            if found.kind eq 'pointer'
+                return found
+            if i + 1 lt len[tokens]
+                return error['null has no member \'`tokens[i + 1]`\'', 'pointer']
+            return 'null'
+        node = found
+        i = i + 1
+    return encode[node]
+
+fn show[document, pointer]
+    found = resolve[document, pointer]
+    if found.ok
+        log['"`pointer`" -> `found`']
+    else
+        log['"`pointer`" -> error: `found.reason`']
+
+task_document = json['{
+  "wiki": {
+    "links": [
+      "https://rosettacode.org/wiki/Rosetta_Code",
+      "https://discord.com/channels/1011262808001880065"
+    ]
+  },
+  "": "Rosetta",
+  " ": "Code",
+  "g/h": "chrestomathy",
+  "i~j": "site",
+  "abc": ["is", "a"],
+  "def": { "": "programming" }
+}']
+log['The task\'s examples:']
+for pointer in ['', '/', '/ ', '/abc', '/def/', '/g~1h', '/i~0j', '/wiki/links/0', '/wiki/links/1', '/wiki/links/2', '/wiki/name', '/no/such/thing', 'bad/pointer']
+    show[task_document, pointer]
+
+log['']
+log['RFC 6901\'s examples, then a few errors:']
+rfc_document = json['{
+  "foo": ["bar", "baz"],
+  "": 0,
+  "a/b": 1,
+  "c%d": 2,
+  "e^f": 3,
+  "g|h": 4,
+  "i\\\\j": 5,
+  "k\\"l": 6,
+  " ": 7,
+  "m~n": 8,
+  "none": null
+}']
+for pointer in ['', '/foo', '/foo/0', '/', '/a~1b', '/c%d', '/e^f', '/g|h', '/i\\j', '/k"l', '/ ', '/m~0n', '/none']
+    show[rfc_document, pointer]
+for pointer in ['/foo/01', '/foo/-', '/foo/1/x', '/none/x', '/a~01b', '/m~n', '/~2']
+    show[rfc_document, pointer]

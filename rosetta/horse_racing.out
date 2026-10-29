@@ -1,0 +1,17 @@
+Ratings from past form, in pounds (A in race 1 = 100): A 100, B 88, C 97, D 92, E 97, F 99, G 92, H 95, I 103, J 99
+
+Race 4, the expected result:
+
+Pos  Horse  Weight  Dist  Sex
+1    I      8.11    0.0   Filly
+2    J      8.11    2.0   Filly
+3    A      9.00    1.0   Colt
+4    F      9.00    0.5   Colt
+5    H      9.00    0.5   Colt
+6    E      9.00    0.5   Colt
+7    B      8.11    1.0   Filly
+7=   D      8.11    0.0   Filly
+9    C      9.00    1.0   Colt
+10   G      9.00    0.5   Colt
+
+Time 1 minute 35.4 seconds

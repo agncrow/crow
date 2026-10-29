@@ -1,0 +1,122 @@
+--- Rosetta Code: Sisyphus sequence
+--- https://rosettacode.org/wiki/Sisyphus_sequence
+--- The terms are made one after another: an even term is halved, an odd one has the
+--- next prime added. The primes come in order from a sieve of Eratosthenes over the
+--- odd numbers, 131,072 of them at a time, as the sequence asks for them. The default
+--- run makes 10,000,000 terms: the first 100, the 1,000th to the 10,000,000th with the
+--- highest prime each needed (the task, and the stretch's first), and the numbers under
+--- 250 that have not occurred, and that have occurred the most, in those terms. A count
+--- of terms on the command line runs that far: 100000000 is the rest of the stretch
+--- (half a minute compiled, two minutes interpreted, both as the references). The
+--- extreme stretch, the first term equal to 36, is the 77,534,485,877th: out of reach.
+
+struct Mark [count, term, prime]
+struct Run [first, marks, seen]
+
+fn primes_below[n]
+    composite = for i in range[n]
+        false
+    found = []
+    for i in range[2, n]
+        if not composite[i]
+            found = push[found, i]
+            j = i * i
+            while j lt n
+                composite[j] = true
+                j = j + i
+    return found
+
+--- the primes among the odd numbers lo, lo + 2, … below lo + 2 size, sieved by the
+--- base primes (lo is odd, and above the last of them)
+fn segment[lo, size, base]
+    composite = for i in range[size]
+        false
+    hi = lo + 2 * size
+    k = 1
+    while k lt len[base] and base[k] * base[k] lt hi
+        q = base[k]
+        start = q * q
+        if start lt lo
+            start = (lo + q - 1) / q * q
+            if start % 2 eq 0
+                start = start + q
+        for j in range[(start - lo) / 2, size, q]
+            composite[j] = true
+        k = k + 1
+    found = for i in range[size]
+        if not composite[i]
+            lo + 2 * i
+    return found
+
+--- the first `limit` terms: the first 100 of them, the term and the highest prime
+--- needed at each power of ten from 1,000, and how often each number under 250 came
+fn sisyphus[limit]
+    base = primes_below[65536]
+    size = 131072
+    primes = base
+    lo = 65537
+    at = 0
+    first = [1]
+    marks = []
+    seen = for i in range[250]
+        0
+    seen[1] = 1
+    n = 1
+    p = 0
+    count = 1
+    mark = 1000
+    while count lt limit
+        if n % 2 eq 1
+            if at eq len[primes]
+                primes = segment[lo, size, base]
+                lo = lo + 2 * size
+                at = 0
+            p = primes[at]
+            at = at + 1
+            n = n + p
+        else
+            n = n / 2
+        count = count + 1
+        if n lt 250
+            seen[n] = seen[n] + 1
+        if count lte 100
+            first = push[first, n]
+        if count eq mark
+            marks = push[marks, Mark[count, n, p]]
+            mark = mark * 10
+    return Run[first, marks, seen]
+
+given = args[]
+limit = 10000000
+if len[given] gt 0
+    limit = int[given[0]]
+run = sisyphus[limit]
+
+log['The first 100 terms of the Sisyphus sequence:']
+for r in range[10]
+    cells = for t in slice[run.first, 10 * r, 10 * r + 10]
+        fmt[t, width = 4]
+    log[join[cells, '']]
+log['']
+for m in run.marks
+    count = fmt[m.count, width = 11, commas = true]
+    term = fmt[m.term, width = 13, commas = true]
+    prime = fmt[m.prime, width = 11, commas = true]
+    log['`count`th term: `term`   highest prime needed: `prime`']
+log['']
+counted = fmt[limit, commas = true]
+missing = for i in range[1, 250]
+    if run.seen[i] eq 0
+        i
+shown = join[missing, ', ']
+log['Under 250, these have not occurred in the first `counted` terms:']
+log['  `shown`']
+most = 0
+for i in range[1, 250]
+    most = max[most, run.seen[i]]
+often = for i in range[1, 250]
+    if run.seen[i] eq most
+        i
+listed = join[often, ', ']
+log['These under 250 have occurred the most, `most` times each:']
+log['  `listed`']

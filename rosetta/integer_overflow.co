@@ -1,0 +1,73 @@
+--- Rosetta Code: Integer overflow
+--- https://rosettacode.org/wiki/Integer_overflow
+--- Crow has no fixed-size integer type: an int is a whole number of any size
+--- (the compiled program keeps one in 64 bits only where it can show the value
+--- fits, and grows it past that), so no integer overflow can occur, nothing
+--- wraps and nothing is raised: each of the task's expressions is exact. The
+--- last column shows, for comparison, what a fixed-size type of the section's
+--- width would have kept: the low bits of the exact answer. (A program that
+--- wants a machine's 64-bit arithmetic on purpose, for a hash, has wrapadd,
+--- wrapsub, wrapmul and wrap in `use bits`.) C writes -2^63 as
+--- -9223372036854775807 - 1 because the literal would not fit; Crow writes
+--- -9223372036854775808 as it is.
+
+--- the low `bits` bits of n, read as a signed number or not
+fn kept[n, bits, signed]
+    size = 2 ^ bits
+    low = n % size
+    if low lt 0
+        low = low + size
+    if signed and low gte size / 2
+        return low - size
+    return low
+
+struct Section [bits, signed]
+
+fn heading[s]
+    kind = 'unsigned'
+    if s.signed
+        kind = 'signed'
+    log['']
+    log['For `s.bits`-bit `kind` integers:']
+    what = fmt['expression', width = 44]
+    exact = fmt['Crow', width = 22, align = 'right']
+    fixed = fmt['`s.bits`-bit `kind` keeps', width = 24, align = 'right']
+    log['  `what` `exact` `fixed`']
+
+fn row[s, text, value]
+    what = fmt[text, width = 44]
+    exact = fmt[str[value], width = 22, align = 'right']
+    fixed = fmt[str[kept[value, s.bits, s.signed]], width = 24, align = 'right']
+    log['  `what` `exact` `fixed`']
+
+log['Crow has no fixed-size integers: every expression is exact, and none overflows.']
+
+s = Section[32, true]
+heading[s]
+row[s, '-(-2147483647 - 1)', -(-2147483647 - 1)]
+row[s, '2000000000 + 2000000000', 2000000000 + 2000000000]
+row[s, '-2147483647 - 2147483647', -2147483647 - 2147483647]
+row[s, '46341 * 46341', 46341 * 46341]
+row[s, '(-2147483647 - 1) / -1', (-2147483647 - 1) / -1]
+
+s = Section[64, true]
+heading[s]
+row[s, '-(-9223372036854775807 - 1)', -(-9223372036854775807 - 1)]
+row[s, '5000000000000000000 + 5000000000000000000', 5000000000000000000 + 5000000000000000000]
+row[s, '-9223372036854775807 - 9223372036854775807', -9223372036854775807 - 9223372036854775807]
+row[s, '3037000500 * 3037000500', 3037000500 * 3037000500]
+row[s, '-9223372036854775808 / -1', -9223372036854775808 / -1]
+
+s = Section[32, false]
+heading[s]
+row[s, '-4294967295', -4294967295]
+row[s, '3000000000 + 3000000000', 3000000000 + 3000000000]
+row[s, '2147483647 - 4294967295', 2147483647 - 4294967295]
+row[s, '65537 * 65537', 65537 * 65537]
+
+s = Section[64, false]
+heading[s]
+row[s, '-18446744073709551615', -18446744073709551615]
+row[s, '10000000000000000000 + 10000000000000000000', 10000000000000000000 + 10000000000000000000]
+row[s, '9223372036854775807 - 18446744073709551615', 9223372036854775807 - 18446744073709551615]
+row[s, '4294967296 * 4294967296', 4294967296 * 4294967296]

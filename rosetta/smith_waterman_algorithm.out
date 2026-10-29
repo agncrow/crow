@@ -1,0 +1,53 @@
+A = ACACACTA, B = AGCACACA; match +2, mismatch -1, gap -2
+        A   G   C   A   C   A   C   A
+    0   0   0   0   0   0   0   0   0
+A   0   2   0   0   2*  0   2   0   2
+C   0   0   1   2   0   4*  2   4   2
+A   0   2   0   0   4   2   6*  4   6
+C   0   0   1   2   2   6   4   8*  6
+A   0   2   0   0   4   4   8   6  10*
+C   0   0   1   2   2   6   6  10   8
+T   0   0   0   0   1   4   5   8   9
+A   0   2   0   0   2   2   6   6  10
+Highest score: 10
+Aligned:  A ACACA
+            |||||
+          B ACACA
+The substrings: ACACA of A (letters 1 to 5), ACACA of B (letters 4 to 8)
+The path through H: (1, 4) (2, 5) (3, 6) (4, 7) (5, 8)
+
+A = ACACACTA, B = AGCACACA; match +2, mismatch -1, gap -1
+        A   G   C   A   C   A   C   A
+    0   0   0   0   0   0   0   0   0
+A   0   2*  1*  0   2   1   2   1   2
+C   0   1   1   3*  2   4   3   4   3
+A   0   2   1   2   5*  4   6   5   6
+C   0   1   1   3   4   7*  6   8   7
+A   0   2   1   2   5   6   9*  8  10
+C   0   1   1   3   4   7   8  11* 10
+T   0   0   0   2   3   6   7  10* 10
+A   0   2   1   1   4   5   8   9  12*
+Highest score: 12
+Aligned:  A A-CACACTA
+            | ||||| |
+          B AGCACAC-A
+The substrings: ACACACTA of A (letters 1 to 8), AGCACACA of B (letters 1 to 8)
+The path through H: (1, 1) (1, 2) (2, 3) (3, 4) (4, 5) (5, 6) (6, 7) (7, 7) (8, 8)
+
+A = TGTTACGG, B = GGTTGACTA; match +3, mismatch -3, gap -2
+        G   G   T   T   G   A   C   T   A
+    0   0   0   0   0   0   0   0   0   0
+T   0   0   0   3   3   1   0   0   3   1
+G   0   3   3*  1   1   6   4   2   1   0
+T   0   1   1   6*  4   4   3   1   5   3
+T   0   0   0   4   9*  7*  5   3   4   2
+A   0   0   0   2   7   6  10*  8   6   7
+C   0   0   0   0   5   4   8  13* 11   9
+G   0   3   3   1   3   8   6  11  10   8
+G   0   3   6   4   2   6   5   9   8   7
+Highest score: 13
+Aligned:  A GTT-AC
+            ||| ||
+          B GTTGAC
+The substrings: GTTAC of A (letters 2 to 6), GTTGAC of B (letters 2 to 7)
+The path through H: (2, 2) (3, 3) (4, 4) (4, 5) (5, 6) (6, 7)

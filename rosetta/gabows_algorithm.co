@@ -1,0 +1,156 @@
+--- Rosetta Code: Gabow's algorithm
+--- https://rosettacode.org/wiki/Gabow's_algorithm
+--- Gabow's path-based search, as algs4's GabowSCC, with the recursion made a loop over an
+--- explicit path of vertices and the next edge each will take. One stack holds the
+--- vertices visited and not yet placed in a component, the other the roots that may
+--- still close one; a back edge to an unplaced vertex pops the roots preordered after
+--- it, and a vertex still the top root when it finishes closes a component. The answer
+--- is checked against reachability: v and w share a component when each reaches the other.
+
+use math
+
+struct Edge [v, w]
+
+--- the components: how many, and each vertex's component
+struct Components [count, ids]
+
+fn filled[n, value]
+    xs = for i in range[n]
+        value
+    return xs
+
+--- each vertex's targets, in the order the edges list them
+fn adjacency[n, edges]
+    adj = for v in range[n]
+        targets = for e in edges
+            if e.v eq v
+                e.w
+        targets
+    return adj
+
+fn gabow[adj]
+    n = len[adj]
+    preorder = filled[n, -1]
+    ids = filled[n, -1]
+    visited = 0
+    count = 0
+    unplaced = []
+    roots = []
+    for start in range[n]
+        if preorder[start] eq -1
+            preorder[start] = visited
+            visited = visited + 1
+            unplaced = push[unplaced, start]
+            roots = push[roots, start]
+            path = [start]
+            next_edge = [0]
+            while len[path] gt 0
+                v = path[-1]
+                i = next_edge[-1]
+                if i lt len[adj[v]]
+                    next_edge[len[next_edge] - 1] = i + 1
+                    w = adj[v][i]
+                    if preorder[w] eq -1
+                        preorder[w] = visited
+                        visited = visited + 1
+                        unplaced = push[unplaced, w]
+                        roots = push[roots, w]
+                        path = push[path, w]
+                        next_edge = push[next_edge, 0]
+                    else if ids[w] eq -1
+                        while preorder[roots[-1]] gt preorder[w]
+                            roots = pop[roots]
+                else
+                    if roots[-1] eq v
+                        roots = pop[roots]
+                        placing = true
+                        while placing
+                            u = unplaced[-1]
+                            unplaced = pop[unplaced]
+                            ids[u] = count
+                            placing = u ne v
+                        count = count + 1
+                    path = pop[path]
+                    next_edge = pop[next_edge]
+    return Components[count, ids]
+
+fn strongly_connected[c, v, w]
+    return c.ids[v] eq c.ids[w]
+
+fn component_of[c, v]
+    return c.ids[v]
+
+--- which vertices v reaches, itself included
+fn reached_from[adj, v]
+    seen = filled[len[adj], false]
+    seen[v] = true
+    todo = [v]
+    while len[todo] gt 0
+        u = todo[-1]
+        todo = pop[todo]
+        for w in adj[u]
+            if not seen[w]
+                seen[w] = true
+                todo = push[todo, w]
+    return seen
+
+--- the pairs of vertices where the components and mutual reachability disagree
+fn disagreements[adj, c]
+    n = len[adj]
+    reach = for v in range[n]
+        reached_from[adj, v]
+    wrong = 0
+    for v in range[n]
+        for w in range[n]
+            if strongly_connected[c, v, w] ne (reach[v][w] and reach[w][v])
+                wrong = wrong + 1
+    return wrong
+
+fn joined[xs]
+    shown = for x in xs
+        str[x]
+    return join[shown, ' ']
+
+fn report[n, edges, pairs]
+    adj = adjacency[n, edges]
+    log['`n` vertices, `len[edges]` edges']
+    for v in range[n]
+        log[trim['`v`: `joined[adj[v]]`']]
+    c = gabow[adj]
+    log['`c.count` strongly connected components:']
+    for k in range[c.count]
+        members = for v in range[n]
+            if component_of[c, v] eq k
+                v
+        log['    component `k`: `joined[members]`']
+    for p in pairs
+        log['vertices `p.v` and `p.w` strongly connected: `strongly_connected[c, p.v, p.w]`']
+    log['pairs where the components and mutual reachability disagree: `disagreements[adj, c]`']
+
+edges = [Edge[4, 2], Edge[2, 3], Edge[3, 2], Edge[6, 0], Edge[0, 1], Edge[2, 0], Edge[11, 12], Edge[12, 9], Edge[9, 10], Edge[9, 11], Edge[8, 9], Edge[10, 12], Edge[0, 5], Edge[5, 4], Edge[3, 5], Edge[6, 4], Edge[6, 9], Edge[7, 6], Edge[7, 8], Edge[8, 7], Edge[5, 3], Edge[0, 6]]
+report[13, edges, [Edge[0, 3], Edge[0, 7], Edge[9, 12]]]
+c = gabow[adjacency[13, edges]]
+log['component of vertex 5: `component_of[c, 5]`, of vertex 8: `component_of[c, 8]`']
+log['']
+--- a self-loop and a parallel edge
+report[5, [Edge[0, 0], Edge[0, 1], Edge[0, 1], Edge[1, 2], Edge[2, 1], Edge[3, 4]], [Edge[1, 2], Edge[3, 4]]]
+log['']
+--- the empty graph
+report[0, [], []]
+log['']
+
+--- a seeded random graph, its components checked against reachability
+seed[2025]
+n = 300
+random_edges = for i in range[600]
+    Edge[rand[n], rand[n]]
+random_adj = adjacency[n, random_edges]
+rc = gabow[random_adj]
+sizes = filled[rc.count, 0]
+for v in range[n]
+    sizes[rc.ids[v]] = sizes[rc.ids[v]] + 1
+largest = 0
+for size in sizes
+    largest = max[largest, size]
+log['a random graph of `n` vertices and `len[random_edges]` edges: `rc.count` components, the largest of `largest` vertices']
+log['pairs where the components and mutual reachability disagree: `disagreements[random_adj, rc]`']

@@ -1,0 +1,7 @@
+--- an item of a list nothing is put into, where its kind decides: the
+--- list is always empty, and the item has no kind to compute with —
+--- refused, naming the list (the interpreter had stopped at the index, and
+--- the compiled program had not built: `!` of text)
+
+g = []
+log[not g[0]]

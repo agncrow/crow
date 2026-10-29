@@ -1,0 +1,15 @@
+--- a list or a map a loop borrows, compared with `eq` or `ne`, is read
+--- where it lies: compiled, a borrow had been compared with a list, and
+--- the program did not build (Rosetta Code, Tree from nesting levels)
+
+tests = [['a', 'b'], ['b', 'a']]
+for xs in tests
+    log[xs eq ['a', 'b'], xs ne ['a', 'b']]
+maps = [map[a = 1], map[b = 2]]
+for m in maps
+    log[m eq map[b = 2]]
+
+fn same[a, b]
+    return a eq b
+
+log[same[['x'], ['x']]]

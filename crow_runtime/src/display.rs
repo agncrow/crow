@@ -212,9 +212,23 @@ pub fn buffer_output() {
 /// What `log` holds, written out now.
 pub fn flush_output() {
     use std::io::Write;
-    // (a panic inside `log` leaves its lock to this thread: none is taken
+    // (a stop inside `log` leaves its lock to this thread: none is taken
     // twice)
-    let Ok(mut held) = OUT.try_lock() else { return };
+    let mut held = match OUT.try_lock() {
+        Ok(held) => held,
+        // (a panic inside `log`'s formatting let the lock go poisoned: the
+        // lines logged before are written, the one it was making is not —
+        // they had been lost with it on a pipe, `before` and all; Rosetta
+        // Code, Pi to a million digits)
+        Err(std::sync::TryLockError::Poisoned(e)) => {
+            let mut held = e.into_inner();
+            let whole = held.iter().rposition(|b| *b == b'\n').map_or(0, |at| at + 1);
+            held.truncate(whole);
+            OUT.clear_poison();
+            held
+        }
+        Err(std::sync::TryLockError::WouldBlock) => return,
+    };
     if !held.is_empty() {
         let mut out = std::io::stdout().lock();
         let _ = out.write_all(&held);
@@ -272,9 +286,11 @@ impl CrowDisplay for serde_json::Value {
         match self {
             serde_json::Value::Null => failed("null", &[]),
             serde_json::Value::Bool(b) => b.crow_repr(),
-            serde_json::Value::Number(n) => match n.as_i64() {
-                Some(i) => i.crow_repr(),
-                None => n.as_f64().unwrap_or(f64::NAN).crow_repr(),
+            serde_json::Value::Number(n) => match (n.as_i64(), n.as_u64()) {
+                (Some(i), _) => i.crow_repr(),
+                // (a whole number past i64 within u64, every digit)
+                (None, Some(u)) => u.to_string(),
+                _ => n.as_f64().unwrap_or(f64::NAN).crow_repr(),
             },
             serde_json::Value::String(s) => s.clone(),
             serde_json::Value::Array(items) => list(items.iter().map(|v| v.crow_repr())),
@@ -385,13 +401,112 @@ pub fn crow_fmt_f64(
 pub fn fmt_value(value: &crate::cell::Cell, decimals: i64, commas: bool, width: i64, align: &str, fill: &str, percent: bool) -> Result<String, String> {
     use crate::cell::Cell;
     match value {
-        Cell::Int(n) => crow_fmt_f64(*n as f64, decimals, commas, width, align, fill, percent),
+        Cell::Int(n) => fmt_big(&crate::int::Int::Small(*n), decimals, commas, width, align, fill, percent),
         Cell::Float(x) => crow_fmt_f64(*x, decimals, commas, width, align, fill, percent),
         Cell::Text(s) => crow_fmt_str(s, decimals, width, align, fill, percent),
         // a moment with no style: its ISO 8601 text, laid out as text is
         Cell::Moment(m) => crow_fmt_str(&m.to_string(), decimals, width, align, fill, percent),
         other => Err(format!("fmt: cannot format {}", other.kind())),
     }
+}
+
+/// `fmt` of a whole number, every digit kept: an int written through a
+/// float had lost the digits past 2^53 (`fmt[2 ^ 60 + 1]` ended in 6), and
+/// one past 64 bits was refused (Rosetta Code, Almkvist-Giullera). Laid out
+/// as [`crow_fmt_f64`] lays out a whole float: the decimals as zeros, the
+/// percent as two more zeros, the digits grouped by commas.
+pub fn fmt_big(n: &crate::int::Int, decimals: i64, commas: bool, width: i64, align: &str, fill: &str, percent: bool) -> Result<String, String> {
+    if decimals > u16::MAX as i64 {
+        return Err(format!("fmt: decimals of at most {} (got {})", u16::MAX, decimals));
+    }
+    let text = n.to_string();
+    let (sign, mut digits) = match text.strip_prefix('-') {
+        Some(rest) => ("-", rest.to_string()),
+        None => ("", text.clone()),
+    };
+    if percent && digits != "0" {
+        digits.push_str("00");
+    }
+    if commas {
+        let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+        for (i, ch) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i) % 3 == 0 {
+                grouped.push(',');
+            }
+            grouped.push(ch);
+        }
+        digits = grouped;
+    }
+    let mut s = format!("{}{}", sign, digits);
+    if decimals > 0 {
+        s.push('.');
+        s.push_str(&"0".repeat(decimals as usize));
+    }
+    if percent {
+        s.push('%');
+    }
+    apply_width(s, width, if align.is_empty() { "right" } else { align }, fill)
+}
+
+/// `fmt` of a decimal: its digits as it holds them (`12.30`), or rounded to
+/// `decimals` places a half away from zero, laid out as a number is — the
+/// percent, the whole part grouped by commas, the width filled. A decimal
+/// had been refused, though it is the language's number for money (Rosetta
+/// Code, Arithmetic-geometric mean).
+pub fn fmt_decimal(d: &crate::decimal::Dec, decimals: i64, commas: bool, width: i64, align: &str, fill: &str, percent: bool) -> Result<String, String> {
+    let d = if percent { d.mul(&crate::decimal::Dec::of_int(&crate::int::Int::Small(100))) } else { d.clone() };
+    let d = if decimals >= 0 { d.round_places(decimals)? } else { d };
+    laid_out(d.to_string(), commas, width, align, fill, percent)
+}
+
+/// `fmt` of a fraction: `1/3` as it shows, or its value to `decimals`
+/// places, a half away from zero (`fmt[fraction[1, 3], decimals = 4]` is
+/// `0.3333`), laid out as a number is.
+pub fn fmt_fraction(f: &crate::fraction::Frac, decimals: i64, commas: bool, width: i64, align: &str, fill: &str, percent: bool) -> Result<String, String> {
+    if decimals < 0 && !percent {
+        return laid_out(f.to_string(), commas, width, align, fill, false);
+    }
+    if decimals > u16::MAX as i64 {
+        return Err(format!("fmt: decimals of at most {} (got {})", u16::MAX, decimals));
+    }
+    let places = decimals.max(0) as u32;
+    let n = f.0.numerator().clone();
+    let n = if percent { n * dashu_int::IBig::from(100u8) } else { n };
+    let scaled = n * dashu_int::IBig::from(10u8).pow(places as usize);
+    let d = dashu_int::IBig::from(f.0.denominator().clone());
+    let neg = scaled < dashu_int::IBig::ZERO;
+    let a = if neg { -scaled } else { scaled };
+    let two = dashu_int::IBig::from(2u8);
+    let q = (&a * &two + &d) / (&d * &two);
+    let q = if neg { -q } else { q };
+    laid_out(crate::decimal::Dec::new(q, places, 0).to_string(), commas, width, align, fill, percent)
+}
+
+/// A number's text laid out as `fmt` lays out a float's: the whole part
+/// grouped by commas, a percent sign, the width filled (numbers right).
+fn laid_out(mut s: String, commas: bool, width: i64, align: &str, fill: &str, percent: bool) -> Result<String, String> {
+    if commas && !s.contains('/') {
+        let (sign, rest) = match s.strip_prefix('-') {
+            Some(r) => ("-", r.to_string()),
+            None => ("", s.clone()),
+        };
+        let (whole, frac) = match rest.split_once('.') {
+            Some((w, f)) => (w.to_string(), format!(".{}", f)),
+            None => (rest, String::new()),
+        };
+        let mut grouped = String::with_capacity(whole.len() + whole.len() / 3);
+        for (i, ch) in whole.chars().enumerate() {
+            if i > 0 && (whole.len() - i) % 3 == 0 {
+                grouped.push(',');
+            }
+            grouped.push(ch);
+        }
+        s = format!("{}{}{}", sign, grouped, frac);
+    }
+    if percent {
+        s.push('%');
+    }
+    apply_width(s, width, if align.is_empty() { "right" } else { align }, fill)
 }
 
 /// fmt[] kernel for strings: width, align and fill only. Decimals or a
@@ -438,6 +553,23 @@ fn apply_width(s: String, width: i64, align: &str, fill: &str) -> Result<String,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A panic inside `log`'s formatting poisons what it holds: the lines
+    /// logged before are still written, the half-made one is not, and the
+    /// buffer serves the next line (they had been lost on a pipe)
+    #[test]
+    fn a_panic_inside_log_keeps_the_lines_logged_before() {
+        let _ = std::thread::spawn(|| {
+            let mut held = OUT.lock().unwrap_or_else(|e| e.into_inner());
+            held.extend_from_slice(b"before\nhalf");
+            panic!("a value's display stopped");
+        })
+        .join();
+        assert!(OUT.is_poisoned());
+        flush_output();
+        assert!(!OUT.is_poisoned());
+        assert!(OUT.lock().is_ok_and(|held| held.is_empty()));
+    }
 
     #[test]
     fn test_string_bare_at_top_level_quoted_in_containers() {

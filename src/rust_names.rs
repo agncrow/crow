@@ -27,6 +27,24 @@ pub const RUST_KEYWORDS: &[&str] = &[
 /// runs: a view's or a handler's session is `state`.
 pub const GENERATED_NAMES: &[&str] = &["state"];
 
+/// The types and traits the compiled program names bare, which a record of
+/// the program's may not be called in Rust (`struct Vec` had shadowed the
+/// `Vec` every value that can fail holds, and not built; Rosetta Code, Draw
+/// a rotating cube). The compiled program's own types begin with `Crow` and
+/// its own functions with `crow_` (`fn crow_stop` had been defined twice):
+/// a name of the program's that does is renamed too.
+pub const RUST_TYPE_NAMES: &[&str] = &[
+    "Vec", "String", "Box", "Option", "Some", "None", "Ok", "Err", "Result", "BTreeMap", "BTreeSet", "HashMap", "HashSet",
+    "Clone", "Copy", "Default", "Debug", "PartialEq", "PartialOrd", "Eq", "Ord", "Ordering", "Fn", "FnMut", "FnOnce",
+    "Iterator", "IntoIterator", "From", "Into", "ToString", "AsRef", "Send", "Sync", "Sized", "Drop", "Arc", "Rc", "Cow",
+];
+
+/// Whether the compiled program may not declare a name of the program's as
+/// it is written.
+fn reserved_in_rust(n: &str) -> bool {
+    RUST_KEYWORDS.contains(&n) || GENERATED_NAMES.contains(&n) || RUST_TYPE_NAMES.contains(&n) || n.starts_with("Crow") || n.starts_with("crow_")
+}
+
 /// The program with every declared name Rust reserves renamed, and the map
 /// from each new name back to the program's; `None` when it declares none.
 pub fn rename_rust_keywords(stmts: &[Stmt]) -> Option<(Vec<Stmt>, BTreeMap<String, String>)> {
@@ -35,13 +53,19 @@ pub fn rename_rust_keywords(stmts: &[Stmt]) -> Option<(Vec<Stmt>, BTreeMap<Strin
     for s in stmts {
         collect_stmt(s, &mut declared, &mut seen);
     }
-    let reserved: Vec<String> = declared.into_iter().filter(|n| RUST_KEYWORDS.contains(&n.as_str()) || GENERATED_NAMES.contains(&n.as_str())).collect();
+    // (a binding the lowering renamed for its block, `move__s2`, is printed
+    // by the name it was written with, `move`: judged and renamed by that
+    // name, the underscore before its block's suffix — the second loop over
+    // `move` had kept it, and the compiled program did not build; Rosetta
+    // Code, Latin squares)
+    let reserved: Vec<String> = declared.into_iter().filter(|n| reserved_in_rust(crate::lower::written(n))).collect();
     if reserved.is_empty() {
         return None;
     }
     let mut renames: BTreeMap<String, String> = BTreeMap::new();
     for name in reserved {
-        let mut fresh = format!("{}_", name);
+        let base = crate::lower::written(&name);
+        let mut fresh = format!("{}_{}", base, &name[base.len()..]);
         while seen.contains(&fresh) || renames.values().any(|v| v == &fresh) {
             fresh.push('_');
         }
@@ -142,7 +166,7 @@ fn collect_stmt(s: &Stmt, declared: &mut BTreeSet<String>, seen: &mut BTreeSet<S
             collect_expr(value, declared, seen);
         }
         Stmt::StructDecl { name, .. } => {
-            seen.insert(name.clone());
+            decl(name, declared, seen);
         }
         _ => {}
     }
@@ -216,7 +240,7 @@ fn top_level_decls(s: &Stmt, out: &mut BTreeSet<String>) {
                 for_vars_in(v, out);
             }
         }
-        Stmt::FnDecl { name, .. } | Stmt::Derive { name, .. } => {
+        Stmt::FnDecl { name, .. } | Stmt::Derive { name, .. } | Stmt::StructDecl { name, .. } => {
             out.insert(name.clone());
         }
         Stmt::For { var, iter, body } => {
@@ -351,6 +375,7 @@ pub(crate) fn rename_stmt(s: &mut Stmt, renames: &BTreeMap<String, String>, glob
             rename_expr(index, renames, &v);
             rename_expr(value, renames, &v);
         }
+        Stmt::StructDecl { name, .. } => rename(name, renames, &v),
         _ => {}
     }
 }
@@ -489,6 +514,19 @@ mod tests {
 
     fn stmts(src: &str) -> Vec<Stmt> {
         crate::build(src).expect("parses")
+    }
+
+    /// Two loops reusing a reserved name as their variable each rename it
+    /// (the second had kept `move`, and the compiled program did not
+    /// build; Rosetta Code, Latin squares)
+    #[test]
+    fn two_loops_reusing_a_reserved_name_each_rename_it() {
+        let lowered = crate::lower::lower_program(&stmts("for move in range[2]\n    log['a']\nfor move in range[2]\n    log['b']\n")).expect("lowers");
+        let (out, _) = rename_rust_keywords(&lowered).expect("renames");
+        let text = format!("{:?}", out);
+        // (the second is its block's: printed by its written name, `move_`)
+        assert!(text.contains("var: \"move_\"") && text.contains("var: \"move___s2\""), "{}", text);
+        assert_eq!(crate::lower::written("move___s2"), "move_");
     }
 
     /// A declared name Rust reserves is renamed everywhere it is read —

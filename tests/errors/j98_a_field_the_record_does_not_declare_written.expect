@@ -1,0 +1,3 @@
+j98_a_field_the_record_does_not_declare_written.co:9:3: struct 'P' has no field 'c'
+  9 │ p.c = 3
+    │   ^

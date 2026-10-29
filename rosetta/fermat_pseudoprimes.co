@@ -1,0 +1,72 @@
+--- Rosetta Code: Fermat pseudoprimes
+--- https://rosettacode.org/wiki/Fermat_pseudoprimes
+--- A composite x is a Fermat pseudoprime to base a when a ^ (x - 1) is 1 modulo x:
+--- composites from a sieve, the power by repeated squaring. Counted up to 12,000 and,
+--- for the stretch, up to 25,000, 50,000 and 100,000.
+
+--- whether each number from 0 to limit is composite
+fn composites[limit]
+    composite = for i in range[limit + 1]
+        false
+    p = 2
+    while p * p lte limit
+        if not composite[p]
+            m = p * p
+            while m lte limit
+                composite[m] = true
+                m = m + p
+        p = p + 1
+    return composite
+
+--- base ^ exp modulo m, by repeated squaring
+fn pow_mod[base, exp, m]
+    result = 1
+    b = base % m
+    e = exp
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+--- the Fermat pseudoprimes to base a up to limit, in order
+fn pseudoprimes[a, composite, limit]
+    found = []
+    x = 4
+    while x lte limit
+        if composite[x] and pow_mod[a, x - 1, x] eq 1
+            found = push[found, x]
+        x = x + 1
+    return found
+
+fn count_upto[xs, limit]
+    count = 0
+    for x in xs
+        if x lte limit
+            count = count + 1
+    return count
+
+limits = [12000, 25000, 50000, 100000]
+composite = composites[100000]
+found = for a in range[1, 21]
+    pseudoprimes[a, composite, 100000]
+
+log['The first 20 Fermat pseudoprimes to each base:']
+for a in range[1, 21]
+    first = for x in slice[found[a - 1], 0, 20]
+        fmt[x, width = 5]
+    shown = join[first, ' ']
+    log['Base `fmt[a, width = 2]`: `shown`']
+
+log['']
+heads = for limit in limits
+    fmt[limit, commas = true, width = 8]
+header = join[heads, '']
+log['How many there are, up to:']
+log['        `header`']
+for a in range[1, 21]
+    counts = for limit in limits
+        fmt[count_upto[found[a - 1], limit], width = 8]
+    shown = join[counts, '']
+    log['Base `fmt[a, width = 2]`:`shown`']

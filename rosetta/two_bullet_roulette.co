@@ -1,0 +1,89 @@
+--- Rosetta Code: Two bullet roulette
+--- https://rosettacode.org/wiki/Two_bullet_roulette
+--- The cylinder is six chambers, position 0 under the hammer and 1 the loading
+--- position; a turn clockwise moves each chamber up a position. A game is a plan
+--- of steps (L load, S spin, F pull the trigger), simulated 100,000 times per
+--- plan with seeded draws, and worked out exactly as well: every spin's six
+--- outcomes followed, as fractions.
+
+use math
+
+fn turned[c, n]
+    k = n % 6
+    return concat[slice[c, 6 - k, 6], slice[c, 0, 6 - k]]
+
+--- turn to an empty loading position, load it, then turn once
+fn loaded[c]
+    while c[1]
+        c = turned[c, 1]
+    c[1] = true
+    return turned[c, 1]
+
+fn spun[c]
+    return turned[c, rand[1, 6]]
+
+fn empty_cylinder[]
+    return [false, false, false, false, false, false]
+
+--- one game: true when a pull of the trigger fires; a pull turns the cylinder
+fn dies[plan]
+    c = empty_cylinder[]
+    steps = split[plan, '']
+    i = 0
+    while i lt len[steps]
+        step = steps[i]
+        if step eq 'L'
+            c = loaded[c]
+        else if step eq 'S'
+            c = spun[c]
+        else
+            if c[0]
+                return true
+            c = turned[c, 1]
+        i = i + 1
+    return false
+
+fn simulated[plan, games]
+    deaths = 0
+    g = 0
+    while g lt games
+        if dies[plan]
+            deaths = deaths + 1
+        g = g + 1
+    return 100.0 * deaths / games
+
+--- the chance of death from step i on, each spin's six outcomes weighed alike
+fn chance[c, steps, i]
+    if i eq len[steps]
+        return fraction[0, 1]
+    step = steps[i]
+    if step eq 'L'
+        return chance[loaded[c], steps, i + 1]
+    if step eq 'S'
+        total = fraction[0, 1]
+        for n in range[1, 7]
+            total = total + chance[turned[c, n], steps, i + 1]
+        return total / 6
+    if c[0]
+        return fraction[1, 1]
+    return chance[turned[c, 1], steps, i + 1]
+
+fn exact[plan]
+    return chance[empty_cylinder[], split[plan, ''], 0]
+
+seed[2026]
+games = 100000
+letters = ['A', 'B', 'C', 'D']
+plans = ['LSLSFSF', 'LSLSFF', 'LLSFSF', 'LLSFF']
+told = ['spin after loading the first bullet, and after the first shot', 'spin after loading the first bullet only', 'spin after the first shot only', 'spin after neither']
+log['`games` games of each (L load, S spin, F fire):']
+best = 0
+for i in range[4]
+    p = exact[plans[i]]
+    if p gt exact[plans[best]]
+        best = i
+    shown = fmt[simulated[plans[i], games], decimals = 2]
+    exactly = fmt[p * 100, decimals = 2]
+    log['`letters[i]`. `fmt[plans[i], width = 8]` `shown`% deaths (exactly `p` = `exactly`%): `told[i]`']
+log['']
+log['The highest chance of death is `letters[best]`: `told[best]`.']

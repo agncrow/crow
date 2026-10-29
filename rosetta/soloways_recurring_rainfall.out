@@ -1,0 +1,6 @@
+Rainfall readings, whole numbers one a line; 99999 ends them.
+'seven' is not a whole number: skipped.
+'4.5' is not a whole number: skipped.
+An empty line: skipped.
+'1e3' is not a whole number: skipped.
+6 readings, average rainfall 7.666666666666667

@@ -1,0 +1,101 @@
+--- Rosetta Code: Cistercian numerals
+--- https://rosettacode.org/wiki/Cistercian_numerals
+--- Drawn as text: a stem of 15 rows, and each digit's glyph drawn in the ones'
+--- corner (upper right, 5 by 5) and mirrored into its place's corner — left for
+--- the tens and thousands, below for the hundreds and thousands. A mirror in one
+--- direction turns each diagonal the other way.
+
+fn strokes[digit]
+    --- the strokes of a digit's glyph in the upper-right corner
+    glyphs = [[], ['top'], ['low'], ['down'], ['up'], ['top', 'up'], ['side'], ['top', 'side'], ['low', 'side'], ['top', 'low', 'side']]
+    return glyphs[digit]
+
+fn stroke_cells[stroke, i]
+    --- cell i (0 … 4) of a stroke, as [row, column], row 0 at the stem's end and column 0 beside the stem
+    if stroke eq 'top'
+        return [0, i]
+    if stroke eq 'low'
+        return [4, i]
+    if stroke eq 'down'
+        return [i, i]
+    if stroke eq 'up'
+        return [4 - i, i]
+    return [i, 4]
+
+fn stroke_char[stroke, mirrored]
+    if stroke eq 'top' or stroke eq 'low'
+        return '-'
+    if stroke eq 'side'
+        return '|'
+    if (stroke eq 'down') ne mirrored
+        return '\\'
+    return '/'
+
+fn overlaid[old, new]
+    --- what a cell shows where two strokes cross
+    if old eq ' ' or old eq new
+        return new
+    if old eq '/' or old eq '\\'
+        return old
+    if new eq '/' or new eq '\\'
+        return new
+    return '+'
+
+fn numeral[n]
+    --- the numeral's 15 rows of 11 characters
+    canvas = map[]
+    for row in range[15]
+        canvas = set[canvas, row * 11 + 5, '|']
+    place = 0
+    rest = n
+    while place lt 4
+        left = place eq 1 or place eq 3
+        below = place gt 1
+        for stroke in strokes[rest % 10]
+            ch = stroke_char[stroke, left ne below]
+            for i in range[5]
+                cell = stroke_cells[stroke, i]
+                row = cell[0]
+                if below
+                    row = 14 - row
+                col = 6 + cell[1]
+                if left
+                    col = 4 - cell[1]
+                key = row * 11 + col
+                old = ' '
+                if key in canvas
+                    old = canvas[key]
+                canvas = set[canvas, key, overlaid[old, ch]]
+        rest = rest / 10
+        place = place + 1
+    rows = for row in range[15]
+        cells = for col in range[11]
+            key = row * 11 + col
+            shown = ' '
+            if key in canvas
+                shown = canvas[key]
+            shown
+        join[cells, '']
+    return rows
+
+fn label[n]
+    --- the number centred over the stem
+    digits = str[n]
+    pad = repeat[' ', 5 - (len[digits] - 1) / 2]
+    return fmt['`pad``digits`', width = 11]
+
+fn show_side_by_side[numbers]
+    pictures = for n in numbers
+        numeral[n]
+    labels = for n in numbers
+        label[n]
+    log[sub[join[labels, '    '], ' +$', '']]
+    for row in range[15]
+        parts = for p in pictures
+            p[row]
+        log[sub[join[parts, '    '], ' +$', '']]
+    log['']
+
+show_side_by_side[[0, 1, 20, 300]]
+show_side_by_side[[4000, 5555, 6789, 2026]]
+show_side_by_side[[1234, 5678, 9999, 8070]]

@@ -1,0 +1,87 @@
+--- Rosetta Code: Sorensen–Dice coefficient
+--- https://rosettacode.org/wiki/Sorensen–Dice_coefficient
+--- A phrase is folded to lower case and split into words at spaces, and each
+--- word gives its bigrams, punctuation kept (a word of one letter gives
+--- itself): a multiset, held as a map from bigram to count. The coefficient is
+--- twice the size of two multisets' intersection over the sum of their sizes.
+--- The dictionary is the list of task names the task links to, saved as
+--- sorensen_dice_tasks.txt; the five names closest to each mangled one are
+--- shown, ties to the later name, as the Python entry orders them.
+
+fn tokens[text]
+    --- the bigrams of a phrase, in order
+    found = []
+    for word in split[lower[text], ' ']
+        letters = split[word, '']
+        if len[letters] eq 1
+            found = push[found, word]
+        for i in range[len[letters] - 1]
+            found = push[found, '`letters[i]``letters[i + 1]`']
+    return found
+
+fn bigrams[text]
+    --- each bigram of a phrase, with how many times it occurs
+    counts = map[]
+    for g in tokens[text]
+        if g in counts
+            counts[g] = counts[g] + 1
+        else
+            counts[g] = 1
+    return counts
+
+fn size[counts]
+    total = 0
+    for k in keys[counts]
+        total = total + counts[k]
+    return total
+
+fn dice[a, b]
+    --- twice the size of the two multisets' intersection over their sizes' sum
+    common = 0
+    for k in keys[a]
+        if k in b
+            common = common + min[a[k], b[k]]
+    return 2.0 * common / (size[a] + size[b])
+
+fn ahead[score, name, other_score, other_name]
+    --- whether a match goes before another: the higher score, then the later name
+    if score ne other_score
+        return score gt other_score
+    return name gt other_name
+
+fn closest[term, names, grams, count]
+    --- the count names closest to term, closest first
+    mine = bigrams[term]
+    scores = for g in grams
+        dice[mine, g]
+    taken = for s in scores
+        false
+    found = []
+    while len[found] lt count
+        best = -1
+        i = 0
+        while i lt len[names]
+            if not taken[i] and (best lt 0 or ahead[scores[i], names[i], scores[best], names[best]])
+                best = i
+            i = i + 1
+        taken[best] = true
+        found = push[found, '`fmt[scores[best], decimals = 6]`  `names[best]`']
+    return found
+
+text = read['sorensen_dice_tasks.txt']
+if not text.ok
+    log['cannot read sorensen_dice_tasks.txt: `text.reason`']
+else
+    names = for line in split[text, '\n']
+        if trim[line] ne ''
+            line
+    grams = for name in names
+        bigrams[name]
+    example = 'Don\'t Panic!'
+    shown = join[tokens[example], ' ']
+    log['`len[names]` task names. The bigrams of "`example`": `shown`']
+    for term in ['Primordial primes', 'Sunkist-Giuliani formula', 'Sieve of Euripides', 'Chowder numbers']
+        log['']
+        log['`term`:']
+        for line in closest[term, names, grams, 5]
+            log['  `line`']

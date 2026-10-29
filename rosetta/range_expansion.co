@@ -1,0 +1,36 @@
+--- Rosetta Code: Range expansion
+--- https://rosettacode.org/wiki/Range_expansion
+--- Each comma-separated item is a whole number, or two joined by a dash (either
+--- may be negative: -3--1 runs from -3 to -1); a range adds every number from its
+--- start to its end. An item that is neither is an error value naming it.
+
+fn expanded[text]
+    numbers = []
+    for written in split[text, ',']
+        item = trim[written]
+        span = find[item, '^(-?[0-9]+)-(-?[0-9]+)$']
+        if span.ok
+            first = int[span.groups[1]]
+            last = int[span.groups[2]]
+            if last lt first
+                return error['\'`item`\' runs backwards', 'parse']
+            numbers = concat[numbers, range[first, last + 1]]
+        else
+            if not matches[item, '^-?[0-9]+$']
+                return error['\'`item`\' is neither a number nor a range', 'parse']
+            numbers = push[numbers, int[item]]
+    return numbers
+
+fn report[text]
+    numbers = expanded[text]
+    if not numbers.ok
+        log['`text`  ->  error: `numbers.reason`']
+        return
+    log['`text`  ->']
+    log['    `join[numbers, \',\']`']
+
+report['-6,-3--1,3-5,7-11,14,15,17-20']
+report['0-2,4,6-8,11,12,14-25,27-33,35-39']
+report['-10--8, -1-1, 98-100']
+report['1-3,5-4']
+report['1,2,x']

@@ -1,0 +1,103 @@
+--- Rosetta Code: Playfair cipher
+--- https://rosettacode.org/wiki/Playfair_cipher
+--- The key's letters, then the rest of the alphabet, each letter once, fill a 5 x 5
+--- square of 25 letters: the user chooses which letter goes, J (read as I) or Q (left
+--- out of the messages). A message is cut into digraphs, an X put between a doubled
+--- letter and after a last lone one (a Z where the letter is X itself); a pair in one
+--- row takes the letters to their right, in one column the letters below, and any
+--- other pair the corners of its rectangle in its own rows. Decoding goes the other
+--- way. The key, the choice and the message are read from standard input, three
+--- lines to a message (playfair_cipher.in).
+
+fn alphabet[option]
+    if option eq 'no Q'
+        return 'ABCDEFGHIJKLMNOPRSTUVWXYZ'
+    return 'ABCDEFGHIKLMNOPQRSTUVWXYZ'
+
+--- the letters of a text the square holds, in capitals: J is read as I where J = I,
+--- and everything else (a Q where there is no Q) is left out
+fn letters[text, option]
+    capitals = upper[text]
+    if option eq 'J = I'
+        capitals = replace[capitals, 'J', 'I']
+    held = alphabet[option]
+    kept = for c in split[capitals, '']
+        if c in held
+            c
+    return kept
+
+--- the square: its 25 letters row by row, and where each one is
+struct Square [cells, at]
+
+fn square[key, option]
+    order = []
+    for c in concat[letters[key, option], split[alphabet[option], '']]
+        if c not in order
+            order = push[order, c]
+    return Square[order, map[order, range[25]]]
+
+--- the message's letters as digraphs, never a doubled letter in one
+fn digraphs[text, option]
+    cs = letters[text, option]
+    pairs = []
+    i = 0
+    while i lt len[cs]
+        first = cs[i]
+        filler = 'X'
+        if first eq 'X'
+            filler = 'Z'
+        if i + 1 lt len[cs] and cs[i + 1] ne first
+            pairs = push[pairs, '`first``cs[i + 1]`']
+            i = i + 2
+        else
+            pairs = push[pairs, '`first``filler`']
+            i = i + 1
+    return pairs
+
+--- a digraph moved by the square: shift 1 encodes, shift 4 (one back) decodes
+fn substitute[sq, pair, shift]
+    a = sq.at[pair[0]]
+    b = sq.at[pair[1]]
+    row_a = a / 5
+    col_a = a % 5
+    row_b = b / 5
+    col_b = b % 5
+    cells = sq.cells
+    if row_a eq row_b
+        return '`cells[row_a * 5 + (col_a + shift) % 5]``cells[row_b * 5 + (col_b + shift) % 5]`'
+    if col_a eq col_b
+        return '`cells[(row_a + shift) % 5 * 5 + col_a]``cells[(row_b + shift) % 5 * 5 + col_b]`'
+    return '`cells[row_a * 5 + col_b]``cells[row_b * 5 + col_a]`'
+
+fn encode_text[sq, text, option]
+    pairs = for pair in digraphs[text, option]
+        substitute[sq, pair, 1]
+    return join[pairs, ' ']
+
+--- a cipher text is already in digraphs: its letters are read two at a time
+fn decode_text[sq, text, option]
+    cs = letters[text, option]
+    pairs = for i in range[0, len[cs], 2]
+        substitute[sq, '`cs[i]``cs[i + 1]`', 4]
+    return join[pairs, ' ']
+
+fn show[key, option, message]
+    sq = square[key, option]
+    log['Key: `key`   (`option`)']
+    for row in range[5]
+        line = join[slice[sq.cells, row * 5, row * 5 + 5], ' ']
+        log['    `line`']
+    hidden = encode_text[sq, message, option]
+    log['Message: `message`']
+    log['Encoded: `hidden`']
+    log['Decoded: `decode_text[sq, hidden, option]`']
+    log['']
+
+key = input[]
+while key.ok
+    option = input[]
+    message = input[]
+    if option ne 'J = I' and option ne 'no Q'
+        halt['the choice must be J = I or no Q, not `option`']
+    show[key, option, message]
+    key = input[]

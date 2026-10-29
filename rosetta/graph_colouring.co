@@ -1,0 +1,163 @@
+--- Rosetta Code: Graph colouring
+--- https://rosettacode.org/wiki/Graph_colouring
+--- A graph is read from its description (`0-1 1-2 2-0 3`) into its nodes in the
+--- order they first appear, its edges as written and a map from each node to its
+--- neighbours. Four colourings, each giving a node the lowest colour no coloured
+--- neighbour holds: greedy in the order the nodes appear (as the Python entry
+--- colours), greedy in the order of their numbers (the Wikipedia article's, which
+--- takes 4 colours for Ex3), Welsh-Powell (one colour at a time down the nodes by
+--- degree, highest first) and DSatur (next, the node whose neighbours show the
+--- most colours), which colours each of the two-colourable graphs with two.
+--- Every colouring is checked: no edge joins two nodes of one colour.
+
+struct Graph [name, description, nodes, edges, nbrs]
+
+fn parse[name, description]
+    nodes = []
+    edges = []
+    for word in split[description, ' ']
+        pair = for part in split[word, '-']
+            int[part]
+        for v in pair
+            if v not in nodes
+                nodes = push[nodes, v]
+        if len[pair] eq 2
+            edges = push[edges, pair]
+    nbrs = map[]
+    for v in nodes
+        around = for e in edges
+            if e[0] eq v
+                e[1]
+            else if e[1] eq v
+                e[0]
+        nbrs = set[nbrs, v, around]
+    return Graph[name, description, nodes, edges, nbrs]
+
+fn colours_around[colour, around]
+    --- the colours held by the coloured nodes of around
+    held = for u in around
+        if u in colour
+            colour[u]
+    return held
+
+fn lowest_free[used]
+    c = 0
+    while c in used
+        c = c + 1
+    return c
+
+fn greedy[g, order]
+    colour = map[]
+    for v in order
+        colour = set[colour, v, lowest_free[colours_around[colour, g.nbrs[v]]]]
+    return colour
+
+fn by_degree[g]
+    --- the nodes by degree, highest first, in the order they appear among equals
+    top = 0
+    for v in g.nodes
+        top = max[top, len[g.nbrs[v]]]
+    order = []
+    d = top
+    while d gte 0
+        for v in g.nodes
+            if len[g.nbrs[v]] eq d
+                order = push[order, v]
+        d = d - 1
+    return order
+
+fn welsh_powell[g]
+    order = by_degree[g]
+    colour = map[]
+    c = 0
+    while len[colour] lt len[order]
+        for v in order
+            if v not in colour
+                if c not in colours_around[colour, g.nbrs[v]]
+                    colour = set[colour, v, c]
+        c = c + 1
+    return colour
+
+fn distinct[xs]
+    seen = map[]
+    for x in xs
+        seen = set[seen, x, true]
+    return len[seen]
+
+fn colours_used[g, colour]
+    held = for v in g.nodes
+        colour[v]
+    return distinct[held]
+
+fn dsatur[g]
+    colour = map[]
+    while len[colour] lt len[g.nodes]
+        best = -1
+        best_shown = -1
+        best_degree = -1
+        for v in g.nodes
+            if v not in colour
+                shown = distinct[colours_around[colour, g.nbrs[v]]]
+                degree = len[g.nbrs[v]]
+                if shown gt best_shown or (shown eq best_shown and degree gt best_degree)
+                    best = v
+                    best_shown = shown
+                    best_degree = degree
+        colour = set[colour, best, lowest_free[colours_around[colour, g.nbrs[best]]]]
+    return colour
+
+fn proper[g, colour]
+    clashes = for e in g.edges
+        if colour[e[0]] eq colour[e[1]]
+            e
+    return len[clashes] eq 0
+
+fn cell[colour, pair]
+    shown = for v in pair
+        str[colour[v]]
+    return join[shown, ' ']
+
+fn row[label, cells]
+    --- a label, then a column per colouring
+    padded = for i in range[len[cells]]
+        if i lt len[cells] - 1
+            fmt[cells[i], width = 14]
+        else
+            cells[i]
+    joined = join[padded, '']
+    return '    `fmt[label, width = 8]``joined`'
+
+fn report[g]
+    colourings = [greedy[g, g.nodes], greedy[g, sort[g.nodes]], welsh_powell[g], dsatur[g]]
+    log['`g.name`: `g.description`']
+    log[row['', ['as they come', 'by number', 'Welsh-Powell', 'DSatur']]]
+    for e in g.edges
+        cells = for colour in colourings
+            cell[colour, e]
+        log[row['`e[0]`-`e[1]`', cells]]
+    for v in g.nodes
+        if len[g.nbrs[v]] eq 0
+            cells = for colour in colourings
+                cell[colour, [v]]
+            log[row[str[v], cells]]
+    counts = for colour in colourings
+        str[colours_used[g, colour]]
+    log[row['colours', counts]]
+    checks = for colour in colourings
+        if proper[g, colour]
+            'proper'
+        else
+            'CLASH'
+    log[row['', checks]]
+    log['    nodes: `len[g.nodes]`, edges: `len[g.edges]`']
+
+graphs = [
+    parse['Ex1', '0-1 1-2 2-0 3'],
+    parse['Ex2', '1-6 1-7 1-8 2-5 2-7 2-8 3-5 3-6 3-8 4-5 4-6 4-7'],
+    parse['Ex3', '1-4 1-6 1-8 3-2 3-6 3-8 5-2 5-4 5-8 7-2 7-4 7-6'],
+    parse['Ex4', '1-6 7-1 8-1 5-2 2-7 2-8 3-5 6-3 3-8 4-5 4-6 4-7']
+]
+for i in range[len[graphs]]
+    if i gt 0
+        log['']
+    report[graphs[i]]

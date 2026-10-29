@@ -1,0 +1,3 @@
+k06_describe_called_by_a_program.co:10:5: describe[] is the standard library's own (sys): a program outside it does not call it — a function is called by its name
+  10 │ d = describe[double]
+     │     ^^^^^^^^

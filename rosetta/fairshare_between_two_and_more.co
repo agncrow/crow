@@ -1,0 +1,58 @@
+--- Rosetta Code: Fairshare between two and more
+--- https://rosettacode.org/wiki/Fairshare_between_two_and_more
+--- Turn n goes to the person numbered by the sum of n's base-b digits, modulo b.
+--- Also, as the Go entry does, how evenly 50,000 turns are shared among many people.
+
+--- the digits of n written in base b, the most significant first
+fn in_base[n, b]
+    digits = [n % b]
+    m = n / b
+    while m gt 0
+        digits = push[digits, m % b]
+        m = m / b
+    return reverse[digits]
+
+--- who has turn n among b people (counting turns from 0)
+fn turn[n, b]
+    total = 0
+    for d in in_base[n, b]
+        total = total + d
+    return total % b
+
+fn fairshare[b, count]
+    turns = for n in range[count]
+        turn[n, b]
+    return turns
+
+--- how many turns each of b people has in the first count turns, as a sentence
+fn turns_shared[b, count]
+    turns = for p in range[b]
+        0
+    n = 0
+    while n lt count
+        t = turn[n, b]
+        turns[t] = turns[t] + 1
+        n = n + 1
+    fewest = turns[0]
+    most = turns[0]
+    having = 0
+    for k in turns
+        fewest = min[fewest, k]
+        most = max[most, k]
+        if k gt 0
+            having = having + 1
+    if fewest eq 0
+        return 'only `having` have a turn'
+    if fewest eq most
+        return '`most`'
+    return '`fewest` or `most`'
+
+for b in [2, 3, 5, 11]
+    shown = for t in fairshare[b, 25]
+        fmt[t, width = 2]
+    line = join[shown, ' ']
+    log['`fmt[b, width = 2]` people: `line`']
+log['']
+log['How many turns does each person have in 50,000?']
+for b in [191, 1377, 49999, 50000, 50001]
+    log['  with `b` people: `turns_shared[b, 50000]`']

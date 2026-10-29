@@ -1,0 +1,34 @@
+--- Rosetta Code: Hofstadter Q sequence
+--- https://rosettacode.org/wiki/Hofstadter_Q_sequence
+--- Q(n) = Q(n - Q(n-1)) + Q(n - Q(n-2)), built up in a list from Q(1) = Q(2) = 1:
+--- each term reads two earlier ones, so a large n needs no recursion and no cache
+--- beyond the list itself.
+
+--- Q(1) to Q(n): the list's item i holds Q(i + 1).
+fn q_terms[n]
+    q = [1, 1]
+    while len[q] lt n
+        k = len[q] + 1
+        q = push[q, q[k - 1 - q[k - 2]] + q[k - 1 - q[k - 3]]]
+    return slice[q, 0, n]
+
+--- How many terms are less than the term before them.
+fn drops[q]
+    count = 0
+    i = 1
+    while i lt len[q]
+        if q[i] lt q[i - 1]
+            count = count + 1
+        i = i + 1
+    return count
+
+first_ten = q_terms[10]
+log['The first ten terms: `join[first_ten, \', \']`']
+log['As the task says: `first_ten eq [1, 1, 2, 3, 3, 4, 5, 5, 6, 6]`']
+log['The 1000th term: `q_terms[1000][-1]`']
+log['']
+
+terms = q_terms[100000]
+log['Terms less than the one before, up to the 100,000th: `drops[terms]`']
+million = q_terms[1000000]
+log['Asked first for a large n, the 1,000,000th term: `million[-1]`']

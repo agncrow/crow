@@ -970,8 +970,12 @@ fn test_negative_index_transpile() {
 
 #[test]
 fn test_negative_index_assign_transpile() {
-    let rust = transpile("nums = [10, 20, 30]\nnums[-1] = 99\n");
+    let rust = transpile("nums = [1.5, 2.5, 3.5]\nnums[-1] = 9.5\n");
     assert!(rust.contains("crow_runtime::core::set_flat_at(&mut nums, _i, _v).unwrap_or_else(|e| crow_stop(2, e))"), "should resolve the assigned index through the runtime, where the tensor lies\n{}", rust);
+    // (whole numbers written down and written by position are a list of
+    // ints: the position is resolved against the list's length)
+    let rust = transpile("nums = [10, 20, 30]\nnums[-1] = 99\n");
+    assert!(rust.contains("let _idx = crow_runtime::stops::at(_i, nums.len(), 2); nums[_idx] = _v;"), "should resolve the assigned index against the list's length\n{}", rust);
 }
 
 #[test]
@@ -2633,6 +2637,29 @@ fn a_list_held_in_a_place_grows_where_it_lies() {
     assert!(rust.contains("std::mem::take(&mut b.items)"), "{}", rust);
     assert!(rust.contains(".get_mut(&_k)"), "{}", rust);
     assert!(!rust.contains("_v[crow_runtime::stops::at(_i, _v.len(), 9)].clone()"), "{}", rust);
+}
+
+/// A vector held in a record's field grows where it lies too: taken out
+/// of the field, pushed onto moved, and written back, where reading it had
+/// copied the vector at every push — 200,000 pushes 4.9 s in both modes
+/// (Rosetta Code, Universal lambda machine)
+#[test]
+fn a_vector_held_in_a_field_grows_where_it_lies() {
+    let rust = transpile("struct Box [xs]\n\nfn grow[n]\n    b = Box[[0, 1, 2]]\n    i = 0\n    while i lt n\n        b.xs = push[b.xs, i]\n        i = i + 1\n    return len[b.xs]\n\nlog[grow[5]]\n");
+    assert!(rust.contains("std::mem::take(&mut b.xs)"), "{}", rust);
+    assert!(rust.contains("push_number_taken"), "{}", rust);
+}
+
+/// A list that can fail, indexed at the top level (where no guard narrows
+/// it), is read where it lies: printed as an unwrap, its payload had been
+/// copied out whole at every index — a loop reading `words[i]` over a
+/// list a function may fail to make ran 300 times slower compiled than
+/// interpreted (Rosetta Code, Aho–Corasick)
+#[test]
+fn a_list_that_can_fail_is_indexed_where_it_lies() {
+    let rust = transpile("fn make[n]\n    if n lt 0\n        return error['negative']\n    xs = for i in range[n]\n        'w`i`'\n    return xs\n\nwords = make[3]\ntotal = 0\nfor i in range[len[words]]\n    total = total + len[words[i]]\nlog[total]\n");
+    assert!(rust.contains("let _v = &(words).value;"), "{}", rust);
+    assert!(!rust.contains("let _v = &(words).value.clone();"), "{}", rust);
 }
 
 /// An item of a list that is itself an item, `cells[k][i]`, is read through

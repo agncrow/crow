@@ -1,0 +1,7 @@
+"The quick brown fox jumps over the lazy dog" is a pangram
+"The quick brown fox jumped over the lazy dog" is not a pangram: it lacks s
+"Pack my box with five dozen liquor jugs." is a pangram
+"Sphinx of black quartz, judge my vow!" is a pangram
+"THE FIVE BOXING WIZARDS JUMP QUICKLY" is a pangram
+"Hello, world" is not a pangram: it lacks abcfgijkmnpqstuvxyz
+"" is not a pangram: it lacks abcdefghijklmnopqrstuvwxyz

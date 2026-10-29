@@ -128,7 +128,26 @@ impl<'a> Lowerer<'a> {
     /// they share, each tensor local the dimensions they agree on.
     pub(super) fn join_detailed(&mut self, a: &[(String, Ty)], b: &[(String, Ty)]) {
         for ((n, ta), (_, tb)) in a.iter().zip(b) {
-            self.ctx.vars.insert(n.clone(), ta.unify(tb));
+            // (the details joined, never whether the value can fail: a
+            // variable whose value could not fail refuses a failure where
+            // it is assigned (spec, Reassignment) — a loop pushing a value
+            // that can fail onto a tensor had made the tensor one that can,
+            // and the lowered program disagreed with itself; Rosetta Code,
+            // colorful numbers)
+            let tb = if ta.is_result() { tb.clone() } else { tb.payload().clone() };
+            // (a tensor given a list in the loop stays the tensor its
+            // declaration made, its sizes not known: unified, the list form
+            // had won, and `last = level` was lowered unconverted into the
+            // tensor `last = [0]` declared — an internal error; Rosetta Code,
+            // Pancake numbers)
+            let joined = match (ta.payload(), tb.payload()) {
+                (Ty::Tensor(e, d), Ty::List(_)) => {
+                    let open = Ty::Tensor(e.clone(), d.as_ref().map(|d| d.iter().map(|_| None).collect()));
+                    if ta.is_result() { Ty::Result(Box::new(open)) } else { open }
+                }
+                _ => ta.unify(&tb),
+            };
+            self.ctx.vars.insert(n.clone(), joined);
         }
     }
 

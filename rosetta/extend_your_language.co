@@ -1,0 +1,80 @@
+--- Rosetta Code: Extend your language
+--- https://rosettacode.org/wiki/Extend_your_language
+--- Crow has no macros and no way to add a keyword or a block form: its syntax is fixed by
+--- design ("one way to do things"). What it offers instead is a function that takes functions:
+--- if2 takes the two conditions, each written and evaluated once, and the four branches as named
+--- functions, and runs only the branch the conditions choose. A branch sees no local variable of
+--- its caller (Crow has no closures), so what it needs is handed to it: here the number tested.
+
+fn if2[first_holds, second_holds, both, first_only, second_only, neither, n]
+    --- the four-way branch: both conditions, only the first, only the second, or neither
+    if first_holds
+        if second_holds
+            return both[n]
+        return first_only[n]
+    if second_holds
+        return second_only[n]
+    return neither[n]
+
+--- FizzBuzz is a four-way branch on two conditions
+fn fizzbuzz[n]
+    return 'FizzBuzz'
+
+fn fizz[n]
+    return 'Fizz'
+
+fn buzz[n]
+    return 'Buzz'
+
+fn plain[n]
+    return str[n]
+
+words = for n in range[1, 16]
+    if2[n % 3 eq 0, n % 5 eq 0, fizzbuzz, fizz, buzz, plain, n]
+log[join[words, ' ']]
+
+--- an if2 nests as an if does: a branch is any function, another if2 included
+fn of_six[n]
+    return '`n` is a multiple of 2 and of 3'
+
+fn of_two[n]
+    return '`n` is a multiple of 2, not of 3'
+
+fn of_three[n]
+    return '`n` is a multiple of 3, not of 2'
+
+fn of_neither[n]
+    return if2[n % 5 eq 0, n % 7 eq 0, of_35, of_five, of_seven, of_none, n]
+
+fn of_35[n]
+    return '`n` is a multiple of neither 2 nor 3, but of 5 and of 7'
+
+fn of_five[n]
+    return '`n` is a multiple of neither 2 nor 3, but of 5'
+
+fn of_seven[n]
+    return '`n` is a multiple of neither 2 nor 3, but of 7'
+
+fn of_none[n]
+    return '`n` is a multiple of none of 2, 3, 5 and 7'
+
+log['']
+for n in [12, 8, 9, 35, 25, 49, 11]
+    log[if2[n % 2 eq 0, n % 3 eq 0, of_six, of_two, of_three, of_neither, n]]
+
+--- only the chosen branch runs, so a branch may do what would fail for other values
+fn positive[n]
+    return '`n` is positive: 100 / `n` = `100 / n`'
+
+fn negative[n]
+    return '`n` is negative: 100 / `n` = `100 / n`'
+
+fn never[n]
+    return 'zero and positive at once cannot happen'
+
+fn zero[n]
+    return '`n` is zero: 100 / `n` is never computed'
+
+log['']
+for n in [4, -5, 0]
+    log[if2[n ne 0, n gt 0, positive, negative, never, zero, n]]

@@ -1,0 +1,35 @@
+--- Rosetta Code: Bell numbers
+--- https://rosettacode.org/wiki/Bell_numbers
+--- The Bell triangle: each row starts with the last number of the row above, and
+--- each number after is its left neighbour plus the number above that neighbour.
+--- The first column holds the Bell numbers; ints grow, so the 50th is exact.
+
+fn next_row[row]
+    out = push[[], row[-1]]
+    for x in row
+        out = push[out, out[-1] + x]
+    return out
+
+--- The first n Bell numbers: the first number of each of the triangle's first n rows.
+fn bell_numbers[n]
+    numbers = []
+    row = push[[], 1]
+    for k in range[n]
+        numbers = push[numbers, row[0]]
+        row = next_row[row]
+    return numbers
+
+fn show_triangle[n]
+    row = push[[], 1]
+    for k in range[n]
+        log[row]
+        row = next_row[row]
+
+bells = bell_numbers[50]
+log['The first fifteen and the fiftieth Bell numbers:']
+for i in range[15]
+    log['`fmt[i + 1, width = 2]`: `bells[i]`']
+log['50: `bells[49]`']
+log['']
+log['The first ten rows of Bell\'s triangle:']
+show_triangle[10]

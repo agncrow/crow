@@ -1,0 +1,96 @@
+--- Rosetta Code: Unicode strings
+--- https://rosettacode.org/wiki/Unicode_strings
+--- A tour of Crow's text, which is Unicode throughout: literals, characters, case,
+--- codes, encodings, patterns, order, normalization and I/O, each shown by what it does.
+
+use bits
+
+--- n in hexadecimal, at least width digits.
+fn hex[n, width]
+    digits = '0123456789ABCDEF'
+    out = []
+    while n gt 0 or len[out] lt width
+        out = push[out, digits[n % 16]]
+        n = n / 16
+    return join[reverse[out], '']
+
+--- Literals. A string or a comment takes any Unicode text written directly in the UTF-8
+--- source. The escapes are \n \t \r \\ \' and \` only: there is no \u escape, and
+--- char[n] (use bits) makes the character whose code is n. Names are ASCII: a variable
+--- named café is refused before the program runs ("'é' is not a character Crow writes
+--- code with"), so code reads the same everywhere and only its text is international.
+s = 'Crow 🐦 naïve café Ελληνικά 日本語'
+log['A literal:           `s`']
+log['Made from codes:     `join[[char[67], char[233], char[128038]], \'\']`']
+log['']
+
+--- Characters. A text is a sequence of Unicode characters (scalar values) held as UTF-8,
+--- and len, an index, slice, split, reverse and the loops all count characters, never
+--- bytes: the bird is one character, at place 5.
+log['len:                 `len[s]` characters']
+log['s[5]:                `s[5]`']
+log['slice[s, 7, 12]:     `slice[s, 7, 12]`']
+log['split by \'\':         `split[\'naïve\', \'\']`']
+log['reverse:             `reverse[\'naïve 🐦\']`']
+log['the bird is in s:    `\'🐦\' in s`']
+log['replaced:            `replace[s, \'🐦\', \'🦅\']`']
+log['']
+
+--- Case follows Unicode's rules, including the ones a byte at a time cannot follow: ß
+--- becomes SS, a sigma ending a word is ς, and a digraph has its own capital.
+log['upper:               `upper[\'straße ελληνικά ǆ\']`']
+log['lower:               `lower[\'ΟΔΟΣ ΣΑΣ\']`']
+log['']
+
+--- Codes. code[ch] is a character's Unicode scalar value and char[n] the reverse.
+codes = for c in split['é🐦日', '']
+    'U+`hex[code[c], 4]`'
+log['codes of é, 🐦, 日:   `join[codes, \' \']`']
+log['']
+
+--- Encodings. Every text is UTF-8, in the program and at its edges: source files,
+--- standard input and output, files read and written, JSON and HTTP bodies. A text's
+--- UTF-8 bytes show through encode[t, 'url'], which writes each byte of a character
+--- outside A-Z a-z 0-9 - . _ ~ as %XX; base64 encodes those bytes too. Crow has no other
+--- encoding built in: UTF-16, for one, is worked out here from the codes.
+fn utf16[c]
+    n = code[c]
+    if n lt 65536
+        return [n]
+    n = n - 65536
+    return [55296 + n / 1024, 56320 + n % 1024]
+
+units = []
+for c in split['é🐦', '']
+    for u in utf16[c]
+        units = push[units, hex[u, 4]]
+log['UTF-8 of é🐦:         `encode[\'é🐦\', \'url\']`']
+log['base64 of é🐦:       `encode[\'é🐦\', \'base64\']`, back: `decode[\'w6nwn5Cm\', \'base64\']`']
+log['UTF-16 of é🐦:       `join[units, \' \']`']
+log['JSON:                `encode[map[word = \'Grüße\']]`, and \\u escapes read: `json[\'"\\u00e9\\ud83d\\udc26"\']`']
+log['']
+
+--- Patterns. A regular expression's classes are Unicode's: \w matches ï, and \p{Greek}
+--- names a script.
+log['naïve is one \\w+:    `matches[\'naïve\', \'^\\w+$\']`']
+log['Greek replaced:      `sub[\'Ελληνικά and English\', \'\\p{Greek}+\', \'GREEK\']`']
+log['']
+
+--- Order. Texts compare and sort by their characters' codes, not by a language's
+--- collation: every capital before every small letter, é after z.
+log['sorted:              `sort[[\'zebra\', \'Zebra\', \'éclair\', \'eclair\', \'Ångström\']]`']
+log['']
+
+--- Normalization. There is none built in: text compares character by character, so é
+--- written as one character and é written as e with a combining acute (U+0301) are
+--- different texts of different lengths, though they look the same.
+one = 'é'
+two = join[['e', char[769]], '']
+log['é and e + U+0301:    `one` and `two`, equal: `one eq two`, lengths `len[one]` and `len[two]`']
+log['']
+
+--- I/O. A file written and read back is the same text, character for character.
+write['unicode_strings.txt', 'Grüße, 世界 🐦\nzweite Zeile\n']
+back = read['unicode_strings.txt']
+rm['unicode_strings.txt']
+log['read back:           `split[back, \'\\n\'][0]` (`len[back]` characters, the same text: `back eq \'Grüße, 世界 🐦\\nzweite Zeile\\n\'`)']

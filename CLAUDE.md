@@ -1473,3 +1473,53 @@ steps on every push and must be green.
   in three). And `crow test src/modules/x.co` holds a module's locals
   to the reserved names (`keys`, `read`, an import's export) where the
   module inlined into a program is not held: test the module itself.
+- The top level is lowered one statement at a time in the scan
+  (`provisional(Pass::Scan, None, [stmt])`) and whole in the final pass:
+  a rule that reads the block (`grown_by_push`, a literal of whole numbers
+  grown or written by position made a list of ints) sees a statement
+  alone first, so what the final pass decides the scan must have settled
+  (`settled_entry` widens a vector of ints given a float, or the final
+  pass's list of ints met the float: parity 358). A loop's
+  `pre_join_loop` joins a tensor's or a frame's details with what the body
+  leaves (`join_detailed`), never whether the value can fail: a loop
+  pushing a value that can fail onto a tensor had made the variable one
+  that can, and the lowered program disagreed with itself (parity 351).
+  `refuses_failed` holds a tensor of known numbers and unknown length as
+  decided, as it does an open list.
+- Threads a program's work runs on get the program's stack
+  (`crow_runtime::stops::STACK`): rayon's shared pool through
+  `cores::deep_stacks` (both mains call it before the program's thread
+  starts) and every pool `cores::pool` makes. A new place that starts
+  threads gives them that stack, or a recursion inside a parallel loop
+  aborts the process at rayon's two megabytes (parity 355).
+- A name the compiled program may not declare as written is renamed by
+  `rust_names` (Rust's keywords, the generated `state`, the types and
+  traits the generated code names bare — `RUST_TYPE_NAMES` — and any
+  `Crow…` or `crow_…` name of the program's), records included; a
+  renamed record is registered in `DECLARED_RECORDS` before the renamed
+  program is lowered, so it shows and is `type`d as declared (parity 354).
+- The settle pass meets a body in order, so what a later line says of a
+  local is unknown where an earlier line used it: a holder pushed a list
+  before the list's own items were known (`groups = push[groups, group]`
+  while `group` is `[]`) is linked to it (`items_of`) and typed when the
+  list settles (parity 383); a function's answer joined across rounds
+  takes the body's form once every item is known (`finish_body`'s
+  `numbers_reformed`: an early round's list guess had stayed beside the
+  body's vector, parity 378). A failure made where it is held
+  (`error[…]`, a core form of no value) takes the type of its place —
+  a list's item, a pushed item (`failure_as`) — or the compiled program
+  holds `()` there; and `held_as` converts lists whose items hold
+  numbers the other way at any depth with a collecting loop over a
+  hidden `_heldN` (parity 382).
+- A loop's condition runs before every round: the width pass reads a
+  `while` condition's calls after the body's assigned variables are reset
+  to their places' ranges (read before, `while not check[big]` held a
+  doubling `big` in 64 bits: parity 417), and the walker puts the `while`
+  line back before each check (a stop there had named the body's last
+  line: parity 418). The move pass lets a `return` move what the
+  function's own block may (`place_moves_leaving`: inside a loop only the
+  body's names move, but nothing runs after a return), and reads `let _t
+  = f[x, …]` / `propagate _t (into x)` / `x = unwrap move _t` as `x =
+  f[x]`. A path write grows a tensor where it lies as it does a list
+  (`Row::grows_in_place`; the emitter takes it with `std::mem::take`, so
+  `CrowTensor` has a `Default`, an empty vector).

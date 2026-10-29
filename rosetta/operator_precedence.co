@@ -1,0 +1,140 @@
+--- Rosetta Code: Operator precedence
+--- https://rosettacode.org/wiki/Operator_precedence
+--- Crow's operators from the tightest binding to the loosest, as the language
+--- specification (section 4, Operators) and its parser give them, then each
+--- level shown by an example Crow computes, beside the grouping it reads as and
+--- another grouping. Every example is asserted, so the program stops if Crow
+--- ever reads one another way. Arguments are passed by value, shown last.
+
+struct Level [operators, associativity, notes]
+
+fn levels[]
+    return [
+        Level['( )  [ ]  map[ ]', 'n/a', 'grouping; a list or a map written down'],
+        Level['f[x]  xs[i]  r.field', 'left', 'a call, an index and a field, read left to right'],
+        Level['^  .^', 'right', 'a power; the exponent may carry a sign: 2 ^ -1'],
+        Level['-  not', 'right', 'prefixes: -x, not b (and not (x eq y) for a comparison)'],
+        Level['*  /  %  .*  ./', 'left', 'times, divide (ints cut toward zero), remainder'],
+        Level['+  -', 'left', 'plus and minus'],
+        Level['then', 'left', 'x then f[a] is f[x, a]'],
+        Level['eq  ne  lt  gt  lte  gte  in  not in', 'left', 'comparisons and membership'],
+        Level['and', 'left', 'the right side runs only where the left does not decide'],
+        Level['or', 'left', 'the right side runs only where the left does not decide']
+    ]
+
+fn show_table[]
+    log['level  operators                             associativity  notes']
+    rows = levels[]
+    for i in range[len[rows]]
+        row = rows[i]
+        level = fmt[i + 1, width = 5]
+        ops = fmt[row.operators, width = 38]
+        assoc = fmt[row.associativity, width = 13]
+        log['`level`  `ops` `assoc`  `row.notes`']
+
+--- an example: what is written and its value, the grouping it reads as, and
+--- another grouping with what that one would be
+fn example[written, value, reads, other, other_value]
+    log['  `written`  is `value`: read as `reads`; `other` would be `other_value`']
+
+--- an example with only its value and a word on it
+fn plain[written, value, note]
+    log['  `written`  is `value`: `note`']
+
+--- answers 1, saying it was called: the order of evaluation shows
+fn noted[name]
+    log['    evaluated `name`']
+    return 1
+
+--- writes into the list and the record it is handed, and shows them
+fn changed[xs, p]
+    xs[0] = 99
+    p.x = 99
+    log['  inside the function: `xs` and `p`']
+
+struct Point [x, y]
+
+log['Crow\'s operators, from the tightest binding to the loosest:']
+log['']
+show_table[]
+log['']
+log['Assignment (=, and a, b = x, y) is a statement, not an operator.']
+log['']
+
+xs = [3, 4]
+log['Level 2 before 3: an index binds before a power.']
+example['xs[1] ^ 2', str[xs[1] ^ 2], '(xs[1]) ^ 2', 'xs[(1 ^ 2)]', str[xs[1 ^ 2]]]
+assert[xs[1] ^ 2 eq (xs[1]) ^ 2]
+log['Level 2 reads left to right: a call, then an index of its answer.']
+plain['split[\'a bc\', \' \'][1]', split['a bc', ' '][1], 'the call first, then the index of its answer']
+assert[split['a bc', ' '][1] eq 'bc']
+
+log['Level 3 is right-associative.']
+example['2 ^ 3 ^ 2', str[2 ^ 3 ^ 2], '2 ^ (3 ^ 2)', '(2 ^ 3) ^ 2', str[(2 ^ 3) ^ 2]]
+assert[2 ^ 3 ^ 2 eq 2 ^ (3 ^ 2)]
+plain['2.0 ^ -1', str[2.0 ^ -1], 'the exponent carries its own sign']
+assert[2.0 ^ -1 eq 0.5]
+
+log['Level 3 before 4: a power binds before the minus sign in front of it.']
+example['-3 ^ 2', str[-3 ^ 2], '-(3 ^ 2)', '(-3) ^ 2', str[(-3) ^ 2]]
+assert[-3 ^ 2 eq -(3 ^ 2)]
+log['Level 4 before 8 and 9: not binds before a comparison and before and, so']
+log['not of a comparison is written with parentheses, not (x eq y).']
+example['not false and false', str[not false and false], '(not false) and false', 'not (false and false)', str[not (false and false)]]
+assert[(not false and false) eq ((not false) and false)]
+
+log['Level 5 before 6: times before plus.']
+example['2 + 3 * 4', str[2 + 3 * 4], '2 + (3 * 4)', '(2 + 3) * 4', str[(2 + 3) * 4]]
+assert[2 + 3 * 4 eq 2 + (3 * 4)]
+log['Level 5 is left-associative, % with * and /.']
+example['24 / 4 / 2', str[24 / 4 / 2], '(24 / 4) / 2', '24 / (4 / 2)', str[24 / (4 / 2)]]
+example['7 * 3 % 4', str[7 * 3 % 4], '(7 * 3) % 4', '7 * (3 % 4)', str[7 * (3 % 4)]]
+assert[24 / 4 / 2 eq (24 / 4) / 2 and 7 * 3 % 4 eq (7 * 3) % 4]
+log['Level 6 is left-associative.']
+example['10 - 4 - 3', str[10 - 4 - 3], '(10 - 4) - 3', '10 - (4 - 3)', str[10 - (4 - 3)]]
+assert[10 - 4 - 3 eq (10 - 4) - 3]
+
+log['Level 6 before 7: then takes the whole sum.']
+example['2 + 3 then str', 2 + 3 then str, 'str[2 + 3]', '2 + str[3]', 'refused: text is no number']
+assert[(2 + 3 then str) eq str[2 + 3]]
+log['Level 7 before 8: then before a comparison.']
+example['16 then sqrt eq 4.0', str[16 then sqrt eq 4.0], 'sqrt[16] eq 4.0', 'sqrt[16 eq 4.0]', 'refused: a truth has no root']
+assert[16 then sqrt eq 4.0]
+log['Level 7 chains left to right.']
+plain['\'b c a\' then split[\' \'] then sort', str['b c a' then split[' '] then sort], 'sort[split[\'b c a\', \' \']]']
+assert[('b c a' then split[' '] then sort) eq ['a', 'b', 'c']]
+
+log['Level 6 before 8: arithmetic before a comparison or membership.']
+example['1 + 2 eq 3', str[1 + 2 eq 3], '(1 + 2) eq 3', '1 + (2 eq 3)', 'refused: a truth is no number']
+assert[1 + 2 eq 3]
+example['2 + 2 in [3, 4]', str[2 + 2 in [3, 4]], '(2 + 2) in [3, 4]', '2 + (2 in [3, 4])', 'refused']
+assert[2 + 2 in [3, 4]]
+log['Level 8 is left-associative.']
+example['1 lt 2 eq true', str[1 lt 2 eq true], '(1 lt 2) eq true', '1 lt (2 eq true)', 'refused: a number is no truth']
+assert[1 lt 2 eq true]
+log['  so 1 lt x lt 3 is no range test: (1 lt x) lt 3 is refused, a truth having no order']
+
+log['Level 8 before 9 before 10: comparisons, then and, then or.']
+example['true or true and false', str[true or true and false], 'true or (true and false)', '(true or true) and false', str[(true or true) and false]]
+assert[true or true and false]
+example['1 gt 2 or 3 lt 4', str[1 gt 2 or 3 lt 4], '(1 gt 2) or (3 lt 4)', '1 gt (2 or 3) lt 4', 'refused']
+assert[1 gt 2 or 3 lt 4]
+log['and and or decide from the left: the right side runs only where it must.']
+ys = [1, 2]
+guarded = len[ys] gt 5 and ys[5] gt 0
+plain['len[ys] gt 5 and ys[5] gt 0', str[guarded], 'ys has two items, and ys[5] is never read']
+assert[not guarded]
+
+log['Every other operator computes its left side first, then its right:']
+total = noted['left'] + noted['right'] * noted['third']
+plain['noted[\'left\'] + noted[\'right\'] * noted[\'third\']', str[total], 'evaluated left to right, multiplied before added']
+assert[total eq 2]
+
+log['']
+log['Arguments are passed by value: a function that writes into its list and its']
+log['record changes its own copies, never its caller\'s.']
+numbers = [1, 2, 3]
+point = Point[1, 2]
+changed[numbers, point]
+log['  the caller\'s afterwards: `numbers` and `point`']
+assert[numbers eq [1, 2, 3] and point.x eq 1]

@@ -1,0 +1,51 @@
+--- Rosetta Code: Euler's sum of powers conjecture
+--- https://rosettacode.org/wiki/Euler's_sum_of_powers_conjecture
+--- Meet in the middle: every sum a^5 + b^5 of two fifth powers below 250^5 goes
+--- into a map, then for each y and each pair c < d the rest y^5 - c^5 - d^5 is
+--- looked up there with b < c. The whole range is searched, so the answer shown
+--- is the only one with every number below 250.
+
+fn fifth_powers[n]
+    powers = for i in range[n]
+        i ^ 5
+    return powers
+
+fn pair_sums[p]
+    --- every a^5 + b^5 with 0 < a < b, mapped to the pair written as a * 1000 + b
+    sums = map[]
+    a = 1
+    while a lt len[p]
+        b = a + 1
+        while b lt len[p]
+            sums = set[sums, p[a] + p[b], a * 1000 + b]
+            b = b + 1
+        a = a + 1
+    return sums
+
+fn search[p, sums]
+    --- every a < b < c < d < y with a^5 + b^5 + c^5 + d^5 = y^5
+    found = []
+    y = 4
+    while y lt len[p]
+        c = 3
+        while c lt y - 1
+            --- d walks down from y - 1; the rest grows as d falls, and once it
+            --- reaches 2 c^5 no pair a < b < c can make it
+            d = y - 1
+            while d gt c and p[y] - p[c] - p[d] lt 2 * p[c]
+                rest = p[y] - p[c] - p[d]
+                if rest gt 0 and rest in sums
+                    pair = sums[rest]
+                    if pair % 1000 lt c
+                        found = push[found, [pair / 1000, pair % 1000, c, d, y]]
+                d = d - 1
+            c = c + 1
+        y = y + 1
+    return found
+
+p = fifth_powers[250]
+found = search[p, pair_sums[p]]
+for s in found
+    log['`s[0]`^5 + `s[1]`^5 + `s[2]`^5 + `s[3]`^5 = `s[4]`^5']
+    log['`p[s[0]]` + `p[s[1]]` + `p[s[2]]` + `p[s[3]]` = `p[s[4]]`']
+log['Solutions with every number below 250: `len[found]`']

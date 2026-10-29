@@ -1,0 +1,50 @@
+Key: Playfair example   (J = I)
+    P L A Y F
+    I R E X M
+    B C D G H
+    K N O Q S
+    T U V W Z
+Message: Hide the gold in...the TREESTUMP!!!
+Encoded: BM OD ZB XD NA BE KU DM UI XM MO UV IF
+Decoded: HI DE TH EG OL DI NT HE TR EX ES TU MP
+
+Key: Playfair example   (no Q)
+    P L A Y F
+    I R E X M
+    B C D G H
+    J K N O S
+    T U V W Z
+Message: Hide the gold in...the TREESTUMP!!!
+Encoded: BM ND ZB XD KY BE JV DM UI XM MN UV IF
+Decoded: HI DE TH EG OL DI NT HE TR EX ES TU MP
+
+Key: Monarchy   (J = I)
+    M O N A R
+    C H Y B D
+    E F G I K
+    L P Q S T
+    U V W X Z
+Message: Instruments jump quickly over the fixed taxi exit
+Encoded: GA TL MZ CL RQ XS MC QS XE DE QC HO KM PD FG SA KC SR AS IU KS
+Decoded: IN ST RU ME NT SI UM PQ UI CK LY OV ER TH EF IX ED TA XI EX IT
+
+Key: Monarchy   (no Q)
+    M O N A R
+    C H Y B D
+    E F G I J
+    K L P S T
+    U V W X Z
+Message: Instruments jump quickly over the fixed taxi exit
+Encoded: GA TK MZ CK RP TI MC KW EB LP HN UF DZ CF GJ UI JZ BA JF AS SZ
+Decoded: IN ST RU ME NT SJ UM PU IC KL YO VE RT HE FI XE DT AX IE XI TX
+
+Key: Playfair example   (J = I)
+    P L A Y F
+    I R E X M
+    B C D G H
+    K N O Q S
+    T U V W Z
+Message: Jinx box xx
+Encoded: RM RK IG QE MW MW
+Decoded: IX IN XB OX XZ XZ
+

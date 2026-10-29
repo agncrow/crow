@@ -1,0 +1,131 @@
+--- Rosetta Code: Summarize and say sequence
+--- https://rosettacode.org/wiki/Summarize_and_say_sequence
+--- A term after the first depends only on how many of each digit the term before
+--- holds, so the seeds whose digits are one multiset share every term after the
+--- first: one seed per multiset (its digits largest first) is followed, the terms
+--- held as text, since they pass 64 bits. A seed counts the terms that follow it
+--- until one repeats, plus itself, unless it is itself one of those terms; only
+--- then are a multiset's seeds written out one by one.
+
+use bits
+
+fn digit_counts[t]
+    counts = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    for c in split[t, '']
+        k = code[c] - 48
+        counts[k] = counts[k] + 1
+    return counts
+
+--- each digit t holds, largest first, after how many times it holds it
+fn summarize[t]
+    counts = digit_counts[t]
+    text = ''
+    d = 9
+    while d gte 0
+        if counts[d] gt 0
+            text = '`text``counts[d]``d`'
+        d = d - 1
+    return text
+
+--- the terms after the seed, up to the first that repeats one of them
+fn followers[seed]
+    terms = []
+    t = summarize[seed]
+    while t not in terms
+        terms = push[terms, t]
+        t = summarize[t]
+    return terms
+
+--- how many terms the sequence of seed has before one is seen again
+fn iterations[seed, tail]
+    k = 0
+    while k lt len[tail]
+        if tail[k] eq seed
+            return k + 1
+        k = k + 1
+    return len[tail] + 1
+
+--- the seeds of 1 to `places` digits whose digits are each no larger than the
+--- one before: one for each multiset of digits that can begin with no zero
+fn representatives[places]
+    level = for d in range[1, 10]
+        str[d]
+    found = level
+    p = 1
+    while p lt places
+        longer = []
+        for s in level
+            last = code[s[-1]] - 48
+            for d in range[last + 1]
+                longer = push[longer, '`s``d`']
+        level = longer
+        found = concat[found, level]
+        p = p + 1
+    return found
+
+--- every distinct order of the digits counted in counts after prefix, `left` of
+--- them still to place, with no zero first
+fn arrangements[prefix, counts, left]
+    if left eq 0
+        return [prefix]
+    found = []
+    for d in range[10]
+        if counts[d] gt 0 and (prefix ne '' or d gt 0)
+            rest = counts
+            rest[d] = rest[d] - 1
+            found = concat[found, arrangements['`prefix``d`', rest, left - 1]]
+    return found
+
+fn seeds_of[rep]
+    return arrangements['', digit_counts[rep], len[rep]]
+
+--- the most iterations a seed of the multiset of rep takes: one more than the
+--- terms that follow where none of them is a seed of it, else each seed's own
+fn most_of[rep, tail]
+    counts = digit_counts[rep]
+    k = 0
+    while k lt len[tail] and digit_counts[tail[k]] ne counts
+        k = k + 1
+    if k eq len[tail]
+        return len[tail] + 1
+    most = 0
+    for s in seeds_of[rep]
+        most = max[most, iterations[s, tail]]
+    return most
+
+zero_tail = followers['0']
+zero_count = iterations['0', zero_tail]
+log['Seed 0 settles on `zero_tail[-1]` after `zero_count` iterations']
+log['']
+
+limit = 6
+best = 0
+winners = []
+for rep in representatives[limit]
+    tail = followers[rep]
+    most = most_of[rep, tail]
+    if most gt best
+        best = most
+        winners = [rep]
+    else if most eq best
+        winners = push[winners, rep]
+
+seeds = []
+for rep in winners
+    tail = followers[rep]
+    for s in seeds_of[rep]
+        if iterations[s, tail] eq best
+            seeds = push[seeds, int[s]]
+seeds = sort[seeds]
+shown = for s in seeds
+    str[s]
+listed = join[shown, ' ']
+log['Seed value(s) under 1000000: `listed`']
+log['']
+log['Iterations: `best`']
+log['']
+first = str[seeds[0]]
+log['Sequence (the same for every seed after the first term):']
+log[first]
+for t in slice[followers[first], 0, best - 1]
+    log[t]

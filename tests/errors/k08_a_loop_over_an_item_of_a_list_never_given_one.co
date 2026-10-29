@@ -1,0 +1,11 @@
+--- An item of a list no item is ever put into has no kind, and a loop
+--- over it has none to walk: refused before the program runs, in both
+--- modes. The interpreter had run no rounds and gone on, and the compiled
+--- program, holding the item as text, did not build (Rosetta Code,
+--- Tropical algebra overloading)
+
+e = []
+for row in e
+    for t in row
+        log[t]
+log['done']

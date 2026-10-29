@@ -1,0 +1,19 @@
+--- a local a collecting loop yields (`none = []` then `none`) is declared
+--- as the loop's items are once a later write types them: it had stayed a
+--- list of nothing known, compiled as one of text beside the list of ints
+--- the variable holds, which did not build (Rosetta Code, Hopcroft-Karp)
+
+adj = for u in range[3]
+    none = []
+    none
+adj[1] = push[adj[1], 7]
+log[adj]
+
+fn rows_of[n]
+    rows = for i in range[n]
+        row = []
+        row
+    rows[0] = push[rows[0], 2.5]
+    return rows
+
+log[rows_of[2]]

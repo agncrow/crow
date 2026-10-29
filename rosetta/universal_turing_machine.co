@@ -1,0 +1,144 @@
+--- Rosetta Code: Universal Turing machine
+--- https://rosettacode.org/wiki/Universal_Turing_machine
+--- A machine is described as the task writes it: its rules as (state, read, write, move,
+--- next) lines, its start, its halting states, its blank and its input. The description
+--- is turned into tables indexed by state and symbol numbers, and the tape is a list
+--- that doubles toward whichever end the head runs off, so it is as long as the run
+--- needs; the five-state busy beaver's 47 million steps are a loop of list reads.
+
+struct Machine [name, start, halts, blank, rules, input]
+
+struct Run [state, steps, tape, pos, lo, hi]
+
+fn index_of[xs, x]
+    i = 0
+    while i lt len[xs]
+        if xs[i] eq x
+            return i
+        i = i + 1
+    return -1
+
+--- Each word of a text, in order (the words are parted by single spaces).
+fn words[line]
+    return split[line, ' ']
+
+--- The machine's states, in the order the description first names them.
+fn states_of[m]
+    states = [m.start]
+    for line in m.rules
+        w = words[line]
+        for s in [w[0], w[4]]
+            if s not in states
+                states = push[states, s]
+    for s in m.halts
+        if s not in states
+            states = push[states, s]
+    return states
+
+--- The machine's symbols, the blank first.
+fn symbols_of[m]
+    symbols = [m.blank]
+    for line in m.rules
+        w = words[line]
+        for s in [w[1], w[2]]
+            if s not in symbols
+                symbols = push[symbols, s]
+    for s in m.input
+        if s not in symbols
+            symbols = push[symbols, s]
+    return symbols
+
+fn shown[r, states, symbols]
+    cells = []
+    for i in range[r.lo, r.hi + 1]
+        s = symbols[r.tape[i]]
+        if i eq r.pos
+            s = '[`s`]'
+        cells = push[cells, s]
+    tape = join[cells, ' ']
+    return '`fmt[states[r.state], width = 6, align = \'left\']``tape`'
+
+fn blanks[n]
+    cells = for i in range[n]
+        0
+    return cells
+
+--- Runs the machine to a halting state, or to a state and symbol no rule is for;
+--- with show, logs the tape before every step.
+fn run[m, show]
+    states = states_of[m]
+    symbols = symbols_of[m]
+    ns = len[symbols]
+    halting = for s in states
+        s in m.halts
+    --- the rule for state q reading symbol a is at q * ns + a; -1 where there is none
+    writes = for i in range[len[states] * ns]
+        0
+    moves = writes
+    nexts = for i in range[len[states] * ns]
+        -1
+    for line in m.rules
+        w = words[line]
+        k = index_of[states, w[0]] * ns + index_of[symbols, w[1]]
+        writes[k] = index_of[symbols, w[2]]
+        moves[k] = index_of[['left', 'stay', 'right'], w[3]] - 1
+        nexts[k] = index_of[states, w[4]]
+    tape = for s in m.input
+        index_of[symbols, s]
+    if len[tape] eq 0
+        tape = [0]
+    pos = 0
+    lo = 0
+    hi = len[tape] - 1
+    state = index_of[states, m.start]
+    steps = 0
+    while not halting[state]
+        if show
+            log[shown[Run[state, steps, tape, pos, lo, hi], states, symbols]]
+        k = state * ns + tape[pos]
+        if nexts[k] lt 0
+            break
+        tape[pos] = writes[k]
+        pos = pos + moves[k]
+        state = nexts[k]
+        steps = steps + 1
+        --- the head on a cell it has not been on before: the tape may need to grow
+        if pos lt lo
+            lo = pos
+            if pos lt 0
+                grown = len[tape]
+                tape = concat[blanks[grown], tape]
+                pos = pos + grown
+                lo = lo + grown
+                hi = hi + grown
+        else if pos gt hi
+            hi = pos
+            if pos eq len[tape]
+                tape = concat[tape, blanks[len[tape]]]
+    r = Run[state, steps, tape, pos, lo, hi]
+    if show
+        log[shown[r, states, symbols]]
+    return r
+
+fn report[m, show]
+    log[m.name]
+    states = states_of[m]
+    r = run[m, show]
+    ones = 0
+    for i in range[r.lo, r.hi + 1]
+        if r.tape[i] ne 0
+            ones = ones + 1
+    if not (states[r.state] in m.halts)
+        log['Stuck: no rule for state `states[r.state]` after `r.steps` steps.']
+    log['Halts in state `states[r.state]` after `fmt[r.steps, commas = true]` steps, `fmt[ones, commas = true]` non-blank cells on a tape of `fmt[r.hi - r.lo + 1, commas = true]` cells.']
+    log['']
+
+incrementer = Machine['Simple incrementer', 'q0', ['qf'], 'B', ['q0 1 1 right q0', 'q0 B 1 stay qf'], ['1', '1', '1']]
+
+beaver3 = Machine['Three-state busy beaver', 'a', ['halt'], '0', ['a 0 1 right b', 'a 1 1 left c', 'b 0 1 left a', 'b 1 1 right b', 'c 0 1 left b', 'c 1 1 stay halt'], []]
+
+beaver5 = Machine['Five-state, two-symbol probable busy beaver', 'A', ['H'], '0', ['A 0 1 right B', 'A 1 1 left C', 'B 0 1 right C', 'B 1 1 right B', 'C 0 1 right D', 'C 1 0 left E', 'D 0 1 left A', 'D 1 1 left D', 'E 0 1 stay H', 'E 1 0 left A'], []]
+
+report[incrementer, true]
+report[beaver3, true]
+report[beaver5, false]

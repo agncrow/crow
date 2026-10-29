@@ -363,7 +363,7 @@ pub fn interpolation_exprs(s: &str) -> Vec<Expr> {
             i = j + 1;
             if span.trim().is_empty() { continue; }
             if let Ok(tokens) = crate::lexer::Lexer::new(&span).tokenize() {
-                if let Ok(stmts) = crate::parser::Parser::new(tokens).parse() {
+                if let Ok(stmts) = crate::parser::Parser::for_fragment(tokens).parse() {
                     let stmts = crate::lower::lower_fragment(&stmts).unwrap_or(stmts);
                     for st in stmts {
                         if let Stmt::ExprStmt(e) = st { out.push(e); }

@@ -1,0 +1,30 @@
+--- Rosetta Code: Find the intersection of a line with a plane
+--- https://rosettacode.org/wiki/Find_the_intersection_of_a_line_with_a_plane
+--- The line is p + t d, and the plane holds the points x with n . (x - q) = 0, so
+--- t = n . (q - p) / (n . d): vectors are lists of numbers, which Crow's operators
+--- and math's dot read as tensors. A line whose direction is at right angles to the
+--- normal (n . d = 0) never meets the plane, or lies in it: an error value says which.
+
+use math
+
+fn intersection[p, d, q, n]
+    facing = dot[n, d]
+    if abs[facing] lt 0.000000001 * norm[n] * norm[d]
+        if abs[dot[n, q - p]] lt 0.000000001 * norm[n]
+            return error['the line lies in the plane', 'geometry']
+        return error['the line runs beside the plane and never meets it', 'geometry']
+    t = dot[n, q - p] / facing
+    return p + d * t
+
+fn report[p, d, q, n]
+    log['line through `p` along `d`, plane through `q` with normal `n`:']
+    point = intersection[p, d, q, n]
+    if point.ok
+        log['    they meet at `point`']
+    else
+        log['    `point.reason`']
+
+report[[0, 0, 10], [0, -1, -1], [0, 0, 5], [0, 0, 1]]
+report[[1, 2, 3], [1, 1, 1], [0, 0, 0], [1, 1, 1]]
+report[[0, 0, 10], [1, 1, 0], [0, 0, 5], [0, 0, 1]]
+report[[0, 0, 5], [1, 1, 0], [0, 0, 5], [0, 0, 1]]

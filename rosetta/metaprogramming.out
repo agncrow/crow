@@ -1,0 +1,15 @@
+A then chain, and the nested calls it is rewritten into:
+  fox brown quick the
+  fox brown quick the
+A chain as lines, '42' then int then n * n + 1: 1765
+Membership, rewritten to a call: e in vowels is true, e not in vowels is false
+One function, compiled once per kind of list it is called with:
+  the largest of 3, 41, 7 is 41
+  the largest of pear, apple, zucchini, fig is zucchini
+A group of functions, each applied to 7:
+  double 7 is 14
+  square 7 is 49
+  negate 7 is -7
+The kind of a value, asked as the program runs:
+  3 is int, 2.5 is float, a is str, true is bool
+  [1, 2] is array, map[a = 1] is map, Point[1, 2] is Point, double is fn

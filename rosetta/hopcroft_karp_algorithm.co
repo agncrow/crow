@@ -1,0 +1,180 @@
+--- Rosetta Code: Hopcroft-Karp Algorithm
+--- https://rosettacode.org/wiki/Hopcroft-Karp_Algorithm
+--- The task's pseudocode: the vertices of U are 1..m and those of V 1..n, and 0
+--- is NIL. A breadth-first search lays the free vertices of U, and the
+--- alternating paths from them, out in layers; depth-first searches along the
+--- layers then augment the matching by shortest vertex-disjoint paths, until no
+--- augmenting path is left. A function changes only its own copy of a value, so
+--- each search takes the state (the pairs and the layers) and answers it changed.
+--- A seeded random graph checks the result against plain augmenting paths.
+
+use math
+
+struct Graph [m, n, adj]
+struct State [pair_u, pair_v, dist, found]
+
+fn infinite[]
+    --- a distance no layer reaches
+    return 2 ^ 62
+
+fn graph[m, n, edges]
+    --- adj[u] holds the neighbours in V of the vertex u of U; NIL (0) has none
+    adj = for u in range[m + 1]
+        []
+    for edge in edges
+        adj[edge[0]] = push[adj[edge[0]], edge[1]]
+    return Graph[m, n, adj]
+
+fn nils[count]
+    unmatched = for i in range[count]
+        0
+    return unmatched
+
+fn bfs[g, s]
+    --- the free vertices of U are layer 0; s.found says whether a free vertex
+    --- of V (NIL) is reached
+    queue = []
+    for u in range[1, g.m + 1]
+        if s.pair_u[u] eq 0
+            s.dist[u] = 0
+            queue = push[queue, u]
+        else
+            s.dist[u] = infinite[]
+    s.dist[0] = infinite[]
+    head = 0
+    while head lt len[queue]
+        u = queue[head]
+        head = head + 1
+        if s.dist[u] lt s.dist[0]
+            for v in g.adj[u]
+                matched_u = s.pair_v[v]
+                if s.dist[matched_u] eq infinite[]
+                    s.dist[matched_u] = s.dist[u] + 1
+                    queue = push[queue, matched_u]
+    s.found = s.dist[0] ne infinite[]
+    return s
+
+fn dfs[g, s, u]
+    --- an augmenting path from u down the layers, the matching flipped along it;
+    --- s.found says whether there was one
+    if u eq 0
+        s.found = true
+        return s
+    neighbours = g.adj[u]
+    i = 0
+    while i lt len[neighbours]
+        v = neighbours[i]
+        matched_u = s.pair_v[v]
+        if s.dist[matched_u] eq s.dist[u] + 1
+            s = dfs[g, s, matched_u]
+            if s.found
+                s.pair_v[v] = u
+                s.pair_u[u] = v
+                return s
+        i = i + 1
+    s.dist[u] = infinite[]
+    s.found = false
+    return s
+
+fn hopcroft_karp[g]
+    --- the maximum matching, as the pairs of its vertices
+    s = State[nils[g.m + 1], nils[g.n + 1], nils[g.m + 1], false]
+    s = bfs[g, s]
+    while s.found
+        for u in range[1, g.m + 1]
+            if s.pair_u[u] eq 0
+                s = dfs[g, s, u]
+        s = bfs[g, s]
+    return s.pair_u
+
+fn matching_size[pair_u]
+    matched = for u in range[1, len[pair_u]]
+        if pair_u[u] ne 0
+            u
+    return len[matched]
+
+fn shown_pairs[pair_u]
+    pairs = for u in range[1, len[pair_u]]
+        if pair_u[u] ne 0
+            '(`u`, `pair_u[u]`)'
+    return join[pairs, ' ']
+
+--- plain augmenting paths, one at a time (Kuhn's algorithm), for the check
+struct Search [pair_v, seen, found]
+
+fn augment[g, k, u]
+    --- try to match u along an augmenting path; k.found says whether it was
+    neighbours = g.adj[u]
+    i = 0
+    while i lt len[neighbours]
+        v = neighbours[i]
+        if not k.seen[v]
+            k.seen[v] = true
+            w = k.pair_v[v]
+            k.found = w eq 0
+            if not k.found
+                k = augment[g, k, w]
+            if k.found
+                k.pair_v[v] = u
+                return k
+        i = i + 1
+    k.found = false
+    return k
+
+fn unseen[count]
+    seen = for i in range[count]
+        false
+    return seen
+
+fn kuhn_size[g]
+    k = Search[nils[g.n + 1], [], false]
+    size = 0
+    for u in range[1, g.m + 1]
+        k.seen = unseen[g.n + 1]
+        k = augment[g, k, u]
+        if k.found
+            size = size + 1
+    return size
+
+fn check[number, m, n, edges, expected]
+    size = matching_size[hopcroft_karp[graph[m, n, edges]]]
+    log['Test `number`: result = `size`, expected = `expected`']
+    return size eq expected
+
+fn is_true[b]
+    return b
+
+log['Running tests...']
+complete = for i in range[9]
+    [i / 3 + 1, i % 3 + 1]
+passed = [
+    check[1, 3, 5, [[1, 4]], 1],
+    check[2, 6, 6, [[1, 4], [1, 5], [5, 1]], 2],
+    check[3, 3, 3, complete, 3],
+    check[4, 2, 2, [], 0]
+]
+if all[passed, is_true]
+    log['All tests passed!']
+else
+    log['A test failed.']
+
+log['']
+m, n = 4, 4
+edges = [[1, 1], [1, 3], [2, 3], [3, 4], [4, 3], [4, 2]]
+log['A graph of m = `m` and n = `n` vertices, with `len[edges]` edges:']
+for edge in edges
+    log['  (`edge[0]`, `edge[1]`)']
+pair_u = hopcroft_karp[graph[m, n, edges]]
+log['Maximum matching size is `matching_size[pair_u]`: `shown_pairs[pair_u]`']
+
+log['']
+seed[7]
+m, n = 2000, 2000
+random_edges = []
+for u in range[1, m + 1]
+    for k in range[3]
+        random_edges = push[random_edges, [u, rand[1, n]]]
+g = graph[m, n, random_edges]
+log['A seeded random graph of `m` + `n` vertices and `len[random_edges]` edges:']
+log['  Hopcroft-Karp matches `matching_size[hopcroft_karp[g]]` pairs']
+log['  plain augmenting paths, one at a time, match `kuhn_size[g]`']

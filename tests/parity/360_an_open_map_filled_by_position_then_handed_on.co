@@ -1,0 +1,21 @@
+--- a map given `map[]` and filled only by `m[k] = v` at the top level,
+--- then handed to a function: the top level is scanned before it settles,
+--- and the call had typed the parameter by the open map (`Map(?)`) — the
+--- compiled program did not build
+fn size_of[m]
+    return len[m]
+
+fn total[m]
+    t = 0
+    for k in keys[m]
+        t = t + m[k]
+    return t
+
+m = map[]
+m['a'] = 1
+m['b'] = 41
+log[size_of[m]]
+log[total[m]]
+counts = map[]
+counts[3] = 'x'
+log[size_of[counts]]

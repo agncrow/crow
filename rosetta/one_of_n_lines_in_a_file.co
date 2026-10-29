@@ -1,0 +1,65 @@
+--- Rosetta Code: One of n lines in a file
+--- https://rosettacode.org/wiki/One_of_n_lines_in_a_file
+--- Reservoir sampling of one line: the k-th line takes the place of the choice
+--- when a uniform draw in [0, 1) is below 1/k. A seeded million runs over a
+--- ten-line file count how often each line is chosen; then the same rule picks
+--- a line of standard input, read once, a line at a time, its length unknown.
+
+use math
+
+--- the line (counted from 1) chosen from a file of n lines
+fn one_of_n[n]
+    choice = 1
+    k = 2
+    while k lte n
+        if rand[] lt 1.0 / k
+            choice = k
+        k = k + 1
+    choice
+
+--- how many times each of n lines is chosen in the given number of runs
+fn tally[n, runs]
+    counts = for i in range[n]
+        0
+    t = 0
+    while t lt runs
+        line = one_of_n[n] - 1
+        counts[line] = counts[line] + 1
+        t = t + 1
+    counts
+
+--- Pearson's chi-squared statistic of the counts against equal shares
+fn chi_squared[counts, runs]
+    expected = 1.0 * runs / len[counts]
+    total = 0.0
+    for c in counts
+        total = total + (c - expected) ^ 2 / expected
+    total
+
+--- one line of standard input, each line read once and none kept but the choice
+fn one_of_input[]
+    choice = input[]
+    k = 2
+    line = input[]
+    while line.ok
+        if rand[] lt 1.0 / k
+            choice = line
+        k = k + 1
+        line = input[]
+    choice
+
+seed[2026]
+runs = 1000000
+counts = tally[10, runs]
+log['How often each line of a 10-line file is chosen in `fmt[runs, commas = true]` runs:']
+for i in range[10]
+    share = fmt[100.0 * counts[i] / runs, decimals = 3, width = 6]
+    log['line `fmt[i + 1, width = 2]`: `fmt[counts[i], width = 7, commas = true]`  (`share`%)']
+statistic = fmt[chi_squared[counts, runs], decimals = 2]
+log['chi-squared `statistic` with 9 degrees of freedom (16.92 at the 5% level)']
+
+picked = one_of_input[]
+if picked.ok
+    log['A line chosen from standard input: `picked`']
+else
+    log['Standard input is empty, so no line is chosen']

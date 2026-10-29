@@ -1,0 +1,87 @@
+--- Rosetta Code: Chaos game
+--- https://rosettacode.org/wiki/Chaos_game
+--- From a random point inside an equilateral triangle, each step moves halfway
+--- to a corner picked at random. The points are drawn twice: as a picture in
+--- characters on the console, and as a plain PGM image, chaos_game.pgm, in the
+--- current directory. The draws are seeded, so every run draws the same.
+
+use math
+
+struct Point [x, y]
+
+--- the corners, the base along the bottom of the unit square
+fn corners[]
+    return [Point[0.0, 0.0], Point[1.0, 0.0], Point[0.5, sqrt[3.0] / 2.0]]
+
+--- a point inside the triangle abc: two random weights, folded back into the
+--- triangle when they fall in the other half of the parallelogram
+fn random_inside[a, b, c]
+    u = rand[]
+    v = rand[]
+    if u + v gt 1.0
+        u = 1.0 - u
+        v = 1.0 - v
+    x = a.x + u * (b.x - a.x) + v * (c.x - a.x)
+    y = a.y + u * (b.y - a.y) + v * (c.y - a.y)
+    return Point[x, y]
+
+fn chaos_game[count]
+    tri = corners[]
+    p = random_inside[tri[0], tri[1], tri[2]]
+    points = []
+    i = 0
+    while i lt count
+        corner = tri[rand[3]]
+        p = Point[(p.x + corner.x) / 2.0, (p.y + corner.y) / 2.0]
+        points = push[points, p]
+        i = i + 1
+    return points
+
+--- the points on a grid of cells, row 0 at the top: true where a point fell
+fn raster[points, width, height]
+    top = sqrt[3.0] / 2.0
+    cells = for i in range[width * height]
+        false
+    for p in points
+        col = round[p.x * float[width - 1]]
+        row = height - 1 - round[p.y / top * float[height - 1]]
+        cells[row * width + col] = true
+    return cells
+
+--- the line without its trailing spaces
+fn trim_end[line]
+    last = len[line]
+    while last gt 0 and line[last - 1] eq ' '
+        last = last - 1
+    return slice[line, 0, last]
+
+fn picture[points, width, height]
+    cells = raster[points, width, height]
+    lines = for row in range[height]
+        marks = for col in range[width]
+            if cells[row * width + col]
+                '*'
+            else
+                ' '
+        trim_end[join[marks, '']]
+    return lines
+
+--- a plain PGM image: black points on white
+fn write_pgm[path, points, width, height]
+    cells = raster[points, width, height]
+    rows = for row in range[height]
+        greys = for col in range[width]
+            if cells[row * width + col]
+                '0'
+            else
+                '255'
+        join[greys, ' ']
+    body = join[rows, '\n']
+    return write[path, 'P2\n`width` `height`\n255\n`body`\n']
+
+seed[2026]
+points = chaos_game[50000]
+for line in picture[slice[points, 0, 5000], 78, 34]
+    log[line]
+written = write_pgm['chaos_game.pgm', points, 600, 520]
+log['50000 points drawn into chaos_game.pgm (600 x 520)']

@@ -1,0 +1,13 @@
+Enter 11 numbers, one or more a line:
+'two' is not a number: left out.
+f(98465465) is too large: alert!
+f(5) is too large: alert!
+f(4.5) is too large: alert!
+f(3) = 136.73205080756887
+f(2) = 41.41421356237309
+f(1) = 6
+f(-8456) = -3023186413988.0435
+f(0) = 0
+f(465) is too large: alert!
+f(532) is too large: alert!
+f(1) = 6

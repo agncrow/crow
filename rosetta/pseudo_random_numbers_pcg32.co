@@ -1,0 +1,58 @@
+--- Rosetta Code: Pseudo-random numbers/PCG32
+--- https://rosettacode.org/wiki/Pseudo-random_numbers/PCG32
+--- The generator is a value: a record of the 64-bit state and the increment. value
+--- reads the number the state stands for and step answers the next state, so next_int
+--- is value, then step. Crow's ints grow, so the U64 and U32 of the pseudo-code are
+--- masks with bitand: x modulo 2 ^ 64 and 2 ^ 32, and >> is a shift by a negative count.
+
+use bits
+
+struct Pcg [state, inc]
+
+fn u64[x]
+    return bitand[x, 2 ^ 64 - 1]
+
+fn u32[x]
+    return bitand[x, 2 ^ 32 - 1]
+
+fn multiplier[]
+    return 6364136223846793005
+
+fn seeded[seed_state, seed_sequence]
+    inc = u64[bitor[shift[seed_sequence, 1], 1]]
+    return Pcg[u64[(inc + seed_state) * multiplier[] + inc], inc]
+
+fn step[g]
+    return Pcg[u64[g.state * multiplier[] + g.inc], g.inc]
+
+--- the 32-bit output of a state: an xorshift, then a rotation by its top five bits
+fn value[g]
+    s = g.state
+    xs = u32[shift[bitxor[shift[s, -18], s], -27]]
+    rot = shift[s, -59]
+    return u32[bitor[shift[xs, -rot], shift[xs, bitand[-rot, 31]]]]
+
+fn as_float[g]
+    return float[value[g]] / float[2 ^ 32]
+
+g = seeded[42, 54]
+log['Seed 42, 54, the first five integers:']
+k = 0
+while k lt 5
+    log[value[g]]
+    g = step[g]
+    k = k + 1
+
+g = seeded[987654321, 1]
+counts = [0, 0, 0, 0, 0]
+k = 0
+while k lt 100000
+    slot = floor[as_float[g] * 5.0]
+    counts[slot] = counts[slot] + 1
+    g = step[g]
+    k = k + 1
+log['']
+log['Seed 987654321, 1, floor(next_float * 5) over 100,000 draws:']
+parts = for i in range[5]
+    '`i`: `counts[i]`'
+log[join[parts, ', ']]

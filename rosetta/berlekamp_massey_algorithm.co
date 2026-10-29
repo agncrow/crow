@@ -1,0 +1,148 @@
+--- Rosetta Code: Berlekamp–Massey algorithm
+--- https://rosettacode.org/wiki/Berlekamp–Massey_algorithm
+--- Massey's form over GF(p), p prime: C(x) and the saved B(x) are lists of
+--- coefficients, a discrepancy is divided out with Fermat's inverse d^(p-2).
+--- The task's own example has linear complexity 4, not 3: the Python entry's
+--- output 1 1 0 1 is the recurrence s(n) = s(n-1) + s(n-2) + s(n-4), which some
+--- entries then read as the polynomial 1 + x + x^3. The register built from the
+--- answer regenerates each sequence, which checks it.
+
+struct Register [length, poly]
+
+fn residue[x, p]
+    --- x reduced into 0 … p-1 (the remainder keeps the sign of x)
+    return (x % p + p) % p
+
+fn power_mod[base, exponent, p]
+    result = 1
+    b = residue[base, p]
+    e = exponent
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % p
+        b = b * b % p
+        e = e / 2
+    return result
+
+fn polynomial_one[size]
+    --- the polynomial 1, held as `size` coefficients
+    poly = [1]
+    while len[poly] lt size
+        poly = push[poly, 0]
+    return poly
+
+fn berlekamp_massey[s, p]
+    n = len[s]
+    c = polynomial_one[n + 1]
+    b = polynomial_one[n + 1]
+    l = 0
+    m = 1
+    last = 1
+    for i in range[n]
+        d = residue[s[i], p]
+        for k in range[1, l + 1]
+            d = (d + c[k] * s[i - k]) % p
+        if d eq 0
+            m = m + 1
+        else
+            saved = c
+            scale = d * power_mod[last, p - 2, p] % p
+            for k in range[0, n + 1 - m]
+                c[k + m] = residue[c[k + m] - scale * b[k], p]
+            if 2 * l lte i
+                l = i + 1 - l
+                b = saved
+                last = d
+                m = 1
+            else
+                m = m + 1
+    return Register[l, slice[c, 0, l + 1]]
+
+fn run[register, seed, count, p]
+    --- the register loaded with the first terms, then stepped to `count` terms
+    s = slice[seed, 0, register.length]
+    while len[s] lt count
+        n = len[s]
+        total = 0
+        for k in range[1, register.length + 1]
+            total = total + register.poly[k] * s[n - k]
+        s = push[s, residue[0 - total, p]]
+    return s
+
+fn balanced[c, p]
+    --- a coefficient shown nearest zero: p - 1 is -1
+    if c gt p / 2
+        return c - p
+    return c
+
+fn times[c, name]
+    if c eq 1
+        return name
+    return '`c``name`'
+
+fn monomial[k]
+    if k eq 1
+        return 'x'
+    return 'x^`k`'
+
+fn polynomial_text[poly, p]
+    text = '1'
+    for k in range[1, len[poly]]
+        c = balanced[poly[k], p]
+        if c gt 0
+            text = '`text` + `times[c, monomial[k]]`'
+        else if c lt 0
+            text = '`text` - `times[0 - c, monomial[k]]`'
+    return text
+
+fn recurrence_text[poly, p]
+    text = ''
+    for k in range[1, len[poly]]
+        c = balanced[residue[0 - poly[k], p], p]
+        term = 's(n-`k`)'
+        if c ne 0
+            if text eq ''
+                if c lt 0
+                    text = '-`times[0 - c, term]`'
+                else
+                    text = times[c, term]
+            else if c gt 0
+                text = '`text` + `times[c, term]`'
+            else
+                text = '`text` - `times[0 - c, term]`'
+    if text eq ''
+        text = '0'
+    return 's(n) = `text`'
+
+fn spaced[xs]
+    parts = for x in xs
+        str[x]
+    return join[parts, ' ']
+
+fn show[title, s, p, extra]
+    register = berlekamp_massey[s, p]
+    again = run[register, s, len[s] + extra, p]
+    log['`title`, over GF(`p`):']
+    log['  sequence:      `spaced[s]`']
+    log['  C(x) = `polynomial_text[register.poly, p]`, linear complexity `register.length`']
+    log['  recurrence:    `recurrence_text[register.poly, p]`']
+    log['  the register:  `spaced[slice[again, 0, len[s]]]` | `spaced[slice[again, len[s], len[again]]]`']
+    if slice[again, 0, len[s]] eq s
+        log['  it regenerates the sequence']
+    else
+        log['  it does NOT regenerate the sequence']
+    log['']
+    return register
+
+show['The task example', [0, 0, 1, 1, 0, 1, 0], 2, 8]
+
+--- an m-sequence of the primitive register 1 + x^3 + x^5, seeded 1 0 0 0 0
+lfsr = Register[5, [1, 0, 0, 1, 0, 1]]
+bits = run[lfsr, [1, 0, 0, 0, 0], 20, 2]
+show['20 bits of the register 1 + x^3 + x^5', bits, 2, 11]
+
+p = 1000000007
+fibonacci = [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+register = show['The first ten Fibonacci numbers', fibonacci, p, 4]
+terms = run[register, fibonacci, 41, p]
+log['Fibonacci numbers 35 to 40 from that register: `spaced[slice[terms, 35, 41]]`']

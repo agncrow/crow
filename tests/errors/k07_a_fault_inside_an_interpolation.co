@@ -1,0 +1,9 @@
+--- An interpolation's text is read on its own, and what its reading
+--- refuses is placed at the line of the string holding it: a bracket that
+--- closes nothing inside a string on line 9 had been shown on line 1, a
+--- line that holds no interpolation (Rosetta Code, Unicode strings)
+
+x = 1
+log[x]
+log['`x + 1`']
+log['`x + )`']

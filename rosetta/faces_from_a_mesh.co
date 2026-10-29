@@ -1,0 +1,123 @@
+--- Rosetta Code: Faces from a mesh
+--- https://rosettacode.org/wiki/Faces_from_a_mesh
+--- Two perimeters are the same when one is a rotation of the other or of the other reversed.
+--- An edge-format face becomes a perimeter by starting from its smallest edge and walking from
+--- edge to edge through the shared vertices; the edges make a face only where every vertex
+--- meets two of them and the walk uses them all and closes where it started.
+
+fn rotation[xs, k]
+    --- xs turned to start at position k
+    return concat[slice[xs, k, len[xs]], slice[xs, 0, k]]
+
+fn same_perimeter[a, b]
+    if len[a] ne len[b]
+        return false
+    back = reverse[b]
+    k = 0
+    while k lt len[a]
+        turned = rotation[a, k]
+        if turned eq b or turned eq back
+            return true
+        k = k + 1
+    return false
+
+fn smallest_edge[edges]
+    --- the position of the edge that sorts first
+    best = 0
+    for i in range[1, len[edges]]
+        e = edges[i]
+        b = edges[best]
+        if e[0] lt b[0] or (e[0] eq b[0] and e[1] lt b[1])
+            best = i
+    return best
+
+fn simple[edges]
+    --- whether every vertex the edges name meets exactly two of them
+    vertices = []
+    for e in edges
+        vertices = concat[vertices, e]
+    for v in vertices
+        meets = 0
+        for e in edges
+            if v in e
+                meets = meets + 1
+        if meets ne 2
+            return false
+    return true
+
+fn perimeter_of[edges]
+    --- the perimeter the edges go round, from the smallest edge; [] where they make no face
+    if len[edges] lt 3 or not simple[edges]
+        return []
+    used = for e in edges
+        false
+    start = smallest_edge[edges]
+    used[start] = true
+    path = edges[start]
+    last = path[1]
+    taken = 1
+    while taken lt len[edges]
+        found = -1
+        i = 0
+        while i lt len[edges] and found lt 0
+            if not used[i] and last in edges[i]
+                found = i
+            i = i + 1
+        if found lt 0
+            return []
+        used[found] = true
+        taken = taken + 1
+        e = edges[found]
+        if e[0] eq last
+            last = e[1]
+        else
+            last = e[0]
+        path = push[path, last]
+    if last ne path[0]
+        return []
+    return slice[path, 0, len[path] - 1]
+
+fn shown[xs]
+    parts = for x in xs
+        str[x]
+    text = join[parts, ', ']
+    return '(`text`)'
+
+fn shown_edges[edges]
+    parts = for e in edges
+        shown[e]
+    text = join[parts, ', ']
+    return '{`text`}'
+
+struct Face [name, vertices]
+
+struct Edges [name, edges]
+
+fn compare[a, b]
+    verdict = 'different perimeters'
+    if same_perimeter[a.vertices, b.vertices]
+        verdict = 'the same perimeter'
+    log['  `a.name` `shown[a.vertices]` and `b.name` `shown[b.vertices]`: `verdict`']
+
+log['Perimeter format equality checks:']
+compare[Face['Q', [8, 1, 3]], Face['R', [1, 3, 8]]]
+compare[Face['U', [18, 8, 14, 10, 12, 17, 19]], Face['V', [8, 14, 10, 12, 17, 19, 18]]]
+log['Two more: Q reversed, and U with two vertices swapped:']
+compare[Face['Q', [8, 1, 3]], Face['Q reversed', [3, 1, 8]]]
+compare[Face['U', [18, 8, 14, 10, 12, 17, 19]], Face['W', [18, 8, 14, 12, 10, 17, 19]]]
+
+log['']
+log['Edge to perimeter format translations:']
+faces = [
+    Edges['E', [[1, 11], [7, 11], [1, 7]]],
+    Edges['F', [[11, 23], [1, 17], [17, 23], [1, 11]]],
+    Edges['G', [[8, 14], [17, 19], [10, 12], [10, 14], [12, 17], [8, 18], [18, 19]]],
+    Edges['H', [[1, 3], [9, 11], [3, 11], [1, 11]]]
+]
+for face in faces
+    perimeter = perimeter_of[face.edges]
+    log['  `face.name`: `shown_edges[face.edges]`']
+    if len[perimeter] eq 0
+        log['     -> no face: these edges do not go round one polygon']
+    else
+        log['     -> `shown[perimeter]`']

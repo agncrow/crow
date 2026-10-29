@@ -994,7 +994,13 @@ impl Emitter {
         for s in &main {
             if let Stmt::Let { var, expr, .. } = s {
                 let prefixed = self.modules.iter().filter(|m| crate::modules::module_by_path(m).is_none()).any(|m| var.starts_with(&format!("{}_", m)));
-                if !prefixed {
+                // (a constant holds a literal alone: a module's value that is
+                // a call or a list — `four = double[2]`, `primes = [2, 3, 5]`
+                // — stays the program's first lines, computed as it starts,
+                // as the interpreter computes it; printed as a constant, every
+                // program importing the module had not built; Rosetta Code,
+                // Executable library)
+                if !prefixed || !matches!(expr, Expr::Const(..)) {
                     continue;
                 }
                 let text = self.expr(expr);
@@ -1109,7 +1115,10 @@ impl Emitter {
             let fields: Vec<String> = s.fields.iter().map(|(f, _)| format!("(\"{}\", self.{}.crow_repr())", f, Self::rust_field(f))).collect();
             self.line(&format!("impl crow_runtime::display::CrowDisplay for {} {{", s.name));
             self.line("    fn crow_repr(&self) -> String {");
-            self.line(&format!("        {{ use crow_runtime::display::CrowDisplay as _; crow_runtime::display::record(\"{}\", vec![{}]) }}", s.shown, fields.join(", ")));
+            // (a record of no fields names its pairs' kind: `vec![]` had
+            // left Rust to guess it, E0283; Rosetta Code, Visitor pattern)
+            let pairs = if fields.is_empty() { "Vec::<(&str, String)>::new()".to_string() } else { format!("vec![{}]", fields.join(", ")) };
+            self.line(&format!("        {{ use crow_runtime::display::CrowDisplay as _; crow_runtime::display::record(\"{}\", {}) }}", s.shown, pairs));
             self.line("    }");
             self.line("}");
             self.line("");

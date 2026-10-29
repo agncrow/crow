@@ -1,0 +1,40 @@
+--- Rosetta Code: Amb
+--- https://rosettacode.org/wiki/Amb
+--- Crow has no continuations, so amb is a facsimile: each list of choices splits the
+--- computation into futures, one per value, and a constraint (a named function over
+--- the values chosen so far) ends a future that breaks it. The first future to reach
+--- the end is the answer; when every future fails, amb answers an error value.
+
+fn amb[choices, constraint]
+    return future[choices, constraint, []]
+
+fn future[choices, constraint, chosen]
+    if len[chosen] eq len[choices]
+        return chosen
+    options = choices[len[chosen]]
+    i = 0
+    while i lt len[options]
+        tried = push[chosen, options[i]]
+        if constraint[tried]
+            found = future[choices, constraint, tried]
+            if found.ok
+                return found
+        i = i + 1
+    return error['every future fails', 'amb']
+
+--- each word but the last ends with the letter its successor begins with
+fn words_join[words]
+    n = len[words]
+    if n lt 2
+        return true
+    return words[n - 2][-1] eq words[n - 1][0]
+
+sentence = amb[[['the', 'that', 'a'], ['frog', 'elephant', 'thing'], ['walked', 'treaded', 'grows'], ['slowly', 'quickly']], words_join]
+log[join[sentence, ' ']]
+
+--- no future survives: no word of the last set begins with g or t
+none = amb[[['the', 'that', 'a'], ['frog', 'elephant', 'thing'], ['slowly', 'quickly']], words_join]
+if none.ok
+    log[join[none, ' ']]
+else
+    log['amb failed: `none.reason`']

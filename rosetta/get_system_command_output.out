@@ -1,0 +1,6 @@
+sort answered status 0 and 4 lines:
+    0: apple
+    1: banana
+    2: fig
+    3: pear
+a command that fails: status 3, standard error no such fruit

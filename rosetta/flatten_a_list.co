@@ -1,0 +1,63 @@
+--- Rosetta Code: Flatten a list
+--- https://rosettacode.org/wiki/Flatten_a_list
+--- A Crow list holds one kind of value, so the nested list is held two ways: as a
+--- parsed JSON value, whose items are walked and asked their type, and as a tree of
+--- records, each item a number or a list of items. A parsed value's leaves are
+--- gathered as their JSON text and read back as one list, so each keeps its kind.
+
+--- the leaves of a parsed list, in order, each written as JSON
+fn leaves[items]
+    found = []
+    for x in items
+        if type[x] eq 'array'
+            found = concat[found, leaves[x]]
+        else
+            found = push[found, encode[x]]
+    return found
+
+--- a parsed list without its nesting
+fn flatten[items]
+    pieces = join[leaves[items], ', ']
+    return json['[`pieces`]']
+
+--- an item of a nested list of numbers: a number, or a list of items
+struct Item [is_list, value, items]
+
+fn number[v]
+    return Item[false, v, []]
+
+fn list_of[items]
+    return Item[true, 0, items]
+
+--- the numbers of a tree of items, in order
+fn flatten_items[item]
+    if not item.is_list
+        return [item.value]
+    flat = []
+    for x in item.items
+        flat = concat[flat, flatten_items[x]]
+    return flat
+
+--- the tree written as a list
+fn shown[item]
+    if not item.is_list
+        return str[item.value]
+    parts = for x in item.items
+        shown[x]
+    inner = join[parts, ', ']
+    return '[`inner`]'
+
+nested = json['[[1], 2, [[3, 4], 5], [[[]]], [[[6]]], 7, 8, []]']
+log['parsed JSON:     `nested`']
+log['flattened:       `flatten[nested]`']
+log['']
+mixed = json['[["a", [true]], 2.5, [[3, "four"]], [[[]]], {"k": [9]}]']
+log['any values:      `mixed`']
+log['flattened:       `flatten[mixed]`']
+log['']
+tree = list_of[[list_of[[number[1]]], number[2],
+    list_of[[list_of[[number[3], number[4]]], number[5]]],
+    list_of[[list_of[[list_of[[]]]]]], list_of[[list_of[[list_of[[number[6]]]]]]],
+    number[7], number[8], list_of[[]]]]
+log['tree of records: `shown[tree]`']
+log['flattened:       `flatten_items[tree]`']

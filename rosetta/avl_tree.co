@@ -1,0 +1,145 @@
+--- Rosetta Code: AVL tree
+--- https://rosettacode.org/wiki/AVL_tree
+--- A persistent AVL tree of records: insert and delete rebuild only the path they
+--- walk, and each node on it is rebalanced by one or two rotations on the way up.
+--- A missing child is 0, asked as `t eq 0`.
+use math
+
+--- A node keeps its height, held as a float (exact at any height a tree can reach).
+struct Node [key, height, left, right]
+
+fn height_of[t]
+    if t eq 0
+        return 0.0
+    return t.height
+
+fn node[key, left, right]
+    return Node[key, 1.0 + max[height_of[left], height_of[right]], left, right]
+
+--- The right subtree's height less the left's: -1, 0 or 1 in a balanced tree.
+fn balance_of[t]
+    return height_of[t.right] - height_of[t.left]
+
+fn rotate_left[t]
+    r = t.right
+    return node[r.key, node[t.key, t.left, r.left], r.right]
+
+fn rotate_right[t]
+    l = t.left
+    return node[l.key, l.left, node[t.key, l.right, t.right]]
+
+fn rebalance[t]
+    b = balance_of[t]
+    if b gt 1
+        if balance_of[t.right] lt 0
+            t = node[t.key, t.left, rotate_right[t.right]]
+        return rotate_left[t]
+    if b lt -1
+        if balance_of[t.left] gt 0
+            t = node[t.key, rotate_left[t.left], t.right]
+        return rotate_right[t]
+    return t
+
+--- A tree is a set: inserting a key it holds answers the same tree.
+fn insert[t, key]
+    if t eq 0
+        return Node[key, 1.0, 0, 0]
+    if key lt t.key
+        return rebalance[node[t.key, insert[t.left, key], t.right]]
+    if key gt t.key
+        return rebalance[node[t.key, t.left, insert[t.right, key]]]
+    return t
+
+fn smallest[t]
+    while t.left ne 0
+        t = t.left
+    return t.key
+
+fn delete[t, key]
+    if t eq 0
+        return t
+    if key lt t.key
+        return rebalance[node[t.key, delete[t.left, key], t.right]]
+    if key gt t.key
+        return rebalance[node[t.key, t.left, delete[t.right, key]]]
+    if t.left eq 0
+        return t.right
+    if t.right eq 0
+        return t.left
+    successor = smallest[t.right]
+    return rebalance[node[successor, t.left, delete[t.right, successor]]]
+
+fn holds[t, key]
+    while t ne 0
+        if key eq t.key
+            return true
+        if key lt t.key
+            t = t.left
+        else
+            t = t.right
+    return false
+
+fn in_order[t]
+    if t eq 0
+        return []
+    return concat[concat[in_order[t.left], [t.key]], in_order[t.right]]
+
+fn count[t]
+    if t eq 0
+        return 0
+    return 1 + count[t.left] + count[t.right]
+
+fn is_odd[k]
+    return k % 2 eq 1
+
+--- Every node's keys in order and its subtrees' heights within one of each other.
+fn is_avl[t, low, high]
+    if t eq 0
+        return true
+    if t.key lte low or t.key gte high
+        return false
+    if abs[balance_of[t]] gt 1 or t.height ne 1.0 + max[height_of[t.left], height_of[t.right]]
+        return false
+    return is_avl[t.left, low, t.key] and is_avl[t.right, t.key, high]
+
+--- The tree on its side: the root at the left, the right subtree above it.
+fn draw[t, depth]
+    if t ne 0
+        draw[t.right, depth + 1]
+        indent = repeat['     ', depth]
+        log['`indent``t.key` (`balance_of[t]`)']
+        draw[t.left, depth + 1]
+
+fn keys_text[t]
+    words = for k in in_order[t]
+        str[k]
+    join[words, ' ']
+
+tree = 0
+for k in range[1, 11]
+    tree = insert[tree, k]
+log['Inserted 1 to 10 in order; in-order keys: `keys_text[tree]`']
+log['Height `height_of[tree]`, the tree with each node\'s balance:']
+draw[tree, 0]
+
+for k in [4, 8, 1]
+    tree = delete[tree, k]
+log['']
+log['After deleting 4, 8 and 1: `keys_text[tree]`']
+draw[tree, 0]
+for k in [3, 4, 11]
+    log['holds `k`: `holds[tree, k]`']
+
+--- A larger check: 2000 seeded random inserts (repeats among them), then the
+--- deletion of every even key, the AVL rules checked after each phase.
+seed[7]
+big = 0
+for i in range[2000]
+    big = insert[big, rand[10000]]
+n = count[big]
+log['']
+log['Random inserts: `n` distinct keys, height `height_of[big]`, AVL: `is_avl[big, -1, 10000]`']
+for k in range[0, 10000, 2]
+    big = delete[big, k]
+odd = all[in_order[big], is_odd]
+log['After deleting the even keys: `count[big]` keys, all odd: `odd`, height `height_of[big]`, AVL: `is_avl[big, -1, 10000]`']

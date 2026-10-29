@@ -1,0 +1,11 @@
+f(x) = x^100 + x + 1
+
+over the integers, f(10) = 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000011
+over the integers modulo 13, f(10) = 1 (mod 13)
+
+the same f in other rings, beside f(10) computed over the integers and then reduced:
+  modulo 2: f(10) = 1 (mod 2), f(10) % 2 = 1
+  modulo 7: f(10) = 1 (mod 7), f(10) % 7 = 1
+  modulo 13: f(10) = 1 (mod 13), f(10) % 13 = 1
+  modulo 101: f(10) = 12 (mod 101), f(10) % 101 = 12
+  modulo 1000000007: f(10) = 226732721 (mod 1000000007), f(10) % 1000000007 = 226732721

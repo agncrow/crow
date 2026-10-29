@@ -1,0 +1,20 @@
+'' has a length of 0:
+    all its characters are the same
+'   ' has a length of 3:
+    all its characters are the same
+'2' has a length of 1:
+    all its characters are the same
+'333' has a length of 3:
+    all its characters are the same
+'.55' has a length of 3:
+    not all its characters are the same: '5' (0x35) differs, at position 2
+'tttTTT' has a length of 6:
+    not all its characters are the same: 'T' (0x54) differs, at position 4
+'4444 444k' has a length of 9:
+    not all its characters are the same: ' ' (0x20) differs, at position 5
+'pépé' has a length of 4:
+    not all its characters are the same: 'é' (0xe9) differs, at position 2
+'🐶🐶🐺🐶' has a length of 4:
+    not all its characters are the same: '🐺' (0x1f43a) differs, at position 3
+'🎄🎄🎄🎄' has a length of 4:
+    all its characters are the same

@@ -1,0 +1,178 @@
+--- Rosetta Code: Cycles of a permutation
+--- https://rosettacode.org/wiki/Cycles_of_a_permutation
+--- Everything is one-based, as Alf and Betty's shelf is, so no conversion is needed.
+--- One-line notation is a list of ints: at each position, the position its letter came
+--- from; every position is written, the trailing 1-cycles too. Cycle notation is a list
+--- of cycles, each a list of ints: the letter at a cycle's first position moves to its
+--- second, and so on; a cycle starts with its smallest number, the cycles go in order
+--- of their first numbers, and 1-cycles are left out. Both show as Alf and Betty write
+--- them: 1 4 7 14 and (2 8 7 3) (9 12 13). compose[a, b, n] is a, then b: what
+--- mathematicians write b∙a, so Thu->Fri∙Wed->Thu is compose[wed_thu, thu_fri, 15].
+
+fn one_line[from, to]
+    --- the permutation, in one-line notation, that turns the text `from` into `to`
+    letters = split[from, '']
+    place = map[letters, range[1, len[letters] + 1]]
+    perm = for c in split[to, '']
+        place[c]
+    return perm
+
+fn inverse[perm]
+    --- one-line notation: the permutation that undoes perm
+    undo = range[1, len[perm] + 1]
+    for i in range[len[perm]]
+        undo[perm[i] - 1] = i + 1
+    return undo
+
+fn permute[s, perm]
+    --- one-line notation: the text s rearranged by perm
+    letters = split[s, '']
+    moved = for p in perm
+        letters[p - 1]
+    return join[moved, '']
+
+fn cycles_of[perm]
+    --- one-line notation to cycle notation: the letter at position a moves to the
+    --- position that perm says it came from a
+    moves = inverse[perm]
+    seen = for p in perm
+        false
+    found = []
+    for start in range[1, len[perm] + 1]
+        if not seen[start - 1]
+            cycle = [start]
+            seen[start - 1] = true
+            next = moves[start - 1]
+            while next ne start
+                cycle = push[cycle, next]
+                seen[next - 1] = true
+                next = moves[next - 1]
+            if len[cycle] gt 1
+                found = push[found, cycle]
+    return found
+
+fn one_line_of[cycles, n]
+    --- cycle notation to one-line notation, for a shelf of n positions
+    perm = range[1, n + 1]
+    for cycle in cycles
+        for i in range[len[cycle]]
+            perm[cycle[(i + 1) % len[cycle]] - 1] = cycle[i]
+    return perm
+
+fn inverse_cycles[cycles]
+    --- cycle notation: each cycle backwards, its smallest number still first
+    undo = for cycle in cycles
+        concat[[cycle[0]], reverse[slice[cycle, 1, len[cycle]]]]
+    return undo
+
+fn permute_by_cycles[s, cycles]
+    --- cycle notation: the letter at each position of a cycle moves to the next one
+    letters = split[s, '']
+    moved = letters
+    for cycle in cycles
+        for i in range[len[cycle]]
+            moved[cycle[(i + 1) % len[cycle]] - 1] = letters[cycle[i] - 1]
+    return join[moved, '']
+
+fn compose[a, b, n]
+    --- cycle notation: a, then b, on a shelf of n positions
+    first = one_line_of[a, n]
+    both = for p in one_line_of[b, n]
+        first[p - 1]
+    return cycles_of[both]
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+fn order[cycles]
+    --- how many times the permutation is done before every letter is back:
+    --- the least common multiple of its cycles' lengths
+    result = 1
+    for cycle in cycles
+        result = result / gcd[result, len[cycle]] * len[cycle]
+    return result
+
+fn signature[cycles]
+    --- 1 when the permutation is an even number of swaps, -1 when it is an odd
+    --- number: -1 exactly when it has an odd number of cycles of even length
+    even = 0
+    for cycle in cycles
+        if len[cycle] % 2 eq 0
+            even = even + 1
+    if even % 2 eq 0
+        return 1
+    return -1
+
+fn show[perm]
+    --- one-line notation as Alf and Betty write it
+    parts = for p in perm
+        str[p]
+    return join[parts, ' ']
+
+fn show_cycles[cycles]
+    --- cycle notation as Alf and Betty write it
+    parts = for cycle in cycles
+        '(`show[cycle]`)'
+    return join[parts, ' ']
+
+days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+shelves = ['HANDYCOILSERUPT', 'SPOILUNDERYACHT', 'DRAINSTYLEPOUCH', 'DITCHSYRUPALONE', 'SOAPYTHIRDUNCLE', 'SHINEPARTYCLOUD', 'RADIOLUNCHTYPES']
+
+--- each day's permutation turns the day before's shelf into the day's
+perms = for i in range[7]
+    one_line[shelves[(i + 6) % 7], shelves[i]]
+
+wed = shelves[2]
+thu = shelves[3]
+fri = shelves[4]
+wed_thu = perms[3]
+wed_thu_cycles = cycles_of[wed_thu]
+log['Wed->Thu in one-line notation: `show[wed_thu]`']
+log['Wed->Thu in cycle notation:    `show_cycles[wed_thu_cycles]`']
+log['Wed\'s `wed` permuted by the one-line notation: `permute[wed, wed_thu]`']
+log['Wed\'s `wed` permuted by the cycles:            `permute_by_cycles[wed, wed_thu_cycles]`']
+log['']
+
+thu_wed = inverse[wed_thu]
+thu_wed_cycles = inverse_cycles[wed_thu_cycles]
+log['Thu->Wed, the inverse, in one-line notation: `show[thu_wed]`']
+log['Thu->Wed, the inverse, in cycle notation:    `show_cycles[thu_wed_cycles]`']
+log['Thu\'s `thu` permuted by the one-line notation: `permute[thu, thu_wed]`']
+log['Thu\'s `thu` permuted by the cycles:            `permute_by_cycles[thu, thu_wed_cycles]`']
+log['']
+
+log['Converting between the notations:']
+log['  cycles `show_cycles[thu_wed_cycles]` are the one-line `show[one_line_of[thu_wed_cycles, 15]]`']
+log['  one-line `show[thu_wed]` is the cycles `show_cycles[cycles_of[thu_wed]]`']
+log['']
+
+thu_fri_cycles = cycles_of[perms[4]]
+wed_fri_cycles = compose[wed_thu_cycles, thu_fri_cycles, 15]
+log['Thu->Fri:                     `show_cycles[thu_fri_cycles]`']
+log['Wed->Thu, then Thu->Fri:      `show_cycles[wed_fri_cycles]`']
+log['Wed->Fri, from the shelves:   `show_cycles[cycles_of[one_line[wed, fri]]]`']
+log['Wed\'s `wed` permuted by it: `permute_by_cycles[wed, wed_fri_cycles]`']
+log['']
+
+log['Starting with Sunday\'s shelf and doing each day\'s permutation in turn:']
+shelf = shelves[6]
+log['     `shelf`']
+for i in range[7]
+    shelf = permute[shelf, perms[i]]
+    log['`days[i]`: `shelf`']
+log['']
+
+log['The permutation of each day (from the day before):']
+for i in range[7]
+    cycles = cycles_of[perms[i]]
+    log['`days[i]`: order `fmt[order[cycles], width = 2]`, signature `fmt[signature[cycles], width = 2]`, cycles `show_cycles[cycles]`']
+log['']
+
+log['Friday\'s permutation done ten times over (its order is 10):']
+s = 'STOREDAILYPUNCH'
+log['    `s`']
+for k in range[1, 11]
+    s = permute[s, perms[4]]
+    log['`fmt[k, width = 2]`  `s`']

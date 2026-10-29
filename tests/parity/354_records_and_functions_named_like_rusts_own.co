@@ -1,0 +1,23 @@
+--- a record named like a type the compiled program names (`Vec`, `Self`,
+--- the runtime's `Crow…`) and a function named like its own helpers
+--- (`crow_stop`): renamed out of Rust's way where the program is compiled,
+--- and shown as the program declared them (`struct Vec` had shadowed the
+--- `Vec` every value that can fail holds, and not built)
+struct Vec [x, y]
+struct Self [a]
+struct CrowResult [v]
+
+fn crow_stop[x]
+    return x + 1
+
+fn total[p]
+    return p.x + p.y
+
+p = Vec[1, 2]
+log[p]
+log[total[p]]
+log[type[p]]
+log[Self[3]]
+log[CrowResult['r'].v]
+log[crow_stop[41]]
+log[encode[p]]

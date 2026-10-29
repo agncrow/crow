@@ -1,0 +1,76 @@
+--- Rosetta Code: Minimum multiple of m where digital sum equals m
+--- https://rosettacode.org/wiki/Minimum_multiple_of_m_where_digital_sum_equals_m
+--- a(n) is the least m with digitsum(n * m) = n (OEIS A131382). Found two ways:
+--- by the definition, trying m = 1, 2, 3, … (the first 40 terms), and as the
+--- least multiple of n whose digits sum to n, built digit by digit breadth
+--- first over the states (remainder mod n, digit sum so far) — the first time
+--- a state is met is by its least number, so the first number met at state
+--- (0, n) is the least multiple sought — and divided by n (all 70 terms).
+
+fn digit_sum[x]
+    total = 0
+    rest = x
+    while rest gt 0
+        total = total + rest % 10
+        rest = rest / 10
+    return total
+
+fn by_trial[n]
+    m = 1
+    while digit_sum[n * m] ne n
+        m = m + 1
+    return m
+
+--- The least positive multiple of n whose digits sum to n. A state is
+--- remainder * (n + 1) + digit sum; least[state] is the least number reaching
+--- it (0 while none has), and the queue holds the states met, in order.
+fn least_multiple[n]
+    least = for i in range[n * (n + 1)]
+        0
+    queue = []
+    for d in range[1, min[9, n] + 1]
+        state = d % n * (n + 1) + d
+        least[state] = d
+        queue = push[queue, state]
+    head = 0
+    while head lt len[queue]
+        state = queue[head]
+        head = head + 1
+        remainder = state / (n + 1)
+        digits = state % (n + 1)
+        if remainder eq 0 and digits eq n
+            return least[state]
+        for d in range[min[9, n - digits] + 1]
+            next = (remainder * 10 + d) % n * (n + 1) + digits + d
+            if least[next] eq 0
+                least[next] = least[state] * 10 + d
+                queue = push[queue, next]
+    return 0
+
+fn table[xs, columns]
+    width = len[str[max_of[xs]]]
+    i = 0
+    while i lt len[xs]
+        row = for x in slice[xs, i, i + columns]
+            fmt[x, width = width]
+        log[join[row, ' ']]
+        i = i + columns
+    log['']
+
+fn max_of[xs]
+    best = xs[0]
+    for x in xs
+        if x gt best
+            best = x
+    return best
+
+trial = for n in range[1, 41]
+    by_trial[n]
+log['The first 40 terms, by trying m = 1, 2, 3, …:']
+table[trial, 10]
+
+terms = for n in range[1, 71]
+    least_multiple[n] / n
+log['The first 70 terms, each the least multiple of n with digit sum n, over n:']
+table[terms, 10]
+log['The two ways agree on the first 40: `slice[terms, 0, 40] eq trial`']

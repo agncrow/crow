@@ -1,0 +1,6 @@
+Collatz lengths of 1 .. 99,999, computed four times:
+    every core (the default):          longest 351, total 10853711
+    one core (cpu[1] in a function):   longest 351, total 10853711
+    every core (that function done):   longest 351, total 10853711
+    two threads (cpu[2] from here on): longest 351, total 10853711
+the four answers are the same: true

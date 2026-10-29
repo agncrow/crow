@@ -1,0 +1,39 @@
+--- Rosetta Code: Idiomatically determine all the lowercase and uppercase letters
+--- https://rosettacode.org/wiki/Idiomatically_determine_all_the_lowercase_and_uppercase_letters
+--- Crow's text is Unicode on every machine, whatever the hardware or the
+--- operating system (this output was made on macOS on an arm64 Mac), so the
+--- letters are asked of the language, never of an encoding's order: a
+--- character is lowercase when `upper` changes it and `lower` keeps it, and
+--- uppercase the other way round. Every code of a block is tried, each made a
+--- character by `use bits`' `char`.
+
+use bits
+
+fn is_lower[c]
+    return lower[c] eq c and upper[c] ne c
+
+fn is_upper[c]
+    return upper[c] eq c and lower[c] ne c
+
+--- the characters with codes from `first` up to `last` that `wanted` keeps, as one text
+fn letters[first, last, wanted]
+    found = for n in range[first, last + 1]
+        c = char[n]
+        if wanted[c]
+            c
+    return join[found, '']
+
+lows = letters[0, 127, is_lower]
+ups = letters[0, 127, is_upper]
+log['Lowercase letters (Basic Latin, codes 0 to 127):']
+log[lows]
+log['Uppercase letters (Basic Latin, codes 0 to 127):']
+log[ups]
+log['']
+log['The lowercase letters raised, and the uppercase lowered:']
+log[upper[lows]]
+log[lower[ups]]
+log['']
+log['Beyond the English alphabet, the Latin-1 Supplement (codes 128 to 255):']
+log['lowercase: `letters[128, 255, is_lower]`']
+log['uppercase: `letters[128, 255, is_upper]`']

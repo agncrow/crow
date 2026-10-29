@@ -1,0 +1,40 @@
+The example in the nest form:
+RosettaCode(rocks(code, comparison, wiki), mocks(trolling))
+
+... to the indent form:
+0 RosettaCode
+1 rocks
+2 code
+2 comparison
+2 wiki
+1 mocks
+2 trolling
+
+... drawn, four spaces a level:
+RosettaCode
+    rocks
+        code
+        comparison
+        wiki
+    mocks
+        trolling
+
+... back to the nest form:
+RosettaCode(rocks(code, comparison, wiki), mocks(trolling))
+
+The first and the final nest forms are the same: true
+Each text read back is the form it was written from: true and true
+
+Another tree: a(b(c(d, e), f), g, h(i(j(k)))), drawn:
+a
+    b
+        c
+            d
+            e
+        f
+    g
+    h
+        i
+            j
+                k
+Back from its indent form: a(b(c(d, e), f), g, h(i(j(k)))), the same: true

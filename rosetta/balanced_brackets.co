@@ -1,0 +1,48 @@
+--- Rosetta Code: Balanced brackets
+--- https://rosettacode.org/wiki/Balanced_brackets
+--- A string of brackets is balanced when, read left to right, the count of open
+--- brackets never goes below zero and ends at zero. The strings to test are N
+--- of each bracket shuffled (Fisher-Yates, seeded so every run is the same).
+use math
+
+fn balanced[text]
+    chars = split[text, '']
+    depth = 0
+    i = 0
+    while i lt len[chars] and depth gte 0
+        if chars[i] eq '['
+            depth = depth + 1
+        else
+            depth = depth - 1
+        i = i + 1
+    return depth eq 0
+
+fn generate[n]
+    chars = concat[split[repeat['[', n], ''], split[repeat[']', n], '']]
+    i = len[chars] - 1
+    while i gt 0
+        j = rand[i + 1]
+        held = chars[i]
+        chars[i] = chars[j]
+        chars[j] = held
+        i = i - 1
+    return join[chars, '']
+
+fn report[text]
+    verdict = 'NOT OK'
+    if balanced[text]
+        verdict = 'OK'
+    shown = text
+    if text eq ''
+        shown = '(empty)'
+    log['`fmt[shown, width = 22]``verdict`']
+
+log['The examples:']
+for text in ['', '[]', '[][]', '[[][]]', '][', '][][', '[]][[]']
+    report[text]
+
+log['']
+log['Generated, N = 0 to 9:']
+seed[2026]
+for n in range[10]
+    report[generate[n]]

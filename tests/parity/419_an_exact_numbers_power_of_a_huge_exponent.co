@@ -1,0 +1,16 @@
+--- 0, 1 and -1 raised to any int are exact in every kind of number, as
+--- an int's power is: a fraction or a decimal of one of them to an
+--- exponent past 32 bits had stopped ("an exponent past 32 bits makes a
+--- number no memory holds"), and one past 64 bits had been refused as no
+--- 64-bit int, naming no `^` (Rosetta Code, Zero to the zero power).
+--- Another base to such a power still stops, in the runtime's words.
+
+log[1 ^ (2 ^ 40)]
+log[fraction[1, 1] ^ (2 ^ 40)]
+log[decimal[1] ^ (2 ^ 40)]
+log[fraction[0, 1] ^ (2 ^ 70)]
+log[fraction[-1, 1] ^ (2 ^ 70 + 1)]
+log[decimal[-1] ^ (2 ^ 70)]
+log[fraction[1, 1] ^ (0 - 2 ^ 70)]
+log[decimal[0] ^ 0, fraction[0, 1] ^ 0, 0 ^ 0]
+log[fraction[2, 1] ^ (2 ^ 70)]

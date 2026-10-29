@@ -1,0 +1,97 @@
+--- Rosetta Code: Set consolidation
+--- https://rosettacode.org/wiki/Set_consolidation
+--- A set is a sorted list of distinct items. The sets are taken in turn: a new set
+--- swallows every consolidated set it shares an item with, and the rest stand. The
+--- consolidated sets never share an item, so one pass is enough, whatever the order.
+
+--- whether two sets share an item
+fn meets[a, b]
+    i = 0
+    while i lt len[a]
+        if a[i] in b
+            return true
+        i = i + 1
+    return false
+
+--- the items of either set, sorted, each once
+fn union[a, b]
+    kept = []
+    for x in sort[concat[a, b]]
+        if len[kept] eq 0 or kept[-1] ne x
+            kept = push[kept, x]
+    return kept
+
+fn consolidate[sets]
+    done = []
+    for s in sets
+        merged = s
+        apart = []
+        for d in done
+            if meets[merged, d]
+                merged = union[merged, d]
+            else
+                apart = push[apart, d]
+        done = push[apart, merged]
+    return done
+
+fn shown[s]
+    items = join[s, ',']
+    return '{`items`}'
+
+--- the sets in the order of their least items, so two answers compare as text
+fn listed[sets]
+    firsts = for s in sets
+        s[0]
+    order = sort[firsts]
+    parts = []
+    for first in order
+        for s in sets
+            if s[0] eq first
+                parts = push[parts, shown[s]]
+    return join[parts, ', ']
+
+fn written[sets]
+    parts = for s in sets
+        shown[s]
+    return join[parts, ', ']
+
+fn report[sets]
+    log['`written[sets]`']
+    log['    -> `listed[consolidate[sets]]`']
+
+--- every ordering of the items of xs (Heap's algorithm would do; this is the plain
+--- recursive one: each item first, before every ordering of the rest)
+fn orderings[xs]
+    if len[xs] lte 1
+        return [xs]
+    found = []
+    for i in range[len[xs]]
+        rest = concat[slice[xs, 0, i], slice[xs, i + 1, len[xs]]]
+        for tail in orderings[rest]
+            found = push[found, concat[[xs[i]], tail]]
+    return found
+
+log['The task\'s examples:']
+report[[['A', 'B'], ['C', 'D']]]
+report[[['A', 'B'], ['B', 'D']]]
+report[[['A', 'B'], ['C', 'D'], ['D', 'B']]]
+report[[['H', 'I', 'K'], ['A', 'B'], ['C', 'D'], ['D', 'B'], ['F', 'G', 'H']]]
+log['']
+log['A sixth set that joins the two:']
+sets = [['H', 'I', 'K'], ['A', 'B'], ['C', 'D'], ['D', 'B'], ['F', 'G', 'H'], ['A', 'H']]
+report[sets]
+log['']
+log['Fewer than two sets, and a set alone among others:']
+report[[['A', 'B', 'C']]]
+report[[['E'], ['A', 'B'], ['B', 'C'], ['X', 'Y', 'Z'], ['C', 'A']]]
+log['']
+answer = listed[consolidate[sets]]
+agree = 0
+tried = 0
+for order in orderings[range[len[sets]]]
+    shuffled = for i in order
+        sets[i]
+    tried = tried + 1
+    if listed[consolidate[shuffled]] eq answer
+        agree = agree + 1
+log['The six sets in all `tried` orders: `agree` consolidate to `answer`']

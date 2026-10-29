@@ -1,0 +1,196 @@
+--- Rosetta Code: Rational calculator
+--- https://rosettacode.org/wiki/Rational_calculator
+--- Each line read is an expression over Crow's exact fractions, evaluated as it
+--- is parsed by recursive descent:
+---     sum     := product (('+' | '-') product)*
+---     product := unary (('*' | '/') unary)*
+---     unary   := ('+' | '-' | 'abs') unary | primary
+---     primary := number | '@' | '(' sum ')'
+--- @ is the previous result. Bonus: a number may be written with its recurring
+--- digits in brackets (0.(3), 1.2(54)), and each result is shown as a fraction
+--- and as a decimal whose recurring digits are found by the remainders of the
+--- long division: 1/12 = 0.08(3). A line that cannot be read says why.
+
+struct Parsed [value, next]
+
+fn is_digit[c]
+    return c gte '0' and c lte '9'
+
+fn is_letter[c]
+    return c gte 'a' and c lte 'z'
+
+--- the line's numbers (with any recurring part), words, operators and brackets
+fn tokens_of[text]
+    chars = split[text, '']
+    tokens = []
+    i = 0
+    while i lt len[chars]
+        c = chars[i]
+        if is_digit[c] or c eq '.'
+            start = i
+            while i lt len[chars] and (is_digit[chars[i]] or chars[i] eq '.')
+                i = i + 1
+            if i lt len[chars] and chars[i] eq '(' and '.' in slice[chars, start, i]
+                close = i + 1
+                while close lt len[chars] and is_digit[chars[close]]
+                    close = close + 1
+                if close lt len[chars] and chars[close] eq ')' and close gt i + 1
+                    i = close + 1
+            tokens = push[tokens, join[slice[chars, start, i], '']]
+        else
+            if is_letter[c]
+                start = i
+                while i lt len[chars] and is_letter[chars[i]]
+                    i = i + 1
+                tokens = push[tokens, join[slice[chars, start, i], '']]
+            else
+                if c ne ' '
+                    if c not in ['+', '-', '*', '/', '(', ')', '@']
+                        return error['\'`c`\' is not part of an expression', 'parse']
+                    tokens = push[tokens, c]
+                i = i + 1
+    return tokens
+
+--- a number as written, exactly: 'a.b(c)' is a.bccc…
+fn number_of[t]
+    if not matches[t, '^([0-9]+\.?[0-9]*|\.[0-9]+)(\([0-9]+\))?$']
+        return error['\'`t`\' is not a number', 'parse']
+    pieces = split[replace[t, ')', ''], '(']
+    head = split[pieces[0], '.']
+    places = ''
+    if len[head] gt 1
+        places = head[1]
+    written = head[0]
+    fixed = int['0`written``places`']
+    shift = 10 ^ len[places]
+    if len[pieces] eq 1
+        return fraction[fixed, shift]
+    recurring = pieces[1]
+    longer = int['0`written``places``recurring`']
+    return fraction[longer - fixed, shift * (10 ^ len[recurring] - 1)]
+
+fn token_at[tokens, i]
+    if i lt len[tokens]
+        return tokens[i]
+    return ''
+
+fn parse_primary[tokens, i, history]
+    t = token_at[tokens, i]
+    if t eq ''
+        return error['the expression ends too soon', 'parse']
+    if t eq '('
+        inner = parse_sum[tokens, i + 1, history]
+        if token_at[tokens, inner.next] ne ')'
+            return error['a bracket is not closed', 'parse']
+        return Parsed[inner.value, inner.next + 1]
+    if t eq '@'
+        if len[history] eq 0
+            return error['@ has no previous result yet', 'parse']
+        return Parsed[history[-1], i + 1]
+    if is_digit[t[0]] or t[0] eq '.'
+        return Parsed[number_of[t], i + 1]
+    return error['\'`t`\' was not expected', 'parse']
+
+fn parse_unary[tokens, i, history]
+    t = token_at[tokens, i]
+    if t eq '+'
+        return parse_unary[tokens, i + 1, history]
+    if t eq '-'
+        operand = parse_unary[tokens, i + 1, history]
+        return Parsed[-operand.value, operand.next]
+    if t eq 'abs'
+        operand = parse_unary[tokens, i + 1, history]
+        return Parsed[abs[operand.value], operand.next]
+    return parse_primary[tokens, i, history]
+
+fn parse_product[tokens, i, history]
+    first = parse_unary[tokens, i, history]
+    value = first.value
+    at = first.next
+    while token_at[tokens, at] eq '*' or token_at[tokens, at] eq '/'
+        right = parse_unary[tokens, at + 1, history]
+        if tokens[at] eq '*'
+            value = value * right.value
+        else
+            if right.value eq 0
+                return error['division by zero', 'math']
+            value = value / right.value
+        at = right.next
+    return Parsed[value, at]
+
+fn parse_sum[tokens, i, history]
+    first = parse_product[tokens, i, history]
+    value = first.value
+    at = first.next
+    while token_at[tokens, at] eq '+' or token_at[tokens, at] eq '-'
+        right = parse_product[tokens, at + 1, history]
+        if tokens[at] eq '+'
+            value = value + right.value
+        else
+            value = value - right.value
+        at = right.next
+    return Parsed[value, at]
+
+--- a whole line: its value, or why it cannot be read
+fn evaluated[text, history]
+    tokens = tokens_of[text]
+    whole = parse_sum[tokens, 0, history]
+    if whole.next lt len[tokens]
+        return error['\'`tokens[whole.next]`\' was not expected', 'parse']
+    return whole.value
+
+--- the decimal digits of a fraction, the recurring ones in brackets: the
+--- remainders of the long division repeat where the digits start to recur. A
+--- long run of recurring digits is shown by its ends and its length.
+fn decimal_of[q]
+    parts = split[str[q], '/']
+    n = int[parts[0]]
+    d = 1
+    if len[parts] gt 1
+        d = int[parts[1]]
+    sign = ''
+    if n lt 0
+        sign = '-'
+        n = -n
+    whole = n / d
+    r = n % d
+    if r eq 0
+        return '`sign``whole`'
+    digits = []
+    seen = map[]
+    while r ne 0 and str[r] not in seen
+        seen[str[r]] = len[digits]
+        r = r * 10
+        digits = push[digits, str[r / d]]
+        r = r % d
+    if r eq 0
+        return '`sign``whole`.`join[digits, \'\']`'
+    start = seen[str[r]]
+    fixed = join[slice[digits, 0, start], '']
+    recurring = join[slice[digits, start, len[digits]], '']
+    size = len[recurring]
+    if size gt 60
+        head = slice[recurring, 0, 30]
+        tail = slice[recurring, size - 10, size]
+        return '`sign``whole`.`fixed`(`head`…`tail`), `size` digits recurring'
+    return '`sign``whole`.`fixed`(`recurring`)'
+
+fn shown[q]
+    as_decimal = decimal_of[q]
+    if str[q] eq as_decimal
+        return as_decimal
+    return '`q` = `as_decimal`'
+
+history = []
+line = input[]
+while line.ok
+    text = trim[line]
+    if text ne ''
+        log['> `text`']
+        value = evaluated[text, history]
+        if value.ok
+            history = push[history, value]
+            log['  = `shown[value]`']
+        else
+            log['  error: `value.reason`']
+    line = input[]

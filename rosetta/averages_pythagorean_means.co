@@ -1,0 +1,31 @@
+--- Rosetta Code: Averages/Pythagorean means
+--- https://rosettacode.org/wiki/Averages/Pythagorean_means
+--- The arithmetic mean is the sum over the count, the geometric mean the nth root
+--- of the product, and the harmonic mean the count over the sum of the reciprocals.
+
+fn arithmetic_mean[xs]
+    total = 0
+    for x in xs
+        total = total + x
+    return float[total] / len[xs]
+
+fn geometric_mean[xs]
+    product = 1
+    for x in xs
+        product = product * x
+    return float[product] ^ (1.0 / len[xs])
+
+fn harmonic_mean[xs]
+    total = 0.0
+    for x in xs
+        total = total + 1.0 / x
+    return len[xs] / total
+
+numbers = range[1, 11]
+a = arithmetic_mean[numbers]
+g = geometric_mean[numbers]
+h = harmonic_mean[numbers]
+log['Arithmetic mean A = `a`']
+log['Geometric mean  G = `g`']
+log['Harmonic mean   H = `h`']
+log['A >= G >= H: `a gte g and g gte h`']

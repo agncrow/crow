@@ -1,0 +1,86 @@
+--- Rosetta Code: Esthetic numbers
+--- https://rosettacode.org/wiki/Esthetic_numbers
+--- The esthetic numbers of each length are grown digit by digit, each next
+--- digit one below or one above the last, so they come in increasing order; a
+--- prefix is kept only while some number it begins can lie in the range asked
+--- for, which makes a range of large numbers cheap.
+
+fn digit_count[n, base]
+    count = 1
+    while n gte base
+        n = n / base
+        count = count + 1
+    return count
+
+--- the esthetic numbers in base `base` from lo to hi, in increasing order
+fn esthetic[base, lo, hi]
+    found = []
+    for length in range[digit_count[lo, base], digit_count[hi, base] + 1]
+        --- a prefix p with `place` still to fill begins the numbers from
+        --- p * place to (p + 1) * place - 1
+        place = base ^ (length - 1)
+        level = for p in range[1, base]
+            if (p + 1) * place - 1 gte lo and p * place lte hi
+                p
+        while place gt 1
+            place = place / base
+            next = []
+            for p in level
+                last = p % base
+                for d in [last - 1, last + 1]
+                    q = p * base + d
+                    if d gte 0 and d lt base and (q + 1) * place - 1 gte lo and q * place lte hi
+                        next = push[next, q]
+            level = next
+        for n in level
+            found = push[found, n]
+    return found
+
+--- the first `count` esthetic numbers in base `base`
+fn first_esthetic[base, count]
+    length = 1
+    found = esthetic[base, 1, base - 1]
+    while len[found] lt count
+        length = length + 1
+        found = esthetic[base, 1, base ^ length - 1]
+    return slice[found, 0, count]
+
+fn in_base[n, base]
+    digits = '0123456789abcdef'
+    text = digits[n % base]
+    while n gte base
+        n = n / base
+        text = '`digits[n % base]``text`'
+    return text
+
+--- the numbers in base `base`, `per` to a line
+fn show[xs, base, per]
+    for start in range[0, len[xs], per]
+        cells = for n in slice[xs, start, start + per]
+            in_base[n, base]
+        log[join[cells, ' ']]
+
+for base in range[2, 17]
+    found = first_esthetic[base, base * 6]
+    log['Base `base`: esthetic numbers `base * 4` to `base * 6`:']
+    show[slice[found, base * 4 - 1, base * 6], base, 20]
+    log['']
+
+found = esthetic[10, 1000, 9999]
+log['Base 10: `len[found]` esthetic numbers from 1,000 to 9,999:']
+show[found, 10, 16]
+log['']
+
+found = esthetic[10, 100000000, 130000000]
+log['Base 10: `len[found]` esthetic numbers from 100,000,000 to 130,000,000:']
+show[found, 10, 9]
+
+--- further: the same ranges three and six digits longer, counted, with the
+--- first and last few shown
+for zeros in [11, 14]
+    lo = 10 ^ zeros
+    found = esthetic[10, lo, 13 * lo / 10]
+    log['']
+    log['Base 10: `fmt[len[found], commas = true]` esthetic numbers from `fmt[lo, commas = true]` to `fmt[13 * lo / 10, commas = true]`, the first and last four:']
+    show[slice[found, 0, 4], 10, 4]
+    show[slice[found, -4, len[found]], 10, 4]

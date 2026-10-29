@@ -1,0 +1,51 @@
+--- Rosetta Code: Apéry's constant
+--- https://rosettacode.org/wiki/Apéry's_constant
+--- Each series is summed exactly, in fractions of ints that grow, and the sum is
+--- cut to 100 decimal places: floor[s * 10 ^ 100] holds every digit kept.
+
+fn factorial[n]
+    product = 1
+    for k in range[2, n + 1]
+        product = product * k
+    return product
+
+--- s cut (not rounded) to the given number of decimal places, as text
+fn truncated[s, places]
+    digits = str[floor[s * 10 ^ places]]
+    whole = len[digits] - places
+    return '`slice[digits, 0, whole]`.`slice[digits, whole, len[digits]]`'
+
+--- the sum of 1/k^3 for k = 1 .. terms
+fn reciprocal_cubes[terms]
+    s = fraction[0, 1]
+    for k in range[1, terms + 1]
+        s = s + fraction[1, k ^ 3]
+    return s
+
+--- Markov's series: 5/2 times the sum of (-1)^(k-1) k!^2 / ((2k)! k^3), k from 1
+fn markov[terms]
+    s = fraction[0, 1]
+    for k in range[1, terms + 1]
+        s = s + fraction[(-1) ^ (k - 1) * factorial[k] ^ 2, factorial[2 * k] * k ^ 3]
+    return s * fraction[5, 2]
+
+--- Wedeniwski's series: 1/24 times its sum over k from 0
+fn wedeniwski[terms]
+    s = fraction[0, 1]
+    for k in range[terms]
+        poly = 126392 * k ^ 5 + 412708 * k ^ 4 + 531578 * k ^ 3 + 336367 * k ^ 2 + 104000 * k + 12463
+        top = (-1) ^ k * factorial[2 * k + 1] ^ 3 * factorial[2 * k] ^ 3 * factorial[k] ^ 3 * poly
+        bottom = factorial[3 * k + 2] * factorial[4 * k + 3] ^ 3
+        s = s + fraction[top, bottom]
+    return s / 24
+
+log['Apéry\'s constant, truncated to 100 decimal places:']
+log['']
+log['The first 1000 terms of the sum of 1/k^3:']
+log[truncated[reciprocal_cubes[1000], 100]]
+log['']
+log['The first 158 terms of Markov\'s series:']
+log[truncated[markov[158], 100]]
+log['']
+log['The first 20 terms of Wedeniwski\'s series:']
+log[truncated[wedeniwski[20], 100]]

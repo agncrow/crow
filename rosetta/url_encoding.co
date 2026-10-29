@@ -1,0 +1,49 @@
+--- Rosetta Code: URL encoding
+--- https://rosettacode.org/wiki/URL_encoding
+--- Each character's UTF-8 bytes are worked out from its code (use bits), and every byte
+--- of a character that is not a letter, a digit or one of the kept symbols is written
+--- %XX. The variations keep RFC 3986's, HTML 5's and encodeURI's symbols; the core's
+--- encode[text, 'url'] is RFC 3986's encoding, and agrees.
+
+use bits
+
+--- The UTF-8 bytes of the character whose code is n.
+fn utf8[n]
+    if n lt 128
+        return [n]
+    if n lt 2048
+        return [192 + n / 64, 128 + n % 64]
+    if n lt 65536
+        return [224 + n / 4096, 128 + n / 64 % 64, 128 + n % 64]
+    return [240 + n / 262144, 128 + n / 4096 % 64, 128 + n / 64 % 64, 128 + n % 64]
+
+fn escaped[b]
+    digits = '0123456789ABCDEF'
+    return join[['%', digits[b / 16], digits[b % 16]], '']
+
+fn is_alphanumeric[n]
+    return (n gte code['0'] and n lte code['9']) or (n gte code['A'] and n lte code['Z']) or (n gte code['a'] and n lte code['z'])
+
+--- Every character but a letter, a digit and those in keep is written as its bytes'
+--- escapes; with plus, a space is written '+' (HTML 5's forms).
+fn url_encode[s, keep = '', plus = false]
+    out = []
+    for c in split[s, '']
+        n = code[c]
+        if is_alphanumeric[n] or c in keep
+            out = push[out, c]
+        else if plus and c eq ' '
+            out = push[out, '+']
+        else
+            for b in utf8[n]
+                out = push[out, escaped[b]]
+    return join[out, '']
+
+examples = ['http://foo bar/', 'google.com/search?q=\`Abdu\'l-Bahá', 'mailto:crow@example.org?subject=¿Qué tal? 🐦']
+for s in examples
+    log[s]
+    log['  default    `url_encode[s]`']
+    log['  RFC 3986   `url_encode[s, keep = \'-._~\']`']
+    log['  HTML 5     `url_encode[s, keep = \'-._*\', plus = true]`']
+    log['  encodeURI  `url_encode[s, keep = \'-._~;,/?:@&=+$!*\\\'()#\']`']
+    log['  RFC 3986 agrees with encode[s, \'url\']: `url_encode[s, keep = \'-._~\'] eq encode[s, \'url\']`']

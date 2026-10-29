@@ -1,0 +1,71 @@
+--- Rosetta Code: Cheryl's birthday
+--- https://rosettacode.org/wiki/Cheryl's_birthday
+--- Each statement removes the dates it rules out: a statement about knowing is
+--- a count of the dates left that share Albert's month or Bernard's day.
+
+struct Date [month, day]
+
+fn same_month[dates, month]
+    hits = for d in dates
+        if d.month eq month
+            d
+    return len[hits]
+
+fn same_day[dates, day]
+    hits = for d in dates
+        if d.day eq day
+            d
+    return len[hits]
+
+fn albert_does_not_know[dates]
+    --- Told the month, Albert cannot tell which of its dates it is.
+    kept = for d in dates
+        if same_month[dates, d.month] gt 1
+            d
+    return kept
+
+fn bernard_cannot_know[dates]
+    --- Albert's month holds no date whose day is Bernard's alone to know.
+    telling = for d in dates
+        if same_day[dates, d.day] eq 1
+            d.month
+    kept = for d in dates
+        if d.month not in telling
+            d
+    return kept
+
+fn bernard_now_knows[dates]
+    --- Of the dates left, Bernard's day names one.
+    kept = for d in dates
+        if same_day[dates, d.day] eq 1
+            d
+    return kept
+
+fn albert_now_knows[dates]
+    --- Of the dates left, Albert's month names one.
+    kept = for d in dates
+        if same_month[dates, d.month] eq 1
+            d
+    return kept
+
+fn shown[dates]
+    names = for d in dates
+        '`d.month` `d.day`'
+    return join[names, ', ']
+
+dates = [Date['May', 15], Date['May', 16], Date['May', 19], Date['June', 17], Date['June', 18], Date['July', 14], Date['July', 16], Date['August', 14], Date['August', 15], Date['August', 17]]
+log['The ten dates:                `shown[dates]`']
+
+step1 = albert_does_not_know[dates]
+log['1) Albert does not know:      `shown[step1]`']
+step2 = bernard_cannot_know[step1]
+log['   nor can Bernard know:      `shown[step2]`']
+step3 = bernard_now_knows[step2]
+log['2) Bernard now knows:         `shown[step3]`']
+step4 = albert_now_knows[step3]
+log['3) Albert now knows too:      `shown[step4]`']
+
+if len[step4] eq 1
+    log['Cheryl\'s birthday is `shown[step4]`.']
+else
+    log['The statements do not single out one date.']

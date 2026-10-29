@@ -1,0 +1,58 @@
+One game, keep pace against hold at 20, to 100 points:
+
+  1. player 1 (keep pace)       rolls 3 1                    busts     banked 0
+  2. player 2 (hold at 20)      rolls 5 4 4 3 1              busts     banked 0
+  3. player 1 (keep pace)       rolls 3 4 4 6 6              holds 23  banked 23
+  4. player 2 (hold at 20)      rolls 3 3 5 2 3 6            holds 22  banked 22
+  5. player 1 (keep pace)       rolls 1                      busts     banked 23
+  6. player 2 (hold at 20)      rolls 3 1                    busts     banked 22
+  7. player 1 (keep pace)       rolls 2 5 5 3 1              busts     banked 23
+  8. player 2 (hold at 20)      rolls 6 2 2 1                busts     banked 22
+  9. player 1 (keep pace)       rolls 5 1                    busts     banked 23
+ 10. player 2 (hold at 20)      rolls 3 4 1                  busts     banked 22
+ 11. player 1 (keep pace)       rolls 6 2 4 2 1              busts     banked 23
+ 12. player 2 (hold at 20)      rolls 3 6 3 6 4              holds 22  banked 44
+ 13. player 1 (keep pace)       rolls 5 5 5 2 5 5            holds 27  banked 50
+ 14. player 2 (hold at 20)      rolls 4 4 6 1                busts     banked 44
+ 15. player 1 (keep pace)       rolls 6 6 1                  busts     banked 50
+ 16. player 2 (hold at 20)      rolls 5 3 2 3 1              busts     banked 44
+ 17. player 1 (keep pace)       rolls 1                      busts     banked 50
+ 18. player 2 (hold at 20)      rolls 2 5 6 5 6              holds 24  banked 68
+ 19. player 1 (keep pace)       rolls 6 3 3 6 5              holds 23  banked 73
+ 20. player 2 (hold at 20)      rolls 5 3 1                  busts     banked 68
+ 21. player 1 (keep pace)       rolls 1                      busts     banked 73
+ 22. player 2 (hold at 20)      rolls 5 2 4 1                busts     banked 68
+ 23. player 1 (keep pace)       rolls 6 3 1                  busts     banked 73
+ 24. player 2 (hold at 20)      rolls 5 5 2 3 1              busts     banked 68
+ 25. player 1 (keep pace)       rolls 6 3 1                  busts     banked 73
+ 26. player 2 (hold at 20)      rolls 5 6 4 1                busts     banked 68
+ 27. player 1 (keep pace)       rolls 6 1                    busts     banked 73
+ 28. player 2 (hold at 20)      rolls 3 6 1                  busts     banked 68
+ 29. player 1 (keep pace)       rolls 5 2 4 5 6 1            busts     banked 73
+ 30. player 2 (hold at 20)      rolls 2 2 6 3 1              busts     banked 68
+ 31. player 1 (keep pace)       rolls 4 5 6 1                busts     banked 73
+ 32. player 2 (hold at 20)      rolls 4 5 6 5                holds 20  banked 88
+ 33. player 1 (keep pace)       rolls 4 5 2 3 6 5 1          busts     banked 73
+ 34. player 2 (hold at 20)      rolls 3 4 6                  holds 13  banked 101
+
+Player 2 wins.
+
+The first player's share of wins in 5,000 games for each order of each pair:
+
+first \ second      random  hold at 20   desperate   keep pace
+random               0.509       0.004       0.005       0.009
+hold at 20           0.996       0.531       0.490       0.488
+desperate            0.996       0.569       0.531       0.512
+keep pace            0.993       0.585       0.562       0.529
+
+Each strategy's share of wins against the other three, half the games played first:
+  random       0.005
+  hold at 20   0.636
+  desperate    0.670
+  keep pace    0.689
+
+Going first, against the same strategy (a share of 0.5 would be no advantage):
+  random       0.509
+  hold at 20   0.531
+  desperate    0.531
+  keep pace    0.529

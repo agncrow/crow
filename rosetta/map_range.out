@@ -1,0 +1,41 @@
+From [0, 10] to [-1, 0], in floats:
+ 0 maps to -1.00
+ 1 maps to -0.90
+ 2 maps to -0.80
+ 3 maps to -0.70
+ 4 maps to -0.60
+ 5 maps to -0.50
+ 6 maps to -0.40
+ 7 maps to -0.30
+ 8 maps to -0.20
+ 9 maps to -0.10
+10 maps to  0.00
+
+In exact fractions:
+ 0 maps to -1
+ 1 maps to -9/10
+ 2 maps to -4/5
+ 3 maps to -7/10
+ 4 maps to -3/5
+ 5 maps to -1/2
+ 6 maps to -2/5
+ 7 maps to -3/10
+ 8 maps to -1/5
+ 9 maps to -1/10
+10 maps to 0
+
+In exact decimals:
+ 0 maps to -1
+ 1 maps to -0.9
+ 2 maps to -0.8
+ 3 maps to -0.7
+ 4 maps to -0.6
+ 5 maps to -0.5
+ 6 maps to -0.4
+ 7 maps to -0.3
+ 8 maps to -0.2
+ 9 maps to -0.1
+10 maps to 0
+
+The whole range at once:
+-1.00 -0.90 -0.80 -0.70 -0.60 -0.50 -0.40 -0.30 -0.20 -0.10 0.00

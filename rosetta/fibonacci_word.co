@@ -1,0 +1,41 @@
+--- Rosetta Code: Fibonacci word
+--- https://rosettacode.org/wiki/Fibonacci_word
+--- Each word is the word before it followed by the one before that, built as text
+--- up to n = 37 (24,157,817 characters), keeping only the last two. A word's entropy
+--- reads its counts of 1s and 0s; the first words are shown whole.
+
+use math
+
+--- a symbol's share of the entropy, in bits, where it occurs count times in n
+fn share[count, n]
+    if count eq 0
+        return 0.0
+    p = float[count] / float[n]
+    return -p * log2[p]
+
+--- the Shannon entropy of a word of 0s and 1s
+fn entropy[word]
+    n = len[word]
+    ones = occurs[word, '1']
+    return share[ones, n] + share[n - ones, n]
+
+fn show[n, word]
+    shown = word
+    if len[word] gte 20
+        shown = '<too long>'
+    size = fmt[len[word], width = 10]
+    bits = fmt[entropy[word], decimals = 7, width = 10]
+    log['`fmt[n, width = 2]` `size` `bits`  `shown`']
+
+log[' N     Length    Entropy  Word']
+before = '1'
+word = '0'
+show[1, before]
+show[2, word]
+n = 3
+while n lte 37
+    next = '`word``before`'
+    before = word
+    word = next
+    show[n, word]
+    n = n + 1

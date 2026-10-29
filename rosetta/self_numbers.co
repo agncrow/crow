@@ -1,0 +1,197 @@
+--- Rosetta Code: Self numbers
+--- https://rosettacode.org/wiki/Self_numbers
+--- The first 50 come from a direct sieve: mark g + digitsum(g) for every g (the sieve also
+--- holds is_self, below, to the right answer under 10,000). The 10^k-th ones, up to the
+--- 1,000,000,000th (past the task's 100,000,000th), come from blocks of 100,000 numbers
+--- without a sieve: for g = q * 100000 + r, g + digitsum(g) is q * 100000 + digitsum(q)
+--- + (r + digitsum(r)), so block q is covered by one fixed pattern P = {r + digitsum(r)}
+--- moved by digitsum(q), plus the top of the pattern spilling over from block q - 1, moved
+--- by digitsum(q - 1). How many self numbers a block holds depends on those two digit sums
+--- alone, so it is counted from prefix counts of P once per pair of sums, and only the
+--- block holding a wanted one is walked number by number. Extra credit: the Mersenne prime
+--- 2^24036583 - 1 is a self number, proved by the digit sums of its 7,235,733 digits:
+--- taking k <= 9 * 7235733 from it changes only its last nine digits, so a generator
+--- g = n - k would need digitsum(g) = k with k within 81 of the digit sum of the rest,
+--- and none of those 82 values works. About 4 s a mode, most of it writing the digits.
+
+struct Pattern [size, spill, covered, below]
+
+fn digit_sum[n]
+    total = 0
+    m = n
+    while m gt 0
+        total = total + m % 10
+        m = m / 10
+    return total
+
+fn blank[n]
+    zeros = for i in range[n]
+        0
+    return zeros
+
+--- which numbers below limit are made as g + digitsum(g): the self numbers are the rest
+fn sieve[limit]
+    made = blank[limit + 50]
+    for g in range[limit]
+        made[g + digit_sum[g]] = 1
+    return made
+
+fn first_selfs[count, made]
+    found = []
+    n = 1
+    while len[found] lt count
+        if made[n] eq 0
+            found = push[found, n]
+        n = n + 1
+    return found
+
+--- P for blocks of 10^digits: which values r + digitsum(r) are made, and how many
+--- distinct made values lie below each value
+fn pattern[digits]
+    size = 10 ^ digits
+    spill = 9 * digits
+    covered = blank[size + spill + 1]
+    sums = blank[size]
+    r = 1
+    while r lt size
+        sums[r] = sums[r / 10] + r % 10
+        r = r + 1
+    for r in range[size]
+        covered[r + sums[r]] = 1
+    below = blank[size + spill + 2]
+    x = 0
+    while x lte size + spill
+        below[x + 1] = below[x] + covered[x]
+        x = x + 1
+    return Pattern[size, spill, covered, below]
+
+--- whether x of a block is made, the block moved by b and the one before it by a
+fn made_in[p, x, a, b, first]
+    if x gte b and p.covered[x - b] eq 1
+        return true
+    if not first and x lt a + p.spill and p.covered[x + p.size - a] eq 1
+        return true
+    return false
+
+--- how many self numbers a block holds: those its own pattern does not make, less
+--- those the spill of the block before makes, where the two do not overlap
+fn holds[p, a, b, first]
+    own = p.below[p.size - b]
+    if first
+        return p.size - own
+    spilt = p.below[len[p.below] - 1] - p.below[p.size - a]
+    both = 0
+    x = b
+    while x lt a + p.spill
+        if p.covered[x - b] eq 1 and p.covered[x + p.size - a] eq 1
+            both = both + 1
+        x = x + 1
+    return p.size - own - spilt + both
+
+--- the j-th self number of block q
+fn walk_block[p, q, a, b, first, j]
+    seen = 0
+    x = 0
+    while x lt p.size
+        if not made_in[p, x, a, b, first]
+            seen = seen + 1
+            if seen eq j
+                return q * p.size + x
+        x = x + 1
+    return -1
+
+--- the self numbers at the wanted positions (ascending), one walk over the blocks
+fn at_positions[p, wanted]
+    answers = []
+    counts = map[]
+    q = 0
+    before = 0
+    a = 0
+    w = 0
+    while w lt len[wanted]
+        b = digit_sum[q]
+        key = a * 1000 + b
+        first = q eq 0
+        if first
+            key = -1
+        if key not in counts
+            counts = set[counts, key, holds[p, a, b, first]]
+        c = counts[key]
+        while w lt len[wanted] and before + c gte wanted[w]
+            answers = push[answers, walk_block[p, q, a, b, first, wanted[w] - before]]
+            w = w + 1
+        before = before + c
+        a = b
+        q = q + 1
+    return answers
+
+--- the digit sum of a number of any size, from its decimal text
+fn digit_sum_of_text[text]
+    total = 0
+    for d in range[1, 10]
+        total = total + d * occurs[text, str[d]]
+    return total
+
+--- how many low digits of n to cut off: enough that taking k <= 9 * (n's digit count)
+--- from them never borrows from the rest
+fn low_width[text]
+    return len[str[9 * len[text]]] + 1
+
+--- whether n is a self number: a generator g = n - k has digitsum(g) = k, and k is at
+--- most 9 times n's digit count. Where taking k from n's low digits never borrows,
+--- digitsum(g) is the rest's digit sum plus the low part's, so k lies within 9 * w of
+--- the rest's digit sum; elsewhere every k is tried
+fn is_self[n, text]
+    limit = 9 * len[text]
+    w = low_width[text]
+    low = n % 10 ^ w
+    rest = digit_sum_of_text[text] - digit_sum[low]
+    if n gte 10 ^ w and low lte limit
+        k = 1
+        while k lte limit
+            if digit_sum[n - k] eq k
+                return false
+            k = k + 1
+        return true
+    k = max[1, rest]
+    while k lte min[min[limit, n], rest + 9 * w]
+        if rest + digit_sum[low - k] eq k
+            return false
+        k = k + 1
+    return true
+
+made = sieve[10000]
+shown = join[first_selfs[50, made], ' ']
+log['The first 50 self numbers:']
+log[shown]
+log['']
+
+p = pattern[5]
+wanted = for k in range[10]
+    10 ^ k
+found = at_positions[p, wanted]
+log['          nth   nth self number']
+for k in range[len[wanted]]
+    log['`fmt[wanted[k], width = 13, commas = true]`  `fmt[found[k], width = 16, commas = true]`']
+log['So the 100,000,000th self number is indeed 1,022,727,208.']
+log['']
+
+--- is_self held to the sieve, then the extra credit
+agree = true
+n = 1
+while n lt 10000 and agree
+    agree = is_self[n, str[n]] eq (made[n] eq 0)
+    n = n + 1
+log['is_self agrees with the sieve below 10,000: `agree`']
+mersenne = 2 ^ 24036583 - 1
+text = str[mersenne]
+head = slice[text, 0, 12]
+tail = slice[text, -12, len[text]]
+w = low_width[text]
+low = mersenne % 10 ^ w
+rest = digit_sum_of_text[text] - digit_sum[low]
+log['n = 2^24036583 - 1 = `head`...`tail` has `fmt[len[text], commas = true]` digits.']
+log['A generator g = n - k needs digitsum(g) = k with k <= 9 * `len[text]` = `fmt[9 * len[text], commas = true]`, and taking']
+log['that from n changes only its last `w` digits (`low`): digitsum(g) = `fmt[rest, commas = true]` + digitsum(`low` - k).']
+log['So k is from `fmt[rest, commas = true]` to `fmt[rest + 9 * w, commas = true]`, and none of those fits:']
+log['2^24036583 - 1 is a self number: `is_self[mersenne, text]`']

@@ -53,9 +53,14 @@ impl From<crate::moments::Moment> for Cell {
 impl From<serde_json::Value> for Cell {
     fn from(v: serde_json::Value) -> Self {
         match v {
-            serde_json::Value::Number(n) => match n.as_i64() {
-                Some(i) => Cell::Int(i),
-                None => Cell::Float(n.as_f64().unwrap_or(f64::NAN)),
+            serde_json::Value::Number(n) => match (n.as_i64(), n.as_u64()) {
+                (Some(i), _) => Cell::Int(i),
+                // (a whole number past i64 within u64 is its digits, which
+                // `int` reads as the growing int it is and `float` as its
+                // nearest float: read through a float, `int` had answered
+                // another number; Rosetta Code, JSON)
+                (None, Some(u)) => Cell::Text(u.to_string()),
+                _ => Cell::Float(n.as_f64().unwrap_or(f64::NAN)),
             },
             serde_json::Value::String(s) => Cell::Text(s),
             serde_json::Value::Bool(b) => Cell::Bool(b),
@@ -186,6 +191,18 @@ pub trait Words {
     }
 }
 
+/// What a reference holds is joined as the value is: a statement loop
+/// lends its items (`for line in grid` walks `&Vec<String>`), and `join`
+/// of one had not built, E0277 (Rosetta Code, 9 billion names of God).
+impl<T: Words + ?Sized> Words for &T {
+    fn words(&self) -> Result<Vec<String>, String> {
+        (**self).words()
+    }
+    fn lent(&self) -> Result<std::borrow::Cow<'_, [String]>, String> {
+        (**self).lent()
+    }
+}
+
 impl Words for Vec<String> {
     fn words(&self) -> Result<Vec<String>, String> {
         Ok(self.clone())
@@ -224,9 +241,10 @@ impl Words for Vec<serde_json::Value> {
             .enumerate()
             .map(|(i, v)| match v {
                 serde_json::Value::String(s) => Ok(s.clone()),
-                serde_json::Value::Number(n) => Ok(match n.as_i64() {
-                    Some(k) => k.to_string(),
-                    None => n.as_f64().unwrap_or(f64::NAN).to_string(),
+                serde_json::Value::Number(n) => Ok(match (n.as_i64(), n.as_u64()) {
+                    (Some(k), _) => k.to_string(),
+                    (None, Some(u)) => u.to_string(),
+                    _ => n.as_f64().unwrap_or(f64::NAN).to_string(),
                 }),
                 serde_json::Value::Bool(b) => Ok(b.to_string()),
                 serde_json::Value::Null => Err(crate::stops::missing_cell(i)),

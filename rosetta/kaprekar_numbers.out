@@ -1,0 +1,31 @@
+Kaprekar numbers below 10,000: 1 9 45 55 99 297 703 999 2223 2728 4879 4950 5050 5292 7272 7777 9999
+Kaprekar numbers below 1,000,000: 54
+
+Kaprekar numbers in base 17 from 1 to 1,000,000: 24
+ base 10  base 17       square        split
+       1        1            1       0 + 1
+      16        g           f1       f + 1
+      64       3d          e2g       e + 2g
+     225       d4         a52g      a5 + 2g
+     288       gg         gf01      gf + 01
+    1536      556       1b43b2     1b4 + 3b2
+    3377      bbb       8093b2     809 + 3b2
+    4912      ggg       ggf001     ggf + 001
+    7425     18bd      24e166g     24e + 166g
+    9280     1f1f      39b1b94     39b + 1b94
+   16705     36db      b992c42     b99 + 2c42
+   20736     43cd     10de32fg    10de + 32fg
+   30016     61eb     23593f92    2359 + 3f92
+   36801     785d     351e433g    351e + 433g
+   37440     7a96     37144382    3714 + 4382
+   46081     967b     52g94382    52g9 + 4382
+   46720     98b4     5575433g    5575 + 433g
+   53505     af26     6ga43f92    6ga4 + 3f92
+   62785     cd44     9a5532fg    9a55 + 32fg
+   66816     da36     aeg42c42    aeg4 + 2c42
+   74241     f1f2     d75f1b94    d75f + 1b94
+   76096     f854     e1f5166g    e1f5 + 166g
+   83520     gggg     gggf0001    gggf + 0001
+  266224    33334    a2c52a07g    a2c5 + 2a07g
+
+Kaprekar numbers in base 17 below 1000000 in base 17 (24,137,569): 57, the largest 24,137,568 (gggggg)

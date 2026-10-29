@@ -1,0 +1,45 @@
+--- Rosetta Code: Modular inverse
+--- https://rosettacode.org/wiki/Modular_inverse
+--- The extended Euclidean algorithm: each remainder of m and a is carried down
+--- beside the multiple of a it is congruent to; where the last nonzero remainder
+--- is 1, its multiple is the inverse. A modulus below 0 is read as its size (as
+--- PARI does), and an a that shares a factor with m answers an error value.
+
+--- x with a * x = 1 (mod m), in 0 .. |m|-1
+fn mod_inverse[a, m]
+    n = abs[m]
+    if n eq 0
+        return error['nothing is invertible modulo 0', 'math']
+    t, new_t = 0, 1
+    r, new_r = n, a % n
+    if new_r lt 0
+        new_r = new_r + n
+    while new_r ne 0
+        q = r / new_r
+        t, new_t = new_t, t - q * new_t
+        r, new_r = new_r, r - q * new_r
+    if r gt 1
+        return error['`a` is not invertible modulo `m` (both are multiples of `r`)', 'math']
+    if t lt 0
+        t = t + n
+    return t % n
+
+fn show[a, m]
+    x = mod_inverse[a, m]
+    if not x.ok
+        log['  `x.reason`']
+    else
+        n = abs[m]
+        check = (a * x % n + n) % n
+        log['  the inverse of `a` modulo `m` is `x`  (`a` * `x` mod `n` = `check`)']
+
+log['The task: the inverse of 42 modulo 2017 is `mod_inverse[42, 2017]`']
+log['']
+log['More cases (those of the C and Phix entries, and two past 64 bits):']
+show[42, 2017]
+show[40, 1]
+show[52, -217]
+show[-486, 217]
+show[40, 2018]
+show[10 ^ 30 + 7, 2 ^ 89 - 1]
+show[3 ^ 100, 10 ^ 40 + 1]

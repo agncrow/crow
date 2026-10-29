@@ -1,0 +1,40 @@
+--- Rosetta Code: Determine if a string is collapsible
+--- https://rosettacode.org/wiki/Determine_if_a_string_is_collapsible
+--- A character is kept when it is the first or differs from the one before
+--- it; a string is collapsible when that drops any character. Characters are
+--- Unicode's, so an emoji counts as one.
+
+fn collapse[s]
+    chars = split[s, '']
+    kept = for i in range[len[chars]]
+        if i eq 0 or chars[i] ne chars[i - 1]
+            chars[i]
+    return join[kept, '']
+
+fn show[label, s]
+    log['`label`: length = `fmt[len[s], width = 2]`, string = «««`s`»»»']
+
+fn report[s]
+    collapsed = collapse[s]
+    show['original ', s]
+    show['collapsed', collapsed]
+    removed = len[s] - len[collapsed]
+    if removed eq 0
+        log['not collapsible']
+    else if removed eq 1
+        log['collapsible: 1 repeated character removed']
+    else
+        log['collapsible: `removed` repeated characters removed']
+    log['']
+
+lincoln = '"If I were two-faced, would I be wearing this one?" --- Abraham Lincoln '
+ones = '..1111111111111111111111111111111111111111111111111111111111111117777888'
+truth = 'I never give \'em hell, I just tell the truth, and they think it\'s hell. '
+truman = '                                                    --- Harry S Truman  '
+for s in ['', lincoln, ones, truth, truman]
+    report[s]
+
+--- the task's own examples, and two more
+wheel = 'The better the 4-wheel drive, the further you\'ll be from help when ya get stuck!'
+for s in [wheel, 'headmistressship', 'aardvark', '😍😀🙌💃😍😍😍🙌']
+    report[s]

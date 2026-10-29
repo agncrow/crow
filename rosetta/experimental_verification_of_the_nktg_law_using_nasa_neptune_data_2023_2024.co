@@ -1,0 +1,124 @@
+--- Rosetta Code: Experimental Verification of the NKTg Law Using NASA Neptune Data (2023–2024)
+--- https://rosettacode.org/wiki/Experimental_Verification_of_the_NKTg_Law_Using_NASA_Neptune_Data_(2023–2024)
+--- p = m·v, NKTg₁ = x·p, NKTg₂ = (dm/dt)·p and NKTg = √(NKTg₁² + NKTg₂²) for each date; the 2024
+--- mass is stepped from the last of 2023 by m_new = m_previous + (dm/dt)·Δt, Δt the seconds between
+--- the dates, in exact decimals (a float cannot hold a loss of 157 kg on 10²⁶ kg), and compared with
+--- NASA's constant mass. The task's own simulated masses are compared too, as other entries do.
+
+use math
+
+struct Obs [date, x, m]
+
+fn obs_of[line]
+    --- a line of a table: the date, x (km) and m (kg), the mass held exactly
+    cells = split[line, ' ']
+    return Obs[cells[0], float[cells[1]], decimal[cells[2]]]
+
+fn sci[x, digits]
+    --- x as C's %.<digits>e writes it: one digit, the point, `digits` more, then the exponent
+    if x eq 0.0
+        zeros = repeat['0', digits]
+        return '0.`zeros`e+00'
+    sign = ''
+    a = x
+    if x lt 0.0
+        sign = '-'
+        a = -x
+    e = floor[log10[a]]
+    mantissa = a / 10.0 ^ e
+    if mantissa lt 1.0
+        mantissa = mantissa * 10.0
+        e = e - 1
+    text = fmt[mantissa, decimals = digits]
+    if starts[text, '10']
+        e = e + 1
+        text = fmt[mantissa / 10.0, decimals = digits]
+    esign = '+'
+    if e lt 0
+        esign = '-'
+    power = fmt[abs[e], width = 2, fill = '0']
+    return '`sign``text`e`esign``power`'
+
+fn right[text, width]
+    return fmt[text, width = width, align = 'right']
+
+fn nktg_line[date, x, m, v, dm_dt]
+    --- the date's p, NKTg₁, NKTg₂ and NKTg, as a line of the table
+    p = m * v
+    nktg1 = x * p
+    nktg2 = dm_dt * p
+    nktg = sqrt[nktg1 ^ 2 + nktg2 ^ 2]
+    cells = [date, right[str[x], 10], right[sci[m, 7], 13], right[sci[p, 7], 13], right[sci[nktg1, 7], 13], right[sci[nktg2, 7], 14], right[sci[nktg, 7], 13]]
+    return join[cells, '  ']
+
+fn header[]
+    cells = [fmt['Date', width = 10], right['x (km)', 10], right['m (kg)', 13], right['p = m·v', 13], right['NKTg₁ = x·p', 13], right['NKTg₂ = ṁ·p', 14], right['NKTg', 13]]
+    return join[cells, '  ']
+
+fn error_percent[m, actual]
+    --- |m − actual| / actual, in percent
+    return abs[(m - actual) / actual * 100]
+
+v = 5.43
+dm_dt = decimal['-0.00002']
+nasa_mass = decimal['1.02430000E+26']
+
+--- NASA's published data for 2023: the date, x (km) and m (kg)
+data_2023 = for line in [
+    '2023-01-01 4498396440 1.02430000E+26',
+    '2023-04-01 4503443661 1.02429980E+26',
+    '2023-07-01 4553946490 1.02429960E+26',
+    '2023-10-01 4503443661 1.02429940E+26',
+    '2023-12-31 4498396440 1.02429920E+26'
+]
+    obs_of[line]
+
+--- the 2024 dates and positions, and the masses the task's table simulates for them
+data_2024 = for line in [
+    '2024-01-01 4498396440 1.02429900E+26',
+    '2024-04-01 4503443661 1.02429880E+26',
+    '2024-07-01 4553946490 1.02429860E+26',
+    '2024-10-01 4503443661 1.02429840E+26',
+    '2024-12-31 4498396440 1.02429820E+26'
+]
+    obs_of[line]
+
+log['NKTg law for Neptune: v = `v` km/s, dm/dt = `dm_dt` kg/s']
+log['']
+log['2023, NASA data:']
+log[header[]]
+for o in data_2023
+    log[nktg_line[o.date, o.x, float[o.m], v, float[dm_dt]]]
+
+log['']
+log['2024, the mass simulated by m_new = m_previous + (dm/dt)·Δt from 2023-12-31:']
+log[header[]]
+m = data_2023[-1].m
+t = moment[data_2023[-1].date]
+simulated = []
+for o in data_2024
+    dt = int[moment[o.date] - t]
+    m = m + dm_dt * dt
+    t = moment[o.date]
+    simulated = push[simulated, m]
+    log[nktg_line[o.date, o.x, float[m], v, float[dm_dt]]]
+
+log['']
+log['The simulated mass against NASA\'s constant `sci[float[nasa_mass], 8]` kg:']
+heading = [fmt['Date', width = 10], right['Δt (s)', 8], right['simulated m (kg)', 31], right['relative error (%)', 18]]
+log[join[heading, '  ']]
+t = moment[data_2023[-1].date]
+for i in range[len[data_2024]]
+    o = data_2024[i]
+    dt = int[moment[o.date] - t]
+    t = moment[o.date]
+    shown = round[simulated[i], 3]
+    cells = [o.date, right[str[dt], 8], right[str[shown], 31], right[fmt[error_percent[simulated[i], nasa_mass], decimals = 10], 18]]
+    log[join[cells, '  ']]
+log['A year\'s loss at 0.00002 kg/s is 632 kg, six parts in 10²⁴ of the mass: the error is that of']
+log['the last 2023 mass against NASA\'s constant (the 2023 table falls 8×10¹⁹ kg over its year).']
+
+log['']
+log['The masses the task\'s 2024 table simulates, against NASA\'s:']
+for o in data_2024
+    log['`o.date`  `sci[float[o.m], 8]` kg  `fmt[error_percent[o.m, nasa_mass], decimals = 8]`%']

@@ -1,0 +1,19 @@
+--- Rosetta Code: Odd and square numbers
+--- https://rosettacode.org/wiki/Odd_and_square_numbers
+--- An odd square is the square of an odd number, so only the odd numbers are
+--- squared, while their squares stay under the limit.
+
+fn odd_squares[low, high]
+    --- the odd squares above low and below high
+    found = []
+    k = 1
+    while k * k lt high
+        if k * k gt low
+            found = push[found, k * k]
+        k = k + 2
+    found
+
+squares = for n in odd_squares[99, 1000]
+    str[n]
+log['The odd squares above 99 and under 1,000:']
+log[join[squares, ' ']]

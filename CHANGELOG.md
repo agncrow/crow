@@ -62,6 +62,193 @@ history says the rest.
   more than four nodes is one range of the edges log, read once, where
   each node had been a read of the log's files of its own (a walk of
   three hops over 1,022 nodes read the files 1,022 times).
+- What writing Rosetta Code's tasks in Crow found (rosetta/; each fix
+  with its parity program, 331–357). Maps: an empty map written at an
+  int key holds ints as keys, and `keys` of a function's int-keyed map
+  is a list of ints (331); a key the width pass cannot bound (`10 ^
+  xs[0]`) is no value the map holds, and `values` of a map of growing
+  ints is a list of them — the lowered program had disagreed with itself
+  (350). A function that can fail and answers nothing ends well on a
+  bare `return` or on a last `if`, `while` or `for` (332), and a
+  recursive one ending on a call of itself (339). `int[text]` items handed
+  to `sort`, `sum` or `max` are numbers (334). `fmt` lays out an int past
+  64 bits, a decimal and a fraction with every option (335, 347).
+- Whole numbers written down and grown with `push`, or written by
+  position, are a list of ints — every digit kept (`fib = [0, 1]` had
+  rounded past 2^53 interpreted and overflowed compiled; 336) — and so
+  when the pushed value can fail (351): the loop's shape pass had joined
+  the failure into a tensor's variable. A list pushed as an item of a list
+  of lists keeps its items' ranges (337); a loop over whole numbers
+  written down ranges its variable by them, which had been read as any
+  64-bit int and overflowed compiled (357); a growing field read through
+  a record-or-none link keeps every digit (338); numbers held two ways
+  (a literal list beside a list of growing ints) compare by value (342).
+- A float written at a nested position of a holder of ints (`g[0][0] =
+  2.5`) makes every row a row of floats, rows pushed or collected before
+  converted where they meet the grid (352), and so does a float written
+  into whole numbers written down at the top level (358); a literal written into a
+  list's item, a map's value or a record's field is the list it holds
+  (344). A local written into a list by position or into its own
+  record's link is copied (343); a record from a call that can fail is
+  handed where a link is taken (345); a call through a list of functions
+  types its members (346); a function handed a list of vectors and a
+  list of lists has a copy for each (341). An item of a list nothing is
+  put into, read or written by position, stops at the first position in
+  both modes — compiled it had been read as a function (353).
+- Names: a variable named `bytes`, `match`, `from` or `print` — words
+  another module or another language owns — is the program's (340); a
+  record named like a type the compiled program names (`Vec`, `String`,
+  `Self`, the runtime's `Crow…`) and a function named like its own
+  helpers (`crow_stop`) are renamed out of Rust's way, shown as declared
+  (354); a backslash before an interpolation (`'\\`e`'`) is a
+  backslash; a view in a program without `use ui` is refused with the
+  fix.
+- A parallel loop's threads have the program's stack: a recursion
+  inside one had aborted the process, 643 calls deep interpreted (355). A
+  loop's variable written in its body is the round's own copy — compiled
+  it had been bound immutably and not built (356). Indexing a top-level
+  list that can fail reads the item where it lies (it had copied the list
+  at every read: 300 times slower compiled), and `join` of a statement
+  loop's item that is a list builds.
+- More of what the Rosetta Code tasks found (parity 359–387). Lists:
+  a list given `[]` that meets `join` before the push typing it takes the
+  push's kind (359); a map filled by position at the top level and handed
+  on is typed by its writes (360); a list literal holds its items in one
+  form — numbers held as a tensor beside a list are the list, whole
+  numbers beside floats floats (365) — and lists whose items hold numbers
+  the other way, at any depth, are converted item by item (382); rows of
+  whole numbers written down keep every digit (366, 371), a list of lists
+  one of whose lists grew holds growing lists (376), and `concat` of a
+  range and growing ints grows both (384). A literal returned beside a
+  list of growing ints is that list (377); a function's answer follows
+  its body once every item is known (378); a list of rows beside a matrix
+  is the matrix, not a tensor of lists (379); one copy of a function
+  takes a matrix of ints and one of floats as floats (400); a list pushed
+  onto another before its own items are known (383), an item written
+  through a record's field (385) and a local a collecting loop yields
+  (387) are typed by what is written later; a tensor given a list in a
+  loop stays a tensor (372). Each had been an internal error in both
+  modes or a compiled program that did not build.
+- Failures: a value that can fail written into a field made plain holds
+  the failure (362); written by position inside a function it is handed
+  back (363); a loop over a list that can fail walks its items (364);
+  `values` of a map that can fail (361); `error[…]` where an item goes —
+  in a list literal, pushed — is a failure of an item (401).
+- Ints: -2^63 divided by -1, and its `abs`, grow to 2^63 (367);
+  arithmetic on an int-keyed map's key grows (368); a width past 64 bits
+  handed to `fmt` beside a float stops alike in both modes, where it had
+  chosen the growing form for the float (386; `crow check --self`).
+- Compiled builds: loops reusing a name Rust reserves (369), a loop over
+  moments handing each on (373), records compared where one is lent
+  (374). Under `use math as m`, a bare name is the core's (`min`), the
+  program's own function or a variable (`sum = [1, 2]`), never math's —
+  each had been refused as math's (375).
+- Refused before the program runs, with the fix (errors j88–j93): what a
+  function answering nothing gives, read by position; an item of a list
+  nothing is put into, computed with or read (parity 353 became j91); a
+  collecting loop whose last line answers nothing; a record declared
+  inside a body; a comparison word Crow does not have (`if k ge 0` is
+  told `gte`, where it had been told the block has no body).
+- A wrong answer, compiled only: a function answering a list whose items
+  can fail (`[turned]` on one path) and returning a plain list on another
+  (`split_up[turned]`) had answered an empty list — each item is now the
+  success it is (399); the IR's verifier refuses a success handed on
+  under another payload, the shape of that slip. Builds that had failed
+  compiled: a view's markup returned by a plain function (388), a map of
+  failures answered through a failing argument (389), `concat` of a list
+  whose items can fail and a plain one (390), a moment a loop borrows
+  handed to a function inside an operator (391), a call handed `error[…]`
+  directly answers that failure (392), a record of no fields (393).
+  Agreeing modes where the lowered program had disagreed with itself: a
+  function handed as a value answers what it answers once its callees
+  are copied (394), rows of ints written down and grown at the top level
+  (395), a whole number written into growing ints by position (397), a
+  map of text written a value that can fail by key — decided where it is
+  written, as a list's item is (398), maps of ints and of floats handed
+  to one function (402). An int and a growing int are one kind: `answer =
+  0` then `answer = m + 1` of a growing `m` had been refused, "from int
+  to int" (396). A body may end on `halt[…]`, which no path goes on past
+  (403; the row's new `Prop::Ends`, beside `exit`'s).
+- Refused before the program runs (errors j94–j97): a top-level variable
+  read before the line that gives it its first value; two calls handing
+  a function taking a function two functions of two answers (spec,
+  Specialization); a collecting loop whose last line is a `for` or
+  `while` statement, which is no value (the interpreter had collected the
+  inner loop's last value, the compiled program nothing); a parameter
+  returned beside a return of another kind, named at the returns — the
+  parameter had taken the function's other answer as its type, and the
+  refusal had landed in another function.
+- Builds that had failed compiled, now agreeing (parity 404–414): a
+  function of the program's named like a form of a module it does not
+  import (`connect`, `fits`, `box`) is the program's — its calls had been
+  checked against the form (404); a top-level variable's one assignment is
+  judged against nothing an earlier round guessed (405); a tree's links
+  pushed onto a stack of records (406); a map of maps written two levels
+  down (407); whole numbers written down joined by `concat` with a list
+  of growing ints keep every digit (408); a record-or-none field that can
+  also hold a failure (409); a list or a map a loop borrows, compared
+  (410); a local handed back before the line that types its items (411);
+  a function value handed a value that can fail takes its payload (412);
+  a function a record's field holds, called through it (413); a call
+  through a member of a list of functions handed in answers the members'
+  kind (414); a list of plain items given a literal whose items can fail
+  holds the good ones and refuses a failed one at the assignment, where
+  the reassignment had been refused as a change of kind (415); a list
+  holding an int past 64 bits handed where numbers are taken is its
+  numbers interpreted too, that int its nearest float (416); a call in a
+  `while` condition is handed what the loop's body grows — the width
+  pass had read it with the variable's range from before the loop, and
+  `while not check[big]` stopped at the first round past 2^63 (417); a
+  stop in a `while` condition names the `while` line in every round,
+  where the interpreter had named the body's last line after the first
+  (418). A decimal of 65,535 places or more shows, where Rust's
+  formatter had stopped the program, and the lines `log` wrote before a
+  stop inside its own formatting are no longer lost on a pipe. A
+  fraction or a decimal of 0, 1 or -1 raised to any int is exact, as an
+  int is — past 32 bits it had stopped as a number no memory holds, and
+  past 64 the exponent had been refused naming no `^` (419).
+- Three copies that made a loop quadratic, found writing a
+  lambda-calculus machine (Rosetta Code, Universal lambda machine): a
+  `return m` inside a loop's body moves `m`, since nothing reads it after
+  (compiled, a record returned from inside a `while` had been copied at
+  every call: 41.8 s, now 0.25); `x = f[x, n]` whose call can fail hands
+  `x` to the call as `x = f[x]` does (a list grown by such calls had been
+  copied at each: 40,000 calls 5.2 s, now 0.03 interpreted); and a vector
+  held in a record's field or a list's item grows where it lies, as a
+  list there does (`b.xs = push[b.xs, i]`: 200,000 pushes 4.9 s, now
+  0.04 interpreted), so a matrix written through a field is written
+  where it lies too. A gather by an index tensor and a matrix's row read
+  the numbers they name where they lie: each had copied its whole source
+  (1,000 gathers of 3 numbers from 4,000,000 took 2.3 s, now 0.001), and
+  a walk of a matrix's rows had copied the matrix once per row (Rosetta
+  Code, Facial detection in a photo). A `return` inside a `for` hands
+  back what the loop walks beside its item as it did (420), and a loop
+  walks what its body assigns anew as the loop began, where the compiled
+  program had not built (421). A parsed JSON whole number past a signed
+  64-bit int, within 2^64, is an int with every digit — `type` had said
+  float and `int[…]` answered the float's digits (422). A window's sum,
+  minimum and maximum over a column of ints are computed on the ints,
+  every digit, where they had gone through floats (423). A moment's text
+  outside the years 0 to 9999 is ISO 8601's expanded year — its sign and
+  four digits or more, `-0005-06-01`, `+10000-01-01`, as `fmt`'s date
+  style writes it — and reads back as the moment: the sign had counted
+  among four digits and read back a day off, and a year past 9999 had not
+  read back (424).
+- Refused before the program runs (errors j98–k09): a field the record
+  does not declare, written; a name declared twice (functions, records);
+  a function value compared (`eq` had compared by name interpreted and
+  by address compiled); a function named `contains` or `has`, which no
+  call could reach; a predicate whose answer can fail handed to `all`,
+  `any` or `find` (a failure had counted as not passing, silently); a
+  member of a list of functions handed where another call hands a
+  function by name; a program's own call of sys's `describe` or `apply`
+  (the interpreter had stopped, "does not run 'describe' yet", and the
+  compiled program did not build); a loop over an item of a list never
+  given one (no rounds interpreted, no build compiled). A fault inside a
+  string's interpolation is placed at the string's line (k07): it had
+  been shown on line 1. A list a builtin takes no row of is named by its
+  items' kind (k09): `sort` of fractions had said `got a list`.
+
 - Magpie measured after the port to Crow (docs/magpie-in-crow.md, 4.2),
   and what the measures found. The sequencer's flush claims the pending
   rows under the tail's lock and writes them outside it, so a put waits
@@ -302,6 +489,9 @@ history says the rest.
 
 ### Added
 
+- `atan2[y, x]` of two numbers is a number, by the tensor's rule (two
+  numbers had been refused, where `sin` of one is its number).
+
 - `use memory` (`remember`, `recall`, `revise`, `forget`, `canonical`):
   process memory — a record a program holds for the process under a name,
   shared by its threads, one kind of record per name, the names a tree (a
@@ -412,6 +602,24 @@ history says the rest.
   module's `internal` flag where it had read the name `sys`, and the
   parity and errors harnesses open the door the book's pages had, so the
   programs about memory's rows run there.
+- A call of a function that answers nothing, handed a value that can
+  fail, answers that failure (spec, Auto-Propagation): dropped by its
+  line, a function hands it back and the top level halts, `cannot drop
+  an error value`. It had been typed as nothing, so the failure vanished
+  in both modes (parity 370).
+- `input[]` at the end of standard input is an error value, `.ok` false
+  and reason `end of input` (333): it had answered empty text that did
+  not fail, the same as an empty line, so a loop reading lines could not
+  tell the two apart. Read lines with `line = input[]` / `while line.ok`.
+- A variable, a parameter or a loop variable named like one of the
+  program's own functions is refused where it is defined (spec, Names
+  Are Never Ambiguous): `fn first[scores]` beside `fn scores[x]` had read
+  `scores[0]` as the function's call, a silent wrong answer in both
+  modes. A record's name read as a value (`p = Point`) is refused with
+  the fix (it had been an internal error), and a number written with an
+  exponent (`3.301e23`) is refused saying Crow writes none — `3.301 *
+  10.0 ^ 23`, or `float['3.301e23']` — where it had been read as a
+  second statement.
 - One value for several names is refused before the program runs, in
   both modes (spec, Multiple Assignment; Design Note: No Destructuring):
   `a, b = xs` and `c, d = pair[]` had run interpreted and not built

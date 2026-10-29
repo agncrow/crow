@@ -1,0 +1,50 @@
+--- Rosetta Code: Farey sequence
+--- https://rosettacode.org/wiki/Farey_sequence
+--- Each term follows from the two before it: after a/b and c/d comes
+--- (k*c - a)/(k*d - b) with k = (n + b) / d. The lengths are 1 plus the sum of
+--- Euler's totient up to n, from a sieve; beside them the estimate 3n^2/pi^2.
+
+use math
+
+--- the Farey sequence of order n, its fractions as text
+fn farey[n]
+    a, b, c, d = 0, 1, 1, n
+    terms = ['0/1']
+    while c lte n
+        k = (n + b) / d
+        a, b, c, d = c, d, k * c - a, k * d - b
+        terms = push[terms, '`a`/`b`']
+    return terms
+
+--- Euler's totient of 0 to limit, by a sieve over the primes
+fn totients[limit]
+    phi = for i in range[limit + 1]
+        i
+    p = 2
+    while p lte limit
+        if phi[p] eq p
+            m = p
+            while m lte limit
+                phi[m] = phi[m] - phi[m] / p
+                m = m + p
+        p = p + 1
+    return phi
+
+log['The Farey sequences of orders 1 to 11:']
+for n in range[1, 12]
+    label = fmt['F`n`:', width = 4]
+    terms = join[farey[n], ' ']
+    log['`label` `terms`']
+
+log['']
+log['The number of fractions in the Farey sequences of orders 100 to 1,000:']
+phi = totients[1000]
+count = 1
+n = 1
+while n lte 1000
+    count = count + phi[n]
+    if n % 100 eq 0
+        label = fmt['F`n`:', width = 6]
+        estimate = fmt[3 * n * n / pi ^ 2, decimals = 1]
+        log['`label` `fmt[count, width = 6]`   (3n^2/pi^2 = `estimate`)']
+    n = n + 1

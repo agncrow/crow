@@ -1,0 +1,29 @@
+--- Rosetta Code: Fibonacci n-step number sequences
+--- https://rosettacode.org/wiki/Fibonacci_n-step_number_sequences
+--- One function grows a sequence from its initial values, each next term the sum of as
+--- many terms before it as there were initial values. The n-step sequence starts with
+--- the first n terms of the (n - 1)-step one; Lucas starts with 2, 1.
+
+--- the first count terms of the sequence that starts with initial
+fn n_step[initial, count]
+    n = len[initial]
+    terms = initial
+    while len[terms] lt count
+        total = 0
+        for t in slice[terms, len[terms] - n, len[terms]]
+            total = total + t
+        terms = push[terms, total]
+    return slice[terms, 0, count]
+
+names = ['fibonacci', 'tribonacci', 'tetranacci', 'pentanacci', 'hexanacci', 'heptanacci', 'octonacci', 'nonanacci', 'decanacci']
+initial = [1, 1]
+n = 2
+while n lte 10
+    terms = join[n_step[initial, 15], ' ']
+    label = fmt[names[n - 2], width = 10, align = 'right']
+    log['`fmt[n, width = 2]`  `label`: `terms` ...']
+    initial = n_step[initial, n + 1]
+    n = n + 1
+lucas = join[n_step[[2, 1], 15], ' ']
+label = fmt['lucas', width = 10, align = 'right']
+log['    `label`: `lucas` ...']

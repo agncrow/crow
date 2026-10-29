@@ -1,0 +1,20 @@
+--- a view's markup returned by a plain function is the function's text,
+--- as the view's node held where markup is held is: compiled, the node
+--- had been handed where text was answered, and the program did not build
+--- (Rosetta Code, CSV to HTML translation)
+
+use web, ui
+
+view cell[s]
+    return td[s]
+
+fn markup_of[s]
+    return cell[s]
+
+fn row_of[xs]
+    cells = for x in xs
+        markup_of[x]
+    return join[cells, '']
+
+log[markup_of['a < b']]
+log[row_of[['1', '2 & 3']]]

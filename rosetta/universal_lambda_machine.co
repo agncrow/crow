@@ -1,0 +1,482 @@
+--- Rosetta Code: Universal Lambda Machine
+--- https://rosettacode.org/wiki/Universal_Lambda_Machine
+--- A Binary Lambda Calculus interpreter. The program's term is parsed from the start of
+--- the input's bits (00 a lambda, 01 an application, 1^n 0 the variable n), applied to
+--- the rest of the input as a list of bits, or of bytes (each a list of 8 bits), and the
+--- result is read back as a list of the same. Terms run on a lazy Krivine machine over
+--- lists of ints: the terms; the closures, each a term in an environment, overwritten by
+--- its value once it is first worked out, so an argument is worked out at most once; the
+--- environments' cells; and a stack of arguments and update marks. The result is read by
+--- applying it to two marker constants and seeing which one comes to the head.
+---
+--- With no arguments the task's programs run. With -b it is the bit-mode machine on the
+--- 0s and 1s of standard input; with -x the byte-mode machine on standard input read as
+--- hexadecimal (`xxd -p prog.Blc | crow run universal_lambda_machine.co -x`): a Crow
+--- program reads standard input as text, and a byte-mode program is binary, so the
+--- byte-mode programs below are written in hexadecimal too.
+
+use bits
+
+--- A term is op, a and b at its number: op 0 a variable (a its de Bruijn index from 0),
+--- 1 a lambda (a its body), 2 an application (a the function, b the argument), 3 a
+--- marker (a which one).
+struct Terms [op, a, b]
+
+--- A closure is term and env at its number, a term in an environment; an environment is
+--- a cell holding a closure (bound) and the rest of the environment (outer; -1 is the
+--- empty one).
+struct Heap [term, env, bound, outer]
+
+struct Parsed [terms, root, end]
+
+--- The same ints in a list made by push. A literal list of numbers held in a record's
+--- field is copied at each push through the field (findings/universal_lambda_machine-1.co).
+fn ints[literal]
+    out = []
+    for v in literal
+        out = push[out, v]
+    return out
+
+--- The terms before any program's: 0 to 3 are the markers (0 a pair, 1 the empty list,
+--- 2 the bit 0, 3 the bit 1); 4 is \\1, true, which is the bit 0; 6 is \\0, false, which
+--- is the bit 1 and the empty list; 8 is \0 1 2, a pair, its head and tail held in its
+--- environment; 11 is the variable 0.
+fn base_terms[]
+    op = ints[[3, 3, 3, 3, 1, 1, 1, 1, 1, 2, 2, 0, 0, 0]]
+    a = ints[[0, 1, 2, 3, 5, 12, 7, 11, 9, 10, 11, 0, 1, 2]]
+    b = ints[[0, 0, 0, 0, 0, 0, 0, 0, 0, 13, 12, 0, 0, 0]]
+    return Terms[op, a, b]
+
+--- The closures before any program's: 0 to 3 hold the markers, 4 true and 5 false.
+fn base_heap[]
+    return Heap[ints[[0, 1, 2, 3, 4, 6]], ints[[-1, -1, -1, -1, -1, -1]], [], []]
+
+--- h with one more closure, the pair of closures x and y; its number is the last.
+fn pair[h, x, y]
+    h.bound = push[h.bound, y]
+    h.outer = push[h.outer, -1]
+    h.bound = push[h.bound, x]
+    h.outer = push[h.outer, len[h.bound] - 2]
+    h.term = push[h.term, 8]
+    h.env = push[h.env, len[h.bound] - 1]
+    return h
+
+--- Parses the term whose code begins at bit pos into ts: holes holds where each term
+--- still to be read goes, 2n for term n's a and 2n + 1 for its b.
+fn parse[ts, bitlist, pos]
+    root = len[ts.op]
+    holes = [-1]
+    while len[holes] gt 0
+        hole = holes[-1]
+        holes = pop[holes]
+        node = len[ts.op]
+        if pos + 1 gte len[bitlist]
+            halt['the input ends inside the program\'s term']
+        if bitlist[pos] eq 1
+            i = 0
+            pos = pos + 1
+            while pos lt len[bitlist] and bitlist[pos] eq 1
+                i = i + 1
+                pos = pos + 1
+            pos = pos + 1
+            ts.op = push[ts.op, 0]
+            ts.a = push[ts.a, i]
+        else if bitlist[pos + 1] eq 0
+            ts.op = push[ts.op, 1]
+            ts.a = push[ts.a, -1]
+            holes = push[holes, 2 * node]
+            pos = pos + 2
+        else
+            ts.op = push[ts.op, 2]
+            ts.a = push[ts.a, -1]
+            holes = push[push[holes, 2 * node + 1], 2 * node]
+            pos = pos + 2
+        ts.b = push[ts.b, -1]
+        if hole gte 0
+            if hole % 2 eq 0
+                ts.a[hole / 2] = node
+            else
+                ts.b[hole / 2] = node
+    return Parsed[ts, root, pos]
+
+--- Reads the output, the list closure listed, as bits or bytes. The machine runs a
+--- closure c applied to closures x and y until a marker comes to the head (or a lambda
+--- is left with no argument, head -1), and what the marker says depends on what was
+--- asked (wanted): 0 the output's next cell (marker 0 a pair, 1 the end), 1 a bit of the
+--- output (marker 2 the bit 0, 3 the bit 1), 2 the next cell of a byte's bits, 3 a bit
+--- of a byte. The lists are locals here, written where they lie.
+fn output[ts, h, listed, byte_mode, limit]
+    op = ts.op
+    a = ts.a
+    b = ts.b
+    term = h.term
+    scope = h.env
+    bound = h.bound
+    outer = h.outer
+    out = []
+    wanted = 0
+    c = listed
+    x = 0
+    y = 1
+    byte = 0
+    more = -1
+    stack = [0, 0, 0]
+    head = -1
+    first = -1
+    second = -1
+    going = true
+    while going
+        --- c applied to x and y; c marked for its update unless it is a value
+        stack[0] = y
+        stack[1] = x
+        sp = 2
+        t = term[c]
+        e = scope[c]
+        if op[t] eq 0 or op[t] eq 2
+            stack[2] = -1 - c
+            sp = 3
+        busy = true
+        while busy
+            k = op[t]
+            if k eq 2
+                --- an application: its argument goes on the stack as a closure (a
+                --- variable's own closure, shared), and its function runs
+                arg = b[t]
+                d = -1
+                if op[arg] eq 0
+                    i = a[arg]
+                    at = e
+                    while i gt 0
+                        at = outer[at]
+                        i = i - 1
+                    d = bound[at]
+                else
+                    term = push[term, arg]
+                    scope = push[scope, e]
+                    d = len[term] - 1
+                if sp lt len[stack]
+                    stack[sp] = d
+                else
+                    stack = push[stack, d]
+                sp = sp + 1
+                t = a[t]
+            else if k eq 0
+                --- a variable: its closure runs, marked for its update unless a value
+                i = a[t]
+                at = e
+                while i gt 0
+                    at = outer[at]
+                    i = i - 1
+                d = bound[at]
+                t = term[d]
+                e = scope[d]
+                if op[t] eq 0 or op[t] eq 2
+                    if sp lt len[stack]
+                        stack[sp] = -1 - d
+                    else
+                        stack = push[stack, -1 - d]
+                    sp = sp + 1
+            else if k eq 1
+                --- a lambda: an update mark is given this value; an argument is bound
+                if sp eq 0
+                    head = -1
+                    busy = false
+                else
+                    sp = sp - 1
+                    top = stack[sp]
+                    if top lt 0
+                        term[-1 - top] = t
+                        scope[-1 - top] = e
+                    else
+                        bound = push[bound, top]
+                        outer = push[outer, e]
+                        e = len[bound] - 1
+                        t = a[t]
+            else
+                --- a marker: its arguments are on the top of the stack, past any marks
+                head = a[t]
+                first = -1
+                second = -1
+                j = sp - 1
+                while j gte 0 and second lt 0
+                    if stack[j] gte 0
+                        if first lt 0
+                            first = stack[j]
+                        else
+                            second = stack[j]
+                    j = j - 1
+                busy = false
+        --- what the marker says, and what is asked next
+        if wanted eq 0
+            if head ne 0
+                going = false
+            else if byte_mode
+                listed = second
+                byte = 0
+                c = first
+                wanted = 2
+            else
+                listed = second
+                c = first
+                x = 2
+                y = 3
+                wanted = 1
+        else if wanted eq 1
+            out = push[out, head - 2]
+            c = listed
+            x = 0
+            y = 1
+            wanted = 0
+        else if wanted eq 2
+            if head eq 0
+                more = second
+                c = first
+                x = 2
+                y = 3
+                wanted = 3
+            else
+                out = push[out, byte]
+                c = listed
+                wanted = 0
+        else
+            byte = byte * 2 + head - 2
+            c = more
+            x = 0
+            y = 1
+            wanted = 2
+        if len[out] gte limit
+            going = false
+    return out
+
+--- Runs the BLC program at the start of bits on the rest of them, in byte mode or bit
+--- mode; answers at most limit items of the output, bytes or bits.
+fn blc[bitlist, byte_mode, limit]
+    p = parse[base_terms[], bitlist, 0]
+    ts = p.terms
+    h = base_heap[]
+    start = p.end
+    --- the input, as a list built from its end; closure 4 + v is the bit v
+    listed = 5
+    if byte_mode
+        start = (start + 7) / 8 * 8
+        i = len[bitlist] - 8
+        while i gte start
+            octet = 5
+            j = 7
+            while j gte 0
+                h = pair[h, 4 + bitlist[i + j], octet]
+                octet = len[h.term] - 1
+                j = j - 1
+            h = pair[h, octet, listed]
+            listed = len[h.term] - 1
+            i = i - 8
+    else
+        i = len[bitlist] - 1
+        while i gte start
+            h = pair[h, 4 + bitlist[i], listed]
+            listed = len[h.term] - 1
+            i = i - 1
+    --- the program applied to the input: its term applied to the variable 0 (term 11),
+    --- in an environment that holds the input
+    ts.op = push[ts.op, 2]
+    ts.a = push[ts.a, p.root]
+    ts.b = push[ts.b, 11]
+    h.bound = push[h.bound, listed]
+    h.outer = push[h.outer, -1]
+    h.term = push[h.term, len[ts.op] - 1]
+    h.env = push[h.env, len[h.bound] - 1]
+    return output[ts, h, len[h.term] - 1, byte_mode, limit]
+
+fn bits_of_text[s]
+    bitlist = []
+    for c in split[s, '']
+        if c eq '0'
+            bitlist = push[bitlist, 0]
+        else if c eq '1'
+            bitlist = push[bitlist, 1]
+    return bitlist
+
+fn bits_of_bytes[bytes_in]
+    bitlist = []
+    for v in bytes_in
+        j = 7
+        while j gte 0
+            bitlist = push[bitlist, bitand[shift[v, 0 - j], 1]]
+            j = j - 1
+    return bitlist
+
+fn bytes_of_hex[h]
+    digits = '0123456789abcdef'
+    nibbles = []
+    for c in split[lower[h], '']
+        k = 0
+        while k lt 16 and digits[k] ne c
+            k = k + 1
+        if k lt 16
+            nibbles = push[nibbles, k]
+    bytes_out = []
+    i = 0
+    while i + 1 lt len[nibbles]
+        bytes_out = push[bytes_out, nibbles[i] * 16 + nibbles[i + 1]]
+        i = i + 2
+    return bytes_out
+
+--- The UTF-8 bytes of a text.
+fn bytes_of_text[s]
+    out = []
+    for c in split[s, '']
+        n = code[c]
+        if n lt 128
+            out = push[out, n]
+        else if n lt 2048
+            out = push[push[out, 192 + n / 64], 128 + n % 64]
+        else if n lt 65536
+            out = push[push[push[out, 224 + n / 4096], 128 + n / 64 % 64], 128 + n % 64]
+        else
+            out = push[push[push[push[out, 240 + n / 262144], 128 + n / 4096 % 64], 128 + n / 64 % 64], 128 + n % 64]
+    return out
+
+--- The text output bytes spell in UTF-8; a byte that begins no character is shown as
+--- the replacement character.
+fn text_of_bytes[bs]
+    out = []
+    i = 0
+    while i lt len[bs]
+        v = bs[i]
+        more = 0
+        n = v
+        if v gte 240 and v lt 248
+            more = 3
+            n = v - 240
+        else if v gte 224 and v lt 240
+            more = 2
+            n = v - 224
+        else if v gte 192 and v lt 224
+            more = 1
+            n = v - 192
+        ok = v lt 128 or more gt 0
+        j = 1
+        while ok and j lte more
+            if i + j gte len[bs] or bs[i + j] lt 128 or bs[i + j] gte 192
+                ok = false
+            else
+                n = n * 64 + bs[i + j] - 128
+            j = j + 1
+        if ok
+            out = push[out, char[n]]
+            i = i + more + 1
+        else
+            out = push[out, char[65533]]
+            i = i + 1
+    return join[out, '']
+
+fn bit_text[bitlist]
+    shown = for v in bitlist
+        str[v]
+    return join[shown, '']
+
+--- Logs a text in lines of at most width characters, indented.
+fn log_wrapped[s, width]
+    i = 0
+    while i lt len[s]
+        log['  `slice[s, i, i + width]`']
+        i = i + width
+
+fn log_text[s]
+    lines = split[s, '\n']
+    if len[lines] gt 0 and lines[-1] eq ''
+        lines = slice[lines, 0, len[lines] - 1]
+    for line in lines
+        log['  `line`']
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    d = 2
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 1
+    return true
+
+fn demo[]
+    log['Bit mode']
+    log['']
+    quine = '000101100100011010000000000001011011110010111100111111011111011010000101100100011010000000000001011011110010111100111111011111011010'
+    out = bit_text[blc[bits_of_text[quine], false, 1000]]
+    log['The quine (`len[quine]` bits) outputs:']
+    log_wrapped[out, 66]
+    log['  which is the program itself: `out eq quine`']
+    log['']
+    --- The machine keeps its stack in a list, so it runs out of no stack; it never frees a
+    --- closure, so memory is what ends the sieve's output: 1,000 bits take 6.5 million steps
+    --- and well under a second, 4,000 bits a gigabyte.
+    sieve = '00010001100110010100011010000000010110000010010001010111110111101001000110100001110011010000000000101101110011100111111101111000000001111100110111000000101100000110110'
+    out = bit_text[blc[bits_of_text[sieve], false, 1000]]
+    log['The sieve of Eratosthenes (`len[sieve]` bits) outputs without end; its first 1,000 bits:']
+    log_wrapped[out, 100]
+    primes = for n in range[1000]
+        if is_prime[n]
+            1
+        else
+            0
+    log['  bit n is 1 exactly where n is prime: `out eq bit_text[primes]`']
+    log['']
+    doors = '0001000100010101000110100000010110000011001110110010100011010000000000101111111000000101111101011001011001000110100001111100110100101111101111000000001011111111110110011001111111011100000000101111110000001011111010110011011100101011000000101111011001011110011110011110110100000000001011011100111011110000000001000000111001110100000000101101110110'
+    out = bit_text[blc[bits_of_text[doors], false, 100]]
+    log['100 doors (`len[doors]` bits), the first 100 bits of its output:']
+    log_wrapped[out, 100]
+    squares = for n in range[1, 101]
+        if floor[sqrt[n]] ^ 2 eq n
+            1
+        else
+            0
+    log['  door n is open exactly where n is a square: `out eq bit_text[squares]`']
+    log['']
+    p342 = '010100011010000000011000010110011110000010010111110111100001010110000000011000011111000000101111110110010111111011001011110100111010111100010000001011100101010001101000000000010110000101011111101111100000010101111011111011111100001011000000101111111010110111000000111111000010110111101110011110100000010110000011011000100000101111000111001110'
+    out = bit_text[blc[bits_of_text[p342], false, 1000]]
+    log['The `len[p342]`-bit program outputs: `out`']
+    log['']
+    log['Byte mode']
+    log['']
+    --- https://github.com/tromp/AIT/blob/master/hilbert, followed by the input 123
+    hilbert = join[['18181818111154680604155ff0419df9de16fffe5f3feff615ff94684058117e05cbfebc', 'bfee86cb946816005c0bfacbfbf71a85e05cf414d5fe08180b048d0800e078016445ffe5', 'ff7ffffe5fff2fc0eed97f5bfffffbfffcaafff7817ffadf76695468060157f7e1605c13', 'fe80b22c18581bfe5c1042ff805deec06c2c0c0608191a00167fbcbcfdf65f7c0a20'], '']
+    program = bytes_of_hex[hilbert]
+    out = text_of_bytes[blc[bits_of_bytes[concat[program, bytes_of_text['123']]], true, 100000]]
+    log['The Hilbert curve (`len[program]` bytes) given 123 draws the curve of order 3:']
+    log_text[out]
+    log['']
+    --- https://github.com/tromp/AIT/blob/master/bf.blc8, followed by a hello world
+    bf = join[['4451a1018455d502b7703022ff32f000bff9857f5ee16f957f7deec0e55468005855fdfb', 'e04557fdebfbf0b6f02fd607e16f73d7f114bcc00bff2e1fa16f6617e85bef2fcfff13ff', 'e1ca34200ac8d00b99ee1fe5ff7f5a6a1fff0fff879d04d0ab0005db2340b73b28ccc0b0', '6c0e7410'], '']
+    program = bytes_of_hex[bf]
+    hello = '++++++++++[>+++++++>++++++++++>+++>+<<<<-]>++.>+.+++++++..+++.>++.<<+++++++++++++++.>.+++.------.--------.>+.>.]'
+    out = text_of_bytes[blc[bits_of_bytes[concat[program, bytes_of_text[hello]]], true, 100000]]
+    log['The brainfuck interpreter (`len[program]` bytes) given the `len[hello]`-byte hello world:']
+    log_text[out]
+    log['']
+    --- https://www.ioccc.org/2012/tromp/symbolic.Blc
+    symbolic = join[['18181818181844451a101818457ffbcff0b9fe00787f0b6fcff87fc00b9fde7ef2cfe1b0', 'bfe1ff0e6f79ffd340f3a44687340aa8d0802b0bff7816fffe16fc2dfffffcabff06551a', '005857ef8115bfbf0b6f02fd607e16f73d117f3f00dffbc0bff97ef8855fe060df70b7ff', 'ffe55ff030306fdd805bb341be85bfffcaa3420ac2bcc0378300c03c2bff9ff51022bc03', '3df07195f657d0601805dfefc0300bbf7f019ac1702e805bffe7c2dffee1155575554182', '0a2028295c61'], '']
+    program = bytes_of_hex[symbolic]
+    term = '010000011100111001110100000011100111010'
+    out = text_of_bytes[blc[bits_of_bytes[concat[program, bytes_of_text[term]]], true, 100000]]
+    log['symbolic.Blc (`len[program]` bytes) given `term` reduces 3 2 to 8:']
+    log_text[out]
+
+--- All of standard input, its lines parted by line breaks.
+fn standard_input[]
+    lines = []
+    line = input[]
+    while line.ok
+        lines = push[lines, line]
+        line = input[]
+    return join[lines, '\n']
+
+given = args[]
+if len[given] eq 0
+    demo[]
+else if given[0] eq '-b'
+    log[bit_text[blc[bits_of_text[standard_input[]], false, 1000000]]]
+else if given[0] eq '-x'
+    log[text_of_bytes[blc[bits_of_bytes[bytes_of_hex[standard_input[]]], true, 1000000]]]
+else
+    log['usage: crow run universal_lambda_machine.co [-b | -x] (no flag: the task\'s programs)']

@@ -1,0 +1,160 @@
+--- Rosetta Code: Solve a Hidato puzzle
+--- https://rosettacode.org/wiki/Solve_a_Hidato_puzzle
+--- The numbers are placed in order by a depth-first search: n + 1 goes on the
+--- square its clue names, or else on a free square a king's move from n. A free
+--- square from which the next clue is out of reach (more king's moves away than
+--- the numbers left before it) is not tried. The search goes on past the first
+--- solution to show it is the only one, and the solution is checked square by
+--- square: every number once, each a king's move from the one before, the clues
+--- where they were.
+
+struct Puzzle [rows, cols, cells, near, clue, ahead, total]
+
+fn king_moves[]
+    return [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]]
+
+fn words_of[line]
+    --- the words of a line, however many spaces part them
+    return split[sub[trim[line], ' +', ' '], ' ']
+
+fn read_cells[lines]
+    --- each square of the grid: -1 for none, 0 for one to fill, else its clue
+    cells = []
+    for line in lines
+        for w in words_of[line]
+            if w eq '.'
+                cells = push[cells, -1]
+            else if w eq '__'
+                cells = push[cells, 0]
+            else
+                cells = push[cells, int[w]]
+    return cells
+
+fn neighbours[cells, rows, cols]
+    --- for each square, the squares of the puzzle a king's move away
+    near = for s in range[rows * cols]
+        r = s / cols
+        c = s % cols
+        found = for m in king_moves[]
+            rr = r + m[0]
+            cc = c + m[1]
+            if rr gte 0 and rr lt rows and cc gte 0 and cc lt cols and cells[rr * cols + cc] gte 0
+                rr * cols + cc
+        found
+    return near
+
+fn puzzle_of[lines]
+    rows = len[lines]
+    cols = len[words_of[lines[0]]]
+    cells = read_cells[lines]
+    total = 0
+    for v in cells
+        if v gte 0
+            total = total + 1
+    --- clue[n]: the square given n, or -1
+    clue = for n in range[total + 1]
+        -1
+    for s in range[len[cells]]
+        if cells[s] gt 0
+            clue[cells[s]] = s
+    --- ahead[n]: the first clue at n or after it, 0 where there is none
+    ahead = for n in range[total + 2]
+        0
+    next = 0
+    n = total
+    while n gte 1
+        if clue[n] gte 0
+            next = n
+        ahead[n] = next
+        n = n - 1
+    return Puzzle[rows, cols, cells, neighbours[cells, rows, cols], clue, ahead, total]
+
+fn reach[p, a, b]
+    --- the fewest king's moves from square a to square b
+    return max[abs[a / p.cols - b / p.cols], abs[a % p.cols - b % p.cols]]
+
+fn solutions[p, board, here, n, limit]
+    --- the ways, up to limit of them, to go on from n on square here
+    if n eq p.total
+        return push[[], board]
+    k = n + 1
+    if p.clue[k] gte 0
+        if p.clue[k] in p.near[here]
+            return solutions[p, board, p.clue[k], k, limit]
+        return []
+    m = p.ahead[k]
+    found = []
+    options = p.near[here]
+    i = 0
+    while i lt len[options] and len[found] lt limit
+        s = options[i]
+        if board[s] eq 0 and (m eq 0 or reach[p, s, p.clue[m]] lte m - k)
+            next = board
+            next[s] = k
+            found = concat[found, solutions[p, next, s, k, limit - len[found]]]
+        i = i + 1
+    return found
+
+fn is_solution[p, board]
+    --- every number 1 … total on one square, each a king's move from the one
+    --- before it, and every clue where it was given
+    place = for n in range[p.total + 1]
+        -1
+    count = for n in range[p.total + 1]
+        0
+    for s in range[len[board]]
+        v = board[s]
+        if p.cells[s] gte 0
+            if v lt 1 or v gt p.total or (p.cells[s] gt 0 and v ne p.cells[s])
+                return false
+            place[v] = s
+            count[v] = count[v] + 1
+    for n in range[1, p.total + 1]
+        if count[n] ne 1
+            return false
+    for n in range[1, p.total]
+        if place[n + 1] not in p.near[place[n]]
+            return false
+    return true
+
+fn shown[p, board]
+    --- the grid as the task shows it: __ for a square to fill
+    width = len[str[p.total]] + 1
+    lines = for r in range[p.rows]
+        parts = for c in range[p.cols]
+            v = board[r * p.cols + c]
+            if v lt 0
+                repeat[' ', width]
+            else if v eq 0
+                fmt['__', width = width, align = 'right']
+            else
+                fmt[v, width = width]
+        sub[join[parts, ''], ' +$', '']
+    return join[lines, '\n']
+
+board = [
+    '__ 33 35 __ __  .  .  .',
+    '__ __ 24 22 __  .  .  .',
+    '__ __ __ 21 __ __  .  .',
+    '__ 26 __ 13 40 11  .  .',
+    '27 __ __ __  9 __  1  .',
+    ' .  . __ __ 18 __ __  .',
+    ' .  .  .  . __  7 __ __',
+    ' .  .  .  .  .  .  5 __'
+]
+p = puzzle_of[board]
+log['The puzzle (\'__\' to fill):']
+log[shown[p, p.cells]]
+found = solutions[p, p.cells, p.clue[1], 1, 2]
+if len[found] eq 0
+    log['No solution.']
+else
+    log['']
+    log['Its solution:']
+    log[shown[p, found[0]]]
+    log['']
+    log['A Hidato path through every square, the clues kept: `is_solution[p, found[0]]`']
+    if len[found] eq 1
+        log['The search finds no other solution: it is unique.']
+    else
+        log['The search finds another solution too.']

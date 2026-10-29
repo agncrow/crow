@@ -1,0 +1,77 @@
+f = Σm(1, 2, 5) + d(0, 7), 3 variables
+  round 1:
+    group 0: 000 (0)
+    group 1: 001 (1)  010 (2)
+    group 2: 101 (5)
+    group 3: 111 (7)
+  round 2:
+    group 0: 0-0 (0,2)  00- (0,1)
+    group 1: -01 (1,5)
+    group 2: 1-1 (5,7)
+  prime implicants, and the minterms of f each covers:
+                 1  2  5
+    -01  B'C     x  .  x
+    0-0  A'C'    .  x  .
+    00-  A'B'    x  .  .
+    1-1  AC      .  .  x
+  essential: 0-0; the minterms they leave: 1, 5
+  minimal: 0-0 -01, that is f = A'C' + B'C (1 on the minterms and 0 off them: true)
+
+g = Σm(4, 8, 10, 11, 12, 15) + d(9, 14), 4 variables
+  round 1:
+    group 1: 0100 (4)  1000 (8)
+    group 2: 1001 (9)  1010 (10)  1100 (12)
+    group 3: 1011 (11)  1110 (14)
+    group 4: 1111 (15)
+  round 2:
+    group 1: -100 (4,12)  1-00 (8,12)  10-0 (8,10)  100- (8,9)
+    group 2: 1-10 (10,14)  10-1 (9,11)  101- (10,11)  11-0 (12,14)
+    group 3: 1-11 (11,15)  111- (14,15)
+  round 3:
+    group 1: 1--0 (8,10,12,14)  10-- (8,9,10,11)
+    group 2: 1-1- (10,11,14,15)
+  prime implicants, and the minterms of g each covers:
+                  4  8 10 11 12 15
+    -100  BC'D'   x  .  .  .  x  .
+    1--0  AD'     .  x  x  .  x  .
+    1-1-  AC      .  .  x  x  .  x
+    10--  AB'     .  x  x  x  .  .
+  essential: -100 1-1-; the minterms they leave: 8
+  minimal: -100 1-1- 1--0, that is g = BC'D' + AC + AD' (1 on the minterms and 0 off them: true)
+  minimal: -100 1-1- 10--, that is g = BC'D' + AC + AB' (1 on the minterms and 0 off them: true)
+
+h = Σm(0, 1, 2, 5, 6, 7), 3 variables
+  round 1:
+    group 0: 000 (0)
+    group 1: 001 (1)  010 (2)
+    group 2: 101 (5)  110 (6)
+    group 3: 111 (7)
+  round 2:
+    group 0: 0-0 (0,2)  00- (0,1)
+    group 1: -01 (1,5)  -10 (2,6)
+    group 2: 1-1 (5,7)  11- (6,7)
+  prime implicants, and the minterms of h each covers:
+                 0  1  2  5  6  7
+    -01  B'C     .  x  .  x  .  .
+    -10  BC'     .  .  x  .  x  .
+    0-0  A'C'    x  .  x  .  .  .
+    00-  A'B'    x  x  .  .  .  .
+    1-1  AC      .  .  .  x  .  x
+    11-  AB      .  .  .  .  x  x
+  essential: none; the minterms they leave: 0, 1, 2, 5, 6, 7
+  minimal: -10 00- 1-1, that is h = BC' + A'B' + AC (1 on the minterms and 0 off them: true)
+  minimal: -01 0-0 11-, that is h = B'C + A'C' + AB (1 on the minterms and 0 off them: true)
+
+m = Σm(3, 5, 6, 7), 3 variables
+  round 1:
+    group 2: 011 (3)  101 (5)  110 (6)
+    group 3: 111 (7)
+  round 2:
+    group 2: -11 (3,7)  1-1 (5,7)  11- (6,7)
+  prime implicants, and the minterms of m each covers:
+                 3  5  6  7
+    -11  BC      x  .  .  x
+    1-1  AC      .  x  .  x
+    11-  AB      .  .  x  x
+  essential: -11 1-1 11-; the minterms they leave: none
+  minimal: -11 1-1 11-, that is m = BC + AC + AB (1 on the minterms and 0 off them: true)

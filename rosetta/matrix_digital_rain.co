@@ -1,0 +1,98 @@
+--- Rosetta Code: Matrix digital rain
+--- https://rosettacode.org/wiki/Matrix_digital_rain
+--- Each column carries a falling trail of half-width katakana and digits: its head writes
+--- a new glyph each step, its tail rubs one out, and glyphs in the trails flicker.
+--- Run with the argument `live` to watch it in a terminal (ANSI escape codes put the cursor
+--- home and paint the rain green, each newest glyph white, a frame every 60 ms); without
+--- it the program prints three consecutive frames as plain text, seeded, the same every run.
+
+use math
+use bits
+
+struct Rain [screen, heads, lengths]
+
+--- A digit, or one of the 56 half-width katakana U+FF66 to U+FF9D.
+fn glyph[]
+    k = rand[66]
+    if k lt 10
+        return str[k]
+    return char[65382 + k - 10]
+
+fn blank_screen[width, height]
+    rows = for r in range[height]
+        row = for c in range[width]
+            ' '
+        row
+    rows
+
+fn start[width, height]
+    heads = for c in range[width]
+        -rand[height * 2]
+    lengths = for c in range[width]
+        rand[4, height]
+    return Rain[blank_screen[width, height], heads, lengths]
+
+--- One step: every head falls a row and writes a glyph, every tail rubs one out, a trail
+--- that has left the screen starts again above it, and a few glyphs change in place.
+fn fall[rain]
+    screen = rain.screen
+    heads = rain.heads
+    lengths = rain.lengths
+    height = len[screen]
+    width = len[heads]
+    for c in range[width]
+        head = heads[c]
+        if head gte 0 and head lt height
+            screen[head][c] = glyph[]
+        tail = head - lengths[c]
+        if tail gte 0 and tail lt height
+            screen[tail][c] = ' '
+        if tail + 1 gte height
+            heads[c] = -rand[height]
+            lengths[c] = rand[4, height]
+        else
+            heads[c] = head + 1
+    for k in range[width / 4]
+        r = rand[height]
+        c = rand[width]
+        if screen[r][c] ne ' '
+            screen[r][c] = glyph[]
+    return Rain[screen, heads, lengths]
+
+fn show[rain]
+    for row in rain.screen
+        log[join[row, '']]
+
+--- A frame for a terminal: the cursor home, the glyphs green and each trail's newest white.
+fn paint[rain]
+    esc = char[27]
+    green = join[[esc, '[32m'], '']
+    white = join[[esc, '[97m'], '']
+    screen = rain.screen
+    lines = for r in range[len[screen]]
+        cells = for c in range[len[rain.heads]]
+            if r eq rain.heads[c] - 1
+                join[[white, screen[r][c], green], '']
+            else
+                screen[r][c]
+        join[cells, '']
+    log[join[[esc, '[H', green, join[lines, '\n']], '']]
+
+seed[1999]
+if 'live' in args[]
+    esc = char[27]
+    log[join[[esc, '[2J'], '']]
+    rain = start[78, 22]
+    for t in range[500]
+        rain = fall[rain]
+        paint[rain]
+        sleep[60]
+    log[join[[esc, '[0m'], '']]
+else
+    rain = start[48, 14]
+    for t in range[30]
+        rain = fall[rain]
+    for frame in range[3]
+        rain = fall[rain]
+        show[rain]
+        log[repeat['-', 48]]

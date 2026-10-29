@@ -1,0 +1,42 @@
+How long can you work on making a routine task more efficient before you
+spend more time than you save? (across five years; xkcd 1205)
+
+Calendar time: 24-hour days, 7-day weeks, 365.25-day years, a month a twelfth of a year
+
+ Shave off |                     How often you do the task
+ task time |      50/day       5/day       daily      weekly     monthly      yearly
+-----------+------------------------------------------------------------------------
+  1 second |       1 day     2 hours  30 minutes   4 minutes    1 minute   5 seconds
+ 5 seconds |      5 days    12 hours     2 hours  21 minutes   5 minutes  25 seconds
+30 seconds |     4 weeks      3 days    15 hours     2 hours  30 minutes   2 minutes
+  1 minute |    2 months      6 days       1 day     4 hours      1 hour   5 minutes
+ 5 minutes |   10 months     4 weeks      6 days    21 hours     5 hours  25 minutes
+30 minutes |         n/a    6 months     5 weeks      5 days       1 day     2 hours
+    1 hour |         n/a      1 year    2 months     10 days      2 days     5 hours
+   6 hours |         n/a         n/a      1 year    2 months     2 weeks       1 day
+     1 day |         n/a         n/a         n/a    8 months     8 weeks      5 days
+
+Where the comic says otherwise:
+  30 seconds daily: 15 hours (15.22 hours); the comic says 12 hours
+  1 minute 50/day: 2 months (2.08 months); the comic says 8 weeks
+  5 minutes 50/day: 10 months (10.42 months); the comic says 9 months
+  1 hour 5/day: 1 year (1.04 years); the comic says 10 months
+  6 hours daily: 1 year (1.25 years); the comic leaves it blank
+  1 day weekly: 8 months (8.57 months); the comic leaves it blank
+The other 48 cells are the comic's.
+
+Working time: 8-hour days, 5-day weeks, 4-week months, 12-month years
+
+ Shave off |                     How often you do the task
+ task time |      50/day       5/day       daily      weekly     monthly      yearly
+-----------+------------------------------------------------------------------------
+  1 second |      2 days      1 hour  20 minutes   4 minutes    1 minute   5 seconds
+ 5 seconds |     2 weeks       1 day      1 hour  20 minutes   5 minutes  25 seconds
+30 seconds |    3 months      6 days       1 day     2 hours  30 minutes   2 minutes
+  1 minute |    6 months     2 weeks      2 days     4 hours      1 hour   5 minutes
+ 5 minutes |     2 years    3 months     2 weeks      2 days     5 hours  25 minutes
+30 minutes |         n/a      1 year    3 months     3 weeks      3 days     2 hours
+    1 hour |         n/a     3 years    7 months     6 weeks      7 days     5 hours
+   6 hours |         n/a         n/a     3 years    9 months    2 months      3 days
+     1 day |         n/a         n/a         n/a      1 year    3 months      5 days
+

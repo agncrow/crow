@@ -1,0 +1,130 @@
+--- Rosetta Code: 24 game
+--- https://rosettacode.org/wiki/24_game
+--- Four seeded random digits; the player's infix expression is read by a small
+--- recursive-descent parser and computed in exact fractions, then held to the
+--- rules: + - * / and brackets only, each given digit used exactly once.
+--- q quits (so do an empty line and the end of the input), and ! deals four
+--- new digits.
+
+use math
+
+struct Parsed [value, next]
+
+fn is_digit[t]
+    t in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+
+fn tokens_of[text]
+    pieces = for c in split[text, '']
+        if c ne ' '
+            c
+    pieces
+
+fn expression[tokens, at]
+    --- terms joined by + and -
+    left = term[tokens, at]
+    value = left.value
+    at = left.next
+    while at lt len[tokens] and tokens[at] in ['+', '-']
+        right = term[tokens, at + 1]
+        if tokens[at] eq '+'
+            value = value + right.value
+        else
+            value = value - right.value
+        at = right.next
+    Parsed[value, at]
+
+fn term[tokens, at]
+    --- factors joined by * and /
+    left = factor[tokens, at]
+    value = left.value
+    at = left.next
+    while at lt len[tokens] and tokens[at] in ['*', '/']
+        right = factor[tokens, at + 1]
+        if tokens[at] eq '*'
+            value = value * right.value
+        else
+            if right.value eq 0
+                return error['it divides by zero', 'input']
+            value = value / right.value
+        at = right.next
+    Parsed[value, at]
+
+fn factor[tokens, at]
+    --- a digit, or an expression in brackets
+    if at gte len[tokens]
+        return error['it ends where a digit or a ( should be', 'input']
+    t = tokens[at]
+    if t eq '('
+        inner = expression[tokens, at + 1]
+        if inner.next gte len[tokens] or tokens[inner.next] ne ')'
+            return error['a ( is not closed', 'input']
+        return Parsed[inner.value, inner.next + 1]
+    if is_digit[t]
+        return Parsed[fraction[int[t]], at + 1]
+    error['`t` stands where a digit or a ( should be', 'input']
+
+fn evaluated[tokens]
+    whole = expression[tokens, 0]
+    if whole.next lt len[tokens]
+        return error['`tokens[whole.next]` follows a complete expression', 'input']
+    whole.value
+
+fn digits_shown[digits]
+    words = for d in digits
+        str[d]
+    join[words, ' ']
+
+fn verdict[text, digits]
+    --- what the program says of the player's expression
+    tokens = tokens_of[text]
+    for t in tokens
+        if not is_digit[t] and t not in ['+', '-', '*', '/', '(', ')']
+            return '\'`t`\' is not allowed: use the digits, + - * / and brackets.'
+    for i in range[1, len[tokens]]
+        if is_digit[tokens[i - 1]] and is_digit[tokens[i]]
+            return 'Each number must be a single digit.'
+    used = for t in tokens
+        if is_digit[t]
+            t
+    dealt = for d in digits
+        str[d]
+    if sort[used] ne sort[dealt]
+        return 'Use each of the digits `digits_shown[digits]` exactly once.'
+    value = evaluated[tokens]
+    if not value.ok
+        return 'That is not an expression I can compute: `value.reason`.'
+    if value eq 24
+        return 'right'
+    '`text` = `value`, not 24.'
+
+fn deal[]
+    drawn = for i in range[4]
+        rand[1, 9]
+    drawn
+
+seed[24]
+log['The 24 game: make 24 from the four digits with + - * / and brackets.']
+log['Use each digit once. q quits, ! deals new digits.']
+digits = deal[]
+log['Your digits: `digits_shown[digits]`']
+solved = 0
+while true
+    line = input['Expression: ']
+    if not line.ok
+        break
+    text = trim[line]
+    if text eq '' or lower[text] eq 'q'
+        break
+    if text eq '!'
+        digits = deal[]
+        log['New digits: `digits_shown[digits]`']
+        continue
+    said = verdict[text, digits]
+    if said eq 'right'
+        solved = solved + 1
+        log['`text` = 24. That\'s right!']
+        digits = deal[]
+        log['Next digits: `digits_shown[digits]`']
+    else
+        log[said]
+log['Deals solved: `solved`. Goodbye.']

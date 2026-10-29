@@ -1,0 +1,64 @@
+--- Rosetta Code: Hofstadter-Conway $10,000 sequence
+--- https://rosettacode.org/wiki/Hofstadter-Conway_$10,000_sequence
+--- a(n) = a(a(n-1)) + a(n - a(n-1)), built up in a list from a(1) = a(2) = 1 (item n
+--- holds a(n); item 0 is unused). Ratios are compared exactly, by cross-multiplying:
+--- a(n)/n beats b/m when a(n) m > b n, and a(n)/n >= 0.55 when 20 a(n) >= 11 n.
+
+fn conway[last]
+    a = [0, 1, 1]
+    n = 3
+    while n lte last
+        x = a[n - 1]
+        a = push[a, a[x] + a[n - x]]
+        n = n + 1
+    return a
+
+--- The n in low < n <= high with the largest a(n)/n (the first, if several).
+fn best_between[a, low, high]
+    best = low + 1
+    n = low + 2
+    while n lte high
+        if a[n] * best gt a[best] * n
+            best = n
+        n = n + 1
+    return best
+
+--- Mallows' number: the last n up to the end of the list with a(n)/n >= 0.55, so
+--- that a(n)/n < 0.55 for every n after it, as far as the list goes.
+fn mallows[a]
+    n = len[a] - 1
+    while n gt 0 and 20 * a[n] lt 11 * n
+        n = n - 1
+    return n
+
+fn ratio[a, n]
+    return float[a[n]] / float[n]
+
+a = conway[2 ^ 20]
+bests = []
+low = 1
+while low lt 2 ^ 20
+    high = low * 2
+    best = best_between[a, low, high]
+    bests = push[bests, best]
+    log['In the region `fmt[low, width = 7]` < n <= `fmt[high, width = 7]`: max a(n)/n = `fmt[ratio[a, best], decimals = 4]` at n = `best`']
+    low = high
+
+halves = true
+power = 2
+while power lte 2 ^ 20
+    halves = halves and 2 * a[power] eq power
+    power = power * 2
+log['']
+log['a(n)/n is exactly 0.5 at every power of 2 from 2 to 2^20: `halves`']
+
+falling = true
+i = 3
+while i lt len[bests]
+    previous = bests[i - 1]
+    falling = falling and a[bests[i]] * previous lt a[previous] * bests[i]
+    i = i + 1
+log['The maxima fall from each region to the next, from the region 4 < n <= 8 on: `falling`']
+
+p = mallows[a]
+log['Mallows\' number: a(`p`)/`p` = `fmt[ratio[a, p], decimals = 6]`, and a(n)/n < 0.55 for every n from `p + 1` to 2^20.']

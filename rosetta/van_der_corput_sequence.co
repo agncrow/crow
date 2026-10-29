@@ -1,0 +1,47 @@
+--- Rosetta Code: Van der Corput sequence
+--- https://rosettacode.org/wiki/Van_der_Corput_sequence
+--- The n-th member in base b is n's digits in base b reflected about the point:
+--- each digit taken off n's low end goes to the next place after the point. The
+--- value is kept exactly, as a fraction, and shown as a decimal too.
+
+--- The n-th member (n from 0) of the sequence in a base.
+fn vdc[n, base]
+    top = 0
+    bottom = 1
+    while n gt 0
+        top = top * base + n % base
+        bottom = bottom * base
+        n = n / base
+    return fraction[top, bottom]
+
+--- n written in a base below 11.
+fn written[n, base]
+    if n eq 0
+        return '0'
+    out = ''
+    while n gt 0
+        out = concat[str[n % base], out]
+        n = n / base
+    return out
+
+log['The first ten in base 2: n in binary, its digits reflected about the point']
+log['   n  binary  reflected  fraction  decimal']
+for n in range[10]
+    binary = written[n, 2]
+    reflected = '.`reverse[binary]`'
+    member = vdc[n, 2]
+    log['`fmt[n, width = 4]`  `fmt[binary, width = 6]`  `fmt[reflected, width = 9]`  `fmt[str[member], width = 8]`  `float[member]`']
+log['']
+
+log['Other bases, as fractions and as decimals:']
+pad = repeat[' ', 10]
+for base in [3, 4, 5, 10]
+    members = for n in range[10]
+        str[vdc[n, base]]
+    shown = join[members, ', ']
+    decimals = for n in range[10]
+        str[float[vdc[n, base]]]
+    shown_decimals = join[decimals, ', ']
+    label = 'Base `base`:'
+    log['`fmt[label, width = 10]``shown`']
+    log['`pad``shown_decimals`']

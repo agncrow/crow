@@ -1,0 +1,556 @@
+--- Rosetta Code: Christofides algorithm
+--- https://rosettacode.org/wiki/Christofides_algorithm
+--- Prim's algorithm for the minimum spanning tree; a minimum-weight perfect matching
+--- of its odd-degree vertices by Edmonds' blossom algorithm (the O(n^3) primal-dual
+--- form of Galil and of Van Rantwijk's mwmatching, on whole-number weights: distances
+--- in millionths); Hierholzer's Euler circuit of tree and matching together; and the
+--- circuit shortcut to a tour. The cities are the 100 of the C++, Julia and Python entries.
+
+use bits
+
+struct Point [x, y]
+struct Edge [u, v]
+
+--- The matching's state, per vertex and per blossom (blossoms are numbered n … 2n-1):
+--- edges' ends and weights, each vertex's matched endpoint, the S/T labels, blossom
+--- trees, least-slack edges, dual variables (doubled), the search queue, and whether
+--- the stage has augmented the matching or the matching is finished.
+struct Matching [n, eu, ev, ew, endpoint, neighbend, mate, labels, labelend, inblossom, parent, childs, base, endps, bestedge, bestlist, listed, unused, dual, allowed, queue, augmented, finished]
+
+fn filled[n, value]
+    xs = for i in range[n]
+        value
+    return xs
+
+fn falses[n]
+    xs = for i in range[n]
+        false
+    return xs
+
+fn position[xs, x]
+    i = 0
+    while xs[i] ne x
+        i = i + 1
+    return i
+
+fn slack[s, k]
+    return s.dual[s.eu[k]] + s.dual[s.ev[k]] - 2 * s.ew[k]
+
+fn leaves[s, b]
+    --- the vertices inside blossom b
+    if b lt s.n
+        return [b]
+    found = []
+    for t in s.childs[b]
+        found = concat[found, leaves[s, t]]
+    return found
+
+fn assign_label[s, w, t, p]
+    --- Label w's blossom S (t = 1) or T (t = 2), reached through endpoint p.
+    b = s.inblossom[w]
+    s.labels[w] = t
+    s.labels[b] = t
+    s.labelend[w] = p
+    s.labelend[b] = p
+    s.bestedge[w] = -1
+    s.bestedge[b] = -1
+    if t eq 1
+        s.queue = concat[s.queue, leaves[s, b]]
+        return s
+    mate_end = s.mate[s.base[b]]
+    return assign_label[s, s.endpoint[mate_end], 1, bitxor[mate_end, 1]]
+
+fn scan_blossom[s, v, w]
+    --- Back from the S-vertices v and w along their trees: the base where the paths
+    --- meet (a new blossom), or -1 where they reach two roots (an augmenting path).
+    marks = s.labels
+    --- 5 marks a blossom passed on the way back (on this copy of the labels only)
+    base = -1
+    while v ne -1 or w ne -1
+        b = s.inblossom[v]
+        if marks[b] eq 5
+            base = s.base[b]
+            break
+        marks[b] = 5
+        if s.labelend[b] eq -1
+            v = -1
+        else
+            v = s.endpoint[s.labelend[b]]
+            b = s.inblossom[v]
+            v = s.endpoint[s.labelend[b]]
+        if w ne -1
+            v, w = w, v
+    return base
+
+fn add_blossom[s, base, k]
+    --- Make the blossom that edge k closes, with its base; it is an S-blossom.
+    v = s.eu[k]
+    w = s.ev[k]
+    bb = s.inblossom[base]
+    bv = s.inblossom[v]
+    bw = s.inblossom[w]
+    b = s.unused[-1]
+    s.unused = pop[s.unused]
+    s.base[b] = base
+    s.parent[b] = -1
+    s.parent[bb] = b
+    path = []
+    links = []
+    while bv ne bb
+        s.parent[bv] = b
+        path = push[path, bv]
+        links = push[links, s.labelend[bv]]
+        v = s.endpoint[s.labelend[bv]]
+        bv = s.inblossom[v]
+    path = reverse[push[path, bb]]
+    links = push[reverse[links], 2 * k]
+    while bw ne bb
+        s.parent[bw] = b
+        path = push[path, bw]
+        links = push[links, bitxor[s.labelend[bw], 1]]
+        w = s.endpoint[s.labelend[bw]]
+        bw = s.inblossom[w]
+    s.childs[b] = path
+    s.endps[b] = links
+    s.labels[b] = 1
+    s.labelend[b] = s.labelend[bb]
+    s.dual[b] = 0
+    for u in leaves[s, b]
+        if s.labels[s.inblossom[u]] eq 2
+            s.queue = push[s.queue, u]
+        s.inblossom[u] = b
+    best_to = filled[2 * s.n, -1]
+    for part in path
+        candidates = s.bestlist[part]
+        if not s.listed[part]
+            candidates = []
+            for u in leaves[s, part]
+                for p in s.neighbend[u]
+                    candidates = push[candidates, p / 2]
+        for e in candidates
+            j = s.ev[e]
+            if s.inblossom[j] eq b
+                j = s.eu[e]
+            bj = s.inblossom[j]
+            if bj ne b and s.labels[bj] eq 1 and (best_to[bj] eq -1 or slack[s, e] lt slack[s, best_to[bj]])
+                best_to[bj] = e
+        s.bestlist[part] = []
+        s.listed[part] = false
+        s.bestedge[part] = -1
+    kept = for e in best_to
+        if e ne -1
+            e
+    s.bestlist[b] = kept
+    s.listed[b] = true
+    s.bestedge[b] = -1
+    for e in kept
+        if s.bestedge[b] eq -1 or slack[s, e] lt slack[s, s.bestedge[b]]
+            s.bestedge[b] = e
+    return s
+
+fn expand_blossom[s, b, endstage]
+    --- Turn blossom b's parts into top-level blossoms again.
+    for part in s.childs[b]
+        s.parent[part] = -1
+        if part lt s.n
+            s.inblossom[part] = part
+        else if endstage and s.dual[part] eq 0
+            s = expand_blossom[s, part, endstage]
+        else
+            for u in leaves[s, part]
+                s.inblossom[u] = part
+    if not endstage and s.labels[b] eq 2
+        --- a T-blossom expanded in a stage: relabel its parts from where it was entered
+        entry = s.inblossom[s.endpoint[bitxor[s.labelend[b], 1]]]
+        j = position[s.childs[b], entry]
+        jstep = -1
+        trick = 1
+        if j % 2 eq 1
+            j = j - len[s.childs[b]]
+            jstep = 1
+            trick = 0
+        p = s.labelend[b]
+        while j ne 0
+            s.labels[s.endpoint[bitxor[p, 1]]] = 0
+            s.labels[s.endpoint[bitxor[bitxor[s.endps[b][j - trick], trick], 1]]] = 0
+            s = assign_label[s, s.endpoint[bitxor[p, 1]], 2, p]
+            s.allowed[s.endps[b][j - trick] / 2] = true
+            j = j + jstep
+            p = bitxor[s.endps[b][j - trick], trick]
+            s.allowed[p / 2] = true
+            j = j + jstep
+        bv = s.childs[b][j]
+        s.labels[s.endpoint[bitxor[p, 1]]] = 2
+        s.labels[bv] = 2
+        s.labelend[s.endpoint[bitxor[p, 1]]] = p
+        s.labelend[bv] = p
+        s.bestedge[bv] = -1
+        j = j + jstep
+        while s.childs[b][j] ne entry
+            bv = s.childs[b][j]
+            if s.labels[bv] eq 1
+                j = j + jstep
+                continue
+            inside = leaves[s, bv]
+            i = 0
+            while i lt len[inside] and s.labels[inside[i]] eq 0
+                i = i + 1
+            if i lt len[inside]
+                u = inside[i]
+                s.labels[u] = 0
+                s.labels[s.endpoint[s.mate[s.base[bv]]]] = 0
+                s = assign_label[s, u, 2, s.labelend[u]]
+            j = j + jstep
+    s.labels[b] = -1
+    s.labelend[b] = -1
+    s.childs[b] = []
+    s.endps[b] = []
+    s.base[b] = -1
+    s.bestlist[b] = []
+    s.listed[b] = false
+    s.bestedge[b] = -1
+    s.unused = push[s.unused, b]
+    return s
+
+fn augment_blossom[s, b, v]
+    --- Swap matched and unmatched edges round blossom b on the path from v to its base.
+    t = v
+    while s.parent[t] ne b
+        t = s.parent[t]
+    if t gte s.n
+        s = augment_blossom[s, t, v]
+    i = position[s.childs[b], t]
+    j = i
+    jstep = -1
+    trick = 1
+    if i % 2 eq 1
+        j = j - len[s.childs[b]]
+        jstep = 1
+        trick = 0
+    while j ne 0
+        j = j + jstep
+        t = s.childs[b][j]
+        p = bitxor[s.endps[b][j - trick], trick]
+        if t gte s.n
+            s = augment_blossom[s, t, s.endpoint[p]]
+        j = j + jstep
+        t = s.childs[b][j]
+        if t gte s.n
+            s = augment_blossom[s, t, s.endpoint[bitxor[p, 1]]]
+        s.mate[s.endpoint[p]] = bitxor[p, 1]
+        s.mate[s.endpoint[bitxor[p, 1]]] = p
+    kids = s.childs[b]
+    s.childs[b] = concat[slice[kids, i, len[kids]], slice[kids, 0, i]]
+    links = s.endps[b]
+    s.endps[b] = concat[slice[links, i, len[links]], slice[links, 0, i]]
+    s.base[b] = s.base[s.childs[b][0]]
+    return s
+
+fn augment_from[s, x, p]
+    --- Match x to the far endpoint p, then back to the tree's root, swapping as we go.
+    while true
+        bs = s.inblossom[x]
+        if bs gte s.n
+            s = augment_blossom[s, bs, x]
+        s.mate[x] = p
+        if s.labelend[bs] eq -1
+            break
+        bt = s.inblossom[s.endpoint[s.labelend[bs]]]
+        x = s.endpoint[s.labelend[bt]]
+        j = s.endpoint[bitxor[s.labelend[bt], 1]]
+        if bt gte s.n
+            s = augment_blossom[s, bt, j]
+        s.mate[j] = s.labelend[bt]
+        p = bitxor[s.labelend[bt], 1]
+    return s
+
+fn scan[s]
+    --- Take S-vertices from the queue and look along their edges: an edge with no slack
+    --- labels a free vertex T (and its mate S), closes a blossom, or completes an
+    --- augmenting path, which is used at once; an edge with slack is kept if least.
+    while len[s.queue] gt 0 and not s.augmented
+        v = s.queue[-1]
+        s.queue = pop[s.queue]
+        around = s.neighbend[v]
+        i = 0
+        while i lt len[around] and not s.augmented
+            p = around[i]
+            i = i + 1
+            k = p / 2
+            w = s.endpoint[p]
+            if s.inblossom[v] eq s.inblossom[w]
+                continue
+            kslack = 0
+            if not s.allowed[k]
+                kslack = slack[s, k]
+                if kslack lte 0
+                    s.allowed[k] = true
+            if s.allowed[k]
+                if s.labels[s.inblossom[w]] eq 0
+                    s = assign_label[s, w, 2, bitxor[p, 1]]
+                else if s.labels[s.inblossom[w]] eq 1
+                    base = scan_blossom[s, v, w]
+                    if base gte 0
+                        s = add_blossom[s, base, k]
+                    else
+                        s = augment_from[s, s.eu[k], 2 * k + 1]
+                        s = augment_from[s, s.ev[k], 2 * k]
+                        s.augmented = true
+                else if s.labels[w] eq 0
+                    s.labels[w] = 2
+                    s.labelend[w] = bitxor[p, 1]
+            else if s.labels[s.inblossom[w]] eq 1
+                b = s.inblossom[v]
+                if s.bestedge[b] eq -1 or kslack lt slack[s, s.bestedge[b]]
+                    s.bestedge[b] = k
+            else if s.labels[w] eq 0
+                if s.bestedge[w] eq -1 or kslack lt slack[s, s.bestedge[w]]
+                    s.bestedge[w] = k
+    return s
+
+fn move_duals[s]
+    --- No augmenting path yet: move the duals by the least delta that lets an edge in
+    --- (2: from an S-vertex to a free one; 3: between S-blossoms, halved) or empties a
+    --- T-blossom's dual (4), and act on it; with none of these the matching is done.
+    n = s.n
+    kind = -1
+    delta = 0
+    edge = -1
+    blossom = -1
+    for v in range[n]
+        if s.labels[s.inblossom[v]] eq 0 and s.bestedge[v] ne -1
+            d = slack[s, s.bestedge[v]]
+            if kind eq -1 or d lt delta
+                delta = d
+                kind = 2
+                edge = s.bestedge[v]
+    for b in range[2 * n]
+        if s.parent[b] eq -1 and s.labels[b] eq 1 and s.bestedge[b] ne -1
+            d = slack[s, s.bestedge[b]] / 2
+            if kind eq -1 or d lt delta
+                delta = d
+                kind = 3
+                edge = s.bestedge[b]
+    for b in range[n, 2 * n]
+        if s.base[b] gte 0 and s.parent[b] eq -1 and s.labels[b] eq 2 and (kind eq -1 or s.dual[b] lt delta)
+            delta = s.dual[b]
+            kind = 4
+            blossom = b
+    if kind eq -1
+        kind = 1
+        delta = s.dual[0]
+        for v in range[n]
+            delta = min[delta, s.dual[v]]
+        delta = max[0, delta]
+    for v in range[n]
+        if s.labels[s.inblossom[v]] eq 1
+            s.dual[v] = s.dual[v] - delta
+        else if s.labels[s.inblossom[v]] eq 2
+            s.dual[v] = s.dual[v] + delta
+    for b in range[n, 2 * n]
+        if s.base[b] gte 0 and s.parent[b] eq -1
+            if s.labels[b] eq 1
+                s.dual[b] = s.dual[b] + delta
+            else if s.labels[b] eq 2
+                s.dual[b] = s.dual[b] - delta
+    if kind eq 1
+        s.finished = true
+    else if kind eq 2
+        s.allowed[edge] = true
+        i = s.eu[edge]
+        if s.labels[s.inblossom[i]] eq 0
+            i = s.ev[edge]
+        s.queue = push[s.queue, i]
+    else if kind eq 3
+        s.allowed[edge] = true
+        s.queue = push[s.queue, s.eu[edge]]
+    else
+        s = expand_blossom[s, blossom, false]
+    return s
+
+fn matched[n, eu, ev, ew]
+    --- A maximum-weight matching among those of greatest size: each vertex's mate, or -1.
+    m = len[eu]
+    endpoint = []
+    neighbend = for v in range[n]
+        range[0]
+    top = 0
+    for k in range[m]
+        endpoint = push[push[endpoint, eu[k]], ev[k]]
+        neighbend[eu[k]] = push[neighbend[eu[k]], 2 * k + 1]
+        neighbend[ev[k]] = push[neighbend[ev[k]], 2 * k]
+        top = max[top, ew[k]]
+    nothing = for b in range[2 * n]
+        range[0]
+    minus = for b in range[2 * n]
+        -1
+    bases = for b in range[2 * n]
+        if b lt n
+            b
+        else
+            -1
+    duals = for b in range[2 * n]
+        if b lt n
+            top
+        else
+            0
+    s = Matching[n, eu, ev, ew, endpoint, neighbend, filled[n, -1], filled[2 * n, 0], minus, range[n], minus, nothing, bases, nothing, minus, nothing, falses[2 * n], range[n, 2 * n], duals, falses[m], [], false, false]
+    --- Each stage looks for one augmenting path, from every free vertex at once.
+    stage = 0
+    while stage lt n and not s.finished
+        s.labels = filled[2 * n, 0]
+        s.bestedge = filled[2 * n, -1]
+        for b in range[n, 2 * n]
+            s.bestlist[b] = []
+            s.listed[b] = false
+        s.allowed = falses[m]
+        s.queue = []
+        s.augmented = false
+        for v in range[n]
+            if s.mate[v] eq -1 and s.labels[s.inblossom[v]] eq 0
+                s = assign_label[s, v, 1, -1]
+        s = scan[s]
+        while not s.augmented and not s.finished
+            s = move_duals[s]
+            s = scan[s]
+        if s.augmented
+            --- blossoms whose duals are spent are taken apart for the next stage
+            for b in range[n, 2 * n]
+                if s.parent[b] eq -1 and s.base[b] gte 0 and s.labels[b] eq 1 and s.dual[b] eq 0
+                    s = expand_blossom[s, b, true]
+        stage = stage + 1
+    mates = for v in range[n]
+        if s.mate[v] gte 0
+            s.endpoint[s.mate[v]]
+        else
+            -1
+    return mates
+
+fn dist[pts, i, j]
+    dx = pts[i].x - pts[j].x
+    dy = pts[i].y - pts[j].y
+    return sqrt[float[dx * dx + dy * dy]]
+
+fn spanning_tree[pts]
+    --- Prim's algorithm from city 0: the tree's edges, each parent first
+    n = len[pts]
+    in_tree = falses[n]
+    best = for i in range[n]
+        dist[pts, 0, i]
+    parent = filled[n, 0]
+    in_tree[0] = true
+    edges = []
+    while len[edges] lt n - 1
+        pick = -1
+        for v in range[n]
+            if not in_tree[v] and (pick eq -1 or best[v] lt best[pick])
+                pick = v
+        in_tree[pick] = true
+        edges = push[edges, Edge[parent[pick], pick]]
+        for v in range[n]
+            if not in_tree[v] and dist[pts, pick, v] lt best[v]
+                best[v] = dist[pts, pick, v]
+                parent[v] = pick
+    return edges
+
+fn weight[pts, edges]
+    total = 0.0
+    for e in edges
+        total = total + dist[pts, e.u, e.v]
+    return total
+
+fn odd_vertices[n, edges]
+    degree = filled[n, 0]
+    for e in edges
+        degree[e.u] = degree[e.u] + 1
+        degree[e.v] = degree[e.v] + 1
+    odd = for v in range[n]
+        if degree[v] % 2 eq 1
+            v
+    return odd
+
+fn cheapest_matching[pts, odd]
+    --- A minimum-weight perfect matching of the cities `odd`: the greatest matching of
+    --- the largest size, each pair weighed as `top` less its distance in millionths.
+    k = len[odd]
+    eu = []
+    ev = []
+    cost = []
+    for a in range[k]
+        for b in range[a + 1, k]
+            eu = push[eu, a]
+            ev = push[ev, b]
+            cost = push[cost, round[dist[pts, odd[a], odd[b]] * 1000000.0]]
+    top = 1
+    for c in cost
+        top = max[top, c + 1]
+    ew = for c in cost
+        top - c
+    mates = matched[k, eu, ev, ew]
+    pairs = for a in range[k]
+        if a lt mates[a]
+            Edge[odd[a], odd[mates[a]]]
+    return pairs
+
+fn euler_circuit[edges, start]
+    --- Hierholzer's algorithm: a closed walk over every edge once, from `start`
+    used = falses[len[edges]]
+    stack = []
+    stack = push[stack, start]
+    walk = []
+    while len[stack] gt 0
+        v = stack[-1]
+        e = 0
+        while e lt len[edges] and (used[e] or (edges[e].u ne v and edges[e].v ne v))
+            e = e + 1
+        if e eq len[edges]
+            walk = push[walk, v]
+            stack = pop[stack]
+        else
+            used[e] = true
+            if edges[e].u eq v
+                stack = push[stack, edges[e].v]
+            else
+                stack = push[stack, edges[e].u]
+    return reverse[walk]
+
+fn shortcut[walk, n]
+    --- the walk with each city after its first visit left out, closed again
+    seen = falses[n]
+    tour = []
+    for v in walk
+        if not seen[v]
+            seen[v] = true
+            tour = push[tour, v]
+    return push[tour, tour[0]]
+
+fn walk_length[pts, walk]
+    total = 0.0
+    for i in range[len[walk] - 1]
+        total = total + dist[pts, walk[i], walk[i + 1]]
+    return total
+
+fn shown[x]
+    return fmt[x, decimals = 2]
+
+cities = [Point[1380, 939], Point[2848, 96], Point[3510, 1671], Point[457, 334], Point[3888, 666], Point[984, 965], Point[2721, 1482], Point[1286, 525], Point[2716, 1432], Point[738, 1325], Point[1251, 1832], Point[2728, 1698], Point[3815, 169], Point[3683, 1533], Point[1247, 1945], Point[123, 862], Point[1234, 1946], Point[252, 1240], Point[611, 673], Point[2576, 1676], Point[928, 1700], Point[53, 857], Point[1807, 1711], Point[274, 1420], Point[2574, 946], Point[178, 24], Point[2678, 1825], Point[1795, 962], Point[3384, 1498], Point[3520, 1079], Point[1256, 61], Point[1424, 1728], Point[3913, 192], Point[3085, 1528], Point[2573, 1969], Point[463, 1670], Point[3875, 598], Point[298, 1513], Point[3479, 821], Point[2542, 236], Point[3955, 1743], Point[1323, 280], Point[3447, 1830], Point[2936, 337], Point[1621, 1830], Point[3373, 1646], Point[1393, 1368], Point[3874, 1318], Point[938, 955], Point[3022, 474], Point[2482, 1183], Point[3854, 923], Point[376, 825], Point[2519, 135], Point[2945, 1622], Point[953, 268], Point[2628, 1479], Point[2097, 981], Point[890, 1846], Point[2139, 1806], Point[2421, 1007], Point[2290, 1810], Point[1115, 1052], Point[2588, 302], Point[327, 265], Point[241, 341], Point[1917, 687], Point[2991, 792], Point[2573, 599], Point[19, 674], Point[3911, 1673], Point[872, 1559], Point[2863, 558], Point[929, 1766], Point[839, 620], Point[3893, 102], Point[2178, 1619], Point[3822, 899], Point[378, 1048], Point[1178, 100], Point[2599, 901], Point[3416, 143], Point[2961, 1605], Point[611, 1384], Point[3113, 885], Point[2597, 1830], Point[2586, 1286], Point[161, 906], Point[1429, 134], Point[742, 1025], Point[1625, 1651], Point[1187, 706], Point[1787, 1009], Point[22, 987], Point[3640, 43], Point[3756, 882], Point[776, 392], Point[1724, 1642], Point[198, 1810], Point[3950, 1558]]
+
+tree = spanning_tree[cities]
+odd = odd_vertices[len[cities], tree]
+pairs = cheapest_matching[cities, odd]
+walk = euler_circuit[concat[tree, pairs], 0]
+tour = shortcut[walk, len[cities]]
+
+log['`len[cities]` cities']
+log['Minimum spanning tree: `len[tree]` edges, weight `shown[weight[cities, tree]]`']
+log['Odd-degree vertices (`len[odd]`): `odd`']
+pair_names = for e in pairs
+    '`e.u`-`e.v`'
+log['Minimum-weight perfect matching, weight `shown[weight[cities, pairs]]`:']
+log['  `join[pair_names, \' \']`']
+log['Euler circuit of tree and matching: `len[walk] - 1` edges, weight `shown[walk_length[cities, walk]]`']
+log['Tour: `tour`']
+length = walk_length[cities, tour]
+log['Tour length: `shown[length]`']
+over = fmt[100.0 * (length / weight[cities, tree] - 1.0), decimals = 1]
+log['An optimal tour is no shorter than the tree, so this one is at most `over`% longer than optimal.']

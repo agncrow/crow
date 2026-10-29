@@ -1,0 +1,44 @@
+--- Rosetta Code: Apply a digital filter (direct form II transposed)
+--- https://rosettacode.org/wiki/Apply_a_digital_filter_(direct_form_II_transposed)
+--- The filter keeps a delay line z of order - 1 states: each sample gives
+--- y = b0 x + z0, then z_i = b_(i+1) x - a_(i+1) y + z_(i+1), with every
+--- coefficient first divided by a0.
+
+--- the i-th coefficient, 0 past the end of a shorter list
+fn coefficient[cs, i]
+    if i lt len[cs]
+        return cs[i]
+    return 0.0
+
+fn transposed_filter[b, a, signal]
+    order = max[len[a], len[b]]
+    --- the coefficients over a0, the shorter list padded with zeros
+    bn = for i in range[order]
+        coefficient[b, i] / a[0]
+    an = for i in range[order]
+        coefficient[a, i] / a[0]
+    z = for i in range[order]
+        0.0
+    out = []
+    for x in signal
+        y = bn[0] * x + z[0]
+        i = 0
+        while i lt order - 1
+            z[i] = bn[i + 1] * x - an[i + 1] * y + z[i + 1]
+            i = i + 1
+        out = push[out, y]
+    return out
+
+--- the task's coefficients (-2.77555756e-16 and -1.85037171e-17 written out)
+a = [1.00000000, -0.000000000000000277555756, 0.333333333, -0.0000000000000000185037171]
+b = [0.16666667, 0.5, 0.5, 0.16666667]
+signal = [-0.917843918645, 0.141984778794, 1.20536903482, 0.190286794412, -0.662370894973, -1.00700480494, -0.404707073677, 0.800482325044, 0.743500089861, 1.01090520172, 0.741527555207, 0.277841675195, 0.400833448236, -0.2085993586, -0.172842103641, -0.134316096293, 0.0259303398477, 0.490105989562, 0.549391221511, 0.9047198589]
+
+filtered = transposed_filter[b, a, signal]
+log['The signal through the order 3 low-pass Butterworth filter:']
+row = 0
+while row * 5 lt len[filtered]
+    cells = for y in slice[filtered, row * 5, row * 5 + 5]
+        fmt[y, decimals = 6, width = 11]
+    log[join[cells, '']]
+    row = row + 1

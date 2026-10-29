@@ -1,0 +1,24 @@
+5 sailors: the pile held 3121 coconuts
+    sailor 1 divides   3121: 1 to the monkey, hides   624, leaves 2496
+    sailor 2 divides   2496: 1 to the monkey, hides   499, leaves 1996
+    sailor 3 divides   1996: 1 to the monkey, hides   399, leaves 1596
+    sailor 4 divides   1596: 1 to the monkey, hides   319, leaves 1276
+    sailor 5 divides   1276: 1 to the monkey, hides   255, leaves 1020
+    in the morning 1020 coconuts make 5 shares of 204, none over
+
+6 sailors: the pile held 233275 coconuts
+    sailor 1 divides 233275: 1 to the monkey, hides 38879, leaves 194395
+    sailor 2 divides 194395: 1 to the monkey, hides 32399, leaves 161995
+    sailor 3 divides 161995: 1 to the monkey, hides 26999, leaves 134995
+    sailor 4 divides 134995: 1 to the monkey, hides 22499, leaves 112495
+    sailor 5 divides 112495: 1 to the monkey, hides 18749, leaves 93745
+    sailor 6 divides  93745: 1 to the monkey, hides 15624, leaves 78120
+    in the morning 78120 coconuts make 6 shares of 13020, none over
+
+the smallest pile for other numbers of sailors:
+    2 sailors: 11
+    3 sailors: 25
+    4 sailors: 765
+    5 sailors: 3121
+    6 sailors: 233275
+    7 sailors: 823537

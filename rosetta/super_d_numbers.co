@@ -1,0 +1,36 @@
+--- Rosetta Code: Super-d numbers
+--- https://rosettacode.org/wiki/Super-d_numbers
+--- n is super-d where d copies of the digit d are a part of the text of d * n^d,
+--- an int that grows past 64 bits. The numbers are tried in blocks that double in
+--- size, each block's tests running at once. The first ten for d = 2 to 8 take a
+--- few seconds; super-9, whose tenth is 182557181, takes half a minute more, and
+--- is shown when the program is given the argument 9.
+
+fn super_d[n, d]
+    return repeat[str[d], d] in str[d * n ^ d]
+
+fn first_super_d[d, count]
+    if d lt 2 or d gt 9
+        return error['super-d is defined for d from 2 to 9, not `d`', 'range']
+    found = []
+    low = 1
+    size = 1000
+    while len[found] lt count
+        hits = for n in range[low, low + size]
+            if super_d[n, d]
+                n
+        found = concat[found, hits]
+        low = low + size
+        size = min[size * 2, 200000]
+    return slice[found, 0, count]
+
+log['3 * 753^3 = `3 * 753 ^ 3`, so 753 is super-3: `super_d[753, 3]`']
+log['']
+top = 8
+if '9' in args[]
+    top = 9
+for d in range[2, top + 1]
+    shown = for n in first_super_d[d, 10]
+        str[n]
+    listed = join[shown, ', ']
+    log['First 10 super-`d` numbers: `listed`']

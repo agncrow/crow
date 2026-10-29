@@ -1,0 +1,184 @@
+--- Rosetta Code: Visualize a tree
+--- https://rosettacode.org/wiki/Visualize_a_tree
+--- A tree is a list of nodes, each holding its name and its children's places in the
+--- list. It is shown two ways in characters: as the unix tree command lists a
+--- directory, and drawn top down, each parent centred over its children and joined
+--- to them by box-drawing lines. The first tree is read from an outline (two spaces
+--- an indent); the second is random (seeded, so the same every run), each node's
+--- number split at random among its children, as the C entry grows its tree.
+
+use math
+
+struct Node [name, kids]
+
+--- the outline's lines as nodes: a line's depth is its indent, and its parent is the
+--- last line above it that is one level less indented
+fn parse[outline]
+    nodes = []
+    stack = []
+    for line in outline
+        name = trim[line]
+        depth = (len[line] - len[name]) / 2
+        nodes = push[nodes, Node[name, []]]
+        i = len[nodes] - 1
+        if depth gt 0
+            parent = stack[depth - 1]
+            nodes[parent].kids = push[nodes[parent].kids, i]
+        stack = push[slice[stack, 0, depth], i]
+    return nodes
+
+--- a random tree of the number n: a node whose number is more than 1 has children
+--- whose numbers, drawn one after another, add up to its own
+fn random_tree[n]
+    nodes = [Node['`n`', []]]
+    numbers = [n]
+    i = 0
+    while i lt len[nodes]
+        left = numbers[i]
+        if left gt 1
+            while left gt 0
+                part = 1 + rand[left]
+                left = left - part
+                nodes = push[nodes, Node['`part`', []]]
+                numbers = push[numbers, part]
+                nodes[i].kids = push[nodes[i].kids, len[nodes] - 1]
+        i = i + 1
+    return nodes
+
+--- the lines below node i, the unix tree command's way: each line starts with the
+--- bars of the ancestors that have more children to come
+fn branch[nodes, i, prefix, last, lines]
+    mark = '├── '
+    more = '│   '
+    if last
+        mark = '└── '
+        more = '    '
+    lines = push[lines, '`prefix``mark``nodes[i].name`']
+    kids = nodes[i].kids
+    k = 0
+    while k lt len[kids]
+        lines = branch[nodes, kids[k], '`prefix``more`', k eq len[kids] - 1, lines]
+        k = k + 1
+    return lines
+
+fn listing[nodes]
+    lines = [nodes[0].name]
+    kids = nodes[0].kids
+    k = 0
+    while k lt len[kids]
+        lines = branch[nodes, kids[k], '', k eq len[kids] - 1, lines]
+        k = k + 1
+    return lines
+
+--- the nodes in breadth-first order, the root first
+fn level_order[nodes]
+    order = [0]
+    i = 0
+    while i lt len[order]
+        order = concat[order, nodes[order[i]].kids]
+        i = i + 1
+    return order
+
+--- the tree drawn top down: a row of names for each level, and between two levels a
+--- row of lines from each parent to its children
+fn drawing[nodes]
+    gap = 2
+    order = level_order[nodes]
+    count = len[nodes]
+    depth = for i in range[count]
+        0
+    for i in order
+        for k in nodes[i].kids
+            depth[k] = depth[i] + 1
+    --- a subtree is as wide as its name, or its children's subtrees side by side
+    width = for i in range[count]
+        0
+    j = count - 1
+    while j gte 0
+        i = order[j]
+        kids = nodes[i].kids
+        spread = 0
+        for k in kids
+            spread = spread + width[k]
+        if len[kids] gt 0
+            spread = spread + gap * (len[kids] - 1)
+        width[i] = max[len[nodes[i].name], spread]
+        j = j - 1
+    --- each subtree's left edge, its children centred within it
+    left = for i in range[count]
+        0
+    for i in order
+        kids = nodes[i].kids
+        spread = 0 - gap
+        for k in kids
+            spread = spread + width[k] + gap
+        start = left[i] + (width[i] - spread) / 2
+        for k in kids
+            left[k] = start
+            start = start + width[k] + gap
+    --- a leaf's centre is its name's middle, a parent's the middle of its children's
+    centre = for i in range[count]
+        0
+    j = count - 1
+    while j gte 0
+        i = order[j]
+        kids = nodes[i].kids
+        if len[kids] eq 0
+            centre[i] = left[i] + (len[nodes[i].name] - 1) / 2
+        else
+            centre[i] = (centre[kids[0]] + centre[kids[len[kids] - 1]]) / 2
+        j = j - 1
+    columns = width[0]
+    --- math's max of a list answers a float: the rows are counted in ints
+    rows = 2 * int[max[depth]] + 1
+    cells = for i in range[columns * rows]
+        ' '
+    for i in range[count]
+        row = 2 * depth[i] * columns
+        letters = split[nodes[i].name, '']
+        start = centre[i] - (len[letters] - 1) / 2
+        for c in range[len[letters]]
+            cells[row + start + c] = letters[c]
+        kids = nodes[i].kids
+        if len[kids] gt 0
+            row = row + columns
+            first = centre[kids[0]]
+            last = centre[kids[len[kids] - 1]]
+            for x in range[first, last + 1]
+                cells[row + x] = '─'
+            for k in kids
+                cells[row + centre[k]] = '┬'
+            cells[row + first] = '┌'
+            cells[row + last] = '┐'
+            here = cells[row + centre[i]]
+            if len[kids] eq 1
+                cells[row + centre[i]] = '│'
+            else if here eq '┬'
+                cells[row + centre[i]] = '┼'
+            else
+                cells[row + centre[i]] = '┴'
+    lines = for r in range[rows]
+        trimmed[slice[cells, r * columns, (r + 1) * columns]]
+    return lines
+
+--- a row of cells as text, without its trailing blanks
+fn trimmed[cells]
+    last = len[cells] - 1
+    while last gte 0 and cells[last] eq ' '
+        last = last - 1
+    return join[slice[cells, 0, last + 1], '']
+
+fn show[title, nodes]
+    log[title]
+    log['']
+    for line in listing[nodes]
+        log[line]
+    log['']
+    for line in drawing[nodes]
+        log[line]
+    log['']
+
+outline = ['Animalia', '  Chordata', '    Mammalia', '      Carnivora', '        Felidae', '        Canidae', '        Ursidae', '      Primates', '        Hominidae', '    Aves', '      Passeriformes', '  Arthropoda', '    Insecta', '      Coleoptera', '      Lepidoptera', '    Arachnida', '  Mollusca']
+show['A tree read from an outline:', parse[outline]]
+seed[2024]
+show['A random tree, each number split among its children:', random_tree[12]]

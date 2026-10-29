@@ -1,0 +1,76 @@
+--- Rosetta Code: Colour pinstripe/Printer
+--- https://rosettacode.org/wiki/Colour_pinstripe/Printer
+--- The page is written in PostScript, the language of the printer, whose unit is
+--- the point: pinstripe.ps is one US Letter page (8.5 by 11 inches) of eleven bands
+--- an inch tall, the first of stripes 1 point wide, the next 2, and so on to 11,
+--- each band cycling black, red, green, blue, magenta, cyan, yellow and white;
+--- `showpage` then ejects the page. The file is written to the current directory;
+--- given the word print, the program also sends it to the default printer with lp:
+---     crow run colour_pinstripe_printer.co print
+
+struct Ink [letter, red, green, blue]
+
+fn pinstripe_inks[]
+    return [
+        Ink['K', 0, 0, 0],
+        Ink['R', 1, 0, 0],
+        Ink['G', 0, 1, 0],
+        Ink['B', 0, 0, 1],
+        Ink['M', 1, 0, 1],
+        Ink['C', 0, 1, 1],
+        Ink['Y', 1, 1, 0],
+        Ink['W', 1, 1, 1]
+    ]
+
+--- band b (from 1, at the top) as PostScript: a stripe a line, `x y width height`
+--- then the ink, filled by S; the last stripe is cut at the edge of the page
+fn band[inks, b, page_width, page_height]
+    y = page_height - 72 * b
+    count = (page_width + b - 1) / b
+    stripes = for k in range[count]
+        ink = inks[k % len[inks]]
+        x = k * b
+        w = min[b, page_width - x]
+        '`x` `y` `w` 72 `ink.red` `ink.green` `ink.blue` S'
+    return join[stripes, '\n']
+
+fn page[inks, page_width, page_height]
+    head = [
+        '%!PS-Adobe-3.0',
+        '%%Title: Colour pinstripe',
+        '%%BoundingBox: 0 0 `page_width` `page_height`',
+        '%%Pages: 1',
+        '%%EndComments',
+        '/S { setrgbcolor rectfill } bind def',
+        '%%BeginSetup',
+        '<< /PageSize [`page_width` `page_height`] >> setpagedevice',
+        '%%EndSetup',
+        '%%Page: 1 1'
+    ]
+    bands = for b in range[1, page_height / 72 + 1]
+        band[inks, b, page_width, page_height]
+    text = join[concat[[head, bands, ['showpage', '%%EOF']]], '\n']
+    return '`text`\n'
+
+--- the first points of band b across the page, a letter a point
+fn sketch[inks, b, points]
+    letters = for x in range[points]
+        inks[x / b % len[inks]].letter
+    return join[letters, '']
+
+all_inks = pinstripe_inks[]
+saved = write['pinstripe.ps', page[all_inks, 612, 792]]
+if not saved.ok
+    halt['pinstripe.ps could not be written: `saved.reason`']
+log['pinstripe.ps: one US Letter page, eleven bands an inch tall; the first 60 points of each:']
+for b in range[1, 12]
+    shown = sketch[all_inks, b, 60]
+    log['`fmt[b, width = 2]` point stripes  `shown`']
+log['K black, R red, G green, B blue, M magenta, C cyan, Y yellow, W white']
+
+if 'print' in args[]
+    sent = shell['lp pinstripe.ps']
+    if sent.status eq 0
+        log['sent to the printer: `trim[sent.stdout]`']
+    else
+        log['lp could not print it: `trim[sent.stderr]`']

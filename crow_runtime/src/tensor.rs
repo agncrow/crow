@@ -97,6 +97,15 @@ pub struct CrowTensor {
     offset: usize,
 }
 
+/// A vector of no numbers: what a place holds while the tensor it held is
+/// taken out to grow where it lies (`std::mem::take` of a record's field
+/// or a list's item, written back with the answer).
+impl Default for CrowTensor {
+    fn default() -> Self {
+        CrowTensor::from_vec(Vec::new(), vec![0])
+    }
+}
+
 /// A tensor crosses a serialized boundary — reactive state, a JSON
 /// response — as its shape and its values in row-major order; it is read
 /// back from that, or from a list of numbers (a vector) or a list of equal
@@ -1394,17 +1403,21 @@ impl CrowTensor {
     /// from the end), or the reason one is outside — the same words as
     /// `xs[i]`, in both modes (the kernel asserted it: a panic).
     pub fn try_gather(&self, indices: &CrowTensor) -> Result<CrowTensor, String> {
-        let src = self.to_vec();
-        let mut data = Vec::with_capacity(indices.len());
-        for i in indices.to_vec() {
+        // (read where the numbers lie: a copy of the whole source had been
+        // made at every gather, 32 MB to read three numbers of 4,000,000;
+        // Rosetta Code, Facial detection in a photo)
+        let src = self.numbers();
+        let idx = indices.numbers();
+        let mut data = Vec::with_capacity(idx.len());
+        for &i in idx.iter() {
             data.push(src[crate::stops::item(i as i64, src.len())?]);
         }
         Ok(Self::from_vec(data, indices.shape.clone()))
     }
 
     pub fn gather(&self, indices: &CrowTensor) -> CrowTensor {
-        let src = self.to_vec();
-        let idx = indices.to_vec();
+        let src = self.numbers();
+        let idx = indices.numbers();
         let n = src.len() as i64;
         let data: Vec<f64> = idx.iter().map(|&i| {
             let mut ii = i as i64;
@@ -1426,7 +1439,9 @@ impl CrowTensor {
         assert!(i < self.shape[0], "row index {} out of bounds (rows: {})", i, self.shape[0]);
         let inner_shape: Vec<usize> = self.shape[1..].to_vec();
         let chunk = Self::numel(&inner_shape);
-        let data = self.to_vec();
+        // (the row copied, not the matrix: `rows` reads each row, and a
+        // walk of a matrix's rows had copied the whole matrix per row)
+        let data = self.numbers();
         Self::from_vec(data[i * chunk..(i + 1) * chunk].to_vec(), inner_shape)
     }
 
@@ -1685,6 +1700,14 @@ impl Numbers for i64 {
     fn shape_into(&self, _: &mut Vec<usize>) {}
 }
 
+/// A growing int as the float a tensor would hold it as (its nearest).
+impl Numbers for crate::int::Int {
+    fn numbers_into(&self, out: &mut Vec<f64>) {
+        out.push(self.to_f64());
+    }
+    fn shape_into(&self, _: &mut Vec<usize>) {}
+}
+
 impl Numbers for CrowTensor {
     fn numbers_into(&self, out: &mut Vec<f64>) {
         out.extend(self.to_vec());
@@ -1723,6 +1746,34 @@ pub fn numbers_equal<A: Numbers, B: Numbers>(a: &A, b: &B) -> bool {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    /// A gather and a matrix's row read the numbers they name where they
+    /// lie: right from a contiguous tensor and from a transposed one, and a
+    /// gather of three numbers costs far less than a copy of the source
+    /// (each had copied it whole: 32 MB per gather of 4,000,000)
+    #[test]
+    fn a_gather_reads_the_numbers_it_names() {
+        let m = CrowTensor::from_vec((0..6).map(|x| x as f64).collect(), vec![2, 3]);
+        assert_eq!(m.index0(1).to_vec(), vec![3.0, 4.0, 5.0]);
+        let t = m.transpose();
+        assert_eq!(t.index0(2).to_vec(), vec![2.0, 5.0]);
+        let idx = CrowTensor::from_vec(vec![5.0, 0.0, -1.0], vec![3]);
+        assert_eq!(m.try_gather(&idx).map(|g| g.to_vec()), Ok(vec![5.0, 0.0, 5.0]));
+        assert_eq!(t.try_gather(&idx).map(|g| g.to_vec()), Ok(vec![5.0, 0.0, 5.0]));
+        let big = CrowTensor::zeros(vec![1_000_000]);
+        let three = CrowTensor::from_vec(vec![0.0, 1.0, 2.0], vec![3]);
+        let start = std::time::Instant::now();
+        for _ in 0..100 {
+            let _ = big.try_gather(&three);
+        }
+        let gathers = start.elapsed();
+        let start = std::time::Instant::now();
+        for _ in 0..100 {
+            std::hint::black_box(big.to_vec());
+        }
+        let copies = start.elapsed();
+        assert!(gathers * 10 < copies, "100 gathers {:?}, 100 copies {:?}", gathers, copies);
+    }
+
     /// A number pushed onto a vector nothing else holds grows it where it
     /// lies; one another value shares is copied first, so that value never
     /// sees the push; a matrix is refused as `push_scalar` refuses it.

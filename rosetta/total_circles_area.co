@@ -1,0 +1,160 @@
+--- Rosetta Code: Total circles area
+--- https://rosettacode.org/wiki/Total_circles_area
+--- Two ways, compared. Exactly, by Green's theorem: the area is half the
+--- integral of x dy - y dx around the union's boundary, which is made of the
+--- arcs of the circles that lie inside no other circle, and each arc's
+--- integral has a closed form. And by scanlines: the length of each
+--- horizontal line that lies inside the union, summed over thin strips (the
+--- midpoint rule). The scanlines are simpler to trust, and slow to converge
+--- (the error falls about as h^1.5, the circles' tops and bottoms being where
+--- a chord's length changes fastest); the arcs give every digit a float holds
+--- in a few thousand operations.
+
+use math
+
+struct Circle [x, y, r]
+
+fn dataset[]
+    rows = [[1.6417233788, 1.6121789534, 0.0848270516], [-1.4944608174, 1.2077959613, 1.1039549836], [0.6110294452, -0.6907087527, 0.9089162485], [0.3844862411, 0.2923344616, 0.2375743054], [-0.2495892950, -0.3832854473, 1.0845181219], [1.7813504266, 1.6178237031, 0.8162655711], [-0.1985249206, -0.8343333301, 0.0538864941], [-1.7011985145, -0.1263820964, 0.4776976918], [-0.4319462812, 1.4104420482, 0.7886291537], [0.2178372997, -0.9499557344, 0.0357871187], [-0.6294854565, -1.3078893852, 0.7653357688], [1.7952608455, 0.6281269104, 0.2727652452], [1.4168575317, 1.0683357171, 1.1016025378], [1.4637371396, 0.9463877418, 1.1846214562], [-0.5263668798, 1.7315156631, 1.4428514068], [-1.2197352481, 0.9144146579, 1.0727263474], [-0.1389358881, 0.1092805780, 0.7350208828], [1.5293954595, 0.0030278255, 1.2472867347], [-0.5258728625, 1.3782633069, 1.3495508831], [-0.1403562064, 0.2437382535, 1.3804956588], [0.8055826339, -0.0482092025, 0.3327165165], [-0.6311979224, 0.7184578971, 0.2491045282], [1.4685857879, -0.8347049536, 1.3670667538], [-0.6855727502, 1.6465021616, 1.0593087096], [0.0152957411, 0.0638919221, 0.9771215985]]
+    circles = for row in rows
+        Circle[row[0], row[1], row[2]]
+    circles
+
+fn distance[ax, ay, bx, by]
+    sqrt[(ax - bx) ^ 2 + (ay - by) ^ 2]
+
+--- whether circle i lies inside another (of two equal circles, the later)
+fn swallowed[cs, i]
+    a = cs[i]
+    j = 0
+    while j lt len[cs]
+        b = cs[j]
+        if j ne i and distance[a.x, a.y, b.x, b.y] + a.r lte b.r and (a.r lt b.r or j lt i)
+            return true
+        j = j + 1
+    false
+
+fn visible[cs]
+    kept = for i in range[len[cs]]
+        if not swallowed[cs, i]
+            cs[i]
+    kept
+
+--- an angle brought into [0, 2 pi)
+fn turn[a]
+    full = 2.0 * pi
+    a - full * floor[a / full]
+
+--- 0, 2 pi and every angle on circle i where another circle crosses it, in order
+fn crossings[cs, i]
+    c = cs[i]
+    angles = [0.0, 2.0 * pi]
+    j = 0
+    while j lt len[cs]
+        o = cs[j]
+        d = distance[c.x, c.y, o.x, o.y]
+        if j ne i and d lt c.r + o.r and d gt abs[c.r - o.r]
+            toward = atan2[o.y - c.y, o.x - c.x]
+            half = acos[(c.r ^ 2 + d ^ 2 - o.r ^ 2) / (2.0 * c.r * d)]
+            angles = push[angles, turn[toward - half]]
+            angles = push[angles, turn[toward + half]]
+        j = j + 1
+    sort[angles]
+
+--- whether a point lies inside a circle other than circle i
+fn covered[cs, i, px, py]
+    j = 0
+    while j lt len[cs]
+        o = cs[j]
+        if j ne i and distance[px, py, o.x, o.y] lt o.r
+            return true
+        j = j + 1
+    false
+
+--- half the integral of x dy - y dx along circle c, from angle a to angle b
+fn arc_integral[c, a, b]
+    0.5 * (c.r ^ 2 * (b - a) + c.x * c.r * (sin[b] - sin[a]) - c.y * c.r * (cos[b] - cos[a]))
+
+--- the union's boundary on circle i: the arcs between crossings whose middle
+--- lies inside no other circle
+fn boundary_part[cs, i]
+    c = cs[i]
+    angles = crossings[cs, i]
+    total = 0.0
+    k = 0
+    while k + 1 lt len[angles]
+        a = angles[k]
+        b = angles[k + 1]
+        middle = (a + b) / 2.0
+        if b gt a and not covered[cs, i, c.x + c.r * cos[middle], c.y + c.r * sin[middle]]
+            total = total + arc_integral[c, a, b]
+        k = k + 1
+    total
+
+fn exact_area[cs]
+    parts = for i in range[len[cs]]
+        boundary_part[cs, i]
+    sum[parts]
+
+--- the length of the line at height y that lies inside some circle: the
+--- chords' ends sorted apart, then swept in order, counting the chords open
+fn covered_length[cs, y]
+    lefts = []
+    rights = []
+    k = 0
+    while k lt len[cs]
+        c = cs[k]
+        if abs[y - c.y] lt c.r
+            half = sqrt[c.r ^ 2 - (y - c.y) ^ 2]
+            lefts = push[lefts, c.x - half]
+            rights = push[rights, c.x + half]
+        k = k + 1
+    lefts = sort[lefts]
+    rights = sort[rights]
+    length = 0.0
+    chords = 0
+    at = 0.0
+    i = 0
+    j = 0
+    while j lt len[rights]
+        x = 0.0
+        step = 0
+        if i lt len[lefts] and lefts[i] lte rights[j]
+            x = lefts[i]
+            step = 1
+            i = i + 1
+        else
+            x = rights[j]
+            step = -1
+            j = j + 1
+        if chords gt 0
+            length = length + x - at
+        chords = chords + step
+        at = x
+    length
+
+--- the midpoint rule over strips of equal height, from the lowest point of
+--- the circles to the highest
+fn scanned_area[cs, strips]
+    bottoms = for c in cs
+        c.y - c.r
+    tops = for c in cs
+        c.y + c.r
+    low = min[bottoms]
+    h = (max[tops] - low) / strips
+    lengths = for k in range[strips]
+        covered_length[cs, low + (k + 0.5) * h]
+    sum[lengths] * h
+
+given = dataset[]
+cs = visible[given]
+log['`len[given]` circles, `len[given] - len[cs]` of them inside another: `len[cs]` left to measure']
+log['']
+exact = exact_area[cs]
+log['Exactly, by the uncovered arcs: `exact`']
+log['To ten decimals: `fmt[exact, decimals = 10]`']
+log['']
+log['By scanlines:']
+for strips in [100, 1000, 10000, 100000]
+    area = scanned_area[cs, strips]
+    log['`fmt[strips, width = 7]` strips: `fmt[area, decimals = 7]`, off by `fmt[abs[area - exact], decimals = 7]`']

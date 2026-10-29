@@ -1,0 +1,80 @@
+--- Rosetta Code: Arena storage pool
+--- https://rosettacode.org/wiki/Arena_storage_pool
+--- Crow has no allocators, pointers or storage pools that a program chooses: every
+--- value (an int, a list, a record) is made by the runtime, from the one allocator
+--- every Crow program has, interpreted or compiled, and is let go after its last
+--- read. Neither a value's type nor a reference to it decides where it lives, so
+--- the storage is the runtime's choice alone. An arena is modelled here as a
+--- value: a list of slots that objects are placed in one at a time, each known by
+--- its handle (its slot's number), freed as a group by moving the arena's top back
+--- to a mark: everything placed since the mark goes at once, and its slots are
+--- used again.
+
+struct Arena [slots, top]
+
+--- an arena with room for `capacity` ints
+fn arena_of[capacity]
+    slots = for i in range[capacity]
+        0
+    return Arena[slots, 0]
+
+--- the arena with the value in its next free slot, whose number (the top before)
+--- is the value's handle; a full arena doubles its slots
+fn place[a, value]
+    if a.top eq len[a.slots]
+        a.slots = concat[a.slots, a.slots]
+    a.slots[a.top] = value
+    a.top = a.top + 1
+    return a
+
+fn object_at[a, handle]
+    if handle gte a.top
+        return error['handle `handle` was freed with its group', 'arena']
+    return a.slots[handle]
+
+fn describe[a, handle]
+    found = object_at[a, handle]
+    if found.ok
+        return 'handle `handle` holds `found`'
+    return 'handle `handle`: `found.reason`'
+
+--- every object placed since the mark freed at once
+fn release[a, mark]
+    a.top = mark
+    return a
+
+fn show[a]
+    log['  `a.top` objects live in `len[a.slots]` slots: `slice[a.slots, 0, a.top]`']
+
+pool = arena_of[4]
+log['An arena with room for 4 ints']
+
+handles = []
+for v in [10, 20, 30]
+    handles = push[handles, pool.top]
+    pool = place[pool, v]
+log['Placed 10, 20 and 30 one at a time, at handles `handles`']
+show[pool]
+
+mark = pool.top
+group = []
+for v in [40, 50, 60, 70, 80]
+    group = push[group, pool.top]
+    pool = place[pool, v]
+log['Marked the top (`mark`), then placed a group of five at handles `group`']
+show[pool]
+log['  `describe[pool, 5]`']
+
+pool = release[pool, mark]
+log['Released the group placed since the mark']
+show[pool]
+log['  `describe[pool, 5]`']
+
+again = pool.top
+pool = place[pool, 90]
+log['Placed 90: it takes handle `again`, a slot of the freed group']
+show[pool]
+
+pool = release[pool, 0]
+log['Released the whole arena']
+show[pool]

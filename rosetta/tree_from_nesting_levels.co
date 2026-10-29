@@ -1,0 +1,78 @@
+--- Rosetta Code: Tree from nesting levels
+--- https://rosettacode.org/wiki/Tree_from_nesting_levels
+--- A list holds one kind of value, so the nested list is a record: an item is a
+--- leaf (an int) or a list of items. It is built by a recursive descent that
+--- takes the levels at its depth and hands deeper runs to a call one deeper; the
+--- tree is then read back to its levels, a calculation over the structure.
+
+struct Item [leaf, n, items]
+
+--- what one call of nest built, and where in the levels it stopped
+struct Built [items, next]
+
+fn leaf_of[n]
+    return Item[true, n, []]
+
+fn list_of[items]
+    return Item[false, 0, items]
+
+--- the items at depth `depth` from position `at` on, until a level above it
+fn nest[levels, at, depth]
+    items = []
+    i = at
+    while i lt len[levels]
+        x = levels[i]
+        if x lt depth
+            break
+        if x eq depth
+            items = push[items, leaf_of[x]]
+            i = i + 1
+        else
+            deeper = nest[levels, i, depth + 1]
+            items = push[items, list_of[deeper.items]]
+            i = deeper.next
+    return Built[items, i]
+
+fn tree_of[levels]
+    return list_of[nest[levels, 0, 1].items]
+
+--- the nested-list text, [1, [2, [[4]]]]
+fn shown[item]
+    if item.leaf
+        return str[item.n]
+    parts = for each in item.items
+        shown[each]
+    inner = join[parts, ', ']
+    return '[`inner`]'
+
+--- the levels the tree holds, each leaf with the depth it sits at
+fn levels_in[item, depth]
+    if item.leaf
+        return [depth]
+    found = []
+    for each in item.items
+        found = concat[found, levels_in[each, depth + 1]]
+    return found
+
+fn listed[xs]
+    parts = for x in xs
+        str[x]
+    inner = join[parts, ', ']
+    return '[`inner`]'
+
+--- lists of different lengths: a nested literal would be a matrix, so push them
+tests = []
+tests = push[tests, []]
+tests = push[tests, [1, 2, 4]]
+tests = push[tests, [3, 1, 3, 1]]
+tests = push[tests, [1, 2, 3, 1]]
+tests = push[tests, [3, 2, 1, 3]]
+tests = push[tests, [3, 3, 3, 1, 1, 3, 3, 3]]
+fn show[levels]
+    tree = tree_of[levels]
+    back = levels_in[tree, 0]
+    log['`listed[levels]` nests to: `shown[tree]`']
+    log['    read back to levels: `listed[back]` (the same: `back eq levels`)']
+
+for levels in tests
+    show[levels]

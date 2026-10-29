@@ -1,0 +1,21 @@
+Encoding broood:
+  [b]roood   1                abcdefghijklmnopqrstuvwxyz
+  b[r]oood   1 17             bacdefghijklmnopqrstuvwxyz
+  br[o]ood   1 17 15          rbacdefghijklmnopqstuvwxyz
+  bro[o]od   1 17 15 0        orbacdefghijklmnpqstuvwxyz
+  broo[o]d   1 17 15 0 0      orbacdefghijklmnpqstuvwxyz
+  brooo[d]   1 17 15 0 0 5    orbacdefghijklmnpqstuvwxyz
+Decoding 1 17 15 0 0 5:
+               [ 1] 17 15 0 0 5    b       abcdefghijklmnopqrstuvwxyz
+             1 [17] 15 0 0 5       br      bacdefghijklmnopqrstuvwxyz
+          1 17 [15] 0 0 5          bro     rbacdefghijklmnopqstuvwxyz
+       1 17 15 [ 0] 0 5            broo    orbacdefghijklmnpqstuvwxyz
+     1 17 15 0 [ 0] 5              brooo   orbacdefghijklmnpqstuvwxyz
+   1 17 15 0 0 [ 5]                broood  orbacdefghijklmnpqstuvwxyz
+
+broood       -> 1 17 15 0 0 5                  -> broood (the same)
+bananaaa     -> 1 1 13 1 1 1 0 0               -> bananaaa (the same)
+hiphophiphop -> 7 8 15 2 15 2 2 3 2 2 3 2      -> hiphophiphop (the same)
+
+Hello: 'H' is not in the symbol table
+[1, 26]: index 26 is past the symbol table

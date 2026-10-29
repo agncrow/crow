@@ -1,0 +1,33 @@
+plain text in single quotes
+a quote ', a backslash \, a backtick `, a tab 	| and a line break
+here
+\d+ is written as typed
+true
+Crow has 4 letters, and 7 squared is 49
+inert: {name} ${name} $name %s #{name} "name"
+shouted: QUIET
+Once upon a midnight dreary,
+    while I pondered, weak and weary
+naïve café ✓ has 12 characters
+crow, small, 2026
+<a href="https://rosettacode.org/">Rosetta Code</a>
+SELECT name FROM birds WHERE kind = 'crow'
+{"say":"it's","tags":"\"a\" and \\"}
+[a = [1, 2]]
+1234567890123456789012345678900
+1267650600228229401496703205376
+3.25
+-0.5
+602000000000000000000000
+-41
+0.30
+1/2
+2026-07-14T14:30:00Z
+true
+[1, 2, 3]
+[[1, 2], [3, 4]]
+[['a'], ['b', 'c']]
+[crow = 3, two words = 4]
+[1 = 'one', 2 = 'two']
+Point[x = 3, y = 4]
+A is code 65, and code 39 is the quote '

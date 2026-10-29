@@ -1,0 +1,112 @@
+--- Rosetta Code: Brilliant numbers
+--- https://rosettacode.org/wiki/Brilliant_numbers
+--- The primes are sieved and grouped by their number of digits; a brilliant number is
+--- p * q with p <= q from one group. Below a limit, each group's pairs are counted with
+--- two pointers (q falls as p rises), and the least product at or past the limit is the
+--- q just past the pointer. Orders of magnitude 1 to 14: the primes are sieved to just
+--- past ten million, the first eight-digit primes being all the last order needs.
+
+struct Tally [count, least]
+
+fn primes_below[n]
+    sieve = for i in range[n]
+        i gte 2
+    p = 2
+    while p * p lt n
+        if sieve[p]
+            m = p * p
+            while m lt n
+                sieve[m] = false
+                m = m + p
+        p = p + 1
+    primes = for i in range[n]
+        if sieve[i]
+            i
+    return primes
+
+--- the primes of one digit, of two digits, and so on
+fn digit_groups[primes, most]
+    groups = for d in range[1, most + 1]
+        low = 10 ^ (d - 1)
+        high = 10 * low
+        group = for p in primes
+            if p gte low and p lt high
+                p
+        group
+    return groups
+
+--- the smaller of two products, 0 standing for none yet
+fn least_of[a, b]
+    if a eq 0 or b lt a
+        return b
+    return a
+
+--- how many products of a group lie below the limit, and the least one at or past it
+fn tally[g, limit]
+    n = len[g]
+    if g[-1] * g[-1] lt limit
+        return Tally[n * (n + 1) / 2, 0]
+    count = 0
+    least = 0
+    j = len[g] - 1
+    i = 0
+    while i lt len[g]
+        while j gte i and g[i] * g[j] gte limit
+            j = j - 1
+        if j lt i
+            least = least_of[least, g[i] * g[i]]
+            break
+        count = count + j - i + 1
+        if j + 1 lt len[g]
+            least = least_of[least, g[i] * g[j + 1]]
+        i = i + 1
+    return Tally[count, least]
+
+--- every brilliant number below the limit, in order
+fn brilliant_below[groups, limit]
+    found = []
+    for g in groups
+        i = 0
+        while i lt len[g] and g[i] * g[i] lt limit
+            j = i
+            while j lt len[g] and g[i] * g[j] lt limit
+                found = push[found, g[i] * g[j]]
+                j = j + 1
+            i = i + 1
+    return sort[found]
+
+fn ordinal[n]
+    if n % 100 gte 11 and n % 100 lte 13
+        return 'th'
+    if n % 10 eq 1
+        return 'st'
+    if n % 10 eq 2
+        return 'nd'
+    if n % 10 eq 3
+        return 'rd'
+    return 'th'
+
+groups = digit_groups[primes_below[10000100], 8]
+
+log['First 100 brilliant numbers:']
+first = slice[brilliant_below[groups, 10000], 0, 100]
+row = 0
+while row lt 100
+    cells = for x in slice[first, row, row + 10]
+        fmt[x, width = 4]
+    log[join[cells, ' ']]
+    row = row + 10
+log['']
+
+limit = 1
+for k in range[1, 15]
+    limit = limit * 10
+    count = 0
+    least = 0
+    for g in groups
+        t = tally[g, limit]
+        count = count + t.count
+        least = least_of[least, t.least]
+    position = count + 1
+    place = fmt['`fmt[position, commas = true]``ordinal[position]`', width = 17, align = 'right']
+    log['First >= `fmt[limit, width = 19, commas = true]` is `place` in the series: `fmt[least, width = 19, commas = true]`']

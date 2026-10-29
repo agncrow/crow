@@ -1,0 +1,64 @@
+--- Rosetta Code: Greyscale bars/Display
+--- https://rosettacode.org/wiki/Greyscale_bars/Display
+--- Crow opens no window, so the display is an image file: greyscale_bars.pgm, a
+--- plain PGM (P2) of 640 by 480 pixels written to the current directory, its four
+--- quarters 8, 16, 32 and 64 bars wide, black to white, white to black, black to
+--- white and white to black. Bar i of n is grey 255 i / (n - 1), rounded. The bars
+--- are drawn on the console too, a character for every ten pixels across (@ is
+--- black and a space white, as ink on paper), between bars that mark the edges.
+--- The file is removed at the end, unless the program is given the argument keep.
+
+fn bar_count[quarter]
+    return 8 * 2 ^ quarter
+
+fn grey[quarter, x, width]
+    --- the grey at column x of a picture width wide, in the given quarter
+    bars = bar_count[quarter]
+    bar = x * bars / width
+    level = round[255.0 * bar / (bars - 1)]
+    if quarter % 2 eq 0
+        return level
+    return 255 - level
+
+fn pgm[width, height]
+    --- every row of a quarter is the same, so one row is made and repeated; sixteen
+    --- numbers a line keep each line below the 70 characters plain PGM allows
+    quarters = for quarter in range[4]
+        lines = for start in range[0, width, 16]
+            cells = for x in range[start, start + 16]
+                str[grey[quarter, x, width]]
+            join[cells, ' ']
+        row = join[lines, '\n']
+        repeat['`row`\n', height / 4]
+    body = join[quarters, '']
+    return 'P2\n`width` `height`\n255\n`body`'
+
+fn shade[level]
+    --- ten characters from black to white
+    ramp = '@%#*+=-:. '
+    return ramp[level * 10 / 256]
+
+fn sketch[columns, lines_each]
+    for quarter in range[4]
+        cells = for x in range[columns]
+            shade[grey[quarter, x, columns]]
+        line = join[cells, '']
+        for k in range[lines_each]
+            log['|`line`|']
+
+saved = write['greyscale_bars.pgm', pgm[640, 480]]
+if not saved.ok
+    halt['greyscale_bars.pgm could not be written: `saved.reason`']
+log['greyscale_bars.pgm: 640 x 480 pixels, quarters of 8, 16, 32 and 64 bars']
+for quarter in range[4]
+    bars = bar_count[quarter]
+    firsts = for x in range[3]
+        str[grey[quarter, x * 640 / bars, 640]]
+    shown = join[firsts, ', ']
+    log['    `bars` bars of `640 / bars` pixels: greys `shown`, ..., `grey[quarter, 639, 640]`']
+sketch[64, 3]
+given = args[]
+if 'keep' not in given
+    removed = rm['greyscale_bars.pgm']
+    if not removed.ok
+        halt['greyscale_bars.pgm could not be removed: `removed.reason`']

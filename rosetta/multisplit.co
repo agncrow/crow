@@ -1,0 +1,73 @@
+--- Rosetta Code: Multisplit
+--- https://rosettacode.org/wiki/Multisplit
+--- A scan from left to right: at each position the separators are tried in their
+--- order, so the first that matches wins (priority); a match closes the piece
+--- before it and the scan goes on past it. Each match keeps which separator it was
+--- and where it was found (the extra credit).
+
+struct Match [sep, index, at]
+
+struct Parsed [pieces, hits]
+
+fn first_match[text, at, seps]
+    --- the index of the first separator that text holds at position at, or -1
+    j = 0
+    while j lt len[seps]
+        if starts[slice[text, at, len[text]], seps[j]]
+            return j
+        j = j + 1
+    return -1
+
+fn multisplit[text, seps]
+    pieces = []
+    hits = []
+    last = 0
+    i = 0
+    while i lt len[text]
+        j = first_match[text, i, seps]
+        if j gte 0
+            pieces = push[pieces, slice[text, last, i]]
+            hits = push[hits, Match[seps[j], j, i]]
+            i = i + len[seps[j]]
+            last = i
+        else
+            i = i + 1
+    pieces = push[pieces, slice[text, last, len[text]]]
+    return Parsed[pieces, hits]
+
+fn quoted[s]
+    return '"`s`"'
+
+fn parse_shown[parsed]
+    --- the pieces quoted, each match's separator in parentheses between them
+    parts = [quoted[parsed.pieces[0]]]
+    for k in range[len[parsed.hits]]
+        parts = push[parts, '(`parsed.hits[k].sep`)']
+        parts = push[parts, quoted[parsed.pieces[k + 1]]]
+    return join[parts, ' ']
+
+fn demo[text, seps]
+    quoted_seps = for s in seps
+        quoted[s]
+    sep_list = join[quoted_seps, ', ']
+    log['text "`text`", separators `sep_list`']
+    parsed = multisplit[text, seps]
+    log['  parsed:  `parse_shown[parsed]`']
+    pieces = for p in parsed.pieces
+        if p eq ''
+            'empty string'
+        else
+            quoted[p]
+    shown_pieces = join[pieces, ', ']
+    log['  pieces:  `shown_pieces`']
+    found = for m in parsed.hits
+        '`quoted[m.sep]` (separator `m.index`) at `m.at`'
+    shown_found = join[found, ', ']
+    if len[found] eq 0
+        shown_found = 'no separator'
+    log['  matched: `shown_found`']
+
+demo['a!===b=!=c', ['==', '!=', '=']]
+demo['a!===b=!=c', ['=', '!=', '==']]
+demo['a!===b=!=c', ['!=', '==', '=']]
+demo['no separators here', ['==', '!=', '=']]

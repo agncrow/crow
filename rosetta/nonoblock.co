@@ -1,0 +1,71 @@
+--- Rosetta Code: Nonoblock
+--- https://rosettacode.org/wiki/Nonoblock
+--- The first block slides from the left edge as far right as leaves room for the
+--- others (each with a gap before it); for each place, the other blocks are placed the
+--- same way in the cells right of it and its gap. Blocks that cannot fit answer an
+--- error value that says why. Each arrangement is drawn with a letter per block.
+
+--- Every arrangement of the blocks in cells, each a list of the blocks' first cells.
+fn placements[blocks, cells]
+    first = blocks[0]
+    rest = slice[blocks, 1, len[blocks]]
+    room = 0
+    for b in rest
+        room = room + b + 1
+    found = []
+    for at in range[cells - room - first + 1]
+        if len[rest] eq 0
+            found = push[found, [at]]
+        else
+            offset = at + first + 1
+            for others in placements[rest, cells - offset]
+                shifted = for p in others
+                    p + offset
+                found = push[found, concat[[at], shifted]]
+    return found
+
+fn needed[blocks]
+    total = len[blocks] - 1
+    for b in blocks
+        total = total + b
+    return total
+
+fn arrangements[blocks, cells]
+    if needed[blocks] gt cells
+        return error['the blocks need `needed[blocks]` cells and the row has `cells`', 'fit']
+    return placements[blocks, cells]
+
+fn drawn[blocks, firsts, cells]
+    letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    row = for i in range[cells]
+        '_'
+    for k in range[len[blocks]]
+        for i in range[firsts[k], firsts[k] + blocks[k]]
+            row[i] = letters[k]
+    return '|`join[row, \'|\']`|'
+
+fn show[blocks, cells]
+    sizes = for b in blocks
+        str[b]
+    log['`cells` cells and [`join[sizes, \', \']`] blocks:']
+    if len[blocks] eq 0
+        log['    `drawn[blocks, [], cells]`']
+        log['  1 position']
+        log['']
+        return
+    found = arrangements[blocks, cells]
+    if not found.ok
+        log['    none: `found.reason`']
+        log['  0 positions']
+        log['']
+        return
+    for firsts in found
+        log['    `drawn[blocks, firsts, cells]`']
+    log['  `len[found]` positions']
+    log['']
+
+show[[2, 1], 5]
+show[[], 5]
+show[[8], 10]
+show[[2, 3, 2, 3], 15]
+show[[2, 3], 5]

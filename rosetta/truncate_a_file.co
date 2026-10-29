@@ -1,0 +1,84 @@
+--- Rosetta Code: Truncate a file
+--- https://rosettacode.org/wiki/Truncate_a_file
+--- Crow has no truncate, nor a stat (the sys layer is the standard library's
+--- own), so the routine checks the file with exists and wc -c and cuts it with
+--- the system's truncate command through shell: the system call, which keeps
+--- the bytes before the cut as they were, whatever they hold. A missing file,
+--- or a length that is not less than the file's, is an error value, as the
+--- task asks. The demonstration makes a text file and a file of all 256 byte
+--- values (with printf: a program writes text), truncates them, checks their
+--- sizes and what is left, and removes them.
+
+--- a path as one word for sh, in single quotes
+fn quoted[path]
+    inner = replace[path, '\'', '\'\\\'\'']
+    return '\'`inner`\''
+
+--- a file's size in bytes, as wc counts them
+fn size_of[path]
+    r = shell['wc -c < `quoted[path]`']
+    if r.status ne 0
+        return error[trim[r.stderr], 'io']
+    return int[trim[r.stdout]]
+
+--- cut the file at `length` bytes; answers its new size
+fn truncate_file[path, length]
+    if not exists[path]
+        return error['there is no file `path`', 'io']
+    if length lt 0
+        return error['a length is never negative', 'io']
+    size = size_of[path]
+    if length gte size
+        return error['`path` holds `size` bytes, and `length` is no fewer', 'io']
+    r = shell['truncate -s `length` `quoted[path]`']
+    if r.status ne 0
+        return error[trim[r.stderr], 'io']
+    return size_of[path]
+
+fn try_truncate[path, length]
+    r = truncate_file[path, length]
+    if r.ok
+        log['  truncate_file[`path`, `length`]: now `r` bytes']
+    else
+        log['  truncate_file[`path`, `length`] refused: `r.reason`']
+
+text = 'truncate_demo.txt'
+_written = write[text, 'The quick brown fox jumps over the lazy dog.\n']
+log['`text` holds `size_of[text]` bytes']
+try_truncate[text, 19]
+log['  what is left: \'`read[text]`\'']
+try_truncate[text, 19]
+try_truncate[text, 100]
+try_truncate[text, -1]
+try_truncate['no_such_file.txt', 10]
+log['']
+
+--- the length counts bytes, not characters: ï is two bytes in UTF-8
+accents = 'truncate_demo_utf8.txt'
+_written = write[accents, 'naïve café']
+log['`accents` holds `len[read[accents]]` characters in `size_of[accents]` bytes']
+try_truncate[accents, 6]
+log['  what is left: \'`read[accents]`\'']
+try_truncate[accents, 3]
+cut = read[accents]
+log['  read as text: `cut.reason`']
+log['']
+
+--- every byte value, 0 to 255, written by printf from octal escapes
+binary = 'truncate_demo.bin'
+escapes = for b in range[256]
+    '\\`b / 64``b / 8 % 8``b % 8`'
+octal = join[escapes, '']
+_made = shell['printf \'`octal`\' > `quoted[binary]`']
+_kept = cp[binary, 'truncate_demo.orig']
+log['`binary` holds `size_of[binary]` bytes, 0 to 255']
+try_truncate[binary, 100]
+tail = shell['od -An -tu1 -j 96 `quoted[binary]`']
+last = sub[trim[tail.stdout], '\s+', ' ']
+log['  its last four bytes: `last`']
+want = shell['head -c 100 truncate_demo.orig | cksum']
+got = shell['cksum < `quoted[binary]`']
+log['  the first 100 bytes as they were (cksum): `want.stdout eq got.stdout`']
+
+for path in [text, accents, binary, 'truncate_demo.orig']
+    _gone = rm[path]

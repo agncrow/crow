@@ -1,0 +1,63 @@
+--- Rosetta Code: Find palindromic numbers in both binary and ternary bases
+--- https://rosettacode.org/wiki/Find_palindromic_numbers_in_both_binary_and_ternary_bases
+--- 0 and 1 are listed, as the task allows. Past them only ternary palindromes of an
+--- odd number of digits are made: one of an even number of digits is a multiple of 4
+--- (3 is -1 modulo 4, so each pair of equal digits cancels), while a binary
+--- palindrome above 0 ends in 1 and is odd. Each is made from its first half h and
+--- a middle digit m, as h's digits, m, then h's digits reversed, so they come in
+--- increasing order; each is then read backwards in binary.
+
+--- n with its digits in base b reversed (0s it ends with are dropped)
+fn reversed[n, b]
+    back = 0
+    while n gt 0
+        back = back * b + n % b
+        n = n / b
+    return back
+
+--- n's digits in base b
+fn digits[n, b]
+    if n eq 0
+        return '0'
+    shown = ''
+    while n gt 0
+        shown = '`n % b``shown`'
+        n = n / b
+    return shown
+
+--- the first count numbers that are palindromes in base 2 and in base 3
+fn both_palindromes[count]
+    found = [0, 1]
+    low = 1
+    while len[found] lt count
+        --- the halves of one more ternary digit: low = 3 ^ (k - 1) up to 3 ^ k - 1
+        h = low
+        while h lt 3 * low and len[found] lt count
+            back = reversed[h, 3]
+            for m in range[3]
+                n = (3 * h + m) * 3 * low + back
+                if n % 2 eq 1 and reversed[n, 2] eq n
+                    found = push[found, n]
+            h = h + 1
+        low = 3 * low
+    return slice[found, 0, count]
+
+--- text moved right to be centred in width places
+fn indented[text, width]
+    before = repeat[' ', (width - len[text]) / 2]
+    return '`before``text`'
+
+--- text centred in width places
+fn centred[text, width]
+    shown = indented[text, width]
+    after = repeat[' ', width - len[shown]]
+    return '`shown``after`'
+
+found = both_palindromes[6]
+widest = len[digits[found[-1], 2]]
+heading = fmt['decimal', width = 12, align = 'right']
+ternary = centred['ternary', 23]
+binary = indented['binary', widest]
+log['`heading`  `ternary`  `binary`']
+for n in found
+    log['`fmt[n, width = 12]`  `centred[digits[n, 3], 23]`  `indented[digits[n, 2], widest]`']

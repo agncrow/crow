@@ -1,0 +1,4 @@
+Input: []                       -> Output: {}
+Input: ['ABC']                  -> Output: {ABC}
+Input: ['ABC', 'DEF']           -> Output: {ABC and DEF}
+Input: ['ABC', 'DEF', 'G', 'H'] -> Output: {ABC, DEF, G and H}

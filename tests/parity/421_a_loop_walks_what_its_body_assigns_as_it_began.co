@@ -1,0 +1,34 @@
+--- A loop walks what it walks as the loop began, though its body assigns
+--- that variable anew: compiled, a list of text lent to the loop could not
+--- be assigned in it and the program did not build (E0506), where the
+--- interpreter walked the list as it began (Rosetta Code, Universal lambda
+--- machine).
+
+struct Bag [items]
+
+fn grow[xs, n]
+    xs = push[xs, n]
+    return xs
+
+fn texts[k]
+    ws = ['a', 'b']
+    for w in ws
+        ws = grow[ws, '`w``k`']
+    return ws
+
+fn numbers[k]
+    n = int[str[k]]
+    xs = [1, 2]
+    for y in xs
+        xs = grow[xs, n + y]
+    return xs
+
+fn bag[]
+    b = Bag[['x']]
+    for item in b.items
+        b.items = push[b.items, upper[item]]
+    return b.items
+
+log[texts['!']]
+log[numbers[5]]
+log[bag[]]

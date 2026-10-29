@@ -1,0 +1,10 @@
+--- a field the record does not declare is no place to write: refused
+--- before the program runs, as a read of it is — interpreted it had
+--- stopped as it ran, and the compiled program had not built (Rosetta
+--- Code, Sealed classes and methods)
+
+struct P [a, b]
+p = P[1, 2]
+log['before']
+p.c = 3
+log[p.a]

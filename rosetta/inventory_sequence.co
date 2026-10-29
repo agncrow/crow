@@ -1,0 +1,99 @@
+--- Rosetta Code: Inventory sequence
+--- https://rosettacode.org/wiki/Inventory_sequence
+--- Each term counts how many times the number the inventory has reached is in the
+--- sequence so far, the counts kept in a list indexed by the number; a count of 0
+--- restarts the inventory from 0. The plot of the first 10,000 terms is a picture
+--- in characters, two points a character (half blocks).
+
+--- the sequence up to and including its first term of at least last
+fn inventory_to[last]
+    seq = [0]
+    counts = [1]
+    num = 0
+    c = 0
+    while c lt last
+        c = 0
+        if num lt len[counts]
+            c = counts[num]
+        if c eq 0
+            num = 0
+        else
+            num = num + 1
+        seq = push[seq, c]
+        while c gte len[counts]
+            counts = push[counts, 0]
+        counts[c] = counts[c] + 1
+    return seq
+
+--- the index of the first term of at least goal
+fn first_at_least[seq, goal]
+    i = 0
+    while seq[i] lt goal
+        i = i + 1
+    return i
+
+fn block[top, bottom]
+    if top and bottom
+        return '█'
+    else if top
+        return '▀'
+    else if bottom
+        return '▄'
+    return ' '
+
+--- the terms drawn as lines of characters, the highest first: a column holds
+--- len[terms] / columns terms, a character two points each value_step high
+fn plot[terms, columns, rows, value_step]
+    per_column = len[terms] / columns
+    marked = for r in range[2 * rows]
+        row = for c in range[columns]
+            false
+        row
+    for i in range[len[terms]]
+        r = terms[i] / value_step
+        if r lt 2 * rows
+            marked[r][i / per_column] = true
+    lines = for k in range[rows]
+        low = 2 * (rows - 1 - k)
+        cells = for c in range[columns]
+            block[marked[low + 1][c], marked[low][c]]
+        join[cells, '']
+    return lines
+
+seq = inventory_to[10000]
+
+log['Inventory sequence, the first 100 terms:']
+for row in range[5]
+    cells = for x in slice[seq, row * 20, row * 20 + 20]
+        fmt[x, width = 2]
+    shown = join[cells, ' ']
+    log[shown]
+log['']
+
+for t in range[1, 11]
+    goal = 1000 * t
+    i = first_at_least[seq, goal]
+    log['First element >= `fmt[goal, width = 6, commas = true]` is `fmt[seq[i], width = 6, commas = true]` at index `fmt[i, width = 7, commas = true]`']
+log['']
+
+--- 100 columns of 100 terms, 22 lines of 20: values 0 to 439
+log['The first 10,000 terms (a column is 100 terms, a character 20 in value):']
+lines = plot[slice[seq, 0, 10000], 100, 22, 10]
+for k in range[22]
+    low = 20 * (21 - k)
+    label = ''
+    if low % 100 eq 0
+        label = str[low]
+    margin = fmt[label, width = 4, align = 'right']
+    log['`margin` │`lines[k]`']
+ticks = for c in range[100]
+    if c % 10 eq 0
+        '┬'
+    else
+        '─'
+axis = join[ticks, '']
+log['     └`axis`']
+places = for x in range[10]
+    fmt[str[x * 1000], width = 10]
+under = join[places, '']
+log['      `under`10000']

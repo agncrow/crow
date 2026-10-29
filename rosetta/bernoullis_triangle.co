@@ -1,0 +1,42 @@
+--- Rosetta Code: Bernoulli's triangle
+--- https://rosettacode.org/wiki/Bernoulli's_triangle
+--- Each row is built from the one above: a 1 on the left, the sum of the two
+--- numbers above in between, and 2^n on the right. Every number is then checked
+--- against the binomial form: column k of row n is C(n, 0) + … + C(n, k).
+
+fn next_row[above, n]
+    inner = for k in range[1, n]
+        above[k - 1] + above[k]
+    return concat[concat[[1], inner], [2 ^ n]]
+
+fn binomial_sum[n, k]
+    --- C(n, 0) + … + C(n, k), each binomial from the one before
+    total = 0
+    c = 1
+    for p in range[k + 1]
+        total = total + c
+        c = c * (n - p) / (p + 1)
+    return total
+
+fn centred[row, n, rows]
+    cells = for x in row
+        fmt[x, width = 5]
+    indent = repeat[' ', 3 * (rows - 1 - n)]
+    line = join[cells, ' ']
+    return '`indent``line`'
+
+rows = 15
+row = [1]
+agree = true
+for n in range[rows]
+    if n gt 0
+        row = next_row[row, n]
+    for k in range[n + 1]
+        if row[k] ne binomial_sum[n, k]
+            agree = false
+    log[centred[row, n, rows]]
+log['']
+if agree
+    log['Every number agrees with its sum of binomial coefficients.']
+else
+    log['Some number disagrees with its sum of binomial coefficients!']

@@ -1,0 +1,84 @@
+--- Rosetta Code: Kaprekar numbers
+--- https://rosettacode.org/wiki/Kaprekar_numbers
+--- n's square is split by each power of the base it reaches, base^d: the
+--- left part is the square divided by it, the right part the remainder, and n
+--- is a Kaprekar number when the two sum to n with the right part not 0 (1 is
+--- one by definition). Casting out (base - 1)s skips most numbers untested:
+--- n^2 - n = left * (base^d - 1), so base - 1 divides n (n - 1).
+
+--- d, the digits of the square's right part, for a Kaprekar number; 0 for
+--- any other number
+fn kaprekar_split[n, base]
+    if n eq 1
+        return 1
+    if n * (n - 1) % (base - 1) ne 0
+        return 0
+    square = n * n
+    power = base
+    d = 1
+    while power lte square
+        right = square % power
+        if right gt 0 and square / power + right eq n
+            return d
+        power = power * base
+        d = d + 1
+    return 0
+
+fn is_kaprekar_in_ten[n]
+    return kaprekar_split[n, 10] gt 0
+
+fn is_kaprekar_in_seventeen[n]
+    return kaprekar_split[n, 17] gt 0
+
+--- n written in the base, its digits 0-9 then a-z
+fn in_base[n, base]
+    digits = split['0123456789abcdefghijklmnopqrstuvwxyz', '']
+    if n eq 0
+        return '0'
+    out = []
+    while n gt 0
+        out = push[out, digits[n % base]]
+        n = n / base
+    return join[reverse[out], '']
+
+below_10000 = for n in range[1, 10000]
+    if is_kaprekar_in_ten[n]
+        str[n]
+shown = join[below_10000, ' ']
+log['Kaprekar numbers below 10,000: `shown`']
+below_million = for n in range[1, 1000000]
+    if is_kaprekar_in_ten[n]
+        n
+log['Kaprekar numbers below 1,000,000: `len[below_million]`']
+log['']
+
+in_seventeen = for n in range[1, 1000001]
+    if is_kaprekar_in_seventeen[n]
+        n
+--- right-aligned in a column of the width
+fn column[text, width]
+    return fmt[text, width = width, align = 'right']
+
+log['Kaprekar numbers in base 17 from 1 to 1,000,000: `len[in_seventeen]`']
+log[' base 10  base 17       square        split']
+for n in in_seventeen
+    square = in_base[n * n, 17]
+    cut = len[square] - kaprekar_split[n, 17]
+    left = slice[square, 0, cut]
+    if left eq ''
+        left = '0'
+    right = slice[square, cut, len[square]]
+    log['`fmt[n, width = 8]` `column[in_base[n, 17], 8]` `column[square, 12]`  `column[left, 6]` + `right`']
+
+--- some entries read the bound as 1000000 written in base 17, 17^6; only
+--- multiples of 16 and the numbers after them can be Kaprekar numbers there
+bound = 17 ^ 6
+multiples = for n in range[16, bound, 16]
+    if is_kaprekar_in_seventeen[n]
+        n
+after = for n in range[1, bound, 16]
+    if is_kaprekar_in_seventeen[n]
+        n
+largest = max[multiples[-1], after[-1]]
+log['']
+log['Kaprekar numbers in base 17 below 1000000 in base 17 (`fmt[bound, commas = true]`): `len[multiples] + len[after]`, the largest `fmt[largest, commas = true]` (`in_base[largest, 17]`)']

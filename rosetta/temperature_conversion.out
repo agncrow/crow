@@ -1,0 +1,23 @@
+K  21.00
+C  -252.15
+F  -421.87
+R  37.80
+
+K  0.00
+C  -273.15
+F  -459.67
+R  0.00
+
+K  273.15
+C  0.00
+F  32.00
+R  491.67
+
+K  373.15
+C  100.00
+F  212.00
+R  671.67
+
+-5 K is below absolute zero
+
+warm is not a number of kelvin

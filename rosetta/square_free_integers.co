@@ -1,0 +1,52 @@
+--- Rosetta Code: Square-free integers
+--- https://rosettacode.org/wiki/Square-free_integers
+--- Trial division: each p that divides n is divided out once, and n has a square
+--- factor when p still divides what is left; the test stops once p * p passes what is
+--- left. The filters are collecting loops, which run their tests in parallel: a
+--- million tests take well under a second in both modes.
+
+fn is_square_free[n]
+    p = 2
+    while p * p lte n
+        if n % p eq 0
+            n = n / p
+            if n % p eq 0
+                return false
+        p = p + 1
+    return true
+
+fn square_free_between[lo, hi]
+    found = for n in range[lo, hi + 1]
+        if is_square_free[n]
+            n
+    return found
+
+fn show_rows[xs, per_row, width]
+    i = 0
+    while i lt len[xs]
+        cells = for x in slice[xs, i, i + per_row]
+            fmt[x, width = width]
+        log[join[cells, '']]
+        i = i + per_row
+
+fn commas[n]
+    return fmt[n, commas = true]
+
+log['Square-free integers from 1 to 145:']
+show_rows[square_free_between[1, 145], 20, 4]
+
+trillion = 10 ^ 12
+log['']
+log['Square-free integers from `commas[trillion]` to `commas[trillion + 145]`:']
+show_rows[square_free_between[trillion, trillion + 145], 5, 14]
+
+log['']
+log['Number of square-free integers:']
+free = square_free_between[1, 1000000]
+limit = 100
+while limit lte 1000000
+    upto = for n in free
+        if n lte limit
+            n
+    log['  from 1 to `commas[limit]`: `commas[len[upto]]`']
+    limit = limit * 10

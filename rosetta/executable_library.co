@@ -1,0 +1,27 @@
+--- Rosetta Code: Executable library
+--- https://rosettacode.org/wiki/Executable_library
+--- The second executable. The library is executable_library_hailstone.co, which
+--- lies beside this file: `use` imports it in the standard manner, and only its
+--- declarations come in (its own top-level lines, the library's command-line
+--- part, run only when that file is run itself). No setup: `crow run
+--- executable_library.co` reads the library's source, and `crow build` makes one
+--- binary of the two. Here the library's hailstone finds the sequence length
+--- that occurs most often for 1 <= n < 100,000.
+use executable_library_hailstone as library
+
+lengths = for n in range[1, 100000]
+    len[library.hailstone[n]]
+
+--- how many starting numbers give each length
+counts = map[]
+for length in lengths
+    if length in counts
+        counts = set[counts, length, counts[length] + 1]
+    else
+        counts = set[counts, length, 1]
+
+common = 0
+for length in keys[counts]
+    if common eq 0 or counts[length] gt counts[common]
+        common = length
+log['The hailstone length returned most often for 1 <= n < 100,000 is `common`, by `counts[common]` numbers']

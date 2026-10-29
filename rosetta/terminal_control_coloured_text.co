@@ -1,0 +1,170 @@
+--- Rosetta Code: Terminal control/Coloured text
+--- https://rosettacode.org/wiki/Terminal_control/Coloured_text
+--- ANSI escape sequences (Select Graphic Rendition: ESC [ codes m) written into the
+--- text. A terminal shows the word in the eight colours of its palette and in their
+--- bright forms, on the sixteen background colours, bold, faint, italic, underlined,
+--- blinking (slow, then rapid: many terminals draw both steady), reversed and struck
+--- through, then in colours of the 256-colour palette and in 24-bit colour, each
+--- sequence closed by ESC [ 0 m. Piped into a file, as recorded here, the sequences
+--- are written as they are. Whether a terminal takes colour is told by its
+--- environment: NO_COLOR set to anything asks for none, TERM unset or dumb has none,
+--- COLORTERM truecolor or 24bit has 24-bit colour, a TERM naming 256color has 256,
+--- any other TERM the sixteen. The rule is shown for sample environments; given the
+--- argument auto, the program applies it to its own, and leaves out the sequences
+--- (or the sections) its terminal cannot show.
+
+use bits
+
+struct Setting [term, colorterm, no_color]
+
+fn sgr[codes]
+    esc = char[27]
+    return '`esc`[`codes`m'
+
+fn painted[text, codes]
+    start = sgr[codes]
+    reset = sgr['0']
+    return '`start``text``reset`'
+
+--- the line as a terminal without colour is given it: every sequence left out
+fn plain[line]
+    pieces = split[line, char[27]]
+    kept = for i in range[len[pieces]]
+        if i eq 0
+            pieces[0]
+        else
+            parts = split[pieces[i], 'm']
+            join[slice[parts, 1, len[parts]], 'm']
+    return join[kept, '']
+
+--- how many colours a terminal shows in this environment (0: none)
+fn colours_of[s]
+    if s.no_color ne '' or s.term eq '' or s.term eq 'dumb'
+        return 0
+    if s.colorterm eq 'truecolor' or s.colorterm eq '24bit'
+        return 16777216
+    if '256color' in s.term
+        return 256
+    return 16
+
+--- a variable of the environment, empty where it is unset
+fn env_text[name]
+    value = env[name]
+    if not value.ok
+        return ''
+    return value
+
+fn depth_named[colours]
+    if colours eq 0
+        return 'no colour'
+    if colours eq 16777216
+        return '24-bit colour'
+    return '`colours` colours'
+
+fn described[s]
+    parts = ['TERM unset']
+    if s.term ne ''
+        parts = ['TERM=`s.term`']
+    if s.colorterm ne ''
+        parts = push[parts, 'COLORTERM=`s.colorterm`']
+    if s.no_color ne ''
+        parts = push[parts, 'NO_COLOR=`s.no_color`']
+    return join[parts, ' ']
+
+fn labelled[label, shown]
+    return '  `fmt[label, width = 12]``shown`'
+
+fn sixteen_colours[word]
+    names = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white']
+    lines = ['The word in the eight colours of the palette, then in their bright forms:']
+    for i in range[8]
+        normal = painted[word, str[30 + i]]
+        bright = painted[word, str[90 + i]]
+        lines = push[lines, labelled[names[i], '`normal`  `bright`']]
+    lines = push[lines, '']
+    lines = push[lines, 'On the eight background colours, then on their bright forms:']
+    light = ['green', 'yellow', 'cyan', 'white']
+    for i in range[8]
+        ink = 97
+        if names[i] in light
+            ink = 30
+        normal = painted[' `word` ', '`ink`;`40 + i`']
+        bright = painted[' `word` ', '30;`100 + i`']
+        lines = push[lines, labelled[names[i], '`normal`  `bright`']]
+    lines = push[lines, '']
+    lines = push[lines, 'With attributes:']
+    styles = ['bold', 'faint', 'italic', 'underline', 'slow blink', 'rapid blink', 'reverse', 'crossed out']
+    codes = [1, 2, 3, 4, 5, 6, 7, 9]
+    for i in range[len[styles]]
+        lines = push[lines, labelled[styles[i], painted[word, str[codes[i]]]]]
+    lines = push[lines, labelled['red, blinks', painted[word, '5;31']]]
+    return lines
+
+--- the colour cube's edge from red to blue (16 + 36 r + 6 g + b), then the greys
+fn palette_colours[word]
+    edge = for k in range[6]
+        painted[word, '38;5;`16 + 36 * (5 - k) + k`']
+    greys = for k in range[24]
+        painted['  ', '48;5;`232 + k`']
+    shown_edge = join[edge, ' ']
+    shown_greys = join[greys, '']
+    return ['', 'In the 256-colour palette (38;5;n and 48;5;n):', labelled['red to blue', shown_edge], labelled['greys', shown_greys]]
+
+--- a hue's red, green and blue: h from 0 to 1 around the colour wheel
+fn hue_rgb[h]
+    x = h * 6.0
+    sector = floor[x]
+    f = x - float[sector]
+    rising = round[255.0 * f]
+    falling = 255 - rising
+    if sector eq 0
+        return '255;`rising`;0'
+    if sector eq 1
+        return '`falling`;255;0'
+    if sector eq 2
+        return '0;255;`rising`'
+    if sector eq 3
+        return '0;`falling`;255'
+    if sector eq 4
+        return '`rising`;0;255'
+    return '255;0;`falling`'
+
+fn true_colours[word]
+    letters = split[word, '']
+    n = len[letters]
+    rainbow = for i in range[n]
+        painted[letters[i], '38;2;`hue_rgb[float[i] / float[n]]`']
+    wheel = for i in range[36]
+        painted[' ', '48;2;`hue_rgb[float[i] / 36.0]`']
+    shown_rainbow = join[rainbow, '']
+    shown_wheel = join[wheel, '']
+    return ['', 'In 24-bit colour (38;2;r;g;b and 48;2;r;g;b):', labelled['each letter', shown_rainbow], labelled['the wheel', shown_wheel]]
+
+fn sample_settings[]
+    return [Setting['xterm-256color', 'truecolor', ''], Setting['xterm-256color', '', ''], Setting['xterm', '', ''], Setting['linux', '', ''], Setting['dumb', '', ''], Setting['', '', ''], Setting['xterm-256color', 'truecolor', '1']]
+
+fn rule_lines[]
+    lines = ['', 'How many colours a terminal shows, told by its environment:']
+    for s in sample_settings[]
+        lines = push[lines, '  `fmt[depth_named[colours_of[s]], width = 15]``described[s]`']
+    return lines
+
+word = 'Rosetta'
+colours = 16777216
+given = args[]
+if len[given] gt 0 and given[0] eq 'auto'
+    own = Setting[env_text['TERM'], env_text['COLORTERM'], env_text['NO_COLOR']]
+    colours = colours_of[own]
+    log['This environment (`described[own]`): `depth_named[colours]`.']
+    log['']
+lines = sixteen_colours[word]
+if colours gte 256
+    lines = concat[lines, palette_colours[word]]
+if colours gte 16777216
+    lines = concat[lines, true_colours[word]]
+lines = concat[lines, rule_lines[]]
+for line in lines
+    if colours gt 0
+        log[line]
+    else
+        log[plain[line]]

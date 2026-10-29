@@ -1,0 +1,41 @@
+--- Rosetta Code: Recaman's sequence
+--- https://rosettacode.org/wiki/Recaman's_sequence
+--- One walk of the sequence, a map holding each value's first place in it: the
+--- first 15 terms, the first value seen twice, and the place by which every
+--- integer from 0 to 1000 has appeared (the walk stops there).
+
+--- a(n) from a(n - 1): back n if that is positive and new, else on n
+fn next_term[a, n, first_at]
+    back = a - n
+    if back gt 0 and back not in first_at
+        return back
+    return a + n
+
+first_at = map[]
+first_at[0] = 0
+a = 0
+n = 0
+first_terms = [0]
+twice = -1
+twice_at = 0
+covered = 1
+while covered lt 1001
+    n = n + 1
+    a = next_term[a, n, first_at]
+    if n lt 15
+        first_terms = push[first_terms, a]
+    if a in first_at
+        if twice lt 0
+            twice = a
+            twice_at = n
+    else
+        first_at[a] = n
+        if a lte 1000
+            covered = covered + 1
+
+shown = for t in first_terms
+    str[t]
+log['The first 15 terms: `join[shown, \', \']`']
+log['The first term seen twice: a(`twice_at`) = `twice`, as a(`first_at[twice]`) was']
+log['Every integer from 0 to 1000 has appeared by a(`n`): `n` terms after a(0) = 0']
+log['(`len[keys[first_at]]` distinct values by then)']

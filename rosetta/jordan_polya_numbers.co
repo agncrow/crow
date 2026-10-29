@@ -1,0 +1,92 @@
+--- Rosetta Code: Jordan-Pólya numbers
+--- https://rosettacode.org/wiki/Jordan-Pólya_numbers
+--- Every product of factorials up to 2^53 is built a factorial at a time: each
+--- number found so far times each power of the next factorial. A number's
+--- decomposition takes, again and again, the largest factorial that leaves a
+--- J-P number, which is the way that uses the largest factorials.
+
+--- 2!, 3!, 4!, ... while they stay within the limit: k! is at position k - 2
+fn factorials_upto[limit]
+    out = []
+    f = 2
+    k = 2
+    while f lte limit
+        out = push[out, f]
+        k = k + 1
+        f = f * k
+    return out
+
+--- a sorted list with each number once
+fn distinct[sorted]
+    out = []
+    for x in sorted
+        if len[out] eq 0 or out[-1] ne x
+            out = push[out, x]
+    return out
+
+--- the J-P numbers up to the limit, in order
+fn jordan_polya[limit]
+    found = [1]
+    for f in factorials_upto[limit]
+        more = []
+        for x in found
+            y = x * f
+            while y lte limit
+                more = push[more, y]
+                y = y * f
+        found = distinct[sort[concat[found, more]]]
+    return found
+
+--- n as a product of factorials, the largest first: 8! * 5!^3 * 2!
+fn decomposition[n, members, facts]
+    counts = for f in facts
+        0
+    while n gt 1
+        k = len[facts] - 1
+        while n % facts[k] ne 0 or not (n / facts[k] in members)
+            k = k - 1
+        counts[k] = counts[k] + 1
+        n = n / facts[k]
+    parts = []
+    k = len[facts] - 1
+    while k gte 0
+        if counts[k] eq 1
+            parts = push[parts, '`k + 2`!']
+        else if counts[k] gt 1
+            parts = push[parts, '`k + 2`!^`counts[k]`']
+        k = k - 1
+    return join[parts, ' * ']
+
+fn ordinal[n]
+    if n % 100 gte 11 and n % 100 lte 13
+        return '`n`th'
+    if n % 10 eq 1
+        return '`n`st'
+    if n % 10 eq 2
+        return '`n`nd'
+    if n % 10 eq 3
+        return '`n`rd'
+    return '`n`th'
+
+limit = 2 ^ 53
+facts = factorials_upto[limit]
+numbers = jordan_polya[limit]
+members = map[numbers, numbers]
+
+log['The first 50 Jordan-Pólya numbers:']
+for row in range[5]
+    cells = for x in slice[numbers, 10 * row, 10 * row + 10]
+        fmt[x, width = 5]
+    log[join[cells, ' ']]
+
+below = for x in numbers
+    if x lt 100000000
+        x
+log['']
+log['The largest Jordan-Pólya number below 100 million: `fmt[below[-1], commas = true]`']
+log['']
+log['There are `len[numbers]` Jordan-Pólya numbers up to 2^53.']
+for i in [800, 1050, 1800, 2800, 3800]
+    n = numbers[i - 1]
+    place = fmt[ordinal[i], width = 6, align = 'right']
+    log['The `place` is `fmt[n, commas = true, width = 21]` = `decomposition[n, members, facts]`']

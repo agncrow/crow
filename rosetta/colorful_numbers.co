@@ -1,0 +1,82 @@
+--- Rosetta Code: Colorful numbers
+--- https://rosettacode.org/wiki/Colorful_numbers
+--- is_colorful takes the product of every run of consecutive digits and stops at
+--- the first that repeats. Past one digit a colorful number has distinct digits from
+--- 2 to 9, and the digits leading a colorful number are colorful themselves, so the
+--- colorful numbers of each length are grown from those one digit shorter.
+
+--- the digits of n, last first: a run of consecutive digits is one either way
+fn digits_of[n]
+    ds = [n % 10]
+    n = n / 10
+    while n gt 0
+        ds = push[ds, n % 10]
+        n = n / 10
+    return ds
+
+fn is_colorful[n]
+    ds = digits_of[n]
+    seen = []
+    i = 0
+    while i lt len[ds]
+        p = 1
+        j = i
+        while j lt len[ds]
+            p = p * ds[j]
+            if p in seen
+                return false
+            seen = push[seen, p]
+            j = j + 1
+        i = i + 1
+    return true
+
+--- the colorful numbers one digit longer than those given
+fn grown[level]
+    out = []
+    for n in level
+        for d in range[2, 10]
+            m = n * 10 + d
+            if str[d] not in str[n] and is_colorful[m]
+                out = push[out, m]
+    return out
+
+--- numbers shown ten to a row, each right-aligned to a width
+fn show_rows[xs, width]
+    i = 0
+    while i lt len[xs]
+        cells = for x in slice[xs, i, i + 10]
+            fmt[x, width = width]
+        log[join[cells, ' ']]
+        i = i + 10
+
+small = for n in range[100]
+    if is_colorful[n]
+        n
+log['The `len[small]` colorful numbers less than 100 are:']
+show_rows[small, 2]
+
+--- counts[k]: how many colorful numbers have k digits (all ten of one digit are)
+counts = [0, 10]
+largest = 9
+level = range[2, 10]
+while len[level] gt 0
+    level = grown[level]
+    if len[level] gt 0
+        counts = push[counts, len[level]]
+        largest = level[-1]
+
+log['']
+log['The largest possible colorful number is: `fmt[largest, commas = true]`']
+log['']
+log['Count of colorful numbers for each order of magnitude:']
+total = 0
+for k in range[1, len[counts]]
+    numbers = 9 * 10 ^ (k - 1)
+    if k eq 1
+        numbers = 10
+    count = fmt[counts[k], commas = true, width = 6]
+    share = fmt[float[counts[k]] / float[numbers], percent = true, decimals = 3, width = 8]
+    log['  `k` digit colorful number count: `count` - `share`']
+    total = total + counts[k]
+log['']
+log['Total colorful numbers: `fmt[total, commas = true]`']

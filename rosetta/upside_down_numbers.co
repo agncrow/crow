@@ -1,0 +1,67 @@
+--- Rosetta Code: Upside-down numbers
+--- https://rosettacode.org/wiki/Upside-down_numbers
+--- An upside-down number of d digits is fixed by its first d / 2 digits (each 1 to 9; the
+--- rest are their complements to 10, with a 5 in the middle of an odd length), so there
+--- are 9^(d / 2) of them, in the order of their first halves. The nth is found directly:
+--- skip whole lengths, then write its place within its length in base 9. A plain test of
+--- every number, run up to the 500th, checks the formula.
+
+fn is_upside_down[n]
+    ds = split[str[n], '']
+    i = 0
+    while i lt len[ds]
+        if int[ds[i]] + int[ds[len[ds] - 1 - i]] ne 10
+            return false
+        i = i + 1
+    return true
+
+--- The nth upside-down number, counting from 1.
+fn nth[n]
+    digits = 1
+    count = 1
+    while n gt count
+        n = n - count
+        digits = digits + 1
+        count = 9 ^ (digits / 2)
+    place = n - 1
+    half = []
+    for i in range[digits / 2]
+        half = push[half, place % 9 + 1]
+        place = place / 9
+    half = reverse[half]
+    value = 0
+    for d in half
+        value = value * 10 + d
+    if digits % 2 eq 1
+        value = value * 10 + 5
+    for d in reverse[half]
+        value = value * 10 + 10 - d
+    return value
+
+log['The first 50 upside-down numbers:']
+first = for i in range[1, 51]
+    nth[i]
+for row in range[5]
+    cells = for n in slice[first, row * 10, row * 10 + 10]
+        fmt[n, width = 5]
+    log[join[cells, '']]
+
+--- the test of every number, up to the 500th
+found = []
+n = 0
+while len[found] lt 500
+    n = n + 1
+    if is_upside_down[n]
+        found = push[found, n]
+agree = true
+for i in range[500]
+    if found[i] ne nth[i + 1]
+        agree = false
+log['']
+log['Testing every number up to the 500th agrees with the formula: `agree`']
+log['']
+
+names = ['Five hundredth', 'Five thousandth', 'Fifty thousandth', 'Five hundred thousandth', 'Five millionth', 'Five billionth', 'Five trillionth']
+places = [500, 5000, 50000, 500000, 5000000, 5000000000, 5000000000000]
+for i in range[len[places]]
+    log['`fmt[names[i], width = 24]` `fmt[nth[places[i]], commas = true]`']

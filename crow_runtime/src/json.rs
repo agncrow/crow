@@ -58,7 +58,9 @@ pub fn type_word(v: &serde_json::Value) -> &'static str {
         serde_json::Value::Object(_) => "map",
         serde_json::Value::Array(_) => "array",
         serde_json::Value::String(_) => "str",
-        serde_json::Value::Number(n) if n.is_i64() => "int",
+        // (a whole number past i64 within u64 is an int too: it had been
+        // called a float; Rosetta Code, JSON)
+        serde_json::Value::Number(n) if n.is_i64() || n.is_u64() => "int",
         serde_json::Value::Number(_) => "float",
         serde_json::Value::Bool(_) => "bool",
         serde_json::Value::Null => "error",
@@ -78,14 +80,14 @@ pub fn encode<T: ToJson + ?Sized>(x: &T) -> String {
 fn not_a_map(name: &str, form: &str, rest: &str, v: &serde_json::Value) -> String {
     use serde_json::Value;
     let got = match v {
-        Value::Number(n) if n.is_i64() => "an int",
+        Value::Number(n) if n.is_i64() || n.is_u64() => "an int",
         Value::Number(_) => "a number",
         Value::String(_) => "text",
         Value::Bool(_) => "a bool",
         Value::Object(_) => "a map",
         Value::Array(items) if !items.is_empty() && items.iter().all(|i| i.is_number()) => "numbers",
         Value::Array(items) => match items.first() {
-            Some(Value::Number(n)) if n.is_i64() => "a list of ints",
+            Some(Value::Number(n)) if n.is_i64() || n.is_u64() => "a list of ints",
             Some(Value::Number(_)) => "a list of numbers",
             Some(Value::String(_)) => "a list of text",
             Some(Value::Bool(_)) => "a list of bools",
@@ -409,6 +411,10 @@ mod read_tests {
         assert_eq!(read_float(&walked[1], "").unwrap(), 1.0);
         let big: serde_json::Value = serde_json::from_str("18446744073709551615").unwrap();
         assert!(read_int(&big, "").is_err());
+        // one past i64 within u64 is an int, shown and read with every digit
+        assert_eq!(type_word(&big), "int");
+        assert_eq!(crate::int::int_of(&crate::cell::Cell::from(big.clone())).map(|n| n.to_string()), Ok("18446744073709551615".to_string()));
+        assert_eq!(crate::display::CrowDisplay::crow_fmt(&big), "18446744073709551615");
     }
 
     use super::*;

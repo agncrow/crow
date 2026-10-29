@@ -1,0 +1,68 @@
+--- Rosetta Code: Runge-Kutta method
+--- https://rosettacode.org/wiki/Runge-Kutta_method
+--- The classic fourth-order step, written once for any slope function f[t, y]
+--- (handed by name), solves y' = t * sqrt(y), y(0) = 1 over 0 .. 10 in 100
+--- steps of 0.1; y is shown at each whole t beside the exact solution
+--- (t^2 + 4)^2 / 16 and its error. Halving the step divides the error by about
+--- 16, as a method of the fourth order should.
+
+fn slope[t, y]
+    t * sqrt[y]
+
+fn exact[t]
+    (t * t + 4.0) ^ 2 / 16.0
+
+--- y at t0, t0 + h, ..., t1 in n steps of h = (t1 - t0) / n
+fn rk4[f, t0, y0, t1, n]
+    h = (t1 - t0) / float[n]
+    ys = [y0]
+    y = y0
+    i = 1
+    while i lte n
+        t = t0 + float[i - 1] * h
+        k1 = h * f[t, y]
+        k2 = h * f[t + 0.5 * h, y + 0.5 * k1]
+        k3 = h * f[t + 0.5 * h, y + 0.5 * k2]
+        k4 = h * f[t + h, y + k3]
+        y = y + (k1 + k2 + k2 + k3 + k3 + k4) / 6.0
+        ys = push[ys, y]
+        i = i + 1
+    ys
+
+--- x in scientific notation, its mantissa to four places: -1.4572e-07
+fn scientific[x]
+    if x eq 0.0
+        return '0.0000e+00'
+    m = abs[x]
+    e = 0
+    while m gte 10.0
+        m = m / 10.0
+        e = e + 1
+    while m lt 1.0
+        m = m * 10.0
+        e = e - 1
+    digits = fmt[m, decimals = 4]
+    if digits eq '10.0000'
+        digits = '1.0000'
+        e = e + 1
+    sign = ''
+    if x lt 0.0
+        sign = '-'
+    mark = '+'
+    if e lt 0
+        mark = '-'
+    power = fmt[abs[e], width = 2, fill = '0']
+    '`sign``digits`e`mark``power`'
+
+ys = rk4[slope, 0.0, 1.0, 10.0, 100]
+log['   t            y (RK4)             exact          error']
+for i in range[0, 101, 10]
+    t = float[i] / 10.0
+    y = ys[i]
+    off = fmt[scientific[y - exact[t]], width = 12, align = 'right']
+    log['`fmt[t, decimals = 1, width = 4]`   `fmt[y, decimals = 8, width = 15]`   `fmt[exact[t], decimals = 8, width = 15]`   `off`']
+log['']
+log['the error at t = 10 as the step shrinks:']
+for n in [50, 100, 200, 400]
+    off = rk4[slope, 0.0, 1.0, 10.0, n][n] - exact[10.0]
+    log['   `fmt[n, width = 4]` steps of `fmt[10.0 / float[n], decimals = 3]`: `scientific[off]`']

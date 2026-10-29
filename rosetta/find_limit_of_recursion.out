@@ -1,0 +1,8 @@
+depth[9999] nests 10000 calls
+ping and pong, calling each other, nest 10000 calls
+2000 calls deep
+4000 calls deep
+6000 calls deep
+8000 calls deep
+10000 calls deep
+runtime error: line 29: recursion deeper than 10000 calls — a function that calls itself needs a case that returns without calling

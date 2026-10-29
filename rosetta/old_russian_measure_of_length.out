@@ -1,0 +1,76 @@
+1 meter converts to:
+      tochka: 3937.01
+      liniya: 393.701
+       diuym: 39.3701
+     vershok: 22.4972
+        piad: 5.6243
+         fut: 3.28084
+      arshin: 1.40607
+      sazhen: 0.468691
+       verst: 0.000937383
+       milia: 0.000133912
+  centimeter: 100
+   kilometer: 0.001
+
+1 milia converts to:
+      tochka: 29400000
+      liniya: 2940000
+       diuym: 294000
+     vershok: 168000
+        piad: 42000
+         fut: 24500
+      arshin: 10500
+      sazhen: 3500
+       verst: 7
+  centimeter: 746760
+       meter: 7467.6
+   kilometer: 7.4676
+
+2.5 arshins converts to:
+      tochka: 7000
+      liniya: 700
+       diuym: 70
+     vershok: 40
+        piad: 10
+         fut: 5.83333
+      sazhen: 0.833333
+       verst: 0.00166667
+       milia: 0.000238095
+  centimeter: 177.8
+       meter: 1.778
+   kilometer: 0.001778
+
+1 verst converts to:
+      tochka: 4200000
+      liniya: 420000
+       diuym: 42000
+     vershok: 24000
+        piad: 6000
+         fut: 3500
+      arshin: 1500
+      sazhen: 500
+       milia: 0.142857
+  centimeter: 106680
+       meter: 1066.8
+   kilometer: 1.0668
+
+100 centimeters converts to:
+      tochka: 3937.01
+      liniya: 393.701
+       diuym: 39.3701
+     vershok: 22.4972
+        piad: 5.6243
+         fut: 3.28084
+      arshin: 1.40607
+      sazhen: 0.468691
+       verst: 0.000937383
+       milia: 0.000133912
+       meter: 1
+   kilometer: 0.001
+
+'1xx' is not a number
+
+no unit named 'furlongs'; the units are tochka, liniya, diuym, vershok, piad, fut, arshin, sazhen, verst, milia, centimeter, meter, kilometer
+
+a line is a value and a unit, not 'half a verst'
+

@@ -1,0 +1,17 @@
+2+2:                4
+7*8:                56
+Fibonacci:          55
+Linked list:        6
+Prisoner's Dilemma: 0
+A game of it, resumed after each STP:
+    round 1: p co-operates c co-operates years so far: p 1, c 1
+    round 2: p co-operates c co-operates years so far: p 2, c 2
+    round 3: p defects     c co-operates years so far: p 2, c 5
+    round 4: p co-operates c defects     years so far: p 5, c 5
+    round 5: p defects     c co-operates years so far: p 5, c 8
+    round 6: p defects     c defects     years so far: p 7, c 10
+    round 7: p co-operates c defects     years so far: p 10, c 10
+Wrapping arithmetic, as in the Python entry:
+    0 - 255 = 1
+    0 - 1   = 255
+    1 + 255 = 0

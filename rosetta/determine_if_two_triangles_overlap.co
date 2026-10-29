@@ -1,0 +1,76 @@
+--- Rosetta Code: Determine if two triangles overlap
+--- https://rosettacode.org/wiki/Determine_if_two_triangles_overlap
+--- Separating edges: two triangles are apart exactly when some edge of one has all three
+--- corners of the other outside it. Each triangle is first turned counter-clockwise, so
+--- "outside" is "to the right of the edge"; whether a corner lying on the edge counts as
+--- touching (an overlap) or not is a choice, and both answers are shown for the last pair.
+
+struct Point [x, y]
+
+struct Pair [first, second]
+
+--- twice the signed area of a, b, c: positive when c lies left of the line a -> b
+fn cross[a, b, c]
+    return (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)
+
+fn counter_clockwise[t]
+    if cross[t[0], t[1], t[2]] lt 0
+        return [t[0], t[2], t[1]]
+    return t
+
+--- whether every corner of u lies outside the edge a -> b; a corner on the edge is
+--- outside only when contact does not count as an overlap
+fn all_outside[a, b, u, contact]
+    out = 0
+    for p in u
+        d = cross[a, b, p]
+        if d lt 0 or (d eq 0 and not contact)
+            out = out + 1
+    return out eq 3
+
+--- whether some edge of t has all of u outside it
+fn separated[t, u, contact]
+    for i in range[3]
+        if all_outside[t[i], t[(i + 1) % 3], u, contact]
+            return true
+    return false
+
+fn overlap[t1, t2, contact]
+    a = counter_clockwise[t1]
+    b = counter_clockwise[t2]
+    return not separated[a, b, contact] and not separated[b, a, contact]
+
+fn show[t]
+    corners = for p in t
+        '(`p.x`, `p.y`)'
+    return join[corners, ', ']
+
+fn verdict[yes]
+    if yes
+        return 'overlap'
+    return 'do not overlap'
+
+fn tri[coords]
+    corners = for k in range[3]
+        Point[coords[2 * k], coords[2 * k + 1]]
+    return corners
+
+pairs = [
+    Pair[tri[[0, 0, 5, 0, 0, 5]], tri[[0, 0, 5, 0, 0, 6]]],
+    Pair[tri[[0, 0, 0, 5, 5, 0]], tri[[0, 0, 0, 5, 5, 0]]],
+    Pair[tri[[0, 0, 5, 0, 0, 5]], tri[[-10, 0, -5, 0, -1, 6]]],
+    Pair[tri[[0, 0, 5, 0, 2.5, 5]], tri[[0, 4, 2.5, -1, 5, 4]]],
+    Pair[tri[[0, 0, 1, 1, 0, 2]], tri[[2, 1, 3, 0, 3, 2]]],
+    Pair[tri[[0, 0, 1, 1, 0, 2]], tri[[2, 1, 3, -2, 3, 4]]]
+]
+for p in pairs
+    log['`show[p.first]` and `show[p.second]`: `verdict[overlap[p.first, p.second, true]]`']
+
+log['']
+log['Only a single corner in contact:']
+corner = Pair[tri[[0, 0, 1, 0, 0, 1]], tri[[1, 0, 2, 0, 1, 1]]]
+touching = verdict[overlap[corner.first, corner.second, true]]
+apart = verdict[overlap[corner.first, corner.second, false]]
+log['`show[corner.first]` and `show[corner.second]`']
+log['    when points on a boundary collide: `touching`']
+log['    when they do not:                  `apart`']

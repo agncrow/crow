@@ -1,0 +1,138 @@
+--- Rosetta Code: Wolstenholme numbers
+--- https://rosettacode.org/wiki/Wolstenholme_numbers
+--- H(n, 2) = 1 + 1/4 + 1/9 + ... + 1/n^2 is summed as an exact fraction, which Crow
+--- keeps in lowest terms (each step adds 1/k^2 to the sum before it), and the nth
+--- Wolstenholme number is its top. A number is tested for primality by trial division
+--- by the primes below 2,000, then by Miller-Rabin to the first twelve primes as
+--- bases: deterministic below 3.3 x 10^24, so the four primes among the first twenty
+--- are proven; past that a number that passes is a strong probable prime, as the
+--- Python entry's gmpy2 test finds too. The candidates are tested a hundred at a
+--- time, each block at once on every core.
+
+fn primes_below[limit]
+    composite = for i in range[limit]
+        false
+    found = []
+    for p in range[2, limit]
+        if not composite[p]
+            found = push[found, p]
+            m = p * p
+            while m lt limit
+                composite[m] = true
+                m = m + p
+    return found
+
+fn power_mod[base, exponent, modulus]
+    result = 1
+    b = base % modulus
+    e = exponent
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % modulus
+        b = b * b % modulus
+        e = e / 2
+    return result
+
+--- Miller-Rabin: whether the odd n passes the strong test to every base
+fn strong_probable_prime[n, bases]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    i = 0
+    while i lt len[bases]
+        x = power_mod[bases[i], d, n]
+        if x ne 1 and x ne n - 1
+            r = 1
+            while r lt s and x ne n - 1
+                x = x * x % n
+                r = r + 1
+            if x ne n - 1
+                return false
+        i = i + 1
+    return true
+
+fn is_prime[n, small, bases]
+    if n lt 2
+        return false
+    i = 0
+    while i lt len[small]
+        p = small[i]
+        if n % p eq 0
+            return n eq p
+        i = i + 1
+    if n lt small[len[small] - 1] ^ 2
+        return true
+    return strong_probable_prime[n, bases]
+
+--- the top of a fraction in lowest terms (a whole one shows as its int alone)
+fn top[h]
+    return int[split[str[h], '/'][0]]
+
+--- a number's digits, all of them up to 50, else the first and last 20
+fn shown[n]
+    digits = str[n]
+    if len[digits] lte 50
+        return digits
+    first = slice[digits, 0, 20]
+    last = slice[digits, len[digits] - 20, len[digits]]
+    return '`first` ... `last`'
+
+fn digit_count[n]
+    count = len[str[n]]
+    if count eq 1
+        return '1 digit'
+    return '`count` digits'
+
+small = primes_below[2000]
+bases = slice[small, 0, 12]
+
+--- the numbers in blocks of a hundred, each block tested at once, until fifteen primes
+tops = []
+found = []
+h = fraction[0, 1]
+n = 0
+while len[found] lt 15
+    block = []
+    while len[block] lt 100
+        n = n + 1
+        h = h + fraction[1, n * n]
+        block = push[block, top[h]]
+    prime = for w in block
+        is_prime[w, small, bases]
+    i = 0
+    while i lt len[block] and len[found] lt 15
+        if prime[i]
+            found = push[found, len[tops] + i]
+        i = i + 1
+    tops = concat[tops, block]
+
+log['The first 20 Wolstenholme numbers:']
+for i in range[20]
+    log['`fmt[i + 1, width = 2]`: `tops[i]`']
+log['']
+log['The first 4 prime Wolstenholme numbers:']
+for j in range[4]
+    log['`j + 1`: W(`found[j] + 1`) = `tops[found[j]]`']
+log['']
+
+log['The 500th, 1000th, 2500th, 5000th and 10000th:']
+wanted = [500, 1000, 2500, 5000, 10000]
+h = fraction[0, 1]
+k = 0
+while k lt 10000
+    k = k + 1
+    h = h + fraction[1, k * k]
+    if k in wanted
+        w = top[h]
+        count = fmt[digit_count[w], width = 11, align = 'right']
+        log['W(`fmt[k, width = 5]`) has `count`: `shown[w]`']
+log['']
+
+log['The first 15 prime Wolstenholme numbers:']
+for j in range[15]
+    w = tops[found[j]]
+    place = fmt[found[j] + 1, width = 4]
+    count = fmt[digit_count[w], width = 11, align = 'right']
+    log['`fmt[j + 1, width = 2]`: W(`place`) has `count`: `shown[w]`']

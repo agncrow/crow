@@ -1,0 +1,29 @@
+A literal:           Crow 🐦 naïve café Ελληνικά 日本語
+Made from codes:     Cé🐦
+
+len:                 30 characters
+s[5]:                🐦
+slice[s, 7, 12]:     naïve
+split by '':         ['n', 'a', 'ï', 'v', 'e']
+reverse:             🐦 evïan
+the bird is in s:    true
+replaced:            Crow 🦅 naïve café Ελληνικά 日本語
+
+upper:               STRASSE ΕΛΛΗΝΙΚΆ Ǆ
+lower:               οδος σας
+
+codes of é, 🐦, 日:   U+00E9 U+1F426 U+65E5
+
+UTF-8 of é🐦:         %C3%A9%F0%9F%90%A6
+base64 of é🐦:       w6nwn5Cm, back: é🐦
+UTF-16 of é🐦:       00E9 D83D DC26
+JSON:                {"word":"Grüße"}, and \u escapes read: é🐦
+
+naïve is one \w+:    true
+Greek replaced:      GREEK and English
+
+sorted:              ['Zebra', 'eclair', 'zebra', 'Ångström', 'éclair']
+
+é and e + U+0301:    é and é, equal: false, lengths 1 and 2
+
+read back:           Grüße, 世界 🐦 (25 characters, the same text: true)

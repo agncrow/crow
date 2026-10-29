@@ -1,0 +1,53 @@
+--- Rosetta Code: Stirling numbers of the first kind
+--- https://rosettacode.org/wiki/Stirling_numbers_of_the_first_kind
+--- Unsigned Stirling numbers of the first kind (the signed S1(n, k) is this one
+--- times -1 where n + k is odd), a row at a time by the recurrence
+--- S1(n, k) = S1(n - 1, k - 1) + (n - 1) * S1(n - 1, k). The ints grow past 64 bits
+--- on their own, so row 100 is exact: its greatest value is found by a walk.
+
+--- S1(n, k), read from row n - 1 (which holds k = 0 .. n - 1)
+fn from_above[above, n, k]
+    if k eq 0
+        return 0
+    if k eq n
+        return above[k - 1]
+    return above[k - 1] + (n - 1) * above[k]
+
+--- the rows 0 .. last: rows[n] holds S1(n, k) for k = 0 .. n
+fn stirling1_rows[last]
+    rows = [[1]]
+    for n in range[1, last + 1]
+        above = rows[n - 1]
+        row = for k in range[n + 1]
+            from_above[above, n, k]
+        rows = push[rows, row]
+    return rows
+
+fn show_table[rows, width]
+    heading = for k in range[len[rows]]
+        fmt[k, width = width]
+    header = join[heading, '']
+    log['n/k`header`']
+    for n in range[len[rows]]
+        cells = for v in rows[n]
+            fmt[v, width = width]
+        line = join[cells, '']
+        log['`fmt[n, width = 3]``line`']
+
+--- the greatest value of a row and the k it is at
+struct Greatest [value, k]
+
+fn greatest[row]
+    best = Greatest[row[0], 0]
+    for k in range[1, len[row]]
+        if row[k] gt best.value
+            best = Greatest[row[k], k]
+    return best
+
+rows = stirling1_rows[100]
+log['Unsigned Stirling numbers of the first kind, S1(n, k):']
+show_table[slice[rows, 0, 13], 10]
+log['']
+top = greatest[rows[100]]
+log['The greatest S1(100, k) is at k = `top.k`, `len[str[top.value]]` digits:']
+log[top.value]

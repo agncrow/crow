@@ -1,0 +1,93 @@
+--- Rosetta Code: Undulating numbers
+--- https://rosettacode.org/wiki/Undulating_numbers
+--- An undulating number writes ABAB... in its base (three digits or more, A not
+--- B, A not 0). For one length, A from 1 and then B from 0 give them in rising
+--- order, and every number of one length is below every number of the next, so
+--- walking the lengths 3, 4, 5, ... lists them all in order; the walk ends at
+--- the first length whose least number (1010...) is not below 2^53.
+
+--- The number whose digits alternate a, b, a, b, ... (digits of them) in base.
+fn undulating[a, b, digits, base]
+    n = 0
+    for i in range[digits]
+        if i % 2 eq 0
+            n = n * base + a
+        else
+            n = n * base + b
+    return n
+
+fn of_length[digits, base]
+    found = []
+    for a in range[1, base]
+        for b in range[base]
+            if a ne b
+                found = push[found, undulating[a, b, digits, base]]
+    return found
+
+fn below[limit, base]
+    found = []
+    digits = 3
+    while undulating[1, 0, digits, base] lt limit
+        for n in of_length[digits, base]
+            if n lt limit
+                found = push[found, n]
+        digits = digits + 1
+    return found
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    d = 2
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 1
+    return true
+
+fn in_base[n, base]
+    digits = []
+    while n gt 0
+        digits = push[digits, str[n % base]]
+        n = n / base
+    return join[reverse[digits], '']
+
+--- The numbers, per_row to a line, right-aligned to the widest (the last).
+fn show[numbers, per_row]
+    width = len[str[numbers[-1]]]
+    i = 0
+    while i lt len[numbers]
+        cells = for n in slice[numbers, i, i + per_row]
+            fmt[n, width = width]
+        log[join[cells, ' ']]
+        i = i + per_row
+
+--- A number with commas, and in the base too where the base is not ten.
+fn written[n, base]
+    shown = fmt[n, commas = true]
+    if base eq 10
+        return shown
+    return '`shown` (`in_base[n, base]` in base `base`)'
+
+fn report[base, nth]
+    three = of_length[3, base]
+    log['Three-digit undulating numbers in base `base`:']
+    show[three, 9]
+    log['']
+    log['Four-digit undulating numbers in base `base`:']
+    show[of_length[4, base], 9]
+    log['']
+    primes = for n in three
+        if is_prime[n]
+            n
+    log['Three-digit undulating numbers in base `base` that are prime:']
+    show[primes, 9]
+    log['']
+    limit = 2 ^ 53
+    every = below[limit, base]
+    log['The `nth`th undulating number in base `base` is `written[every[nth - 1], base]`.']
+    log['There are `fmt[len[every], commas = true]` undulating numbers in base `base` below 2^53;']
+    log['the largest is `written[every[-1], base]`.']
+
+report[10, 600]
+log['']
+report[7, 600]

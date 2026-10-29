@@ -1,0 +1,149 @@
+P(s) = s^3 + 6s^2 + 11s + 6    coefficients [1, 6, 11, 6]
+    s^3  + | 1    11
+    s^2  + | 6    6
+    s^1  + | 10
+    s^0  + | 6
+    0 sign changes in the first column; stable: every root in the left half-plane
+    roots: -3.0000,  -2.0000,  -1.0000  (agree: true)
+
+P(s) = s^3 - 6s^2 + 11s - 6    coefficients [1, -6, 11, -6]
+    s^3  + | 1    11
+    s^2  - | -6   -6
+    s^1  + | 10
+    s^0  - | -6
+    3 sign changes in the first column; unstable: 3 roots in the right half-plane
+    roots: 1.0000,  2.0000,  3.0000  (agree: true)
+
+P(s) = s^4 - s^3 - 7s^2 + s + 6    coefficients [1, -1, -7, 1, 6]
+    s^4  + | 1     -7   6
+    s^3  - | -1    1
+    s^2  - | -6    6
+    s^1  - | -12            <- a row of zeros: the auxiliary polynomial -6s^2 + 6, differentiated
+    s^0  + | 6
+    2 sign changes in the first column; unstable: 2 roots in the right half-plane
+    roots: -2.0000,  -1.0000,  1.0000,  3.0000  (agree: true)
+
+P(s) = s^3 + s^2 + s + 1    coefficients [1, 1, 1, 1]
+    s^3  + | 1   1
+    s^2  + | 1   1
+    s^1  + | 2       <- a row of zeros: the auxiliary polynomial s^2 + 1, differentiated
+    s^0  + | 1
+    0 sign changes in the first column; marginally stable: 2 roots on the imaginary axis, none in the right half-plane
+    roots: -1.0000,  -1.0000i,  1.0000i  (agree: true)
+
+P(s) = s^2 + 1    coefficients [1, 0, 1]
+    s^2  + | 1   1
+    s^1  + | 2       <- a row of zeros: the auxiliary polynomial s^2 + 1, differentiated
+    s^0  + | 1
+    0 sign changes in the first column; marginally stable: 2 roots on the imaginary axis, none in the right half-plane
+    roots: -1.0000i,  1.0000i  (agree: true)
+
+P(s) = s^3 + 2s^2 + s + 2    coefficients [1, 2, 1, 2]
+    s^3  + | 1   1
+    s^2  + | 2   2
+    s^1  + | 4       <- a row of zeros: the auxiliary polynomial 2s^2 + 2, differentiated
+    s^0  + | 2
+    0 sign changes in the first column; marginally stable: 2 roots on the imaginary axis, none in the right half-plane
+    roots: -2.0000,  -1.0000i,  1.0000i  (agree: true)
+
+P(s) = s^2 - 1    coefficients [1, 0, -1]
+    s^2  + | 1    -1
+    s^1  + | 2         <- a row of zeros: the auxiliary polynomial s^2 - 1, differentiated
+    s^0  - | -1
+    1 sign change in the first column; unstable: 1 root in the right half-plane
+    roots: -1.0000,  1.0000  (agree: true)
+
+P(s) = s^4 + 3s^2 + 2    coefficients [1, 0, 3, 0, 2]
+    s^4  + | 1     3   2
+    s^3  + | 4     6       <- a row of zeros: the auxiliary polynomial s^4 + 3s^2 + 2, differentiated
+    s^2  + | 3/2   2
+    s^1  + | 2/3
+    s^0  + | 2
+    0 sign changes in the first column; marginally stable: 4 roots on the imaginary axis, none in the right half-plane
+    roots: -1.4142i,  -1.0000i,  1.0000i,  1.4142i  (agree: true)
+
+P(s) = s^5 + 2s^4 + 3s^3 + 6s^2 + 5s + 10    coefficients [1, 2, 3, 6, 5, 10]
+    s^5  + | 1       3    5
+    s^4  + | 2       6    10
+    s^3  + | 8       12        <- a row of zeros: the auxiliary polynomial 2s^4 + 6s^2 + 10, differentiated
+    s^2  + | 3       10
+    s^1  - | -44/3
+    s^0  + | 10
+    2 sign changes in the first column; unstable: 2 roots in the right half-plane
+    roots: -2.0000,  -0.6067 - 1.3668i,  -0.6067 + 1.3668i,  0.6067 - 1.3668i,  0.6067 + 1.3668i  (agree: true)
+
+P(s) = s^6 + 2s^5 + 8s^4 + 12s^3 + 20s^2 + 16s + 16    coefficients [1, 2, 8, 12, 20, 16, 16]
+    s^6  + | 1     8    20   16
+    s^5  + | 2     12   16
+    s^4  + | 2     12   16
+    s^3  + | 8     24             <- a row of zeros: the auxiliary polynomial 2s^4 + 12s^2 + 16, differentiated
+    s^2  + | 6     16
+    s^1  + | 8/3
+    s^0  + | 16
+    0 sign changes in the first column; marginally stable: 4 roots on the imaginary axis, none in the right half-plane
+    roots: -1.0000 - 1.0000i,  -1.0000 + 1.0000i,  -2.0000i,  -1.4142i,  1.4142i,  2.0000i  (agree: true)
+
+P(s) = s^5 + s^4 + 2s^3 + 2s^2 + s + 1    coefficients [1, 1, 2, 2, 1, 1]
+    s^5  + | 1   2   1
+    s^4  + | 1   2   1
+    s^3  + | 4   4       <- a row of zeros: the auxiliary polynomial s^4 + 2s^2 + 1, differentiated
+    s^2  + | 1   1
+    s^1  + | 2           <- a row of zeros: the auxiliary polynomial s^2 + 1, differentiated
+    s^0  + | 1
+    0 sign changes in the first column; unstable: 4 roots on the imaginary axis, some of them repeated
+    roots: -1.0000,  -1.0000i,  -1.0000i,  1.0000i,  1.0000i  (agree: true)
+
+P(s) = s^3 + s^2    coefficients [1, 1, 0, 0]
+    s^3  + | 1   0
+    s^2  + | 1   0
+    s^1  + | 2       <- a row of zeros: the auxiliary polynomial s^2, differentiated
+    s^0  + | 2       <- a row of zeros: the auxiliary polynomial 2s, differentiated
+    0 sign changes in the first column; unstable: 2 roots on the imaginary axis, some of them repeated
+    roots: -1.0000,  0.0000,  0.0000  (agree: true)
+
+P(s) = s^5 + 2s^4 + 3s^3 + 6s^2 + 5s + 3    coefficients [1, 2, 3, 6, 5, 3]
+    s^5  + | 1      3     5
+    s^4  + | 2      6     3
+    s^3  + | ε      7/2       <- a zero in the first column, replaced by ε
+    s^2  - | -7/ε   3
+    s^1  + | 7/2
+    s^0  + | 3
+    2 sign changes in the first column; unstable: 2 roots in the right half-plane
+    roots: -1.6681,  -0.5088 - 0.7020i,  -0.5088 + 0.7020i,  0.3429 - 1.5083i,  0.3429 + 1.5083i  (agree: true)
+
+P(s) = s^4 + s^3 + 2s^2 + 2s + 3    coefficients [1, 1, 2, 2, 3]
+    s^4  + | 1      2   3
+    s^3  + | 1      2
+    s^2  + | ε      3       <- a zero in the first column, replaced by ε
+    s^1  - | -3/ε
+    s^0  + | 3
+    2 sign changes in the first column; unstable: 2 roots in the right half-plane
+    roots: -0.9057 - 0.9020i,  -0.9057 + 0.9020i,  0.4057 - 1.2928i,  0.4057 + 1.2928i  (agree: true)
+
+P(s) = s^2 + 2s + 1    coefficients [0, 1, 2, 1]
+    s^2  + | 1   1
+    s^1  + | 2
+    s^0  + | 1
+    0 sign changes in the first column; stable: every root in the left half-plane
+    roots: -1.0000,  -1.0000  (agree: true)
+
+P(s) = 5    coefficients [5]
+    a constant: no roots, so stable
+
+P(s) = 0    coefficients [0, 0, 0]
+    every coefficient is zero: stability is undefined
+
+P(s) = s^3 + 3s^2 + 3s + 1 + K, for K from -2 to 9:
+    K = -2: unstable: 1 root in the right half-plane
+    K = -1: marginally stable: 1 root on the imaginary axis, none in the right half-plane
+    K =  0: stable: every root in the left half-plane
+    K =  1: stable: every root in the left half-plane
+    K =  2: stable: every root in the left half-plane
+    K =  3: stable: every root in the left half-plane
+    K =  4: stable: every root in the left half-plane
+    K =  5: stable: every root in the left half-plane
+    K =  6: stable: every root in the left half-plane
+    K =  7: stable: every root in the left half-plane
+    K =  8: marginally stable: 2 roots on the imaginary axis, none in the right half-plane
+    K =  9: unstable: 2 roots in the right half-plane
+    stable for K from 0 to 7; every verdict agrees with the roots: true

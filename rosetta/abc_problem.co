@@ -1,0 +1,28 @@
+--- Rosetta Code: ABC problem
+--- https://rosettacode.org/wiki/ABC_problem
+--- Backtracking: the first letter takes each block that has it in turn, and
+--- the rest of the word is spelled from the blocks left; case is ignored.
+
+fn sample_blocks[]
+    return split['BO XK DQ CP NA GT RE TG QD FS JW HU VI AN OB ER FS LY PC ZM', ' ']
+
+--- whether the word (in capitals) can be spelled from the blocks
+fn spell[word, blocks]
+    if word eq ''
+        return true
+    letter = word[0]
+    rest = slice[word, 1, len[word]]
+    i = 0
+    while i lt len[blocks]
+        if letter in blocks[i]
+            others = concat[slice[blocks, 0, i], slice[blocks, i + 1, len[blocks]]]
+            if spell[rest, others]
+                return true
+        i = i + 1
+    return false
+
+fn can_make_word[word]
+    return spell[upper[word], sample_blocks[]]
+
+for word in ['A', 'BARK', 'BoOK', 'TrEAT', 'COmMoN', 'SQUAD', 'conFUsE']
+    log['`fmt[word, width = 8]` `can_make_word[word]`']

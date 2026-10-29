@@ -1,0 +1,36 @@
+--- Rosetta Code: Break OO privacy
+--- https://rosettacode.org/wiki/Break_OO_privacy
+--- Crow has no classes and no private members, so there is no privacy to break: a record's
+--- fields are read and written wherever the record is, a leading underscore marks a field
+--- private by convention only, and a module of the program's own is reached whole through
+--- its prefix. (The one privacy Crow keeps, the standard modules' own helpers, has no escape
+--- hatch: `math._one[1]` is refused with "math has no '_one'".) A debugger or a serializer
+--- reads a record whole: `log` and `str` show every field, `type` names the record, and
+--- `encode` writes it as JSON, whose keys a program walks by name.
+
+struct Account [owner, _balance, _pin]
+
+fn open[owner, deposit]
+    return Account[owner, deposit, 1234]
+
+--- what the account means to show of itself
+fn statement[a]
+    return '`a.owner` holds an account'
+
+a = open['Ada', 250]
+log[statement[a]]
+
+--- the fields meant to be private, read from outside
+log['balance `a._balance`, PIN `a._pin`']
+
+--- and written: the record held by a is a fresh one with the field changed
+a._balance = 1000000
+log['balance now `a._balance`']
+
+--- as a debugger shows it
+log['`type[a]`: `str[a]`']
+
+--- as a serializer sees it: every field, found by name
+fields = json[encode[a]]
+for name in keys[fields]
+    log['  `name` = `fields[name]`']

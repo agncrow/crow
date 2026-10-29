@@ -1,0 +1,67 @@
+4 queens of each colour on 5 x 5:
+W ◦ W ◦ •
+◦ • ◦ • B
+W ◦ W ◦ •
+◦ • ◦ • B
+• B • B •
+
+9 queens of each colour on 8 x 8:
+W W W ◦ • ◦ • ◦
+W W W W ◦ • ◦ •
+• ◦ • ◦ • B B B
+◦ • ◦ • ◦ • B B
+• ◦ • ◦ • ◦ • B
+W W ◦ • ◦ • ◦ •
+• ◦ • ◦ B ◦ • ◦
+◦ • ◦ • B B ◦ •
+
+Stretch:
+
+10 queens of each colour on 8 x 8: no solution
+
+9 queens of each colour on 9 x 9:
+W W W W W ◦ • ◦ •
+◦ W W W W • ◦ • ◦
+• ◦ • ◦ • ◦ • B B
+◦ • ◦ • ◦ • ◦ • B
+• ◦ • ◦ • ◦ • ◦ •
+◦ • ◦ • ◦ • ◦ • ◦
+• ◦ • ◦ • B • ◦ •
+◦ • ◦ • ◦ B B • ◦
+• ◦ • ◦ • B B B •
+
+10 queens of each colour on 9 x 9:
+W W W W W ◦ • ◦ •
+◦ • ◦ • ◦ • B B B
+• ◦ W W W ◦ • ◦ •
+◦ • ◦ • ◦ • ◦ • B
+W ◦ • ◦ • ◦ • ◦ •
+W • ◦ • ◦ • ◦ • ◦
+• ◦ • ◦ • B • ◦ •
+◦ • ◦ • ◦ B B • ◦
+• ◦ • ◦ • B B B •
+
+11 queens of each colour on 9 x 9:
+W W W W • ◦ • W •
+◦ W W W ◦ • ◦ W ◦
+• ◦ W W • ◦ • ◦ •
+◦ • ◦ • ◦ • ◦ • B
+• ◦ • ◦ • ◦ • ◦ B
+◦ • ◦ • B • ◦ • ◦
+• ◦ • ◦ B B • ◦ •
+◦ • ◦ • B B B • ◦
+• ◦ • ◦ B B B ◦ •
+
+12 queens of each colour on 9 x 9:
+W ◦ W ◦ W ◦ W ◦ •
+◦ • ◦ • ◦ • ◦ • B
+W ◦ W ◦ W ◦ W ◦ •
+◦ • ◦ • ◦ • ◦ • B
+W ◦ W ◦ W ◦ W ◦ •
+◦ • ◦ • ◦ • ◦ • B
+• B • B • B • B •
+◦ • ◦ • ◦ • ◦ • B
+• B • B • B • B •
+
+13 queens of each colour on 9 x 9: no solution
+

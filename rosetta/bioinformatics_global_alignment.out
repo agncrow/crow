@@ -1,0 +1,40 @@
+Shortest common superstring of 5 sequences:
+  GAAGTA
+         A           3
+         C           0
+         G           2
+         T           1
+     Other           0
+  ____________________
+  Total length       6
+
+Shortest common superstring of 4 sequences:
+  CATTAGGG
+         A           2
+         C           1
+         G           3
+         T           2
+     Other           0
+  ____________________
+  Total length       8
+
+Shortest common superstring of 3 sequences:
+  AAGAUGGAGCGCAUCGCAAUAAGGA
+         A          10
+         C           4
+         G           8
+         T           0
+     Other           3
+  ____________________
+  Total length      25
+
+Shortest common superstring of 13 sequences:
+  CGTAAAAAATTACAACGTCCTTTGGCTATCTCTTAAACTCCTGCTAAATGCTCGTGCTTTCCAATTATGTAAGCGTTCCGAGACGGGGTGGTCGATTCTGAGGACAAAGGTCAAGATGGAGCGCATCGAACGCAATAAGGATCATTTGATGGGACGTTTCGTCGACAAAGTCTTGTTTCGAGAGTAACGGCTACCGTCTTCGATTCTGCTTATAACACTATGTTCTTATGAAATGGATGTTCTGAGTTGGTCAGTCCCAATGTGCGGGGTTTCTTTTAGTACGTCGGGAGTGGTATTATA
+         A          74
+         C          57
+         G          75
+         T          94
+     Other           0
+  ____________________
+  Total length     300
+

@@ -1,0 +1,33 @@
+--- Rosetta Code: Sylvester's sequence
+--- https://rosettacode.org/wiki/Sylvester's_sequence
+--- Each term is the product of the terms before it, plus one: a(0) = 2, and since the
+--- product of the terms before a(n + 1) is a(n)·(a(n) − 1), a(n + 1) = a(n)² − a(n) + 1.
+--- Ints grow, so the terms keep every digit; the reciprocals are summed as exact
+--- fractions, and the sum of the first k is 1 − 1/(a(k) − 1).
+
+--- the first `count` terms of Sylvester's sequence
+fn sylvester[count]
+    terms = []
+    product = 1
+    while len[terms] lt count
+        term = product + 1
+        terms = push[terms, term]
+        product = product * term
+    return terms
+
+terms = sylvester[11]
+first = slice[terms, 0, 10]
+log['The first 10 terms of Sylvester\'s sequence (OEIS A000058):']
+for t in first
+    log[t]
+
+total = fraction[0, 1]
+for t in first
+    total = total + fraction[1, t]
+log['']
+log['The sum of their reciprocals, exactly:']
+log[total]
+log['']
+log['It falls short of 1 by:']
+log[1 - total]
+log['which is 1/(a(10) - 1), a(10) being the 11th term: `1 - total eq fraction[1, terms[10] - 1]`']

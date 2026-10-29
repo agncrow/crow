@@ -1,0 +1,54 @@
+--- Rosetta Code: Knuth's algorithm S
+--- https://rosettacode.org/wiki/Knuth's_algorithm_S
+--- Crow has no closures, so s_of_n_creator answers the sampler as a value: a
+--- record holding n, the items seen so far and the sample (what the closure
+--- would keep). s_of_n takes the sampler and an item and answers the sampler
+--- after the item; the caller keeps what it answers. The draws are seeded, so
+--- every run prints the same counts.
+
+use math
+
+struct Sampler [n, seen, sample]
+
+fn s_of_n_creator[n]
+    return Sampler[n, 0, []]
+
+--- the first n items are kept; the i-th after them is kept with chance n/i, in
+--- the place of an item of the sample chosen at random
+fn s_of_n[s, item]
+    seen = s.seen + 1
+    sample = s.sample
+    if seen lte s.n
+        sample = push[sample, item]
+    else if rand[seen] lt s.n
+        sample[rand[s.n]] = item
+    return Sampler[s.n, seen, sample]
+
+fn shown[xs]
+    parts = for x in xs
+        str[x]
+    return join[parts, ', ']
+
+seed[2026]
+
+log['A single run of samples for n = 3:']
+sampler = s_of_n_creator[3]
+for item in range[10]
+    sampler = s_of_n[sampler, item]
+    log['  item `item` -> sample [`shown[sampler.sample]`]']
+
+counts = for d in range[10]
+    0
+trial = 0
+while trial lt 100000
+    sampler = s_of_n_creator[3]
+    for item in range[10]
+        sampler = s_of_n[sampler, item]
+    for d in sampler.sample
+        counts[d] = counts[d] + 1
+    trial = trial + 1
+
+log['']
+log['How often each digit was in the sample after the 9, over 100,000 runs (30,000 expected):']
+for d in range[10]
+    log['  `d`: `fmt[counts[d], commas = true]`']

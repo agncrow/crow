@@ -1,0 +1,239 @@
+--- Rosetta Code: Quine–McCluskey algorithm
+--- https://rosettacode.org/wiki/Quine–McCluskey_algorithm
+--- Terms are text over 0, 1 and - (a dash where a variable is free). Terms of
+--- neighbouring groups (counted by their ones) that differ in one place combine,
+--- round by round, until none do: those never combined are the prime
+--- implicants. Then the chart: a minterm only one prime implicant covers makes
+--- that one essential, and the fewest further prime implicants (then the fewest
+--- letters) that cover the rest are found by trying every choice of them.
+
+struct Round [made, primes]
+
+--- n in binary, in width places
+fn bits_of[n, width]
+    places = for k in range[width]
+        str[(n / 2 ^ (width - 1 - k)) % 2]
+    return join[places, '']
+
+--- the term a and b make where they differ in one place, a digit in both;
+--- empty text where they do not combine
+fn combined[a, b]
+    place = -1
+    i = 0
+    while i lt len[a]
+        if a[i] ne b[i]
+            if a[i] eq '-' or b[i] eq '-' or place gte 0
+                return ''
+            place = i
+        i = i + 1
+    if place lt 0
+        return ''
+    return concat[[slice[a, 0, place], '-', slice[a, place + 1, len[a]]]]
+
+--- whether the term covers the minterm written in bits
+fn covers[term, bits]
+    i = 0
+    while i lt len[term]
+        if term[i] ne '-' and term[i] ne bits[i]
+            return false
+        i = i + 1
+    return true
+
+--- the numbers the term covers
+fn covered[term, numbers, width]
+    found = for n in numbers
+        if covers[term, bits_of[n, width]]
+            n
+    return found
+
+fn listed[numbers, separator]
+    parts = for n in numbers
+        str[n]
+    return join[parts, separator]
+
+--- the term as a product of letters, A' for not A
+fn product[term]
+    names = 'ABCDEFGH'
+    text = ''
+    i = 0
+    while i lt len[term]
+        if term[i] eq '1'
+            text = '`text``names[i]`'
+        if term[i] eq '0'
+            text = '`text``names[i]`\''
+        i = i + 1
+    if text eq ''
+        return '1'
+    return text
+
+fn letters[term]
+    return len[term] - occurs[term, '-']
+
+--- one round: each term tried with every term of the group one up from its own
+fn next_round[terms]
+    made = []
+    used = for t in terms
+        false
+    i = 0
+    while i lt len[terms]
+        j = 0
+        while j lt len[terms]
+            if occurs[terms[j], '1'] eq occurs[terms[i], '1'] + 1
+                c = combined[terms[i], terms[j]]
+                if c ne ''
+                    used[i] = true
+                    used[j] = true
+                    if c not in made
+                        made = push[made, c]
+            j = j + 1
+        i = i + 1
+    primes = for i in range[len[terms]]
+        if not used[i]
+            terms[i]
+    return Round[sort[made], primes]
+
+fn show_round[number, terms, numbers, width]
+    log['  round `number`:']
+    for ones in range[width + 1]
+        group = for t in terms
+            if occurs[t, '1'] eq ones
+                t
+        if len[group] gt 0
+            shown = for t in group
+                numbers_shown = listed[covered[t, numbers, width], ',']
+                '`t` (`numbers_shown`)'
+            line = join[shown, '  ']
+            log['    group `ones`: `line`']
+
+--- which of the candidates a mask picks, bit i for candidate i
+fn picked[candidates, mask]
+    found = for i in range[len[candidates]]
+        if (mask / 2 ^ i) % 2 eq 1
+            candidates[i]
+    return found
+
+--- whether every minterm is covered by one of the terms
+fn all_covered[terms, minterms, width]
+    i = 0
+    while i lt len[minterms]
+        bits = bits_of[minterms[i], width]
+        hit = false
+        j = 0
+        while j lt len[terms]
+            if covers[terms[j], bits]
+                hit = true
+            j = j + 1
+        if not hit
+            return false
+        i = i + 1
+    return true
+
+fn total_letters[terms]
+    total = 0
+    for t in terms
+        total = total + letters[t]
+    return total
+
+--- every choice of the fewest candidates covering the minterms, with the
+--- fewest letters among those
+fn cheapest[candidates, minterms, width]
+    best = []
+    best_count = len[candidates] + 1
+    best_letters = 0
+    mask = 0
+    while mask lt 2 ^ len[candidates]
+        chosen = picked[candidates, mask]
+        if all_covered[chosen, minterms, width]
+            size = total_letters[chosen]
+            if len[chosen] lt best_count or (len[chosen] eq best_count and size lt best_letters)
+                best = [chosen]
+                best_count = len[chosen]
+                best_letters = size
+            else if len[chosen] eq best_count and size eq best_letters
+                best = push[best, chosen]
+        mask = mask + 1
+    return best
+
+fn minimize[name, width, ones, dont_cares]
+    ones_shown = listed[ones, ', ']
+    cares_shown = ''
+    if len[dont_cares] gt 0
+        listed_cares = listed[dont_cares, ', ']
+        cares_shown = ' + d(`listed_cares`)'
+    log['`name` = Σm(`ones_shown`)`cares_shown`, `width` variables']
+    cubes = sort[concat[ones, dont_cares]]
+    terms = for n in cubes
+        bits_of[n, width]
+    primes = []
+    number = 1
+    while len[terms] gt 0
+        show_round[number, terms, cubes, width]
+        r = next_round[terms]
+        primes = concat[primes, r.primes]
+        terms = r.made
+        number = number + 1
+    log['  prime implicants, and the minterms of `name` each covers:']
+    header = for m in ones
+        fmt[m, width = 3]
+    heading = join[header, '']
+    indent = repeat[' ', width + 12]
+    log['`indent``heading`']
+    for p in primes
+        marks = for m in ones
+            if covers[p, bits_of[m, width]]
+                '  x'
+            else
+                '  .'
+        row = join[marks, '']
+        log['    `p`  `fmt[product[p], width = 6]``row`']
+    --- a minterm one prime implicant alone covers makes that one essential
+    sole = for m in ones
+        holders = for p in primes
+            if covers[p, bits_of[m, width]]
+                p
+        if len[holders] eq 1
+            holders[0]
+    essential = []
+    for p in primes
+        if p in sole
+            essential = push[essential, p]
+    left = for m in ones
+        if not all_covered[essential, [m], width]
+            m
+    candidates = for p in primes
+        if p not in essential
+            p
+    essential_shown = join[essential, ' ']
+    if len[essential] eq 0
+        essential_shown = 'none'
+    left_shown = listed[left, ', ']
+    if len[left] eq 0
+        left_shown = 'none'
+    log['  essential: `essential_shown`; the minterms they leave: `left_shown`']
+    --- the inputs where f is 0, for the check of each cover
+    offs = for n in range[2 ^ width]
+        if n not in ones and n not in dont_cares
+            n
+    for chosen in cheapest[candidates, left, width]
+        cover = concat[essential, chosen]
+        products = for t in cover
+            product[t]
+        sum_text = join[products, ' + ']
+        cover_shown = join[cover, ' ']
+        good = all_covered[cover, ones, width]
+        for n in offs
+            if all_covered[cover, [n], width]
+                good = false
+        log['  minimal: `cover_shown`, that is `name` = `sum_text` (1 on the minterms and 0 off them: `good`)']
+
+--- the example of the other entries: 0-0 -01 (0X0 X01 in their notation)
+minimize['f', 3, [1, 2, 5], [0, 7]]
+log['']
+--- Wikipedia's example: two covers are as good
+minimize['g', 4, [4, 8, 10, 11, 12, 15], [9, 14]]
+log['']
+--- a cyclic chart: no prime implicant is essential
+minimize['h', 3, [0, 1, 2, 5, 6, 7], []]
+log['']
+--- the majority of three: every prime implicant is essential
+minimize['m', 3, [3, 5, 6, 7], []]

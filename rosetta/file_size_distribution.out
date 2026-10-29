@@ -1,0 +1,14 @@
+Files under file_size_distribution_demo: 22, 3,059,268 bytes
+(each bin holds its lower size and not its upper)
+
+size             files          bytes
+empty                3              0  ##############################
+1 B to 10 B          3             16  ##############################
+10 B to 100 B        3            200  ##############################
+100 B to 1 kB        3          1,562  ##############################
+1 kB to 10 kB        4         15,570  ########################################
+10 kB to 100 kB      3         91,920  ##############################
+100 kB to 1 MB       1        250,000  ##########
+1 MB to 10 MB        2      2,700,000  ####################
+
+Half the files are 512 bytes or smaller; half the bytes are in the 2 largest.

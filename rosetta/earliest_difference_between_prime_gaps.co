@@ -1,0 +1,90 @@
+--- Rosetta Code: Earliest difference between prime gaps
+--- https://rosettacode.org/wiki/Earliest_difference_between_prime_gaps
+--- The primes are sieved a segment at a time (a segmented sieve of Eratosthenes),
+--- and the first prime to start each gap is noted as the scan passes it. A first
+--- start is final once noted, so a magnitude m is settled as soon as every gap up
+--- to the answer has its start: the answer is the first pair of adjacent gaps, g
+--- and g + 2, whose starts lie more than m apart. Magnitudes 10 to 10^7 are
+--- shown; 10^7 needs the primes to 13,626,257. (10^8 would need them to
+--- 378,043,979, too far for a run of a few seconds.)
+
+--- the primes below n, by the sieve of Eratosthenes
+fn primes_below[n]
+    marks = for i in range[n]
+        i gte 2
+    p = 2
+    while p * p lt n
+        if marks[p]
+            for m in range[p * p, n, p]
+                marks[m] = false
+        p = p + 1
+    found = for i in range[n]
+        if marks[i]
+            i
+    return found
+
+--- marks for the numbers from lo up to hi: true where the number is prime,
+--- the multiples of the small primes crossed out
+fn segment[lo, hi, small]
+    marks = for i in range[hi - lo]
+        true
+    k = 0
+    while k lt len[small] and small[k] * small[k] lt hi
+        p = small[k]
+        start = max[p * p, (lo + p - 1) / p * p]
+        for m in range[start, hi, p]
+            marks[m - lo] = false
+        k = k + 1
+    return marks
+
+--- the answer for magnitude m from the gaps' first starts (first[g / 2], 0 where
+--- not met yet): [g, start of g, start of g + 2], or [] while a gap it needs
+--- has not been met
+fn earliest[first, m]
+    g = 2
+    while g / 2 + 1 lt len[first] and first[g / 2] ne 0 and first[g / 2 + 1] ne 0
+        a = first[g / 2]
+        b = first[g / 2 + 1]
+        if abs[b - a] gt m
+            return [g, a, b]
+        g = g + 2
+    return []
+
+fn report[m, found]
+    g = found[0]
+    a = found[1]
+    b = found[2]
+    log['Earliest difference > `fmt[m, commas = true]` between adjacent prime gap starting primes:']
+    log['Gap `g` starts at `fmt[a, commas = true]`, gap `g + 2` starts at `fmt[b, commas = true]`, difference is `fmt[abs[b - a], commas = true]`.']
+
+fn run[magnitudes, size]
+    small = primes_below[100000]
+    first = for i in range[1000]
+        0
+    k = 0
+    lo = 0
+    --- primes above 2 only: the scan starts from 3
+    previous = 3
+    while k lt len[magnitudes]
+        hi = lo + size
+        marks = segment[lo, hi, small]
+        for i in range[max[lo, 5] - lo, size]
+            if marks[i]
+                p = lo + i
+                gap = p - previous
+                if first[gap / 2] eq 0
+                    first[gap / 2] = previous
+                previous = p
+        lo = hi
+        settled = true
+        while settled and k lt len[magnitudes]
+            found = earliest[first, magnitudes[k]]
+            if len[found] eq 0
+                settled = false
+            else
+                if k gt 0
+                    log['']
+                report[magnitudes[k], found]
+                k = k + 1
+
+run[[10, 100, 1000, 10000, 100000, 1000000, 10000000], 1000000]

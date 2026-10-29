@@ -1,0 +1,102 @@
+--- Rosetta Code: Factorial primes
+--- https://rosettacode.org/wiki/Factorial_primes
+--- n! - 1 and n! + 1 for n = 1, 2, ...: trial division by the primes below 2000 first,
+--- then the Miller-Rabin test with the first 13 primes as bases (ints grow without limit).
+
+--- the primes below limit, by the sieve of Eratosthenes
+fn primes_below[limit]
+    sieve = for i in range[limit]
+        true
+    primes = []
+    n = 2
+    while n lt limit
+        if sieve[n]
+            primes = push[primes, n]
+            m = n * n
+            while m lt limit
+                sieve[m] = false
+                m = m + n
+        n = n + 1
+    return primes
+
+--- base ^ exp modulo m, by repeated squaring
+fn pow_mod[base, exp, m]
+    result = 1
+    b = base % m
+    e = exp
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+--- whether the base a shows that n (odd, n - 1 = d * 2 ^ s) is composite
+fn witness[a, d, s, n]
+    x = pow_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return false
+    i = 1
+    while i lt s
+        x = x * x % n
+        if x eq n - 1
+            return false
+        i = i + 1
+    return true
+
+fn is_probable_prime[n, small]
+    if n lt 2
+        return false
+    if n in small
+        return true
+    i = 0
+    while i lt len[small]
+        if n % small[i] eq 0
+            return false
+        i = i + 1
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    bases = slice[small, 0, 13]
+    k = 0
+    while k lt len[bases]
+        if witness[bases[k], d, s, n]
+            return false
+        k = k + 1
+    return true
+
+--- a number of more than 40 digits as its first 20 and last 20, and its count
+fn shown[n]
+    digits = str[n]
+    count = len[digits]
+    if count lte 40
+        return digits
+    head = slice[digits, 0, 20]
+    tail = slice[digits, count - 20, count]
+    return '`head`...`tail` (`count` digits)'
+
+fn factorial_primes[wanted, small]
+    lines = []
+    fact = 1
+    n = 1
+    while len[lines] lt wanted
+        fact = fact * n
+        if is_probable_prime[fact - 1, small]
+            lines = push[lines, '`fmt[n, width = 3]`! - 1 = `shown[fact - 1]`']
+        if len[lines] lt wanted and is_probable_prime[fact + 1, small]
+            lines = push[lines, '`fmt[n, width = 3]`! + 1 = `shown[fact + 1]`']
+        n = n + 1
+    return lines
+
+small = primes_below[2000]
+found = factorial_primes[29, small]
+log['The first 10 factorial primes:']
+i = 0
+while i lt len[found]
+    if i eq 10
+        log['']
+        log['The next 19 (probable primes past 2 ^ 64):']
+    log['`fmt[i + 1, width = 2]`: `found[i]`']
+    i = i + 1

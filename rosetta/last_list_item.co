@@ -1,0 +1,43 @@
+--- Rosetta Code: Last list item
+--- https://rosettacode.org/wiki/Last_list_item
+--- Twice: sorting the list each round and taking its first two items, and without
+--- sorting, finding the smallest item's place and removing it, two times a round.
+
+fn with_sorting[items]
+    while len[items] gt 1
+        items = sort[items]
+        log['Sorted list: `items`']
+        total = items[0] + items[1]
+        log['Two smallest: `items[0]` + `items[1]` = `total`']
+        items = push[slice[items, 2, len[items]], total]
+    return items[0]
+
+fn smallest_at[items]
+    at = 0
+    for i in range[1, len[items]]
+        if items[i] lt items[at]
+            at = i
+    return at
+
+fn without[items, at]
+    return concat[slice[items, 0, at], slice[items, at + 1, len[items]]]
+
+fn without_sorting[items]
+    while len[items] gt 1
+        log['List: `items`']
+        first = smallest_at[items]
+        a = items[first]
+        items = without[items, first]
+        second = smallest_at[items]
+        b = items[second]
+        items = without[items, second]
+        log['Two smallest: `a` + `b` = `a + b`']
+        items = push[items, a + b]
+    return items[0]
+
+start = [6, 81, 243, 14, 25, 49, 123, 69, 11]
+log['With sorting:']
+log['Last item is `with_sorting[start]`.']
+log['']
+log['Without sorting:']
+log['Last item is `without_sorting[start]`.']

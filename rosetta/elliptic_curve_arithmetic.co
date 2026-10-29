@@ -1,0 +1,98 @@
+--- Rosetta Code: Elliptic curve arithmetic
+--- https://rosettacode.org/wiki/Elliptic_curve_arithmetic
+--- Points of y^2 = x^3 + 7 (secp256k1's a = 0, b = 7) over the reals, without
+--- modular arithmetic. The point at infinity, the group's zero, is a point of
+--- its own; sums follow the chord and tangent rules, multiples are made by
+--- doubling and adding. Coordinates are floats, so two numbers that differ only
+--- by rounding count as equal.
+
+use math
+
+struct Point [x, y, infinite]
+
+fn infinity[]
+    Point[0.0, 0.0, true]
+
+--- The point of the curve at height y: x is the real cube root of y^2 - 7.
+fn from_y[y]
+    n = y * y - 7.0
+    root = abs[n] ^ (1.0 / 3.0)
+    if n lt 0.0
+        root = -root
+    Point[root, y, false]
+
+fn near[a, b]
+    abs[a - b] lte 0.000000001 * max[1.0, max[abs[a], abs[b]]]
+
+fn negated[p]
+    Point[p.x, -p.y, p.infinite]
+
+--- P + P: the tangent at P meets the curve again at -(P + P).
+fn doubled[p]
+    if p.infinite or near[p.y, 0.0]
+        return infinity[]
+    slope = 3.0 * p.x * p.x / (2.0 * p.y)
+    x = slope * slope - 2.0 * p.x
+    Point[x, slope * (p.x - x) - p.y, false]
+
+--- P + Q: the chord through P and Q meets the curve again at -(P + Q).
+fn plus[p, q]
+    if p.infinite
+        return q
+    if q.infinite
+        return p
+    if near[p.x, q.x]
+        if near[p.y, q.y]
+            return doubled[p]
+        return infinity[]
+    slope = (q.y - p.y) / (q.x - p.x)
+    x = slope * slope - p.x - q.x
+    Point[x, slope * (p.x - x) - p.y, false]
+
+--- n P, adding the doublings of P that the bits of n pick.
+fn times[p, n]
+    total = infinity[]
+    while n gt 0
+        if n % 2 eq 1
+            total = plus[total, p]
+        p = doubled[p]
+        n = n / 2
+    return total
+
+--- Whether three points lie on one line: the cross product of the two chords
+--- from the first is zero.
+fn aligned[p, q, r]
+    left = (q.x - p.x) * (r.y - p.y)
+    right = (q.y - p.y) * (r.x - p.x)
+    near[left, right]
+
+fn shown[p]
+    if p.infinite
+        return 'Zero'
+    '(`fmt[p.x, decimals = 3]`, `fmt[p.y, decimals = 3]`)'
+
+a = from_y[1.0]
+b = from_y[2.0]
+c = plus[a, b]
+d = negated[c]
+log['a = `shown[a]`']
+log['b = `shown[b]`']
+log['c = a + b = `shown[c]`']
+log['d = -c = `shown[d]`']
+log['c + d = `shown[plus[c, d]]`']
+log['a + b + d = `shown[plus[a, plus[b, d]]]`']
+log['a * 12345 = `shown[times[a, 12345]]`']
+log['']
+log['a, b and d = -(a + b) lie on one line: `aligned[a, b, d]`']
+
+--- Two more points, drawn at random heights (seeded, so every run draws the same).
+seed[42]
+p = from_y[10.0 * rand[] - 5.0]
+q = from_y[10.0 * rand[] - 5.0]
+r = negated[plus[p, q]]
+log['']
+log['p = `shown[p]`, q = `shown[q]`']
+log['p + q = `shown[plus[p, q]]`']
+log['p, q and -(p + q) lie on one line: `aligned[p, q, r]`']
+log['p + q + -(p + q) = `shown[plus[plus[p, q], r]]`']
+log['3p computed as p + p + p and as p * 3: `shown[plus[plus[p, p], p]]` and `shown[times[p, 3]]`']

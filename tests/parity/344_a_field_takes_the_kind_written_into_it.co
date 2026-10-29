@@ -1,0 +1,17 @@
+--- A field first given an empty list takes a list written down for it as
+--- a list (it had been written the literal's tensor: "expected a list"
+--- interpreted, no build compiled), and a field every constructor gave 0
+--- is a record or none once a record of its kind is written into it (it
+--- had been typed an int). Rosetta Code, Blossom algorithm, Deepcopy.
+struct S [queue]
+
+s = S[[]]
+s.queue = [3]
+log[len[s.queue]]
+
+struct Node [name, next]
+
+n = Node['a', 0]
+m = Node['b', 0]
+n.next = m
+log[n]

@@ -1,0 +1,96 @@
+--- Rosetta Code: Here document
+--- https://rosettacode.org/wiki/Here_document
+--- Crow has no << marker: a string literal may run over several lines, and it keeps
+--- its line breaks, its indentation and every other space exactly as written. The
+--- opening quote does what <<TOKEN does, and the closing quote ends the text.
+--- Backticks interpolate, as in a shell's heredoc whose token is not quoted; an
+--- escaped backtick is a plain one, as in a heredoc whose token is quoted.
+
+--- A text block, printed as it was written.
+usage = 'Usage: thingy [OPTIONS]
+     -h                        Display this usage message
+     -H hostname               Hostname to connect to'
+log[usage]
+log['']
+
+--- Each line between bars, to show that the spaces at the start of a line are kept.
+fn framed[text]
+    lines = for line in split[text, '\n']
+        '|`line`|'
+    return join[lines, '\n']
+
+poem = '  I\'ll let you be in my dream,
+    if I can be in yours.
+          -- Bob Dylan'
+log[framed[poem]]
+log['']
+
+--- Backticks interpolate any expression, as $name and $(...) do in a shell.
+color = 'green'
+lamps = 3
+note = 'some line
+color: `color`
+lamps lit: `lamps`, hands to hold them: `lamps * 2`
+another line'
+log[note]
+log['']
+
+--- Nothing interpolated: an escaped backtick or quote is plain text, and a backslash
+--- before any other character stays a backslash.
+raw = 'In a shell, \`date\` runs a command and \'$HOME\' names a directory;
+here they are only text, and so is C:\Users\crow.'
+log[raw]
+log['']
+
+--- The lines of a block in a function go on at the margin of the code around them,
+--- so they carry its indentation: dedented takes the common margin away (as Ruby's
+--- <<~ and Raku's :to do), with the line after the opening quote and the line before
+--- the closing one when they are blank.
+fn margin[line]
+    spaces = 0
+    while spaces lt len[line] and line[spaces] eq ' '
+        spaces = spaces + 1
+    return spaces
+
+fn dedented[text]
+    lines = split[text, '\n']
+    if len[lines] gt 1 and trim[lines[0]] eq ''
+        lines = slice[lines, 1, len[lines]]
+    if len[lines] gt 1 and trim[lines[-1]] eq ''
+        lines = slice[lines, 0, -1]
+    least = -1
+    for line in lines
+        if trim[line] ne ''
+            m = margin[line]
+            if least lt 0 or m lt least
+                least = m
+    least = max[least, 0]
+    kept = for line in lines
+        slice[line, min[least, len[line]], len[line]]
+    return join[kept, '\n']
+
+fn letter[name, items]
+    text = '
+        Dear `name`,
+            your order of `items` items has shipped.
+        Regards,
+            the warehouse
+        '
+    return dedented[text]
+
+log[letter['Ada', 4]]
+log['']
+
+--- A here document written to a file and read back, as cat > file << EOF does.
+_written = write['heredoc.txt', note]
+back = read['heredoc.txt']
+lines = len[split[back, '\n']]
+log['heredoc.txt holds `lines` lines, the same text: `back eq note`']
+_removed = rm['heredoc.txt']
+
+--- And the shell's own here document, inside a Crow block, feeding a command.
+r = shell['tr a-z A-Z << EOF
+here documents
+reach the shell too
+EOF']
+log[trim[r.stdout]]

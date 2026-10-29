@@ -1,0 +1,59 @@
+--- Rosetta Code: Periodic table
+--- https://rosettacode.org/wiki/Periodic_table
+--- A row ends at each noble gas (2, 10, 18, 36, 54, 86, 118); an element's rank
+--- in its row gives its column, past the gaps of rows 1 to 3 and the f-block cut
+--- out of rows 6 and 7. The lanthanides (57-71) and actinides (89-103) are rows 8
+--- and 9 from column 4. The task's examples are checked, then every element is
+--- placed by the same function to draw the table.
+
+struct Place [row, column]
+
+fn place[z]
+    if z gte 57 and z lte 71
+        return Place[8, z - 53]
+    if z gte 89 and z lte 103
+        return Place[9, z - 85]
+    nobles = [2, 10, 18, 36, 54, 86, 118]
+    row = 1
+    start = 0
+    while z gt nobles[row - 1]
+        start = nobles[row - 1]
+        row = row + 1
+    rank = z - start
+    if row eq 1 and rank eq 2
+        return Place[1, 18]
+    if (row eq 2 or row eq 3) and rank gt 2
+        return Place[row, rank + 10]
+    if row gte 6 and rank gt 2
+        return Place[row, rank - 14]
+    return Place[row, rank]
+
+symbols = split['H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og', ' ']
+
+for z in [1, 2, 29, 42, 57, 58, 72, 89]
+    p = place[z]
+    log['`fmt[z, width = 3]` -> `p.row` `p.column`']
+log['']
+
+--- every element placed: no two may share a cell
+cells = for i in range[9 * 18]
+    ''
+for z in range[1, len[symbols] + 1]
+    p = place[z]
+    at = (p.row - 1) * 18 + p.column - 1
+    assert[cells[at] eq '', 'element `z` lands on `cells[at]`']
+    cells[at] = symbols[z - 1]
+cells[5 * 18 + 2] = '*'
+cells[6 * 18 + 2] = '°'
+
+heads = for c in range[1, 19]
+    fmt[c, width = 4, align = 'left']
+header = sub[join[heads, ''], ' +$', '']
+log['   `header`']
+for r in range[9]
+    if r eq 7
+        log['']
+    line = for c in range[18]
+        fmt[cells[r * 18 + c], width = 4, align = 'left']
+    shown = sub[join[line, ''], ' +$', '']
+    log['`r + 1`  `shown`']

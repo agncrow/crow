@@ -1,0 +1,52 @@
+--- Rosetta Code: Search in paragraph's text
+--- https://rosettacode.org/wiki/Search_in_paragraph's_text
+--- The file is cut into paragraphs at its blank lines; a paragraph where the regular
+--- expression matches (matches[] searches the whole paragraph) and that holds the marker
+--- is shown from the marker's first place to its end, then a line of 16 dashes. The
+--- pattern and the file can be given as arguments: `crow run search_in_paragraphs_text.co
+--- '(Import|Attribute)Error'` finds two other paragraphs. Traceback.txt is the task's file.
+
+fn paragraphs[text]
+    found = []
+    current = []
+    for line in split[replace[text, '\r', ''], '\n']
+        if trim[line] eq ''
+            if len[current] gt 0
+                found = push[found, join[current, '\n']]
+                current = []
+        else
+            current = push[current, line]
+    if len[current] gt 0
+        found = push[found, join[current, '\n']]
+    return found
+
+--- the paragraph from the first place of the marker, or an error where it has none
+fn from_marker[paragraph, marker]
+    pieces = split[paragraph, marker]
+    if len[pieces] lt 2
+        return error['no marker']
+    rest = join[slice[pieces, 1, len[pieces]], marker]
+    return '`marker``rest`'
+
+marker = 'Traceback (most recent call last):'
+pattern = 'SystemError'
+file = 'Traceback.txt'
+given = args[]
+if len[given] gt 0
+    pattern = given[0]
+if len[given] gt 1
+    file = given[1]
+
+text = read[file]
+valid = matches['', pattern]
+if not text.ok
+    log['cannot read `file`: `text.reason`']
+else if not valid.ok
+    log['not a regular expression: `pattern` (`valid.reason`)']
+else
+    for paragraph in paragraphs[text]
+        if matches[paragraph, pattern]
+            part = from_marker[paragraph, marker]
+            if part.ok
+                log[part]
+                log[repeat['-', 16]]

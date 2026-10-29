@@ -1,0 +1,13 @@
+ 1990 MCMXC
+ 2008 MMVIII
+ 1666 MDCLXVI
+ 2026 MMXXVI
+ 1954 MCMLIV
+ 3999 MMMCMXCIX
+  444 CDXLIV
+   42 XLII
+   14 XIV
+    4 IV
+    1 I
+    0 error: 0 has no Roman numeral
+every number from 1 to 3999 decodes back to itself: true

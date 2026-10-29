@@ -1,0 +1,3 @@
+k08_a_loop_over_an_item_of_a_list_never_given_one.co:9:14: 'row' is an item of a list never given one, so it has no kind to walk
+  9 │     for t in row
+    │              ^^^

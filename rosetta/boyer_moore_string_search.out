@@ -1,0 +1,22 @@
+text1 = GCTAGCTCTACGAGTCTA
+text2 = GGCTATAATGCGTA
+text3 = there would have been a time for such a word
+text4 = needle need noodle needle
+text5 = InhisbookseriesTheArtofComputerProgrammingpublishedbyAddisonWesleyDKnuthusesanimaginarycomputertheMIXanditsassociatedmachinecodeandassemblylanguagestoillustratetheconceptsandalgorithmsastheyarepresented
+text6 = Nearby farms grew a half acre of alfalfa on the dairy's behalf, with bales of all that alfalfa exchanged for milk.
+text7 = Due to a malfunction, alfredo halfheartedly wore calfskin severalfold on behalf of alfa.
+text8 = alfredo, behalf, calfskin, halfhearted, malfunction, severalfold, alfalfa
+text9 = alfalfalfa
+text10 = zzzzzz
+
+'TCTA' in text1: at [6, 14] after 5 alignments and 14 comparisons
+'TAATAAA' in text2: at [] after 3 alignments and 4 comparisons
+'word' in text3: at [40] after 12 alignments and 15 comparisons
+'needle' in text4: at [0, 19] after 5 alignments and 18 comparisons
+'put' in text5: at [26, 90] after 70 alignments and 78 comparisons
+'and' in text5: at [101, 128, 171] after 71 alignments and 79 comparisons
+'alfalfa' in text6: at [33, 87] after 20 alignments and 42 comparisons
+'alfa' in text7: at [83] after 25 alignments and 32 comparisons
+'alfalfa' in text8: at [66] after 14 alignments and 24 comparisons
+'alfa' in text9: at [0, 3, 6] after 3 alignments and 12 comparisons
+'zzz' in text10: at [0, 1, 2, 3] after 4 alignments and 12 comparisons

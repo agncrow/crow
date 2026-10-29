@@ -1,0 +1,53 @@
+--- Rosetta Code: Own digits power sum
+--- https://rosettacode.org/wiki/Own_digits_power_sum
+--- The sum of the digits' powers does not depend on their order, so each multiset of
+--- N digits is tried once, written as a non-decreasing list: its power sum is a hit
+--- when the sum has N digits and they are the same multiset (N = 9 is 48,620 tries).
+
+fn sorted_digits[n]
+    --- the digits of n, smallest first
+    ds = []
+    while n gt 0
+        ds = push[ds, n % 10]
+        n = n / 10
+    return sort[ds]
+
+fn next_multiset[ds]
+    --- the non-decreasing list of digits after ds, or [] after the last (all nines)
+    i = len[ds] - 1
+    while i gte 0 and ds[i] eq 9
+        i = i - 1
+    if i lt 0
+        return []
+    d = ds[i] + 1
+    while i lt len[ds]
+        ds[i] = d
+        i = i + 1
+    return ds
+
+fn own_digits_power_sums[n]
+    --- every n-digit number equal to the sum of its digits, each to the power n
+    powers = for d in range[10]
+        d ^ n
+    low = 10 ^ (n - 1)
+    high = 10 ^ n
+    found = []
+    ds = for i in range[n]
+        0
+    while len[ds] gt 0
+        total = 0
+        i = 0
+        while i lt n
+            total = total + powers[ds[i]]
+            i = i + 1
+        if total gte low and total lt high and sorted_digits[total] eq ds
+            found = push[found, total]
+        ds = next_multiset[ds]
+    return sort[found]
+
+log['Own digits power sums for N = 3 to 9 inclusive:']
+for n in range[3, 10]
+    shown = for s in own_digits_power_sums[n]
+        str[s]
+    line = join[shown, ' ']
+    log['N = `n`: `line`']

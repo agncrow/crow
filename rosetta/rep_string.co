@@ -1,0 +1,31 @@
+--- Rosetta Code: Rep-string
+--- https://rosettacode.org/wiki/Rep-string
+--- The first k characters repeat through the text exactly when the text from
+--- position k on is a start of the text; k runs to half the length, so the unit
+--- appears at least twice. Every unit is listed, shortest first.
+
+fn repeats[s, k]
+    return starts[s, slice[s, k, len[s]]]
+
+--- Every repeating unit of s, shortest first: empty when s is no rep-string.
+fn rep_units[s]
+    n = len[s]
+    units = for k in range[1, n / 2 + 1]
+        if repeats[s, k]
+            slice[s, 0, k]
+    return units
+
+fn report[s]
+    units = rep_units[s]
+    shown = fmt[s, width = 12]
+    if len[units] eq 0
+        log['`shown`not a rep-string']
+    else
+        every = join[units, ', ']
+        longest = fmt[units[-1], width = 14]
+        log['`shown``longest``every`']
+
+tests = ['1001110011', '1110111011', '0010010010', '1010101010', '1111111111', '0100101101', '0100100', '101', '11', '00', '1']
+log['string      longest unit  every unit']
+for s in tests
+    report[s]

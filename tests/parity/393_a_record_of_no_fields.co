@@ -1,0 +1,17 @@
+--- a record of no fields is a value like any record: shown, encoded,
+--- handed to a function and held in a list — compiled, its display had
+--- left Rust to guess the kind of its pairs, and the program did not build
+--- (Rosetta Code, Visitor pattern)
+
+struct Body []
+struct Wheel [name]
+
+fn visit[b]
+    return 'body'
+
+b = Body[]
+log[b]
+log[visit[b]]
+log[encode[b]]
+log[[Body[], Body[]]]
+log[Wheel['front']]

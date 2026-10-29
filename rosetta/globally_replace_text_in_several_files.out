@@ -1,0 +1,24 @@
+Before:
+--- london_1.txt
+Goodbye London!
+We said Goodbye London! and then Goodbye London! again.
+--- london_2.txt
+Nothing to change here:
+Goodbye, London! has a comma, and goodbye london! no capitals.
+--- london_3.txt
+Goodbye London!Goodbye London!Goodbye London!
+
+london_1.txt: 3 replaced
+london_2.txt: 0 replaced
+london_3.txt: 3 replaced
+cannot read 'london_4.txt': No such file or directory (os error 2)
+
+After:
+--- london_1.txt
+Hello New York!
+We said Hello New York! and then Hello New York! again.
+--- london_2.txt
+Nothing to change here:
+Goodbye, London! has a comma, and goodbye london! no capitals.
+--- london_3.txt
+Hello New York!Hello New York!Hello New York!

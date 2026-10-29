@@ -1,0 +1,64 @@
+--- Rosetta Code: Blum integer
+--- https://rosettacode.org/wiki/Blum_integer
+--- A Blum integer is p * q for distinct primes p and q of the form 4t + 3: sieve the
+--- primes up to a third of the limit, keep those of that form, multiply each pair
+--- whose product stays under the limit, and sort. Nine million holds the 400,000th.
+
+fn primes_upto[limit]
+    composite = for i in range[limit + 1]
+        false
+    found = []
+    i = 2
+    while i lte limit
+        if not composite[i]
+            found = push[found, i]
+            j = i * i
+            while j lte limit
+                composite[j] = true
+                j = j + i
+        i = i + 1
+    return found
+
+fn blum_upto[limit]
+    --- Every Blum integer up to the limit, in order. The smaller prime is at least 3,
+    --- so the larger is at most a third of the limit.
+    primes = for p in primes_upto[limit / 3]
+        if p % 4 eq 3
+            p
+    found = []
+    i = 0
+    while primes[i] * primes[i] lt limit
+        j = i + 1
+        while j lt len[primes] and primes[i] * primes[j] lte limit
+            found = push[found, primes[i] * primes[j]]
+            j = j + 1
+        i = i + 1
+    return sort[found]
+
+fn show_rows[xs, per_row, width]
+    i = 0
+    while i lt len[xs]
+        cells = for x in slice[xs, i, i + per_row]
+            fmt[x, width = width]
+        log[join[cells, ' ']]
+        i = i + per_row
+
+fn ordinal[n]
+    return fmt[n, commas = true, width = 7]
+
+blum = blum_upto[9000000]
+log['First 50 Blum integers:']
+show_rows[slice[blum, 0, 50], 10, 4]
+log['']
+for n in [26828, 100000, 200000, 300000, 400000]
+    log['The `ordinal[n]`th Blum integer is `fmt[blum[n - 1], commas = true, width = 9]`']
+
+first = slice[blum, 0, 400000]
+log['']
+log['Distribution by last digit of the first 400,000 Blum integers:']
+for digit in [1, 3, 7, 9]
+    ending = for n in first
+        if n % 10 eq digit
+            n
+    share = fmt[100.0 * len[ending] / len[first], decimals = 3]
+    log['  `share`% end in `digit`']

@@ -1,0 +1,79 @@
+--- Rosetta Code: Brazilian numbers
+--- https://rosettacode.org/wiki/Brazilian_numbers
+--- n is Brazilian when some base 1 < b < n - 1 writes it with every digit the same. Three
+--- digits or more need b * b <= n, so those bases are tried one by one; two digits dd in
+--- base b is n = d * (b + 1) with 2 <= d < b, which is a divisor d with d * (d + 2) <= n.
+
+--- whether n written in base b has every digit the same
+fn same_digits[n, b]
+    digit = n % b
+    rest = n / b
+    while rest gt 0
+        if rest % b ne digit
+            return false
+        rest = rest / b
+    return true
+
+fn is_brazilian[n]
+    if n lt 7
+        return false
+    if n % 2 eq 0
+        return true
+    b = 2
+    while b * b lte n
+        if same_digits[n, b]
+            return true
+        b = b + 1
+    d = 3
+    while d * (d + 2) lte n
+        if n % d eq 0
+            return true
+        d = d + 2
+    return false
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    if n % 2 eq 0
+        return n eq 2
+    d = 3
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 2
+    return true
+
+--- the first count Brazilian numbers from start, stepping by step (primes only, if asked)
+fn first[count, start, step, primes_only]
+    found = []
+    n = start
+    while len[found] lt count
+        if is_brazilian[n] and (not primes_only or is_prime[n])
+            found = push[found, n]
+        n = n + step
+    return found
+
+fn show[title, xs]
+    shown = for x in xs
+        str[x]
+    line = join[shown, ' ']
+    log['First 20 `title`Brazilian numbers:']
+    log[line]
+    log['']
+
+show['', first[20, 1, 1, false]]
+show['odd ', first[20, 1, 2, false]]
+show['prime ', first[20, 1, 2, true]]
+
+--- the 10th, 100th, ... 100,000th Brazilian number
+count = 0
+n = 0
+target = 10
+while target lte 100000
+    n = n + 1
+    if is_brazilian[n]
+        count = count + 1
+        if count eq target
+            place = fmt[count, commas = true, width = 7]
+            log['The `place`th Brazilian number is `fmt[n, commas = true]`']
+            target = target * 10

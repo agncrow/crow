@@ -1,0 +1,97 @@
+--- Rosetta Code: Jump anywhere
+--- https://rosettacode.org/wiki/Jump_anywhere
+--- Crow has no goto, no labels and no continuations: its jumps are structured.
+--- break leaves a while loop and continue goes back to its test; return leaves
+--- a function from any depth of its loops; a failure is a value, and one that
+--- meets a decision makes its function return it at once, so it unwinds every
+--- call that does not ask .ok, as an exception does; exit ends the program
+--- from anywhere. A program written with gotos runs as a while loop over its
+--- labels, the label to go to held in a variable.
+
+--- break: the first square above a limit
+fn first_square_above[limit]
+    n = 1
+    while true
+        if n * n gt limit
+            break
+        n = n + 1
+    return n * n
+
+--- continue: the sum of the numbers up to a limit that 2 and 3 do not divide
+fn sum_of_coprimes_to_six[limit]
+    total = 0
+    n = 0
+    while n lt limit
+        n = n + 1
+        if n % 2 eq 0 or n % 3 eq 0
+            continue
+        total = total + n
+    return total
+
+--- return: leaves both loops at once, as a labelled break would
+fn first_pair_summing_to[xs, target]
+    for i in range[len[xs]]
+        for j in range[i + 1, len[xs]]
+            if xs[i] + xs[j] eq target
+                return '`xs[i]` + `xs[j]`'
+    return 'no pair'
+
+--- a non-local exit: a failure made at the deepest call unwinds every call
+--- above it, each returning at its first decision on it, until one asks .ok
+fn descend[depth, deepest, blocked]
+    log['  entering level `depth`']
+    if depth eq deepest
+        if blocked
+            return error['no way down past level `depth`', 'unwind']
+        return 0
+    below = descend[depth + 1, deepest, blocked]
+    if below gte 0
+        log['  leaving level `depth`']
+    return below + 1
+
+fn explore[blocked]
+    result = descend[0, 3, blocked]
+    if not result.ok
+        log['  caught at the top: `result.reason`']
+    else
+        log['  back at the top, `result` levels up']
+
+log['break: the first square above 50 is `first_square_above[50]`']
+log['continue: the numbers to 20 that 2 and 3 do not divide sum to `sum_of_coprimes_to_six[20]`']
+log['return: in [3, 9, 4, 12, 7], 16 is `first_pair_summing_to[[3, 9, 4, 12, 7], 16]`']
+log['Three calls down, nothing failing:']
+explore[false]
+log['A failure three calls down unwinds them all:']
+explore[true]
+
+--- gotos, the label to go to in a variable: the loop restarts once
+log['goto, as a loop over labels:']
+label = 'start'
+message = ''
+i = 0
+while label ne 'end'
+    if label eq 'start'
+        i = 1
+        label = 'loop'
+    else if label eq 'loop'
+        log['  `i`']
+        if i eq 2 and message eq ''
+            log['  Oops - forgot to define the message! Start again.']
+            message = 'Hello world'
+            label = 'start'
+        else if i eq 3
+            label = 'done'
+        else
+            i = i + 1
+    else if label eq 'done'
+        log['  `message`']
+        label = 'end'
+
+--- exit: the end of the program, from anywhere
+log['exit:']
+for n in range[10]
+    if n eq 3
+        log['  leaving the program at n = 3']
+        exit[0]
+    log['  n = `n`']
+log['never shown']

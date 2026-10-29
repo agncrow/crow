@@ -1,0 +1,50 @@
+--- Rosetta Code: Hailstone sequence
+--- https://rosettacode.org/wiki/Hailstone_sequence
+--- hailstone[n] makes the sequence from n down to 1. The search below 100,000 needs
+--- only lengths, so it keeps each one found: a number's sequence is walked only
+--- until it falls below the number, whose length is then already known.
+
+fn hailstone[n]
+    --- the hailstone sequence of a positive int, from n down to 1
+    seq = [n]
+    while n ne 1
+        if n % 2 eq 0
+            n = n / 2
+        else
+            n = 3 * n + 1
+        seq = push[seq, n]
+    return seq
+
+fn shown[xs]
+    parts = for x in xs
+        str[x]
+    return join[parts, ', ']
+
+fn longest_below[limit]
+    --- the start below limit with the longest sequence, and that length
+    lengths = for i in range[limit]
+        0
+    lengths[1] = 1
+    best = 1
+    n = 2
+    while n lt limit
+        m = n
+        steps = 0
+        while m gte n
+            if m % 2 eq 0
+                m = m / 2
+            else
+                m = 3 * m + 1
+            steps = steps + 1
+        lengths[n] = steps + lengths[m]
+        if lengths[n] gt lengths[best]
+            best = n
+        n = n + 1
+    return [best, lengths[best]]
+
+s = hailstone[27]
+first = shown[slice[s, 0, 4]]
+last = shown[slice[s, -4, len[s]]]
+log['The hailstone sequence for 27 has `len[s]` elements, starting with `first` and ending with `last`']
+found = longest_below[100000]
+log['Below 100,000, `found[0]` has the longest hailstone sequence: `found[1]` elements (`len[hailstone[found[0]]]` by the routine)']

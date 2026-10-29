@@ -1,0 +1,26 @@
+--- a value that can fail written into a record's field made plain holds
+--- the failure, as a field given one where the record is made does (spec,
+--- Structs: `b.speed.ok` asks the field): the field had stayed plain, so
+--- `c.v.ok` was true of a failure interpreted, and the compiled program
+--- did not build
+struct Box [v]
+
+fn maybe[n]
+    if n lt 0
+        return error['negative', 'x']
+    return n
+
+fn filled[b, n]
+    b.v = maybe[n]
+    return b
+
+b = Box[0]
+b.v = maybe[5]
+log[b.v]
+c = Box[0]
+c.v = maybe[-1]
+log[c.v.ok]
+log[c.v.reason]
+d = filled[Box[1], -2]
+log[d.v.ok]
+log[filled[Box[1], 7].v]

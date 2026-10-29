@@ -1,0 +1,7 @@
+R(1) to R(10): 1, 3, 7, 12, 18, 26, 35, 45, 56, 69
+As the task says: true
+S(1) to S(10): 2, 4, 5, 6, 8, 9, 10, 11, 13, 14
+
+ffr[1..40] and ffs[1..960] hold every integer from 1 to 1000 exactly once: true
+
+No maximum: ffr[1000000] = 500918449417, ffs[1000000] = 1001384

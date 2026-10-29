@@ -1,0 +1,30 @@
+--- A call in a `while` condition is handed what the loop's body leaves:
+--- the condition runs before every round. The width pass had read the
+--- condition's calls with the variable's range from before the loop, so
+--- `check[big]` held `big` in 64 bits and the program stopped at the first
+--- round past 2^63, in both modes (Rosetta Code, Primes: n*2^m+1).
+
+fn check[x]
+    return x gt 10 ^ 30
+
+fn half[x]
+    return x / 2
+
+big = 48
+while not check[big]
+    big = 2 * big
+log[big]
+
+fn doubled_past[limit]
+    n = 3
+    while half[n] lt limit
+        n = n * 2
+    return n
+
+log[doubled_past[10 ^ 25]]
+k = 0
+m = 5
+while k lt 100 and not check[m]
+    m = m * 3
+    k = k + 1
+log[k, m]

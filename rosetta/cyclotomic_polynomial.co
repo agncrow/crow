@@ -1,0 +1,127 @@
+--- Rosetta Code: Cyclotomic polynomial
+--- https://rosettacode.org/wiki/Cyclotomic_polynomial
+--- The nth cyclotomic polynomial is the product of (x^d - 1)^mu(n/d) over the divisors
+--- d of n. For n > 1 that is the product of (1 - x^d)^mu(n/d), worked out as a power
+--- series: times (1 - x^d) is c[i] - c[i - d] from the top down, and over (1 - x^d)
+--- is c[i] + c[i - d] from the bottom up, so no polynomial division is needed.
+--- The search: Φ2n(x) = Φn(-x) for odd n, and Φn(x) = Φr(x^(n/r)) for r the product of
+--- n's distinct primes, so Φn has the coefficient sizes of Φm, m the odd part of r, and
+--- the first n with a coefficient of some size is odd and squarefree. Φp and Φpq have
+--- only 0 and ±1 (Migotti, 1883), and Φ1 = x - 1 has 1, so the search for the larger
+--- sizes computes only the n with three distinct odd primes or more, and of each only
+--- the lower half of its coefficients (Φn for n > 1 reads the same both ways).
+
+fn prime_factors[n]
+    --- the primes dividing n, each as often as it divides
+    found = []
+    p = 2
+    while p * p lte n
+        while n % p eq 0
+            found = push[found, p]
+            n = n / p
+        p = p + 1
+    if n gt 1
+        found = push[found, n]
+    return found
+
+fn distinct[primes]
+    kept = []
+    for p in primes
+        if not (p in kept)
+            kept = push[kept, p]
+    return kept
+
+fn totient[n]
+    --- the degree of the nth cyclotomic polynomial
+    phi = n
+    for p in distinct[prime_factors[n]]
+        phi = phi - phi / p
+    return phi
+
+fn series[n, terms]
+    --- the first `terms` coefficients of the nth cyclotomic polynomial, n > 1, the
+    --- constant first; mu(n/d) is 0 unless d is n over a product of distinct primes
+    ds = [n]
+    signs = [1]
+    for p in distinct[prime_factors[n]]
+        fewer = for d in ds
+            d / p
+        flipped = for s in signs
+            -s
+        ds = concat[ds, fewer]
+        signs = concat[signs, flipped]
+    c = for i in range[terms]
+        0
+    c[0] = 1
+    for k in range[len[ds]]
+        d = ds[k]
+        if signs[k] eq 1
+            --- times (1 - x^d)
+            i = terms - 1
+            while i gte d
+                c[i] = c[i] - c[i - d]
+                i = i - 1
+        else
+            --- over (1 - x^d), that is times 1 + x^d + x^2d + ...
+            for i in range[d, terms]
+                c[i] = c[i] + c[i - d]
+    return c
+
+fn cyclotomic[n]
+    --- every coefficient of the nth cyclotomic polynomial, the constant first
+    if n eq 1
+        return [-1, 1]
+    return series[n, totient[n] + 1]
+
+fn term[c, k, first]
+    --- one term of a polynomial, with the sign before it
+    sign = ' + '
+    if c lt 0
+        sign = ' - '
+    if first
+        sign = ''
+        if c lt 0
+            sign = '-'
+    size = ''
+    if abs[c] ne 1 or k eq 0
+        size = str[abs[c]]
+    power = ''
+    if k eq 1
+        power = 'x'
+    else if k gt 1
+        power = 'x^`k`'
+    return '`sign``size``power`'
+
+fn show[cs]
+    --- a polynomial, the highest power first
+    text = ''
+    first = true
+    k = len[cs] - 1
+    while k gte 0
+        if cs[k] ne 0
+            text = '`text``term[cs[k], k, first]`'
+            first = false
+        k = k - 1
+    return text
+
+log['The first 30 cyclotomic polynomials:']
+for n in range[1, 31]
+    log['CP[`fmt[n, width = 2]`] = `show[cyclotomic[n]]`']
+log['']
+
+--- first[size]: the smallest n whose polynomial has size or -size as a coefficient
+first = map[]
+first = set[first, 1, 1]
+n = 3
+while len[first] lt 10
+    factors = prime_factors[n]
+    if len[factors] gte 3 and len[distinct[factors]] eq len[factors]
+        for c in series[n, totient[n] / 2 + 1]
+            size = abs[c]
+            if size gte 1 and size lte 10 and not (size in first)
+                first = set[first, size, n]
+    n = n + 2
+
+log['The smallest cyclotomic polynomial with n or -n as a coefficient:']
+for size in range[1, 11]
+    log['`fmt[size, width = 2]`: CP[`first[size]`]']

@@ -1,0 +1,19 @@
+--- two records compared where one is a function's lent parameter or a
+--- loop's borrowed item: compared as the records they are — a record had
+--- been compared with a borrow of one, and the compiled program did not
+--- build
+
+struct P [name]
+
+fn differs[k, ps]
+    left = ps[1]
+    if left ne k
+        return 1
+    return 0
+
+log[differs[P['a'], [P['a'], P['b']]]]
+
+k = P['a']
+for p in [P['a'], P['b']]
+    if p ne k
+        log[p]

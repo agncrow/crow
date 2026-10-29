@@ -1,0 +1,16 @@
+Triangle (3/2, 12/5), (51/10, -31/10), (-19/5, 1/2)
+  (0, 0) is inside
+  (0, 1) is inside
+  (3, 1) is outside
+  (51/10, -31/10) is on an edge
+  (-23/20, 29/20) is on an edge
+  (-23/20, 73/50) is outside
+Triangle (0, 0), (1, 1), (2, 2)
+  (1, 1) is not placed: the corners lie on one line
+
+Triangle (1/10, 1/9), (25/2, 100/3), (25, 100/9)
+  (379/70, 904/63) is on an edge
+  in floats (5.414285714285714, 14.349206349206348) is outside
+Triangle (1/10, 1/9), (25/2, 100/3), (-25/2, 50/3)
+  (379/70, 904/63) is on an edge
+  in floats (5.414285714285714, 14.349206349206348) is inside

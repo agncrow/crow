@@ -1,0 +1,54 @@
+--- Rosetta Code: Inverted syntax
+--- https://rosettacode.org/wiki/Inverted_syntax
+--- Crow writes a condition before its action and a name before its value, and
+--- has no inverted form of either: `need_umbrella = true if raining` is refused
+--- ("a line holds one statement — 'if' starts a second one: put it on a line of
+--- its own"), and so is `6 = a` ("invalid assignment target"). The nearest it
+--- comes, as the Go and Kotlin entries do, is a function that takes the value or
+--- the action first and the condition after it, which `then` writes in that
+--- order: `x then f[c]` is `f[x, c]`.
+
+--- a truth when the condition holds, its opposite when it does not
+fn iif[value, condition]
+    if condition
+        return value
+    return not value
+
+--- runs the action, a function handed by name, when the condition holds
+fn only_if[action, condition]
+    if condition
+        action[]
+
+fn take_umbrella[]
+    log['    -> the action ran: take an umbrella']
+
+--- the traditional order in a function: a guard first, the action after it
+fn what_to_carry[raining]
+    if not raining
+        return 'nothing'
+    return 'an umbrella'
+
+for raining in [true, false]
+    log['Is it raining? `raining`.']
+
+    --- traditional: the condition, then the action
+    need_umbrella = false
+    if raining
+        need_umbrella = true
+    log['  if raining / need_umbrella = true      -> need an umbrella? `need_umbrella`']
+
+    --- inverted: the value, then the condition
+    need_umbrella = true then iif[raining]
+    log['  need_umbrella = true then iif[raining] -> need an umbrella? `need_umbrella`']
+
+    --- inverted: the action, then the condition
+    log['  take_umbrella then only_if[raining]']
+    take_umbrella then only_if[raining]
+
+    --- a guard written first
+    log['  what_to_carry[raining]                 -> `what_to_carry[raining]`']
+    log['']
+
+--- assignment has one order, the name and then its value
+a = 6
+log['a = 6 -> a is `a`']

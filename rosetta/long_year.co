@@ -1,0 +1,42 @@
+--- Rosetta Code: Long year
+--- https://rosettacode.org/wiki/Long_year
+--- An ISO 8601 year has 53 weeks when it starts on a Thursday or ends on one (a
+--- year's week 1 is the week holding its first Thursday). The weekday comes from
+--- the year's own first and last days as moments (weekday 1 is Monday, 4 Thursday);
+--- the same answer by arithmetic alone (the weekday of 31 December from the
+--- Gregorian leap rule) checks it.
+
+fn long_year[year]
+    return moment[year, 1, 1].weekday eq 4 or moment[year, 12, 31].weekday eq 4
+
+--- The weekday of 31 December of year, 0 for Sunday to 6 for Saturday.
+fn last_day[year]
+    return (year + year / 4 - year / 100 + year / 400) % 7
+
+fn long_year_by_arithmetic[year]
+    return last_day[year] eq 4 or last_day[year - 1] eq 3
+
+fn show_rows[years, per_row]
+    i = 0
+    while i lt len[years]
+        row = for y in slice[years, i, i + per_row]
+            str[y]
+        log['  `join[row, \' \']`']
+        i = i + per_row
+
+long = for year in range[2000, 2101]
+    if long_year[year]
+        year
+log['The long (53-week) years from 2000 to 2100:']
+show_rows[long, 9]
+log['']
+
+cycle = for year in range[2000, 2400]
+    if long_year[year]
+        year
+log['Long years in a 400-year cycle of the calendar: `len[cycle]`']
+
+agree = for year in range[1, 10000]
+    if long_year[year] ne long_year_by_arithmetic[year]
+        year
+log['The two ways agree for every year from 1 to 9999: `len[agree] eq 0`']

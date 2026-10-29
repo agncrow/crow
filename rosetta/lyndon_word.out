@@ -1,0 +1,39 @@
+Lyndon words of length 1 to 5 over {0, 1}:
+    0
+    00001
+    0001
+    00011
+    001
+    00101
+    0011
+    00111
+    01
+    01011
+    011
+    0111
+    01111
+    1
+14 words; Lyndon words of length 1 to 5 over 2 symbols number 14
+each word strictly before all its rotations, and after the word before it: yes
+
+Lyndon words of length 1 to 3 over {a, b, c}:
+    a
+    aab
+    aac
+    ab
+    abb
+    abc
+    ac
+    acb
+    acc
+    b
+    bbc
+    bc
+    bcc
+    c
+14 words; Lyndon words of length 1 to 3 over 3 symbols number 14
+each word strictly before all its rotations, and after the word before it: yes
+
+Lyndon words of length 1 to 7 over {0, 1, 2, 3}, not listed:
+3304 words; Lyndon words of length 1 to 7 over 4 symbols number 3304
+each word strictly before all its rotations, and after the word before it: yes

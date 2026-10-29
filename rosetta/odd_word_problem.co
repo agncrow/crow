@@ -1,0 +1,59 @@
+--- Rosetta Code: Odd word problem
+--- https://rosettacode.org/wiki/Odd_word_problem
+--- Crow reads standard input a line at a time (input[]) and writes a line at a
+--- time (log): it has no read or write of one character. So each line read is the
+--- stream, taken through one reader that answers the next character and never
+--- looks ahead or back (where the reading has got to is handed from call to call,
+--- as a function sees no variable outside it), and the output is a text written a
+--- character at a time, logged when the line ends. An odd word is reversed by
+--- recursion: each call reads a letter and holds it while the call within reads
+--- and writes the rest of the word, then writes its own. No character is kept in
+--- a collection to be reversed later.
+
+struct Step [at, out, mark]
+--- how far the line is read, what is written so far, and the punctuation read last
+
+fn next_char[line, at]
+    --- the character at `at`; past the end, the full stop the stream promises
+    if at lt len[line]
+        return line[at]
+    '.'
+
+fn is_letter[c]
+    matches[c, '^[A-Za-z]$']
+
+fn forward[line, at, out]
+    --- an even word: each letter written as soon as it is read, then the mark
+    c = next_char[line, at]
+    if not is_letter[c]
+        return Step[at + 1, '`out``c`', c]
+    forward[line, at + 1, '`out``c`']
+
+fn backward[line, at, out]
+    --- an odd word: a letter is held while the call within reads and writes the
+    --- rest of the word, then written; the mark that ends the word is handed back
+    --- unwritten, for the first call's caller to write after the word
+    c = next_char[line, at]
+    if not is_letter[c]
+        return Step[at + 1, out, c]
+    rest = backward[line, at + 1, out]
+    Step[rest.at, '`rest.out``c`', rest.mark]
+
+fn odd_words[line]
+    --- the line with every other word reversed, its punctuation left in place
+    step = forward[line, 0, '']
+    odd = true
+    while step.mark ne '.'
+        if odd
+            word = backward[line, step.at, step.out]
+            step = Step[word.at, '`word.out``word.mark`', word.mark]
+        else
+            step = forward[line, step.at, step.out]
+        odd = not odd
+    step.out
+
+line = input[]
+while line.ok
+    log['in:  `line`']
+    log['out: `odd_words[line]`']
+    line = input[]

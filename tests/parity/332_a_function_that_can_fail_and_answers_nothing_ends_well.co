@@ -1,0 +1,29 @@
+--- A function that can fail and answers nothing answers its success at a
+--- bare `return` and where its body ends on an `if` or a loop: compiled,
+--- `return;` had not built (E0069), nor had a body ending on `()` (E0308)
+--- (Rosetta Code, 15 puzzle game).
+fn check[s]
+    n = int[s]
+    if n gt 5
+        log['big']
+        return
+    log['small']
+
+fn sort_of[s]
+    n = int[s]
+    if n gt 5
+        log['big']
+    else
+        log['small']
+
+fn count_down[s]
+    n = int[s]
+    while n gt 0
+        log[n]
+        n = n - 1
+
+check['7']
+check['2']
+sort_of['7']
+sort_of['2']
+count_down['3']

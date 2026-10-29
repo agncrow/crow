@@ -1,0 +1,28 @@
+program:
+    2 ^ x
+with [x = 3]: 8
+with [x = 5]: 32
+difference: 24
+
+program:
+    3 * x + y
+with [x = 3, y = 1]: 10
+with [x = 5, y = 2]: 17
+difference: 7
+
+program:
+    fn poly[t]
+        3 * t * t - 2 * t + 1
+    poly[x]
+with [x = 1]: 2
+with [x = 4]: 41
+difference: 39
+
+program:
+    use math
+    exp[x]
+with [x = 0]: 1
+with [x = 1]: 2.718281828459045
+difference: 1.718281828459045
+
+2 ^ z with x = 1: error: line 1: undefined variable 'z'

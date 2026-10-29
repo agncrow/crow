@@ -1,0 +1,34 @@
+--- Rosetta Code: O'Halloran numbers
+--- https://rosettacode.org/wiki/O'Halloran_numbers
+--- Every cuboid with l ≥ w ≥ h ≥ 1 and half its area, lw + lh + wh, below a limit
+--- is visited once (each loop stops where the smallest half-area left reaches the
+--- limit), and that half-area marked; the even numbers above 6 whose halves are
+--- never marked are the O'Halloran numbers. The search runs to areas of 100,000,
+--- past the task's 1,000, to see that no more turn up there.
+
+fn half_areas_below[limit]
+    --- whether each number below limit is lw + lh + wh for some cuboid
+    seen = for s in range[limit]
+        false
+    h = 1
+    while 3 * h * h lt limit
+        w = h
+        while w * w + 2 * w * h lt limit
+            l = w
+            while l * (w + h) + w * h lt limit
+                seen[l * (w + h) + w * h] = true
+                l = l + 1
+            w = w + 1
+        h = h + 1
+    seen
+
+seen = half_areas_below[50000]
+found = for s in range[4, 50000]
+    if not seen[s]
+        2 * s
+task = for n in found
+    if n lt 1000
+        str[n]
+log['The even numbers from 8 to 998 that are no cuboid\'s surface area (`len[task]`):']
+log[join[task, ' ']]
+log['Below 100,000 there are `len[found]` such numbers in all.']

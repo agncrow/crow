@@ -1,0 +1,75 @@
+--- Rosetta Code: Narcissistic decimal number
+--- https://rosettacode.org/wiki/Narcissistic_decimal_number
+--- The sum of the m-th powers of an m-digit number's digits depends only on which
+--- digits it has, not on their order. So for each length m, each multiset of m
+--- digits is tried once (as a non-decreasing list): its power sum is narcissistic
+--- where the sum's own digits are that multiset. Lengths 1 to 7 hold the first 25
+--- (19,447 multisets in all, where counting through the numbers would try ten
+--- million). Beyond the task, lengths 1 to 14 give every narcissistic number
+--- below 10^14 (1,961,255 multisets, about four seconds interpreted).
+
+fn sorted_digits[n]
+    ds = [n % 10]
+    m = n / 10
+    while m gt 0
+        ds = push[ds, m % 10]
+        m = m / 10
+    return sort[ds]
+
+fn of_length[m]
+    --- the narcissistic numbers of m digits, in order
+    powers = for d in range[10]
+        d ^ m
+    found = []
+    ds = for i in range[m]
+        0
+    going = true
+    while going
+        total = 0
+        for d in ds
+            total = total + powers[d]
+        if sorted_digits[total] eq ds
+            found = push[found, total]
+        --- the next multiset: raise the last digit below 9, and set the digits
+        --- after it to the same
+        i = m - 1
+        while i gte 0 and ds[i] eq 9
+            i = i - 1
+        if i lt 0
+            going = false
+        else
+            raised = ds[i] + 1
+            j = i
+            while j lt m
+                ds[j] = raised
+                j = j + 1
+    return sort[found]
+
+fn shown[ns]
+    if len[ns] eq 0
+        return 'none'
+    parts = for n in ns
+        str[n]
+    return join[parts, ' ']
+
+numbers = []
+m = 1
+while len[numbers] lt 25
+    numbers = concat[numbers, of_length[m]]
+    m = m + 1
+log['The first 25 narcissistic decimal numbers:']
+for row in range[5]
+    log[shown[slice[numbers, row * 5, row * 5 + 5]]]
+
+log['']
+log['Every narcissistic number below 10^14, by length:']
+count = 0
+for size in range[1, 15]
+    found = of_length[size]
+    count = count + len[found]
+    unit = 'digits'
+    if size eq 1
+        unit = 'digit'
+    label = '`fmt[size, width = 2]` `unit`:'
+    log['`fmt[label, width = 10]` `shown[found]`']
+log['`count` in all']

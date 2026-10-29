@@ -1,0 +1,35 @@
+Input                                        Space Address (hex)                     Port
+127.0.0.1                                    IPv4  7F000001                          none
+127.0.0.1:80                                 IPv4  7F000001                          80
+::1                                          IPv6  00000000000000000000000000000001  none
+[::1]:80                                     IPv6  00000000000000000000000000000001  80
+2605:2700:0:3::4713:93e3                     IPv6  260527000000000300000000471393E3  none
+[2605:2700:0:3::4713:93e3]:80                IPv6  260527000000000300000000471393E3  80
+::ffff:127.0.0.1                             IPv6  00000000000000000000FFFF7F000001  none
+[::ffff:71.19.147.227]:80                    IPv6  00000000000000000000FFFF471393E3  80
+::192.168.0.1                                IPv6  000000000000000000000000C0A80001  none
+::                                           IPv6  00000000000000000000000000000000  none
+1::                                          IPv6  00010000000000000000000000000000  none
+[1::]:65535                                  IPv6  00010000000000000000000000000000  65535
+192.168.0.1:0                                IPv4  C0A80001                          0
+2001:db8:85a3:0:0:8a2e:370:7334              IPv6  20010DB885A3000000008A2E03707334  none
+2001:db8:85a3::8a2e:370:7334                 IPv6  20010DB885A3000000008A2E03707334  none
+[2001:db8:85a3:8d3:1319:8a2e:370:7348]:443   IPv6  20010DB885A308D313198A2E03707348  443
+ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff      IPv6  FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF  none
+0000:0000:0000::0000:0000                    IPv6  00000000000000000000000000000000  none
+fff:ffff:0:ffff:ffff:ffff:ffff:ffff          IPv6  0FFFFFFF0000FFFFFFFFFFFFFFFFFFFF  none
+256.0.0.0                                    error: the octet 256 is past 255
+127.0.0.1:65536                              error: the port 65536 is past 65535
+1.2.3                                        error: '1.2.3' is not four dotted octets
+g::1                                         error: 'g' is not a group of one to four hex digits
+a::b::1                                      error: 'a::b::1' holds :: more than once
+0000:0000                                    error: '0000:0000' holds 2 groups, not 8
+1:2:3:4:5:6:7:8::                            error: '1:2:3:4:5:6:7:8::' leaves no group for :: to stand for
+::ffff:127.0.0.0.1                           error: '127.0.0.0.1' is not four dotted octets
+1.2.3.4::                                    error: '1.2.3.4' is not a group of one to four hex digits
+[::1                                         error: '[::1' opens [ and does not close it once
+[::1]80                                      error: '80' after ] is not :port
+
+127.0.0.1 has the address number 7F000001 (2130706433 decimal) in the IPv4 address space
+::ffff:127.0.0.1 has the address number FFFF7F000001 (281472812449793 decimal) in the IPv6 address space
+::1 has the address number 1 (1 decimal) in the IPv6 address space

@@ -1,0 +1,68 @@
+A tree read from an outline:
+
+Animalia
+├── Chordata
+│   ├── Mammalia
+│   │   ├── Carnivora
+│   │   │   ├── Felidae
+│   │   │   ├── Canidae
+│   │   │   └── Ursidae
+│   │   └── Primates
+│   │       └── Hominidae
+│   └── Aves
+│       └── Passeriformes
+├── Arthropoda
+│   ├── Insecta
+│   │   ├── Coleoptera
+│   │   └── Lepidoptera
+│   └── Arachnida
+└── Mollusca
+
+                                                           Animalia
+                                ┌─────────────────────────────┴─────────┬───────────────────┐
+                             Chordata                               Arthropoda           Mollusca
+                     ┌──────────┴───────────┐                  ┌────────┴─────────┐
+                  Mammalia                 Aves             Insecta           Arachnida
+            ┌────────┴─────────┐            │            ┌─────┴──────┐
+        Carnivora           Primates  Passeriformes  Coleoptera  Lepidoptera
+   ┌────────┼────────┐         │
+Felidae  Canidae  Ursidae  Hominidae
+
+A random tree, each number split among its children:
+
+12
+├── 10
+│   ├── 7
+│   │   ├── 3
+│   │   │   ├── 2
+│   │   │   │   ├── 1
+│   │   │   │   └── 1
+│   │   │   └── 1
+│   │   └── 4
+│   │       ├── 3
+│   │       │   ├── 2
+│   │       │   │   ├── 1
+│   │       │   │   └── 1
+│   │       │   └── 1
+│   │       └── 1
+│   ├── 1
+│   ├── 1
+│   └── 1
+└── 2
+    ├── 1
+    └── 1
+
+                        12
+                  ┌─────┴──────┐
+                  10           2
+         ┌────────┴──┬──┬──┐  ┌┴─┐
+         7           1  1  1  1  1
+   ┌─────┴─────┐
+   3           4
+ ┌─┴──┐     ┌──┴──┐
+ 2    1     3     1
+┌┴─┐      ┌─┴──┐
+1  1      2    1
+         ┌┴─┐
+         1  1
+

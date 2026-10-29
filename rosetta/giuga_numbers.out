@@ -1,0 +1,8 @@
+The first four Giuga numbers, by the definition: 30 858 1722 66198
+
+By the search over sets of primes:
+    3 prime factors: 30
+    4 prime factors: 858 1722
+    5 prime factors: 66198
+    6 prime factors: 2214408306 24423128562
+The fifth Giuga number is 2214408306, and the sixth 24423128562; by the definition: true, true

@@ -1,0 +1,11 @@
+text            without first   without last    without both
+'knight'        'night'         'knigh'         'nigh'
+'socks'         'ocks'          'sock'          'ock'
+'brooms'        'rooms'         'broom'         'room'
+'café'          'afé'           'caf'           'af'
+'αβγδ'          'βγδ'           'αβγ'           'βγ'
+'𝔘𝔫𝔦𝔠𝔬𝔡𝔢'       '𝔫𝔦𝔠𝔬𝔡𝔢'        '𝔘𝔫𝔦𝔠𝔬𝔡'        '𝔫𝔦𝔠𝔬𝔡'
+'🦊crow🐦'        'crow🐦'         '🦊crow'         'crow'
+'ab'            'b'             'a'             ''
+'a'             ''              ''              ''
+''              ''              ''              ''

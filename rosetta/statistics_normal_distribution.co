@@ -1,0 +1,79 @@
+--- Rosetta Code: Statistics/Normal distribution
+--- https://rosettacode.org/wiki/Statistics/Normal_distribution
+--- Normal numbers from a seeded uniform source, two ways: Box-Muller over tensors of
+--- uniform draws (a radius sqrt(-2 ln u) and an angle 2 pi v make two normals), and
+--- Marsaglia's polar method with rand[] one draw at a time (a point of the square is
+--- kept when it falls inside the unit circle, and needs no sine or cosine). Native
+--- support: use math has randn[n], standard normals (itself Box-Muller, written in
+--- Crow), and normal[mean, std, n]; math's mean and math.stats's std (the population
+--- standard deviation) give the statistics. Each set of 100,000 numbers is shown with
+--- its mean, its standard deviation and the shares within 1, 2 and 3 deviations of
+--- the mean (a normal's are 68.27%, 95.45% and 99.73%); the two built from uniform
+--- draws are drawn as histograms in characters, a bar per half deviation.
+
+use math, math.stats
+
+fn box_muller[n]
+    u = uniform[0.0, 1.0, n / 2]
+    v = uniform[0.0, 1.0, n / 2]
+    --- 1 - u lies in (0, 1], so its log is finite
+    radius = sqrt[-2.0 * ln[1.0 - u]]
+    angle = 2.0 * pi * v
+    return concat[radius .* cos[angle], radius .* sin[angle]]
+
+fn marsaglia[n]
+    found = []
+    while len[found] lt n
+        x = 2.0 * rand[] - 1.0
+        y = 2.0 * rand[] - 1.0
+        s = x * x + y * y
+        if s gt 0.0 and s lt 1.0
+            scale = sqrt[-2.0 * ln[s] / s]
+            found = push[found, x * scale]
+            found = push[found, y * scale]
+    return tensor[found]
+
+--- the shares of xs within 1, 2 and 3 deviations of the mean
+fn shares[xs, m, s]
+    shown = for k in [1, 2, 3]
+        within = xs[abs[xs - m] lte k * s]
+        '`fmt[100.0 * len[within] / len[xs], decimals = 2]`%'
+    return join[shown, ', ']
+
+--- how many of xs fall in each of the bins of the given width from lo
+fn histogram[xs, lo, width, bins]
+    counts = for b in range[bins]
+        0
+    for x in xs
+        b = floor[(x - lo) / width]
+        if b gte 0 and b lt bins
+            counts[b] = counts[b] + 1
+    return counts
+
+--- bars of half a deviation, from 4 deviations below the mean to 4 above
+fn draw[xs, m, s]
+    counts = histogram[xs, m - 4.0 * s, s / 2.0, 16]
+    most = max[counts]
+    for b in range[16]
+        lo = m + (b - 8) * s / 2.0
+        bin = '`fmt[lo, decimals = 2, width = 6]` .. `fmt[lo + s / 2.0, decimals = 2, width = 6]`'
+        share = fmt[100.0 * counts[b] / len[xs], decimals = 2, width = 6]
+        bar = repeat['#', counts[b] * 50 / most]
+        log['  `bin` `share`% |`bar`']
+
+fn report[title, xs, drawn]
+    m = mean[xs]
+    s = std[xs]
+    log[title]
+    log['  mean `fmt[m, decimals = 5]`, standard deviation `fmt[s, decimals = 5]`']
+    log['  within 1, 2 and 3 deviations: `shares[xs, m, s]`']
+    if drawn
+        draw[xs, m, s]
+    log['']
+
+seed[2026]
+n = 100000
+report['Box-Muller, from 100,000 uniform draws:', box_muller[n], true]
+report['Marsaglia\'s polar method, from uniform draws one at a time:', marsaglia[n], true]
+report['randn[100000], math\'s own standard normals:', randn[n], false]
+report['normal[50.0, 4.0, 100000], math\'s normals of mean 50 and deviation 4:', normal[50.0, 4.0, n], false]

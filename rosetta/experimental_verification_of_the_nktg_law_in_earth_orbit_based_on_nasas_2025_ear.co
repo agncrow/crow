@@ -1,0 +1,93 @@
+--- Rosetta Code: Experimental Verification of the NKTg Law in Earth Orbit Based on NASA’s 2025 Earth Dataset
+--- https://rosettacode.org/wiki/Experimental_Verification_of_the_NKTg_Law_in_Earth_Orbit_Based_on_NASA’s_2025_Earth_Dataset
+--- The task's computation over its tables, in SI units: for each date p = m v,
+--- NKTg1 = x p and NKTg2 = (dm/dt) p with dm/dt = -1.8 kg/s, first for the 2024
+--- data (which gives the tabled NKTg1 to every digit), then for the simulated
+--- 2025 data, whose velocity is compared with NASA's (relative error in %).
+--- Last, the simulated velocity is made from the law rather than read from the
+--- table: NKTg1 held at its value of 12/31/2024, so v = NKTg1 / (x m). Floats
+--- are shown in scientific notation by sci below.
+use math
+
+struct Day [date, x, v, m]
+
+fn day_of[row]
+    --- date, x (m), v (m/s), m (kg)
+    cells = for w in split[row, ' ']
+        if w ne ''
+            w
+    return Day[cells[0], float[cells[1]], float[cells[2]], float[cells[3]]]
+
+fn sci[x, places]
+    --- x as d.ddd...e±n, with places digits after the point
+    if x eq 0.0
+        return '0'
+    e = floor[log10[abs[x]]]
+    shown = fmt[x / 10.0 ^ e, decimals = places]
+    if starts[shown, '10.'] or starts[shown, '-10.']
+        e = e + 1
+        shown = fmt[x / 10.0 ^ e, decimals = places]
+    return '`shown`e`e`'
+
+fn line[cells, widths]
+    padded = for i in range[len[cells]]
+        fmt[cells[i], width = widths[i]]
+    return trim[join[padded, '']]
+
+fn percent[sim, observed]
+    return fmt[(sim - observed) / observed, percent = true, decimals = 4]
+
+dm_dt = -1.8
+
+data_2024 = [
+    '1/1/2024     1.47103e11  3.0286e4  5.97e24',
+    '4/1/2024     1.49526e11  2.9785e4  5.97e24',
+    '7/1/2024     1.52094e11  2.9292e4  5.97e24',
+    '10/1/2024    1.49599e11  2.9782e4  5.97e24',
+    '12/31/2024   1.47101e11  3.0287e4  5.97e24'
+]
+simulated_2025 = [
+    '1/1/2025     1.471012e11  3.0276e4  5.97219e24',
+    '4/1/2025     1.494953e11  2.9791e4  5.97218999999998e24',
+    '7/1/2025     1.520965e11  2.9282e4  5.97218999999997e24',
+    '10/1/2025    1.496328e11  2.9764e4  5.97218999999995e24',
+    '12/31/2025   1.471025e11  3.0276e4  5.97218999999994e24'
+]
+nasa_v_2025 = [30287.0, 29791.0, 29291.0, 29778.0, 30286.0]
+
+year_2024 = for row in data_2024
+    day_of[row]
+year_2025 = for row in simulated_2025
+    day_of[row]
+
+log['Earth in 2024 (NASA JPL Horizons), dm/dt = `dm_dt` kg/s:']
+widths = [12, 16, 22, 16]
+log[line[['Date', 'p = m v', 'NKTg1 = x p', 'NKTg2 = (dm/dt) p'], widths]]
+for d in year_2024
+    p = d.m * d.v
+    log[line[[d.date, sci[p, 7], sci[d.x * p, 12], sci[dm_dt * p, 7]], widths]]
+
+log['']
+log['Earth in 2025, simulated by the NKTg law and observed by NASA:']
+widths2 = [12, 12, 12, 13, 12, 10, 10]
+log[line[['Date', 'p = m v', 'NKTg1', 'NKTg2', 'v_sim', 'v_NASA', 'error'], widths2]]
+i = 0
+while i lt len[year_2025]
+    d = year_2025[i]
+    p = d.m * d.v
+    shown = [d.date, sci[p, 3], sci[d.x * p, 3], sci[dm_dt * p, 3], sci[d.v, 4], sci[nasa_v_2025[i], 4], percent[d.v, nasa_v_2025[i]]]
+    log[line[shown, widths2]]
+    i = i + 1
+
+held = year_2024[-1].x * (year_2024[-1].m * year_2024[-1].v)
+log['']
+log['The simulated velocity from the law, NKTg1 held at `sci[held, 12]` (12/31/2024):']
+widths3 = [12, 20, 12, 12, 10]
+log[line[['Date', 'v = NKTg1 / (x m)', 'tabled', 'v_NASA', 'error'], widths3]]
+i = 0
+while i lt len[year_2025]
+    d = year_2025[i]
+    v = held / (d.x * d.m)
+    shown = [d.date, fmt[v, decimals = 4], sci[d.v, 4], sci[nasa_v_2025[i], 4], percent[v, nasa_v_2025[i]]]
+    log[line[shown, widths3]]
+    i = i + 1

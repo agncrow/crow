@@ -1,0 +1,6 @@
+The first 5 odd k > 1 with k + 2^m composite for every m from 1 to k - 1:
+773: of the 772 numbers 773 + 2^m, 761 have a prime factor below 2,000 and the other 11 fail a Fermat test to base 3
+2131: of the 2130 numbers 2131 + 2^m, 2106 have a prime factor below 2,000 and the other 24 fail a Fermat test to base 3
+2491: of the 2490 numbers 2491 + 2^m, 2408 have a prime factor below 2,000 and the other 82 fail a Fermat test to base 3
+4471: of the 4470 numbers 4471 + 2^m, 4339 have a prime factor below 2,000 and the other 131 fail a Fermat test to base 3
+5101: of the 5100 numbers 5101 + 2^m, 4917 have a prime factor below 2,000 and the other 183 fail a Fermat test to base 3

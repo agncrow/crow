@@ -1,0 +1,12 @@
+--- a statement loop over moments borrows each, and handing one to a
+--- function that takes it copies it: the borrow had been handed as it was,
+--- and the compiled program did not build
+fn year_of[t]
+    return t.year
+
+days = [moment['2020-02-02'], moment['2021-12-12']]
+for t in days
+    log[year_of[t]]
+ys = for t in days
+    year_of[t]
+log[ys]

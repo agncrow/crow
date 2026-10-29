@@ -1,0 +1,110 @@
+--- Rosetta Code: War card game
+--- https://rosettacode.org/wiki/War_card_game
+--- Bicycle's rules: the shuffled deck (seeded, so the same game every run) is dealt
+--- one card at a time to two players. Each turn both turn up their top card; the
+--- higher rank (aces high, suits never count) takes both to the bottom of his stack.
+--- Cards of one rank are war: each player lays one card face down and one face up,
+--- again while the face-up cards tie, and the higher face-up card takes the whole
+--- pile. The winner gathers the cards won in no set order (they are shuffled, again
+--- seeded), as a game whose won cards keep one order can come round to where it was
+--- and go on for ever, and puts them at the bottom. A player who cannot lay down the
+--- two cards a war asks for loses (one of the ways Wikipedia gives; the rules page is
+--- silent), and whoever holds all 52 cards wins.
+
+use math
+
+fn card_name[card]
+    faces = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+    suits = ['♣', '♦', '♥', '♠']
+    return '`faces[card / 4]``suits[card % 4]`'
+
+fn value_of[card]
+    return card / 4
+
+--- Fisher-Yates
+fn shuffled[deck]
+    i = len[deck] - 1
+    while i gt 0
+        j = rand[i + 1]
+        t = deck[i]
+        deck[i] = deck[j]
+        deck[j] = t
+        i = i - 1
+    return deck
+
+fn rest[hand]
+    return slice[hand, 1, len[hand]]
+
+--- a line of the game: the turn, the cards turned up, what happens, and how many
+--- cards each player holds after it
+fn row[number, a, b, what, counts]
+    turn = fmt[number, width = 4, align = 'right']
+    line = '`turn`  `fmt[a, width = 4]`  `fmt[b, width = 4]`  `what`'
+    if counts eq ''
+        return line
+    return '`fmt[line, width = 50]``counts`'
+
+fn held[one, two]
+    return '`fmt[len[one], width = 3]``fmt[len[two], width = 5]`'
+
+fn play[deck]
+    one = []
+    two = []
+    for i in range[len[deck]]
+        if i % 2 eq 0
+            one = push[one, deck[i]]
+        else
+            two = push[two, deck[i]]
+    log[row['turn', 'one', 'two', '', 'one  two']]
+    turn = 0
+    over = false
+    while not over
+        turn = turn + 1
+        a = one[0]
+        b = two[0]
+        one = rest[one]
+        two = rest[two]
+        pile = [a, b]
+        number = '`turn`'
+        short = false
+        while value_of[a] eq value_of[b] and not short
+            if len[one] lt 2 or len[two] lt 2
+                short = true
+            else
+                log[row[number, card_name[a], card_name[b], 'war: one card down, one up', '']]
+                number = ''
+                pile = concat[pile, [one[0], two[0], one[1], two[1]]]
+                a = one[1]
+                b = two[1]
+                one = slice[one, 2, len[one]]
+                two = slice[two, 2, len[two]]
+        pile = shuffled[pile]
+        what = ''
+        if short
+            what = 'war, and neither can fight it'
+            if len[one] lt len[two]
+                what = 'war, and one cannot fight it'
+                two = concat[two, concat[pile, one]]
+                one = []
+            else if len[two] lt len[one]
+                what = 'war, and two cannot fight it'
+                one = concat[one, concat[pile, two]]
+                two = []
+        else if value_of[a] gt value_of[b]
+            one = concat[one, pile]
+            what = 'one takes `len[pile]` cards'
+        else
+            two = concat[two, pile]
+            what = 'two takes `len[pile]` cards'
+        log[row[number, card_name[a], card_name[b], what, held[one, two]]]
+        over = short or len[one] eq 0 or len[two] eq 0
+    log['']
+    if len[two] eq 0
+        log['Player one wins the game, on turn `turn`.']
+    else if len[one] eq 0
+        log['Player two wins the game, on turn `turn`.']
+    else
+        log['The game is drawn, on turn `turn`.']
+
+seed[14]
+play[shuffled[range[52]]]

@@ -1,0 +1,35 @@
+--- Rosetta Code: Find limit of recursion
+--- https://rosettacode.org/wiki/Find_limit_of_recursion
+--- Crow's limit is a rule of the language, the same in both modes: calls may nest
+--- 10000 deep, and the call that would nest one deeper stops the program with
+--- "runtime error: line N: recursion deeper than 10000 calls — ..." on standard
+--- error, exit status 1. The stop is no error value, so nothing catches it: the
+--- program shows the limit reached (by one function, and by two calling each
+--- other), then recurses without end, saying how deep it is every 2000 calls,
+--- until the stop ends it.
+
+--- how many calls nest when depth[n] is called: n + 1
+fn depth[n]
+    if n eq 0
+        return 1
+    return 1 + depth[n - 1]
+
+fn ping[n]
+    if n eq 0
+        return 1
+    return 1 + pong[n - 1]
+
+fn pong[n]
+    if n eq 0
+        return 1
+    return 1 + ping[n - 1]
+
+--- no case returns: it goes deeper until the program stops
+fn descend[level]
+    if level % 2000 eq 0
+        log['`level` calls deep']
+    descend[level + 1]
+
+log['depth[9999] nests `depth[9999]` calls']
+log['ping and pong, calling each other, nest `ping[9999]` calls']
+descend[1]

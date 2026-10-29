@@ -1,0 +1,22 @@
+S = 5 4 5 5 2 1 5 6 1 3 5 0, sigma 7: 3 levels
+  level 0 (bit 2): 1 1 1 1 0 0 1 1 0 0 1 0   zeros 5
+  level 1 (bit 1): 1 0 0 1 0 0 0 0 0 0 1 0   zeros 9
+  level 2 (bit 0): 1 1 0 1 0 1 1 1 1 0 1 0   zeros 4
+  access, every position                  5 4 5 5 2 1 5 6 1 3 5 0
+  rank, the 5s in S[0, 8)                 4
+  select, the 4th 5                       position 6
+  select, the 3rd 1                       none
+  quantile, the 3rd smallest of S[2, 9)   2
+  range count, 2 to 4 in S[0, 12)         3
+  previous value, below 5 in S[0, 5)      4
+  next value, from 3 in S[4, 9)           5
+  next value, from 7 in S[0, 12)          none
+
+The reference entries' example, [3374, 956, 2114, 3415, 3437], queries (l, r, k):
+  (2, 2, 1): 956
+  (3, 4, 1): 2114
+  (4, 5, 1): 3415
+  (1, 2, 2): 3374
+  (4, 4, 1): 3415
+
+A random sequence of 1,000 numbers below 1000 (10 levels): every access, and 1000 random queries of each other kind, checked against a plain search: 0 wrong

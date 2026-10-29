@@ -1,0 +1,35 @@
+--- Rosetta Code: Semordnilap
+--- https://rosettacode.org/wiki/Semordnilap
+--- The words of unixdict.txt go into a map; a word whose reversal is another word of the
+--- map is half of a pair, counted once, from the word that sorts first (a palindrome
+--- reverses to itself and is no pair). The five examples are the longest pairs.
+
+fn pairs_of[words]
+    known = map[words, range[len[words]]]
+    found = for w in words
+        r = reverse[w]
+        if w lt r and r in known
+            [w, r]
+    return found
+
+--- the first count pairs, longest first, in dictionary order within a length
+fn longest[pairs, count]
+    size = 0
+    for p in pairs
+        size = max[size, len[p[0]]]
+    chosen = []
+    while len[chosen] lt count and size gt 0
+        for p in pairs
+            if len[p[0]] eq size and len[chosen] lt count
+                chosen = push[chosen, p]
+        size = size - 1
+    return chosen
+
+text = read['unixdict.txt']
+words = for line in split[text, '\n']
+    if trim[line] ne ''
+        trim[line]
+pairs = pairs_of[words]
+log['`len[pairs]` semordnilap pairs in unixdict.txt; the five longest:']
+for p in longest[pairs, 5]
+    log['  `p[0]` / `p[1]`']

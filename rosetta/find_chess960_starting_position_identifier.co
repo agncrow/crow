@@ -1,0 +1,115 @@
+--- Rosetta Code: Find Chess960 starting position identifier
+--- https://rosettacode.org/wiki/Find_Chess960_starting_position_identifier
+--- The position, as letters (KQRBN) or chess symbols of either side, is checked, then
+--- read as the task says: the knights' pair among the five squares left without the
+--- queen and bishops (N), the queen among the six without the bishops (Q), each
+--- bishop among the squares of its colour (D, L); the id is 96N + 16Q + 4D + L.
+--- To check the reading, every id 0..959 is turned into its position (Wikipedia's
+--- direct derivation) and read back.
+
+--- the letter a piece is written with
+fn letter_of[piece]
+    symbols = map['♔' = 'K', '♕' = 'Q', '♖' = 'R', '♗' = 'B', '♘' = 'N', '♚' = 'K', '♛' = 'Q', '♜' = 'R', '♝' = 'B', '♞' = 'N']
+    if piece in symbols
+        return symbols[piece]
+    return upper[piece]
+
+--- where letter stands among pieces
+fn places[pieces, letter]
+    found = for i in range[len[pieces]]
+        if pieces[i] eq letter
+            i
+    return found
+
+--- the pieces left when every piece written in gone is taken away
+fn without[pieces, gone]
+    kept = for p in pieces
+        if p not in gone
+            p
+    return kept
+
+--- the five squares hold ten pairs, numbered left to right: NN--- is 0, ---NN is 9
+fn pair_index[a, b]
+    index = b - a - 1
+    for i in range[a]
+        index = index + 4 - i
+    return index
+
+--- the position's letters, or why it is no Chess960 starting position
+fn checked[position]
+    pieces = for p in split[position, '']
+        letter_of[p]
+    if len[pieces] ne 8
+        return error['8 pieces are needed, not `len[pieces]`', 'chess960']
+    wanted = map[K = 1, Q = 1, R = 2, B = 2, N = 2]
+    for p in pieces
+        if p not in wanted
+            return error['`p` is no piece', 'chess960']
+    for letter in keys[wanted]
+        count = len[places[pieces, letter]]
+        if count ne wanted[letter]
+            return error['`count` of `letter`, where there must be `wanted[letter]`', 'chess960']
+    bishops = places[pieces, 'B']
+    if bishops[0] % 2 eq bishops[1] % 2
+        return error['the bishops stand on squares of one colour', 'chess960']
+    rooks = places[pieces, 'R']
+    king = places[pieces, 'K'][0]
+    if king lt rooks[0] or king gt rooks[1]
+        return error['the king does not stand between the rooks', 'chess960']
+    return pieces
+
+fn identifier[position]
+    pieces = checked[position]
+    knights = places[without[pieces, ['Q', 'B']], 'N']
+    n = pair_index[knights[0], knights[1]]
+    q = places[without[pieces, ['B']], 'Q'][0]
+    bishops = places[pieces, 'B']
+    dark = bishops[0] / 2
+    light = bishops[1] / 2
+    if bishops[0] % 2 eq 1
+        dark = bishops[1] / 2
+        light = bishops[0] / 2
+    return 96 * n + 16 * q + 4 * dark + light
+
+--- the empty squares of a board being set up
+fn empties[board]
+    found = for i in range[8]
+        if board[i] eq '-'
+            i
+    return found
+
+--- the position an id stands for: bishops, queen, knights, then rook, king, rook
+fn position_of[id]
+    board = split['--------', '']
+    board[2 * (id % 4) + 1] = 'B'
+    board[2 * ((id / 4) % 4)] = 'B'
+    board[empties[board][(id / 16) % 6]] = 'Q'
+    pair = id / 96
+    free = empties[board]
+    for a in range[5]
+        for b in range[a + 1, 5]
+            if pair_index[a, b] eq pair
+                board[free[a]] = 'N'
+                board[free[b]] = 'N'
+    free = empties[board]
+    board[free[0]] = 'R'
+    board[free[1]] = 'K'
+    board[free[2]] = 'R'
+    return join[board, '']
+
+for position in ['QNRBBNKR', 'RNBQKBNR', 'RQNBBKRN', 'RNQBBKRN', '♕♘♖♗♗♘♔♖', '♛♞♜♝♝♞♚♜', 'rnbqkbnr']
+    log['`position`  `identifier[position]`']
+log['']
+for position in ['RNBQK', 'RNBQKBNX', 'RNBQKBNQ', 'RNBQKNBR', 'KRNBBNQR']
+    id = identifier[position]
+    log['`position`  not a Chess960 position: `id.reason`']
+log['']
+wrong = 0
+seen = map[]
+for id in range[960]
+    position = position_of[id]
+    seen = set[seen, position, id]
+    if identifier[position] ne id
+        wrong = wrong + 1
+log['id 0 is `position_of[0]`, id 518 is `position_of[518]`, id 959 is `position_of[959]`']
+log['`len[seen]` different positions from the ids 0..959; `wrong` read back to another id']

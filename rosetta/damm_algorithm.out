@@ -1,0 +1,9 @@
+   5724 is valid
+   5727 is invalid
+ 112946 is valid
+ 112949 is invalid
+
+the check digit of 572 is 4, making 5724
+the check digit of 11294 is 6, making 112946
+the check digit of 2026 is 5, making 20265
+the check digit of 1234567890 is 6, making 12345678906

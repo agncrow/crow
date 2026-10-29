@@ -1,0 +1,27 @@
+--- Rosetta Code: Count the coins
+--- https://rosettacode.org/wiki/Count_the_coins
+--- ways[s] counts the ways to make s cents. Taking the coins in turn, the ways
+--- to make s with the coins so far are those without the new coin plus those
+--- with at least one of it: ways[s] + ways[s - coin]. Ints grow past 64 bits.
+
+fn ways_to_make[amount, coins]
+    ways = for s in range[amount + 1]
+        0
+    ways[0] = 1
+    for coin in coins
+        for s in range[coin, amount + 1]
+            ways[s] = ways[s] + ways[s - coin]
+    return ways[amount]
+
+common = [25, 10, 5, 1]
+log['a dollar, in quarters, dimes, nickels and pennies: `ways_to_make[100, common]` ways']
+
+all_us = [100, 50, 25, 10, 5, 1]
+log['$1000, with half dollars and dollar coins too: `ways_to_make[1000 * 100, all_us]` ways']
+log['$10000, the same coins: `ways_to_make[10000 * 100, all_us]` ways']
+log['$100000, the same coins: `ways_to_make[100000 * 100, all_us]` ways']
+
+euro = [200, 100, 50, 20, 10, 5, 2, 1]
+log['']
+log['a euro, in cent coins (50, 20, 10, 5, 2, 1): `ways_to_make[100, slice[euro, 2, len[euro]]]` ways']
+log['1000 euros, with 1 and 2 euro coins too: `ways_to_make[1000 * 100, euro]` ways']

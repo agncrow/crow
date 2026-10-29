@@ -1,0 +1,50 @@
+--- Rosetta Code: Isograms and heterograms
+--- https://rosettacode.org/wiki/Isograms_and_heterograms
+--- A word's order is n when each of its characters (in lower case) is used n
+--- times, 0 when the counts differ; the words, their orders and lengths make a
+--- frame, which picks and sorts the n-isograms (n > 1) and the long heterograms.
+
+use frame
+
+--- how many times each character of the word is used
+fn counts_of[word]
+    seen = map[]
+    for c in split[lower[word], '']
+        n = 0
+        if c in seen
+            n = seen[c]
+        seen = set[seen, c, n + 1]
+    return values[seen]
+
+--- n where every character is used n times, 0 where they are not used alike
+fn isogram_order[word]
+    counts = counts_of[word]
+    i = 1
+    while i lt len[counts]
+        if counts[i] ne counts[0]
+            return 0
+        i = i + 1
+    return counts[0]
+
+fn show[title, words]
+    log['`title` (`len[words]`):']
+    for w in words
+        log['  `w`']
+
+words = for w in split[read['unixdict.txt'], '\n']
+    if w ne ''
+        w
+orders = for w in words
+    isogram_order[w]
+sizes = for w in words
+    len[w]
+all_words = frame.new[word = words, n = orders, size = sizes]
+
+isograms = all_words[all_words.n gt 1]
+isograms = sort[isograms, ['n', 'size', 'word'], desc = [true, true, false]]
+show['n-isograms with n > 1, by n, then length, then alphabetically', isograms.word]
+log['']
+
+heterograms = all_words[all_words.n eq 1 and all_words.size gt 10]
+heterograms = sort[heterograms, ['size', 'word'], desc = [true, false]]
+show['Heterograms longer than 10 characters, by length, then alphabetically', heterograms.word]

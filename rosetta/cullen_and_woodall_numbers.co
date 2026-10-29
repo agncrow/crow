@@ -1,0 +1,117 @@
+--- Rosetta Code: Cullen and Woodall numbers
+--- https://rosettacode.org/wiki/Cullen_and_Woodall_numbers
+--- C(n) = n * 2^n + 1 and W(n) = n * 2^n - 1, as ints, which grow without limit. For
+--- the primes, each n is first sieved by every prime below 100,000 at once: the powers
+--- of 2 modulo the primes are a tensor, doubled as n grows, so n * 2^n + 1 (or - 1) is
+--- divisible by one of them where (n * 2^n mod p) + 1 is. The few n left are tested by
+--- Miller-Rabin (bases 3 and 5); the fifth Cullen prime, n = 6611, has 1,994 digits.
+use math
+
+fn cullen[n]
+    return n * 2 ^ n + 1
+
+fn woodall[n]
+    return n * 2 ^ n - 1
+
+--- the primes below limit, by the sieve of Eratosthenes
+fn primes_below[limit]
+    sieve = for i in range[limit]
+        true
+    primes = []
+    n = 2
+    while n lt limit
+        if sieve[n]
+            primes = push[primes, n]
+            m = n * n
+            while m lt limit
+                sieve[m] = false
+                m = m + n
+        n = n + 1
+    return primes
+
+fn pow_mod[base, power, m]
+    result = 1
+    b = base % m
+    e = power
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+--- whether base a shows that the odd n, n - 1 = d * 2^s, is composite
+fn witness[a, d, s, n]
+    x = pow_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return false
+    i = 1
+    while i lt s
+        x = x * x % n
+        if x eq n - 1
+            return false
+        i = i + 1
+    return true
+
+--- Miller-Rabin for an odd n with no small factor
+fn probable_prime[n]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    return not witness[3, d, s, n] and not witness[5, d, s, n]
+
+--- whether n is prime, by trial division alone (n below the square of the last prime)
+fn small_prime[n, primes]
+    if n lt 2
+        return false
+    i = 0
+    while i lt len[primes] and primes[i] * primes[i] lte n
+        if n % primes[i] eq 0
+            return false
+        i = i + 1
+    return true
+
+--- the first `wanted` n for which n * 2^n + side is prime (side 1 for Cullen, -1 for
+--- Woodall), both odd, so sieved by the odd primes. While the number is below the
+--- largest sieving prime, trial division decides; past it, a prime that divides it is
+--- a proper factor.
+fn prime_indices[side, wanted, primes]
+    ps = tensor[slice[primes, 1, len[primes]]]
+    powers = ps * 0 + 1
+    top = primes[-1]
+    found = []
+    n = 0
+    while len[found] lt wanted
+        n = n + 1
+        powers = mod[powers * 2, ps]
+        number = n * 2 ^ n + side
+        if number lt top
+            if small_prime[number, primes]
+                found = push[found, n]
+        else if min[mod[powers * n + side, ps]] gt 0 and probable_prime[number]
+            found = push[found, n]
+    return found
+
+fn listed[numbers]
+    shown = for x in numbers
+        str[x]
+    return join[shown, ' ']
+
+cullens = for n in range[1, 21]
+    cullen[n]
+woodalls = for n in range[1, 21]
+    woodall[n]
+log['The first 20 Cullen numbers, n * 2^n + 1:']
+log[listed[cullens]]
+log['']
+log['The first 20 Woodall numbers, n * 2^n - 1:']
+log[listed[woodalls]]
+log['']
+primes = primes_below[100000]
+log['The first 5 Cullen primes, by n:']
+log[listed[prime_indices[1, 5, primes]]]
+log['']
+log['The first 12 Woodall primes, by n:']
+log[listed[prime_indices[-1, 12, primes]]]

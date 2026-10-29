@@ -1,0 +1,146 @@
+--- Rosetta Code: Bitcoin/address validation
+--- https://rosettacode.org/wiki/Bitcoin/address_validation
+--- An address is read from base 58 into 25 bytes — refused for a character outside
+--- the alphabet, a number past 25 bytes, a version other than 0, or text that is not
+--- its bytes' own encoding (a leading 1 for each zero byte) — and its last four bytes
+--- are checked against a double SHA-256 of the first 21. SHA-256 is written here over
+--- a list of byte values: the core `hash` reads text, which holds no arbitrary bytes.
+
+use bits
+
+fn hex_number[text]
+    n = 0
+    for c in split[text, '']
+        k = code[c]
+        if k gte 97
+            n = n * 16 + k - 87
+        else
+            n = n * 16 + k - 48
+    return n
+
+fn hex_words[text]
+    words = for w in split[text, ' ']
+        hex_number[w]
+    return words
+
+fn hex_byte[b]
+    digits = '0123456789abcdef'
+    return '`digits[b / 16]``digits[b % 16]`'
+
+fn hex_of[data]
+    pairs = for b in data
+        hex_byte[b]
+    return join[pairs, '']
+
+fn rotr[x, n]
+    return bitor[shift[x, -n], bitand[shift[x, 32 - n], 4294967295]]
+
+fn xor3[a, b, c]
+    return bitxor[bitxor[a, b], c]
+
+fn word32[x]
+    return bitand[x, 4294967295]
+
+fn padded[message]
+    out = push[message, 128]
+    while len[out] % 64 ne 56
+        out = push[out, 0]
+    length = len[message] * 8
+    for i in range[8]
+        out = push[out, bitand[shift[length, -8 * (7 - i)], 255]]
+    return out
+
+fn schedule[data, at]
+    w = for t in range[16]
+        i = at + 4 * t
+        bitor[bitor[shift[data[i], 24], shift[data[i + 1], 16]], bitor[shift[data[i + 2], 8], data[i + 3]]]
+    t = 16
+    while t lt 64
+        s0 = xor3[rotr[w[t - 15], 7], rotr[w[t - 15], 18], shift[w[t - 15], -3]]
+        s1 = xor3[rotr[w[t - 2], 17], rotr[w[t - 2], 19], shift[w[t - 2], -10]]
+        w = push[w, word32[w[t - 16] + s0 + w[t - 7] + s1]]
+        t = t + 1
+    return w
+
+fn compress[h, w, k]
+    a, b, c, d, e, f, g, hh = h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]
+    t = 0
+    while t lt 64
+        s1 = xor3[rotr[e, 6], rotr[e, 11], rotr[e, 25]]
+        pick = bitxor[bitand[e, f], bitand[bitxor[e, 4294967295], g]]
+        t1 = hh + s1 + pick + k[t] + w[t]
+        s0 = xor3[rotr[a, 2], rotr[a, 13], rotr[a, 22]]
+        majority = xor3[bitand[a, b], bitand[a, c], bitand[b, c]]
+        t2 = s0 + majority
+        hh, g, f, e, d, c, b, a = g, f, e, word32[d + t1], c, b, a, word32[t1 + t2]
+        t = t + 1
+    after = [a, b, c, d, e, f, g, hh]
+    sums = for i in range[8]
+        word32[h[i] + after[i]]
+    return sums
+
+fn sha256[message]
+    k = hex_words['428a2f98 71374491 b5c0fbcf e9b5dba5 3956c25b 59f111f1 923f82a4 ab1c5ed5 d807aa98 12835b01 243185be 550c7dc3 72be5d74 80deb1fe 9bdc06a7 c19bf174 e49b69c1 efbe4786 0fc19dc6 240ca1cc 2de92c6f 4a7484aa 5cb0a9dc 76f988da 983e5152 a831c66d b00327c8 bf597fc7 c6e00bf3 d5a79147 06ca6351 14292967 27b70a85 2e1b2138 4d2c6dfc 53380d13 650a7354 766a0abb 81c2c92e 92722c85 a2bfe8a1 a81a664b c24b8b70 c76c51a3 d192e819 d6990624 f40e3585 106aa070 19a4c116 1e376c08 2748774c 34b0bcb5 391c0cb3 4ed8aa4a 5b9cca4f 682e6ff3 748f82ee 78a5636f 84c87814 8cc70208 90befffa a4506ceb bef9a3f7 c67178f2']
+    h = hex_words['6a09e667 bb67ae85 3c6ef372 a54ff53a 510e527f 9b05688c 1f83d9ab 5be0cd19']
+    data = padded[message]
+    at = 0
+    while at lt len[data]
+        h = compress[h, schedule[data, at], k]
+        at = at + 64
+    digest = []
+    for word in h
+        for i in range[4]
+            digest = push[digest, bitand[shift[word, -8 * (3 - i)], 255]]
+    return digest
+
+fn alphabet[]
+    return '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
+fn base58[data]
+    digits = split[alphabet[], '']
+    n = 0
+    for b in data
+        n = n * 256 + b
+    out = []
+    while n gt 0
+        out = push[out, digits[n % 58]]
+        n = n / 58
+    zeros = 0
+    while zeros lt len[data] and data[zeros] eq 0
+        zeros = zeros + 1
+    ones = repeat['1', zeros]
+    rest = join[reverse[out], '']
+    return '`ones``rest`'
+
+fn decoded[address]
+    --- The 25 bytes an address holds, or why it is no address.
+    value = map[split[alphabet[], ''], range[58]]
+    chars = split[address, '']
+    n = 0
+    i = 0
+    while i lt len[chars]
+        if chars[i] not in value
+            return error['a character outside base 58', 'address']
+        n = n * 58 + value[chars[i]]
+        i = i + 1
+    if n gte 2 ^ 200
+        return error['more than 25 bytes', 'address']
+    data = for i in range[25]
+        bitand[shift[n, -8 * (24 - i)], 255]
+    if data[0] ne 0
+        return error['a version other than 0', 'address']
+    if base58[data] ne address
+        return error['not the encoding of its bytes', 'address']
+    check = sha256[sha256[slice[data, 0, 21]]]
+    if slice[check, 0, 4] ne slice[data, 21, 25]
+        return error['a checksum that does not match', 'address']
+    return data
+
+addresses = ['1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62i', '1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62j', '1Q1pE5vPGEEMqRcVRMbtBK842Y6Pzo6nK9', '17NdbrSGoUotzeGCcMMCqnFkEvLymoou9j', '1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62X', '1ANNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62i', '1A Na15ZQXAZUgFiqJ2i7Z2DPU2J6hW62i', 'BZbvjr', 'i55j', '1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62!', '1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62iz', '1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62izz', '1Q1pE5vPGEEMqRcVRMbtBK842Y6Pzo6nJ9', '1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62I']
+for address in addresses
+    shown = fmt[address, width = 37]
+    found = decoded[address]
+    if found.ok
+        log['`shown` valid']
+    else
+        log['`shown` invalid: `found.reason`']

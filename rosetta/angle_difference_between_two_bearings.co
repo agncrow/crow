@@ -1,0 +1,24 @@
+--- Rosetta Code: Angle difference between two bearings
+--- https://rosettacode.org/wiki/Angle_difference_between_two_bearings
+--- The difference b2 - b1 less the nearest whole number of turns lies in the range
+--- -180 to +180 (a half turn rounds away from zero), for bearings of any size.
+
+fn angle_difference[b1, b2]
+    d = b2 - b1
+    return d - 360.0 * round[d / 360.0]
+
+fn row[a, b, c]
+    left = fmt[a, width = 20, align = 'right']
+    middle = fmt[b, width = 20, align = 'right']
+    right = fmt[c, width = 22, align = 'right']
+    return '`left``middle``right`'
+
+fn show[pairs]
+    log[row['b1', 'b2', 'b2 - b1']]
+    for pair in pairs
+        log[row[str[pair[0]], str[pair[1]], str[angle_difference[pair[0], pair[1]]]]]
+
+show[[[20, 45], [-45, 45], [-85, 90], [-95, 90], [-45, 125], [-45, 145], [29.4803, -88.6381], [-78.3251, -159.036]]]
+log['']
+log['Bearings of any size:']
+show[[[-70099.74233810938, 29840.67437876723], [-165313.6666297357, 33693.9894517456], [1174.8380510598456, -154146.66490124757], [60175.77306795546, 42213.07192354373]]]

@@ -1,0 +1,57 @@
+--- Rosetta Code: World Cup group stage
+--- https://rosettacode.org/wiki/World_Cup_group_stage
+--- The six games of a group of four are numbered, and an outcome of the stage is a
+--- number from 0 to 728 whose six digits in base 3 are the games' results: 0 the
+--- first team loses, 1 a draw, 2 the first team wins (3 points a win, 1 a draw). Each
+--- outcome's points are sorted, highest first, and counted by place; no tiebreakers.
+--- The counts are shown as a table and as a histogram, a mark for each ten outcomes.
+
+fn standings[outcome]
+    games = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]]
+    scoring = [0, 1, 3]
+    points = [0, 0, 0, 0]
+    rest = outcome
+    for g in games
+        result = rest % 3
+        rest = rest / 3
+        points[g[0]] = points[g[0]] + scoring[result]
+        points[g[1]] = points[g[1]] + scoring[2 - result]
+    return reverse[sort[points]]
+
+places = ['1st', '2nd', '3rd', '4th']
+outcomes = for outcome in range[3 ^ 6]
+    standings[outcome]
+counts = for place in range[4]
+    row = for points in range[10]
+        0
+    row
+for table in outcomes
+    for place in range[4]
+        counts[place][table[place]] = counts[place][table[place]] + 1
+
+log['`len[outcomes]` outcomes of the six games']
+log['']
+numbers = for points in range[10]
+    fmt[points, width = 5]
+heading = join[numbers, '']
+log['POINTS       `heading`']
+log[repeat['-', 63]]
+for place in range[4]
+    cells = for n in counts[place]
+        fmt[n, width = 5]
+    shown = join[cells, '']
+    log['`places[place]` place    `shown`']
+log['']
+
+for place in range[4]
+    log['`places[place]` place, by points (# = 10 outcomes):']
+    for points in range[10]
+        n = counts[place][points]
+        bar = repeat['#', (n + 5) / 10]
+        if n eq 0
+            log['  `points` |']
+        else if bar eq ''
+            log['  `points` | `n`']
+        else
+            log['  `points` | `bar` `n`']
+    log['']

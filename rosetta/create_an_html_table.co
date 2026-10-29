@@ -1,0 +1,36 @@
+--- Rosetta Code: Create an HTML table
+--- https://rosettacode.org/wiki/Create_an_HTML_table
+--- Crow writes HTML with its views: inside a view, table, tr, th and td are
+--- the HTML elements, and a view called outside a page answers its markup.
+--- Every number, the row numbers too, is aligned right in its cell; the
+--- numbers are seeded random draws, so every run prints the same table.
+
+use web, ui, math
+
+view number_cell[n]
+    return td[str[n], style = 'text-align: right']
+
+view html_table[rows]
+    body = for i in range[len[rows]]
+        cells = for n in rows[i]
+            number_cell[n]
+        tr[number_cell[i + 1], cells]
+    return table[thead[tr[th[''], th['X'], th['Y'], th['Z']]], tbody[body]]
+
+--- count rows of three numbers of at most four digits, the same every run
+fn random_rows[count]
+    seed[2026]
+    rows = for i in range[count]
+        row = for j in range[3]
+            rand[0, 9999]
+        row
+    return rows
+
+--- the markup with each row on a line of its own
+fn laid_out[markup]
+    for tag in ['<thead>', '</thead>', '<tbody>', '</tbody>']
+        markup = replace[markup, tag, '\n  `tag`']
+    markup = replace[markup, '<tr>', '\n    <tr>']
+    return replace[markup, '</table>', '\n</table>']
+
+log[laid_out[html_table[random_rows[5]]]]

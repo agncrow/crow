@@ -1,0 +1,12 @@
+text:                            '\x08a\x00b\x0a\x0dc\x0cdÃ' (10 characters)
+without control codes:           'abcdÃ' (5)
+without control codes, extended: 'abcd' (4)
+the same by regular expression:  true
+
+text:                            'Crow: ¿dónde está?\x09(tab) \x1b[1mbold\x1b[0m, DEL\x7f, “naïve café”, 3×4 = 12 €' (69 characters)
+without control codes:           'Crow: ¿dónde está?(tab) [1mbold[0m, DEL, “naïve café”, 3×4 = 12 €' (65)
+without control codes, extended: 'Crow: dnde est?(tab) [1mbold[0m, DEL, nave caf, 34 = 12 ' (56)
+the same by regular expression:  true
+
+codes 0 to 255: 256 characters, 223 without control codes, 95 without either:
+ !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~

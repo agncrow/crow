@@ -1,0 +1,19 @@
+--- a function called through a member of a list of functions handed to it
+--- answers the members' kind: typed as nothing before the final pass, it
+--- had been declared to answer text, and the compiled program did not
+--- build (Rosetta Code, Deming's funnel)
+
+fn double[x]
+    x * 2
+
+fn triple[x]
+    x * 3
+
+fn apply_to[f, v]
+    f[v]
+
+log[double[1]]
+log[triple[1]]
+fs = [double, triple]
+log[apply_to[fs[1], 5]]
+log[apply_to[fs[0], 5] + 1]

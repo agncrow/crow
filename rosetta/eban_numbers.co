@@ -1,0 +1,95 @@
+--- Rosetta Code: Eban numbers
+--- https://rosettacode.org/wiki/Eban_numbers
+--- A number's American English name has no e when each group of three digits is
+--- named without one: no hundreds ("hundred"), tens of 0 or 3 to 6 ("thirty" to
+--- "sixty"; "ten" to "nineteen", "twenty", "seventy", "eighty" and "ninety" have
+--- an e) and units of 0, 2, 4 or 6 ("two", "four", "six"). The scales, "thousand"
+--- to "quintillion", have no e, so below one sextillion (10^21) that is the whole
+--- rule, and zero is not eban. The lists test each number, and so do the counts to
+--- 10^7; then, for the extra credit, the counts to 10^21 come from the groups
+--- alone: 20 groups of three digits qualify, and the eban numbers below n are
+--- counted place by place, as with digits — a qualifying group below n's at one
+--- place, n's own groups before it, and any of the 20 at each place after it.
+
+--- whether a group of three digits is named without an e
+fn group_ok[g]
+    tens = g / 10
+    units = g % 10
+    return g lt 100 and (tens eq 0 or (tens gte 3 and tens lte 6)) and units % 2 eq 0 and units ne 8
+
+fn eban[n]
+    if n eq 0
+        return false
+    ok = true
+    while ok and n gt 0
+        ok = group_ok[n % 1000]
+        n = n / 1000
+    return ok
+
+fn ebans_between[from, upto]
+    found = for n in range[from, upto + 1]
+        if eban[n]
+            n
+    return found
+
+--- how many eban numbers lie from 1 to n, one by one (only even numbers can be)
+fn counted[n]
+    count = 0
+    k = 2
+    while k lte n
+        if eban[k]
+            count = count + 1
+        k = k + 2
+    return count
+
+--- how many eban numbers lie from 1 to n, from n's groups of three digits
+fn count_upto[n]
+    valid = for g in range[1000]
+        if group_ok[g]
+            g
+    --- n's groups, the lowest first
+    groups = []
+    m = n
+    while m gt 0
+        groups = push[groups, m % 1000]
+        m = m / 1000
+    count = 0
+    whole = true
+    i = len[groups] - 1
+    while whole and i gte 0
+        below = 0
+        for v in valid
+            if v lt groups[i]
+                below = below + 1
+        count = count + below * len[valid] ^ i
+        whole = group_ok[groups[i]]
+        i = i - 1
+    if whole
+        count = count + 1
+    --- zero has all its groups right, and is not eban
+    return count - 1
+
+fn show_list[title, xs]
+    line = join[xs, ' ']
+    log[title]
+    log[line]
+    log['count = `len[xs]`']
+
+--- a row of the table of counts: n, then the two counts, right-aligned
+fn row[n, one_by_one, from_groups]
+    cells = [fmt[n, width = 29, align = 'right'], fmt[one_by_one, width = 12, align = 'right'], fmt[from_groups, width = 15, align = 'right']]
+    return join[cells, ' ']
+
+show_list['eban numbers up to and including 1000:', ebans_between[0, 1000]]
+log['']
+show_list['eban numbers between 1000 and 4000 (inclusive):', ebans_between[1000, 4000]]
+log['']
+log['eban numbers up to and including n, counted one by one to 10^7 and from the']
+log['groups of digits to 10^21:']
+log[row['n', 'one by one', 'from groups']]
+for k in range[1, 22]
+    n = 10 ^ k
+    one_by_one = ''
+    if k lte 7
+        one_by_one = fmt[counted[n], commas = true]
+    log[row[fmt[n, commas = true], one_by_one, fmt[count_upto[n], commas = true]]]

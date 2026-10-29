@@ -1,0 +1,97 @@
+--- Rosetta Code: Runtime evaluation
+--- https://rosettacode.org/wiki/Runtime_evaluation
+--- Crow has no eval: a running program cannot compile text into itself. Its
+--- platform can: the toolchain's interpreter (crow run -i) runs program text,
+--- and its REPL (crow) runs fragments, showing each expression's value. A
+--- program reaches either through shell, so text made or read at run time is
+--- written to a file and run as a program of its own.
+---   * The text is a whole program: statements, functions, records, imports.
+---     A bare expression computes and shows nothing, so a program logs what it
+---     means to show; given to the REPL, every expression's value is shown.
+---   * It sees nothing of the program running it: a fresh top level with the
+---     core builtins and what it imports. Values go in as its arguments
+---     (args[]), its environment (env[...]) or its standard input, as text, and
+---     come out as what it prints (structured values as JSON: encode, then
+---     json[]) and as its exit status.
+---   * The whole text is checked before any of it runs: a refused program runs
+---     nothing and says why on standard error, with status 1. A stop while it
+---     runs is status 1 too, after what it printed.
+---   * It is a process, so the caller restricts it as any process: here one
+---     second of processor time (ulimit -t) ends a loop that would never end.
+--- The command is crow, or the one the CROW variable names.
+
+--- what a run of program text did: its exit status, its output, its complaints
+struct Ran [status, out, said]
+
+fn command[]
+    env['CROW', 'crow']
+
+--- the text run as a program of its own, given these arguments, with at most
+--- this many seconds of processor time (0: no limit; the shell's report of the
+--- signal is left out)
+fn run_program[text, arguments, seconds]
+    path = 'runtime_evaluation_text.co'
+    kept = write[path, text]
+    words = join[arguments, ' ']
+    line = '`command[]` run -i `path` `words`'
+    if seconds gt 0
+        line = '(ulimit -t `seconds`; `line`) 2> /dev/null'
+    r = shell[line]
+    gone = rm[path]
+    Ran[r.status, trim[r.stdout], trim[r.stderr]]
+
+--- the lines given one by one to the REPL, which shows every expression's value
+fn run_fragments[text]
+    path = 'runtime_evaluation_lines.txt'
+    kept = write[path, text]
+    r = shell['`command[]` < `path`']
+    gone = rm[path]
+    lines = split[trim[r.stdout], '\n']
+    --- the REPL's own greeting comes first
+    shown = slice[lines, 1, len[lines]]
+    Ran[r.status, join[shown, '\n'], trim[r.stderr]]
+
+fn report[title, text, ran]
+    log['== `title`']
+    for line in split[trim[text], '\n']
+        if line eq ''
+            log['    |']
+        else
+            log['    | `line`']
+    if ran.status gt 128
+        log['  status `ran.status`: ended by signal `ran.status - 128`']
+    else
+        log['  status `ran.status`']
+    if ran.out ne ''
+        for line in split[ran.out, '\n']
+            log['  out: `line`']
+    if ran.said ne ''
+        first = split[ran.said, '\n'][0]
+        log['  err: `first`']
+    log['']
+
+--- a function of this program, which no text it runs can see
+fn twice[n]
+    2 * n
+
+statements = 'fn fib[n]\n    a, b = 0, 1\n    i = 0\n    while i lt n\n        a, b = b, a + b\n        i = i + 1\n    a\n\nfor n in [10, 50, 100]\n    log[fib[n]]\n'
+report['statements and a function, run as a program', statements, run_program[statements, [], 0]]
+
+summing = 'numbers = for a in args[]\n    int[a]\ntotal = 0\nfor n in numbers\n    total = total + n\nlog[encode[map[count = len[numbers], total = total]]]\n'
+ran = run_program[summing, ['3', '4', '5', '30'], 0]
+report['values in as arguments, out as JSON', summing, ran]
+answer = json[ran.out]
+log['  read back: `answer.count` numbers, total `answer.total`; twice that here is `twice[int[answer.total]]`']
+log['']
+
+blind = 'log[twice[21]]\n'
+report['the running program\'s own functions are not there', blind, run_program[blind, [], 0]]
+
+stopping = 'log[\'before\']\nlog[10 / 0]\nlog[\'after\']\n'
+report['a stop while it runs', stopping, run_program[stopping, [], 0]]
+
+endless = 'n = 0\nwhile true\n    n = n + 1\n'
+report['a limit of one second of processor time', endless, run_program[endless, [], 1]]
+
+fragments = 'x = 6\nx * 7\nfn square[n]\n    n * n\n\nsquare[x + 1]\n[x, square[x]]\n2 ^ 70\n'
+report['fragments given to the REPL, each value shown', fragments, run_fragments[fragments]]

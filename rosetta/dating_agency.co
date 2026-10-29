@@ -1,0 +1,76 @@
+--- Rosetta Code: Dating agency
+--- https://rosettacode.org/wiki/Dating_agency
+--- The agency, the sailor and the ladies are records. The agency's rule, "all the
+--- nice girls love a sailor", puts forward the nice ladies: a lady is nice when the
+--- places of her name's letters in the alphabet add up to an even number. The
+--- sailor's rule, "lady is lovable", picks from those: a lady is lovable when at
+--- least half the letters of her name are vowels.
+
+use bits
+
+struct Lady [name]
+
+struct Sailor [name]
+
+struct Agency [name, ladies]
+
+fn letter_total[name]
+    --- the places of the name's letters in the alphabet, added up
+    total = 0
+    for c in split[lower[name], '']
+        total = total + code[c] - code['a'] + 1
+    return total
+
+fn is_nice[lady]
+    return letter_total[lady.name] % 2 eq 0
+
+fn vowels[name]
+    count = 0
+    for c in split[lower[name], '']
+        if c in 'aeiou'
+            count = count + 1
+    return count
+
+fn is_lovable[lady]
+    return 2 * vowels[lady.name] gte len[lady.name]
+
+fn suggestions[agency]
+    --- the agency's rule: all the nice girls love a sailor
+    nice = for lady in agency.ladies
+        if is_nice[lady]
+            lady
+    return nice
+
+fn dates[sailor, ladies]
+    --- the sailor's rule: lady is lovable
+    chosen = for lady in ladies
+        if is_lovable[lady]
+            lady
+    return chosen
+
+fn names[ladies]
+    shown = for lady in ladies
+        lady.name
+    return join[shown, ', ']
+
+names_on_books = ['Amelia', 'Bella', 'Daisy', 'Emma', 'Freya', 'Kate', 'Luna', 'Rose', 'Tess', 'Zoe']
+on_books = for name in names_on_books
+    Lady[name]
+agency = Agency['Harbour Hearts', on_books]
+sailor = Sailor['Jack']
+
+log['The ladies on the books of `agency.name`:']
+for lady in agency.ladies
+    nice = 'not nice'
+    if is_nice[lady]
+        nice = 'nice'
+    lovable = 'not lovable'
+    if is_lovable[lady]
+        lovable = 'lovable'
+    name = lady.name
+    log['  `name`: letters add up to `letter_total[name]`, so `nice`; vowels `vowels[name]` of `len[name]`, so `lovable`']
+log['']
+
+suggested = suggestions[agency]
+log['`agency.name` suggests to `sailor.name`: `names[suggested]`']
+log['`sailor.name` offers to date: `names[dates[sailor, suggested]]`']

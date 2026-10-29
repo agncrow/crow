@@ -1,0 +1,95 @@
+--- Rosetta Code: Prime triangle
+--- https://rosettacode.org/wiki/Prime_triangle
+--- An arrangement of 1 to S with 1 first, S last and every two neighbours summing to a
+--- prime is a path through the numbers, each step to a number whose sum with the last
+--- one is prime. The triangle's rows are the first arrangements in order, found by a
+--- depth-first search trying the smaller number first. The counts walk every path at
+--- once, a step at a time, in a map from where a path is (the numbers it has used and
+--- the last one) to how many paths are there: paths that meet go on as one.
+
+use bits
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    d = 2
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 1
+    return true
+
+--- for each a from 0 to s, the numbers from 2 to s - 1 whose sum with a is prime
+fn steps_from[s]
+    lists = for a in range[s + 1]
+        found = for b in range[2, s]
+            if is_prime[a + b]
+                b
+        found
+    return lists
+
+--- the first way to finish a path that has used the numbers marked: an arrangement,
+--- or an empty list where there is none
+fn finish[path, used, s, steps]
+    last = path[len[path] - 1]
+    if len[path] eq s - 1
+        if is_prime[last + s]
+            return push[path, s]
+        return []
+    options = steps[last]
+    i = 0
+    while i lt len[options]
+        b = options[i]
+        if not used[b]
+            used[b] = true
+            found = finish[push[path, b], used, s, steps]
+            if len[found] gt 0
+                return found
+            used[b] = false
+        i = i + 1
+    return []
+
+fn first_arrangement[s, steps]
+    if s eq 2
+        return [1, 2]
+    used = for i in range[s + 1]
+        i eq 1
+    return finish[[1], used, s, steps]
+
+--- how many arrangements there are: a path's place is its used numbers as bits and its
+--- last number, kept as one key, bits * 32 + last
+fn arrangements[s, steps]
+    if s eq 2
+        return 1
+    layer = set[map[], shift[1, 1] * 32 + 1, 1]
+    length = 1
+    while length lt s - 1
+        onward = map[]
+        for key in keys[layer]
+            ways = layer[key]
+            used = key / 32
+            for b in steps[key % 32]
+                bit = shift[1, b]
+                if bitand[used, bit] eq 0
+                    place = (used + bit) * 32 + b
+                    if place in onward
+                        ways_before = onward[place]
+                        onward = set[onward, place, ways_before + ways]
+                    else
+                        onward = set[onward, place, ways]
+        layer = onward
+        length = length + 1
+    total = 0
+    for key in keys[layer]
+        if is_prime[key % 32 + s]
+            total = total + layer[key]
+    return total
+
+for s in range[2, 21]
+    cells = for n in first_arrangement[s, steps_from[s]]
+        fmt[n, width = 2]
+    log[join[cells, ' ']]
+log['']
+counts = for s in range[2, 21]
+    str[arrangements[s, steps_from[s]]]
+log[join[counts, ' ']]

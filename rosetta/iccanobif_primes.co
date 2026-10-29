@@ -1,0 +1,119 @@
+--- Rosetta Code: Iccanobif primes
+--- https://rosettacode.org/wiki/Iccanobif_primes
+--- Each Fibonacci number in turn is written backwards and tested: trial division
+--- by the primes below 1000, then the Miller-Rabin test with the first twelve
+--- primes as witnesses (so a number past 10^6 is a probable prime, as in the
+--- reference solutions). Ints grow, so every number is exact. The stretch asks
+--- for the digit counts of the next 15: the 25th has 1911 digits and alone takes
+--- about 20 s more, so the program finds 24 unless it is given a count:
+--- `crow run iccanobif_primes.co 25` finds all 25.
+
+fn primes_below[limit]
+    composite = for i in range[limit]
+        false
+    primes = []
+    for n in range[2, limit]
+        if not composite[n]
+            primes = push[primes, n]
+            k = n * n
+            while k lt limit
+                composite[k] = true
+                k = k + n
+    return primes
+
+fn binary_digits[e]
+    --- the binary digits of e, the lowest first
+    digits = []
+    k = e
+    while k gt 0
+        digits = push[digits, k % 2]
+        k = k / 2
+    return digits
+
+fn pow_mod[base, e, m]
+    --- left to right: each step squares, and a set digit multiplies by the
+    --- (small) base alone
+    digits = binary_digits[e]
+    result = 1
+    i = len[digits] - 1
+    while i gte 0
+        result = result * result % m
+        if digits[i] eq 1
+            result = result * base % m
+        i = i - 1
+    return result
+
+fn passes[a, d, s, n]
+    --- one Miller-Rabin round: n - 1 = d * 2^s with d odd
+    x = pow_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return true
+    i = 1
+    while i lt s
+        x = x * x % n
+        if x eq n - 1
+            return true
+        i = i + 1
+    return false
+
+fn is_prime[n, small]
+    if n lt 2
+        return false
+    i = 0
+    while i lt len[small]
+        if n % small[i] eq 0
+            return n eq small[i]
+        i = i + 1
+    if n lt 1000000
+        --- no prime below 1000 divides it, so it is prime
+        return true
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    i = 0
+    while i lt 12
+        if not passes[small[i], d, s, n]
+            return false
+        i = i + 1
+    return true
+
+fn iccanobif_primes[wanted]
+    small = primes_below[1000]
+    found = []
+    a, b = 0, 1
+    while len[found] lt wanted
+        a, b = b, a + b
+        backwards = int[reverse[str[a]]]
+        if is_prime[backwards, small]
+            found = push[found, backwards]
+    return found
+
+fn shown[n]
+    --- a long number by its first and last twenty digits
+    digits = str[n]
+    if len[digits] lte 50
+        return digits
+    first = slice[digits, 0, 20]
+    last = slice[digits, len[digits] - 20, len[digits]]
+    return '`first`...`last`'
+
+wanted = 24
+given = args[]
+if len[given] gt 0
+    asked = int[given[0]]
+    if asked.ok and asked gte 10
+        wanted = asked
+    else
+        log['The count to find is a whole number, 10 or more: finding 24.']
+primes = iccanobif_primes[wanted]
+firsts = for p in slice[primes, 0, 10]
+    str[p]
+log['The first 10 iccanobif primes:']
+log[join[firsts, ' ']]
+log['']
+log['The digit counts of the next `wanted - 10`:']
+for i in range[10, wanted]
+    p = primes[i]
+    log['`fmt[i + 1, width = 2]`: `fmt[len[str[p]], width = 4]` digits  `shown[p]`']

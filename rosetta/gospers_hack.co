@@ -1,0 +1,56 @@
+--- Rosetta Code: Gosper's hack
+--- https://rosettacode.org/wiki/Gosper's_hack
+--- c = x & -x is the lowest set bit; r = x + c carries it past the lowest run of
+--- ones; the ones that run held but r lost, (r xor x) less two, are shifted down to
+--- the bottom, ((r xor x) >> 2) / c, and joined to r. The bit operations are named
+--- functions of use bits, and ints grow, so the hack holds past 64 bits as well.
+--- After the task's table: Gosper's own use, every subset of 3 of 5 things in order.
+use bits
+
+fn gosper[x]
+    --- the next higher int with as many set bits as x (x positive)
+    c = bitand[x, -x]
+    r = x + c
+    return bitor[shift[bitxor[r, x], -2] / c, r]
+
+fn successors[x, count]
+    --- gosper applied count times, each answer kept
+    found = []
+    while len[found] lt count
+        x = gosper[x]
+        found = push[found, x]
+    return found
+
+fn joined[xs]
+    parts = for x in xs
+        str[x]
+    return join[parts, ' ']
+
+fn binary[x, width]
+    digits = for i in range[width]
+        str[bitand[shift[x, i + 1 - width], 1]]
+    return join[digits, '']
+
+fn subsets[k, names]
+    --- the k-subsets of names, each an int with k set bits, bit i for names[i]
+    n = len[names]
+    x = shift[1, k] - 1
+    while x lt shift[1, n]
+        chosen = for i in range[n]
+            if bitand[shift[x, -i], 1] eq 1
+                names[i]
+        picked = join[chosen, ' ']
+        log['`fmt[x, width = 3]`  `binary[x, n]`  `picked`']
+        x = gosper[x]
+
+for start in [1, 3, 7, 15]
+    log['`start`: `joined[successors[start, 10]]`']
+
+log['']
+log['The subsets of 3 of A B C D E (bit i for the i-th letter):']
+subsets[3, ['A', 'B', 'C', 'D', 'E']]
+
+log['']
+log['From 2^64 - 1, 64 ones, past 64 bits:']
+for x in successors[shift[1, 64] - 1, 3]
+    log['`x` holds `bitcount[x]` ones']

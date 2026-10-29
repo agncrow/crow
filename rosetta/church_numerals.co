@@ -1,0 +1,84 @@
+--- Rosetta Code: Church numerals
+--- https://rosettacode.org/wiki/Church_numerals
+--- Crow has no closures, so a function made as the program runs is written as a
+--- compiler writes one (defunctionalization): a record naming its lambda and
+--- holding what the lambda captured, applied by `call`. A Church numeral is such
+--- a record: called with f, it answers the record of the function applying f n
+--- times. A number is a record too, so that `call` takes functions and numbers alike.
+
+struct Lambda [rule, f, g, n]
+
+fn number[k]
+    return Lambda['number', 0, 0, k]
+
+fn increment[]
+    --- λk. k + 1
+    return Lambda['increment', 0, 0, 0]
+
+fn identity[]
+    --- λx. x
+    return Lambda['identity', 0, 0, 0]
+
+fn composed[f, g]
+    --- λx. f (g x)
+    return Lambda['compose', f, g, 0]
+
+fn church_zero[]
+    --- λf. λx. x
+    return Lambda['zero', 0, 0, 0]
+
+fn church_succ[c]
+    --- λf. λx. f (c f x)
+    return Lambda['succ', c, 0, 0]
+
+fn church_add[m, n]
+    --- λf. λx. m f (n f x)
+    return Lambda['add', m, n, 0]
+
+fn church_mul[m, n]
+    --- λf. m (n f)
+    return Lambda['mul', m, n, 0]
+
+fn church_pow[m, n]
+    --- m to the power n: λf. n m f
+    return Lambda['pow', m, n, 0]
+
+fn call[c, x]
+    --- The lambda `c` stands for, applied to `x`.
+    if c.rule eq 'increment'
+        return number[x.n + 1]
+    if c.rule eq 'identity'
+        return x
+    if c.rule eq 'compose'
+        return call[c.f, call[c.g, x]]
+    if c.rule eq 'zero'
+        return identity[]
+    if c.rule eq 'succ'
+        return composed[x, call[c.f, x]]
+    if c.rule eq 'add'
+        return composed[call[c.f, x], call[c.g, x]]
+    if c.rule eq 'mul'
+        return call[c.f, call[c.g, x]]
+    return call[call[c.g, c.f], x]
+
+fn church_of[k]
+    c = church_zero[]
+    for i in range[k]
+        c = church_succ[c]
+    return c
+
+fn int_of[c]
+    --- c applied to "add one", then to 0
+    return call[call[c, increment[]], number[0]].n
+
+three = church_succ[church_succ[church_succ[church_zero[]]]]
+four = church_succ[three]
+
+log['zero  -> `int_of[church_zero[]]`']
+log['three -> `int_of[three]`']
+log['four  -> `int_of[four]`']
+log['three + four -> `int_of[church_add[three, four]]`']
+log['three * four -> `int_of[church_mul[three, four]]`']
+log['four ^ three -> `int_of[church_pow[four, three]]`']
+log['three ^ four -> `int_of[church_pow[three, four]]`']
+log['5 -> church -> `int_of[church_of[5]]`']

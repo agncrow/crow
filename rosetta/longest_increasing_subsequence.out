@@ -1,0 +1,6 @@
+A longest increasing subsequence of [3, 2, 6, 4, 5, 1] is [2, 4, 5]
+A longest increasing subsequence of [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15] is [0, 2, 6, 9, 11, 15]
+
+Of 2000 seeded random numbers below 1,000,000: one of 79, from 4821 to 916176
+  increasing and a subsequence of the list: true
+  as long as the quadratic programme finds: true

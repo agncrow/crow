@@ -1,0 +1,15 @@
+--- `join` takes a list of text, numbers or bools as they show, so it says
+--- nothing of a list's items: at the top level, a list given `[]` met
+--- `join` before the push that typed it, was read as text from there on,
+--- and the int pushed was refused (`its items are text, not a number`)
+fn triple[m]
+    return 3 * m
+
+shown = []
+shown = push[shown, triple[2]]
+shown = push[shown, triple[5]]
+log[join[shown, ' ']]
+words = []
+log[join[words, ',']]
+words = push[words, 'a']
+log[join[words, ',']]

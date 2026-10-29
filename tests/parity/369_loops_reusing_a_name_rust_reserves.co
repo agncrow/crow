@@ -1,0 +1,12 @@
+--- loops reusing a name Rust reserves as their variable: the lowering
+--- names the second for its block (`move__s2`), printed by the name it was
+--- written with — renamed by that name, or the second loop had kept `move`
+--- and the compiled program did not build
+for move in range[2]
+    log['a']
+for move in range[2]
+    log['b `move`']
+for loop in ['x', 'y']
+    log[loop]
+for loop in ['z']
+    log[loop]

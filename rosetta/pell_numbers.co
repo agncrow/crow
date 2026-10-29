@@ -1,0 +1,114 @@
+--- Rosetta Code: Pell numbers
+--- https://rosettacode.org/wiki/Pell_numbers
+--- Both sequences by x(n) = 2 x(n - 1) + x(n - 2) with ints that grow; the
+--- approximations to the square root of 2 as exact fractions shown to 16 places;
+--- Pell primes by the Miller-Rabin test with the first 13 primes as bases.
+
+--- the first `count` terms of x(n) = 2 x(n - 1) + x(n - 2) from x(0) and x(1)
+fn pell_like[first, second, count]
+    terms = [first, second]
+    while len[terms] lt count
+        terms = push[terms, 2 * terms[-1] + terms[-2]]
+    return terms
+
+--- base ^ exp modulo m, by repeated squaring
+fn pow_mod[base, exp, m]
+    result = 1
+    b = base % m
+    e = exp
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+--- whether the base a shows that odd n, with n - 1 = d * 2 ^ s, is composite
+fn witness[a, d, s, n]
+    x = pow_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return false
+    i = 1
+    while i lt s
+        x = x * x % n
+        if x eq n - 1
+            return false
+        i = i + 1
+    return true
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    bases = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41]
+    if n in bases
+        return true
+    i = 0
+    while i lt len[bases]
+        if n % bases[i] eq 0
+            return false
+        i = i + 1
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    k = 0
+    while k lt len[bases]
+        if witness[bases[k], d, s, n]
+            return false
+        k = k + 1
+    return true
+
+fn spaced[numbers]
+    shown = for n in numbers
+        str[n]
+    return join[shown, ' ']
+
+pell = pell_like[0, 1, 200]
+lucas = pell_like[2, 2, 20]
+
+log['The first 20 Pell numbers:']
+log[spaced[slice[pell, 0, 20]]]
+log['']
+log['The first 20 Pell-Lucas numbers:']
+log[spaced[lucas]]
+log['']
+
+--- the n-th approximation is (P(n - 1) + P(n)) / P(n), or Q(n) / 2 over P(n)
+log['The first 20 rational approximations of √2 (`sqrt[2.0]`):']
+for n in range[1, 21]
+    top = pell[n - 1] + pell[n]
+    ratio = '`top`/`pell[n]`'
+    shown = fmt[ratio, width = 18]
+    log['`shown` ≈ `fmt[fraction[top, pell[n]], decimals = 16]`']
+log['']
+
+--- a Pell number is prime only at a prime index (P(d) divides P(n) when d divides n)
+indices = []
+n = 1
+while len[indices] lt 15
+    if is_prime[n] and is_prime[pell[n]]
+        indices = push[indices, n]
+    n = n + 1
+log['The first 15 Pell primes:']
+for i in indices
+    log[pell[i]]
+log['']
+log['Their indices:']
+log[spaced[indices]]
+log['']
+
+--- the sum of P(0) to P(4n + 1) is the square of P(2n) + P(2n + 1)
+nsw = for i in range[20]
+    pell[2 * i] + pell[2 * i + 1]
+log['The first 20 Newman-Shank-Williams numbers:']
+log[spaced[nsw]]
+log['']
+
+--- the hypotenuse is P(2n + 1), the shorter leg the sum of the Pell numbers below it
+log['The first 20 near isosceles right triangles:']
+total = 1
+for i in range[2, 42]
+    if i % 2 eq 1
+        log['(`total`, `total + 1`, `pell[i]`)']
+    total = total + pell[i]

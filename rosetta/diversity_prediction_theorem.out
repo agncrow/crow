@@ -1,0 +1,27 @@
+True value:           49
+Crowd estimates:      48 47 51
+Average error:          3.000  (exactly 3)
+Crowd error:            0.111  (exactly 1/9)
+Prediction diversity:   2.889  (exactly 26/9)
+Crowd error = average error - prediction diversity: true
+
+True value:           49
+Crowd estimates:      48 47 51 42
+Average error:         14.500  (exactly 29/2)
+Crowd error:            4.000  (exactly 4)
+Prediction diversity:  10.500  (exactly 21/2)
+Crowd error = average error - prediction diversity: true
+
+True value:           49
+Crowd estimates:      50 50 50
+Average error:          1.000  (exactly 1)
+Crowd error:            1.000  (exactly 1)
+Prediction diversity:   0.000  (exactly 0)
+Crowd error = average error - prediction diversity: true
+
+True value:           49
+Crowd estimates:      40 35 40
+Average error:        119.333  (exactly 358/3)
+Crowd error:          113.778  (exactly 1024/9)
+Prediction diversity:   5.556  (exactly 50/9)
+Crowd error = average error - prediction diversity: true

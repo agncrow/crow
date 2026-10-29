@@ -1,0 +1,3 @@
+k04_a_predicate_whose_answer_can_fail.co:15:5: all[] decides by what positive[] answers, a truth, and positive[] answers one that can fail — decide the failure inside it (`if not v.ok`, then `return false`)
+  15 │ log[all[[1, 2, 3], positive]]
+     │     ^^^            ^^^^^^^^

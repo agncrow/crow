@@ -1,0 +1,19 @@
+A record of mixed kinds: text, an int, a list, a map of lists, a record, and a link to another record
+original: Person[age = 25, friend = Person[age = 30, friend = 0, home = Address[city = 'Springfield', street = '1 Main St'], name = 'Alice', scores = [math = [90, 85]], tags = ['admin']], home = Address[city = 'Shelbyville', street = '2 Oak Ave'], name = 'Bob', scores = [art = [75], math = [60]], tags = ['dev', 'ops']]
+copy eq original: true
+
+The copy changed at every depth:
+copy:     Person[age = 25, friend = Person[age = 30, friend = 0, home = Address[city = 'Springfield', street = '1 Main St'], name = 'Alicia', scores = [math = [90, 85, 77]], tags = ['admin']], home = Address[city = 'Capital City', street = '2 Oak Ave'], name = 'Robert', scores = [art = [75], math = [100]], tags = ['lead', 'ops']]
+original: Person[age = 25, friend = Person[age = 30, friend = 0, home = Address[city = 'Springfield', street = '1 Main St'], name = 'Alice', scores = [math = [90, 85]], tags = ['admin']], home = Address[city = 'Shelbyville', street = '2 Oak Ave'], name = 'Bob', scores = [art = [75], math = [60]], tags = ['dev', 'ops']]
+alice:    Person[age = 30, friend = 0, home = Address[city = 'Springfield', street = '1 Main St'], name = 'Alice', scores = [math = [90, 85]], tags = ['admin']]
+copy eq original: false
+
+Handed to a function that changes it: the answer is 26 with tags ['dev', 'ops', 'older'], the original still 25 with ['dev', 'ops']
+
+A record written into its own field: Person[age = 1, friend = Person[age = 1, friend = 0, home = Address[city = '', street = ''], name = 'Ring', scores = [], tags = []], home = Address[city = '', street = ''], name = 'Ring', scores = [], tags = []]
+its friend has no friend: true
+
+A cyclic graph: [a = ['b'], b = ['c'], c = ['a']]
+the copy with edge c -> a turned to c -> b: [a = ['b'], b = ['c'], c = ['b']]
+walking the original: a -> b -> c -> a -> b -> c -> a
+walking the copy:     a -> b -> c -> b -> c -> b -> c

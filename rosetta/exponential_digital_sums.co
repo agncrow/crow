@@ -1,0 +1,64 @@
+--- Rosetta Code: Exponential digital sums
+--- https://rosettacode.org/wiki/Exponential_digital_sums
+--- For each n the powers n^k, k = 2, 3, …, are made one from the last (ints grow) and their digit
+--- sums taken from the counts of each digit in the power's text. No bound on k is known, so the
+--- search stops as the other entries do: once k passes 10 and the digit sum passes 2n, or after
+--- n + 20 misses (the digit sums of a power of ten stay at 1).
+
+fn digit_sum[n]
+    --- the sum of the digits of n: each digit times the number of times it occurs
+    s = str[n]
+    low = occurs[s, '1'] + 2 * occurs[s, '2'] + 3 * occurs[s, '3'] + 4 * occurs[s, '4']
+    high = 5 * occurs[s, '5'] + 6 * occurs[s, '6'] + 7 * occurs[s, '7'] + 8 * occurs[s, '8'] + 9 * occurs[s, '9']
+    return low + high
+
+fn exponents[n]
+    --- the exponents k > 1 for which the digits of n^k add up to n
+    found = []
+    if n lt 2
+        return found
+    power = n
+    k = 1
+    misses = 0
+    while misses lt n + 20
+        k = k + 1
+        power = power * n
+        total = digit_sum[power]
+        if total eq n
+            found = push[found, k]
+        else
+            misses = misses + 1
+            if k gt 10 and total gt 2 * n
+                break
+    return found
+
+fn shown[n, ks]
+    --- '18^3, 18^6, 18^7'
+    parts = for k in ks
+        '`n`^`k`'
+    return join[parts, ', ']
+
+fn search[first_wanted, multi_wanted]
+    --- the first integers with any such exponent, and the first with three or more
+    first = []
+    multi = []
+    n = 1
+    while len[first] lt first_wanted or len[multi] lt multi_wanted
+        n = n + 1
+        ks = exponents[n]
+        if len[ks] gt 0
+            line = shown[n, ks]
+            if len[first] lt first_wanted
+                first = push[first, line]
+            if len[ks] gte 3 and len[multi] lt multi_wanted
+                multi = push[multi, line]
+    return [first, multi]
+
+found = search[25, 30]
+log['The first 25 integers equal to the digital sum of that integer raised to some power:']
+for line in found[0]
+    log[line]
+log['']
+log['The first 30 that do so in three or more ways:']
+for line in found[1]
+    log[line]

@@ -1,0 +1,20 @@
+'' has a length of 0:
+    all its characters are unique
+'.' has a length of 1:
+    all its characters are unique
+'abcABC' has a length of 6:
+    all its characters are unique
+'XYZ ZYX' has a length of 7:
+    not all its characters are unique: 'X' (0x58) is at positions 1 and 7
+'1234567890ABCDEFGHIJKLMN0PQRSTUVWXYZ' has a length of 36:
+    not all its characters are unique: '0' (0x30) is at positions 10 and 25
+'01234567890ABCDEFGHIJKLMN0PQRSTUVWXYZ0X' has a length of 39:
+    not all its characters are unique: '0' (0x30) is at positions 1 and 11
+'hétérogénéité' has a length of 13:
+    not all its characters are unique: 'é' (0xe9) is at positions 2 and 4
+'🎆🎃🎇🎈' has a length of 4:
+    all its characters are unique
+'😍😀🙌💃😍🙌' has a length of 6:
+    not all its characters are unique: '😍' (0x1f60d) is at positions 1 and 5
+'🐠🐟🐡🦈🐬🐳🐋🐡' has a length of 8:
+    not all its characters are unique: '🐡' (0x1f421) is at positions 3 and 8

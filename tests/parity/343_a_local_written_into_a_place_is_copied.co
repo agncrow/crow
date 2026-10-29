@@ -1,0 +1,19 @@
+--- A local the program reads again, written into a list by position or
+--- into a record's link, is copied in: compiled, the write had moved it
+--- (E0382). And a statement loop's item that is a list is joined as any
+--- list is (Rosetta Code, Best shuffle, Deepcopy, 9 billion names of God).
+xs = ['a', 'b']
+first = xs[1]
+xs[0] = first
+log[first]
+log[xs]
+
+struct Node [name, next]
+
+n = Node['a', Node['b', 0]]
+n.next = n
+log[n]
+
+grid = [['a', 'b'], ['c', 'd']]
+for line in grid
+    log[join[line, '']]

@@ -1,0 +1,55 @@
+--- Rosetta Code: De Bruijn sequences
+--- https://rosettacode.org/wiki/De_Bruijn_sequences
+--- The lexicographically least de Bruijn sequence B(k, n) is the Lyndon words over k
+--- digits whose lengths divide n, in order; Duval's method makes each Lyndon word
+--- from the one before, so no recursion is needed. A PIN is found when the sequence,
+--- read round its end (its first n - 1 digits written again after it), holds it.
+
+fn de_bruijn[k, n]
+    digits = []
+    word = [-1]
+    while len[word] gt 0
+        --- the next Lyndon word: the last digit up by one
+        last = len[word] - 1
+        word[last] = word[last] + 1
+        m = len[word]
+        if n % m eq 0
+            digits = concat[digits, word]
+        --- repeat the word up to length n, then drop the k - 1 digits at its end
+        while len[word] lt n
+            word = push[word, word[len[word] - m]]
+        while len[word] gt 0 and word[len[word] - 1] eq k - 1
+            word = pop[word]
+    shown = for d in digits
+        str[d]
+    return join[shown, '']
+
+fn missing_pins[sequence]
+    --- every four-digit PIN the sequence does not hold, read round its end
+    wrapped = '`sequence``slice[sequence, 0, 3]`'
+    missing = for i in range[10000]
+        pin = fmt[i, width = 4, fill = '0']
+        if not (pin in wrapped)
+            pin
+    return missing
+
+fn validate[sequence]
+    missing = missing_pins[sequence]
+    if len[missing] eq 0
+        log['  no PIN is missing']
+    else
+        log['  `len[missing]` PINs are missing:']
+        for pin in missing
+            log['    `pin`']
+
+sequence = de_bruijn[10, 4]
+log['The length of the de Bruijn sequence B(10, 4) is `len[sequence]`.']
+log['Its first 130 digits: `slice[sequence, 0, 130]`']
+log['Its last 130 digits:  `slice[sequence, -130, len[sequence]]`']
+log['']
+log['Validating the sequence:']
+validate[sequence]
+log['Validating the reversed sequence:']
+validate[reverse[sequence]]
+log['Validating the sequence with its 4444th digit replaced by a period:']
+validate['`slice[sequence, 0, 4443]`.`slice[sequence, 4444, len[sequence]]`']

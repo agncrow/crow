@@ -1,0 +1,38 @@
+--- Rosetta Code: NKTgLaw
+--- https://rosettacode.org/wiki/NKTgLaw
+--- The quantities as the task defines them: momentum p = m v, NKTg1 = x p and
+--- NKTg2 = (dm/dt) p, each sign read as the task reads it (zero as a balance, as the
+--- other entries do), for the entries' example and a few more test values.
+
+struct Tendency [p, nktg1, nktg2, position, mass]
+
+fn position_reading[n]
+    if n gt 0
+        return 'moving away from the stable state'
+    if n lt 0
+        return 'moving toward the stable state'
+    'in stable equilibrium'
+
+fn mass_reading[n]
+    if n gt 0
+        return 'mass variation supports the movement'
+    if n lt 0
+        return 'mass variation resists the movement'
+    'no effect of mass variation'
+
+fn nktg[x, v, m, dm_dt]
+    p = m * v
+    nktg1 = x * p
+    nktg2 = dm_dt * p
+    return Tendency[p, nktg1, nktg2, position_reading[nktg1], mass_reading[nktg2]]
+
+fn show[x, v, m, dm_dt]
+    t = nktg[x, v, m, dm_dt]
+    log['x = `x`, v = `v`, m = `m`, dm/dt = `dm_dt`']
+    log['    p = `t.p`, NKTg1 = `t.nktg1` NKTm, NKTg2 = `t.nktg2` NKTm']
+    log['    `t.position`; `t.mass`']
+
+show[2.0, 3.0, 4.0, -0.5]
+show[-1.5, 2.0, 10.0, 0.25]
+show[4.0, -2.5, 6.0, 1.5]
+show[0.0, 7.0, 3.0, 0.0]

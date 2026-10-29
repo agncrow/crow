@@ -1,0 +1,78 @@
+--- Rosetta Code: Tropical algebra overloading
+--- https://rosettacode.org/wiki/Tropical_algebra_overloading
+--- Crow has no operator overloading — an operator means one thing, on numbers,
+--- and a program cannot give it another — so ⊕, ⊗ and ↑ are ordinary functions
+--- over numbers, with math's -inf for the semiring's -Inf. The pipe
+--- `a then f[b]` is f[a, b], so `a then oplus[b]` reads in the order a ⊕ b is
+--- written; nested pipes write the precedence out.
+
+use math
+
+--- x ⊕ y: the greater of the two; -inf is its identity
+fn oplus[x, y]
+    return max[x, y]
+
+--- x ⊗ y: the sum; 0 is its identity
+fn otimes[x, y]
+    return x + y
+
+--- a ↑ b: a ⊗ a ⊗ … ⊗ a with b a's, for a positive whole number b
+fn up[a, b]
+    if b lt 1
+        return error['a power is a positive whole number, not `b`', 'tropical']
+    p = a
+    for i in range[1, b]
+        p = otimes[p, a]
+    return p
+
+--- the laws, checked over a list of numbers
+fn distributes[a, b, c]
+    return otimes[a, oplus[b, c]] eq oplus[otimes[a, b], otimes[a, c]]
+
+fn identities[x]
+    return oplus[x, -inf] eq x and otimes[x, 0.0] eq x and oplus[x, x] eq x
+
+fn power_is_product[a, b]
+    p = up[a, b]
+    if not p.ok
+        return false
+    return p eq a * b
+
+log['2 ⊗ -2 = `otimes[2, -2]`']
+log['-0.001 ⊕ -inf = `oplus[-0.001, -inf]`']
+log['0 ⊗ -inf = `otimes[0, -inf]`']
+log['1.5 ⊕ -1 = `oplus[1.5, -1]`']
+log['-0.5 ⊗ 0 = `otimes[-0.5, 0]`']
+log['']
+log['5 ↑ 7 = `5 then up[7]` (and 5 * 7 = `5 * 7`)']
+zero = up[5, 0]
+log['5 ↑ 0 is refused: `zero.reason`']
+log['']
+
+--- ⊗ binds tighter than ⊕: 5 ⊗ 8 ⊕ 5 ⊗ 7 is (5 ⊗ 8) ⊕ (5 ⊗ 7)
+left = 5 then otimes[8 then oplus[7]]
+right = 5 then otimes[8] then oplus[5 then otimes[7]]
+log['5 ⊗ (8 ⊕ 7) = `left`']
+log['5 ⊗ 8 ⊕ 5 ⊗ 7 = `right`']
+log['5 ⊗ (8 ⊕ 7) equals 5 ⊗ 8 ⊕ 5 ⊗ 7: `left eq right`']
+log['']
+
+xs = [-inf, -2.5, -1.0, 0.0, 0.5, 3.0, 7.25]
+log['Over `xs`:']
+triples = 0
+holds = true
+for a in xs
+    for b in xs
+        for c in xs
+            holds = holds and distributes[a, b, c]
+            triples = triples + 1
+log['  a ⊗ (b ⊕ c) = a ⊗ b ⊕ a ⊗ c for all `triples` choices of a, b, c: `holds`']
+identical = true
+for x in xs
+    identical = identical and identities[x]
+log['  x ⊕ -inf = x, x ⊗ 0 = x and x ⊕ x = x for each x: `identical`']
+products = true
+for a in xs
+    for b in range[1, 10]
+        products = products and power_is_product[a, b]
+log['  a ↑ b = a * b for each a and b from 1 to 9: `products`']

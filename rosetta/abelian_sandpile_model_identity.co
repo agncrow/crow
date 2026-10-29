@@ -1,0 +1,101 @@
+--- Rosetta Code: Abelian sandpile model/Identity
+--- https://rosettacode.org/wiki/Abelian_sandpile_model/Identity
+--- A sandpile is a record of its nine cells, row after row. A toppling takes
+--- four grains from the first unstable cell (four or more) and gives one to
+--- each neighbour, the edge losing what falls past it; an avalanche topples
+--- until the pile is stable. Two piles add cell by cell, then the sum is
+--- stabilised; two piles are equal when their cells are (the record's eq).
+
+struct Sandpile [cells]
+
+--- where the first cell of four grains or more is, or -1 if the pile is stable
+fn unstable_at[pile]
+    i = 0
+    while i lt 9
+        if pile.cells[i] gte 4
+            return i
+        i = i + 1
+    return -1
+
+fn topple[pile, i]
+    cells = pile.cells
+    cells[i] = cells[i] - 4
+    r = i / 3
+    c = i % 3
+    if r gt 0
+        cells[i - 3] = cells[i - 3] + 1
+    if r lt 2
+        cells[i + 3] = cells[i + 3] + 1
+    if c gt 0
+        cells[i - 1] = cells[i - 1] + 1
+    if c lt 2
+        cells[i + 1] = cells[i + 1] + 1
+    return Sandpile[cells]
+
+--- every pile of the avalanche, from the one given to the stable one
+fn avalanche[pile]
+    piles = [pile]
+    i = unstable_at[pile]
+    while i gte 0
+        pile = topple[pile, i]
+        piles = push[piles, pile]
+        i = unstable_at[pile]
+    return piles
+
+fn stabilise[pile]
+    return avalanche[pile][-1]
+
+fn plus[a, b]
+    return stabilise[Sandpile[a.cells + b.cells]]
+
+fn rows_of[pile]
+    lines = for r in range[3]
+        row = for c in range[3]
+            str[pile.cells[r * 3 + c]]
+        join[row, ' ']
+    return lines
+
+--- the piles side by side, each sign on the middle row between two of them
+fn show_side_by_side[piles, signs]
+    for r in range[3]
+        line = rows_of[piles[0]][r]
+        k = 1
+        while k lt len[piles]
+            sign = signs[k - 1]
+            gap = repeat[' ', len[sign]]
+            if r eq 1
+                gap = sign
+            line = '`line` `gap` `rows_of[piles[k]][r]`'
+            k = k + 1
+        log[line]
+
+fn show_sum[a, b]
+    show_side_by_side[[a, b, plus[a, b]], ['+', '=']]
+
+unstable = Sandpile[[4, 3, 3, 3, 1, 2, 0, 2, 3]]
+s1 = Sandpile[[1, 2, 0, 2, 1, 1, 0, 1, 3]]
+s2 = Sandpile[[2, 1, 3, 1, 0, 1, 0, 1, 0]]
+s3 = Sandpile[[3, 3, 3, 3, 3, 3, 3, 3, 3]]
+s3_id = Sandpile[[2, 1, 2, 1, 0, 1, 2, 1, 2]]
+
+steps = avalanche[unstable]
+arrows = for k in range[len[steps] - 1]
+    '==>'
+log['The avalanche:']
+show_side_by_side[steps, arrows]
+settled = stabilise[unstable] eq Sandpile[[2, 1, 0, 0, 3, 3, 1, 2, 3]]
+log['it settles as the task shows: `settled`']
+log['']
+
+log['s1 + s2 == s2 + s1: `plus[s1, s2] eq plus[s2, s1]`']
+show_sum[s1, s2]
+log['']
+show_sum[s2, s1]
+log['']
+
+log['s3 + s3_id == s3: `plus[s3, s3_id] eq s3`']
+show_sum[s3, s3_id]
+log['']
+
+log['s3_id + s3_id == s3_id: `plus[s3_id, s3_id] eq s3_id`']
+show_sum[s3_id, s3_id]

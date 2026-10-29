@@ -1,0 +1,69 @@
+Cards dealt: 4
+
+two open purple squiggles
+three striped green squiggles
+one solid green squiggle
+one solid red squiggle
+
+Sets present: 1
+
+two open purple squiggles
+three striped green squiggles
+one solid red squiggle
+
+----
+Cards dealt: 8
+
+two solid purple ovals
+three solid red squiggles
+one open purple diamond
+one solid red diamond
+two open green diamonds
+one striped green diamond
+one striped red squiggle
+three striped red ovals
+
+Sets present: 1
+
+one open purple diamond
+one solid red diamond
+one striped green diamond
+
+----
+Cards dealt: 12
+
+one open purple oval
+two striped green squiggles
+three striped red squiggles
+two striped green ovals
+two striped red diamonds
+three striped purple ovals
+three open purple squiggles
+three striped purple squiggles
+three open green diamonds
+three solid purple diamonds
+three striped red diamonds
+three open purple diamonds
+
+Sets present: 2
+
+three striped purple ovals
+three open purple squiggles
+three solid purple diamonds
+
+three open green diamonds
+three solid purple diamonds
+three striped red diamonds
+
+----
+The whole pack of 81 holds 1080 sets (every two cards complete one: 81 x 80 / 6 = 1080).
+
+The task's examples:
+    two solid green ovals
+    one open green squiggle
+    three striped green diamonds
+is a set: true
+    two solid purple ovals
+    one open green squiggle
+    three striped green diamonds
+is a set: false

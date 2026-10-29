@@ -1,0 +1,30 @@
+--- Rosetta Code: Substring/Top and tail
+--- https://rosettacode.org/wiki/Substring/Top_and_tail
+--- A text is sliced by character (code point), so the first and the last
+--- character are taken off whole, inside the Basic Multilingual Plane or above it.
+
+--- the text without its first character
+fn untopped[s]
+    return slice[s, 1, len[s]]
+
+--- the text without its last character
+fn untailed[s]
+    return slice[s, 0, -1]
+
+--- the text without its first and its last character
+fn top_and_tailed[s]
+    return slice[s, 1, -1]
+
+fn quoted[s]
+    return '\'`s`\''
+
+fn show[s]
+    cells = for t in [s, untopped[s], untailed[s], top_and_tailed[s]]
+        fmt[quoted[t], width = 15]
+    log[trim[join[cells, ' ']]]
+
+heads = for h in ['text', 'without first', 'without last', 'without both']
+    fmt[h, width = 15]
+log[trim[join[heads, ' ']]]
+for word in ['knight', 'socks', 'brooms', 'café', 'αβγδ', '𝔘𝔫𝔦𝔠𝔬𝔡𝔢', '🦊crow🐦', 'ab', 'a', '']
+    show[word]

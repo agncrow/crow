@@ -1,0 +1,12 @@
+--- A list of ints read from text — each `int[w]` a growing int that can
+--- fail — handed whole where numbers are taken is its numbers: compiled,
+--- the conversion had cast a growing int `as f64` and not built (Rosetta
+--- Code, 24 game).
+use math
+
+nums = for w in ['3', '1', '2']
+    int[w]
+log[sort[nums]]
+log[sum[nums]]
+log[max[nums]]
+log[nums eq [3, 1, 2]]

@@ -104,7 +104,9 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 fn main() {
     // the interpreter's frames to the recursion limit need a deeper stack
     // than the main thread's (crow_runtime::stops::STACK); the thread is
-    // named for the main thread, so a stop on it exits as one there does
+    // named for the main thread, so a stop on it exits as one there does —
+    // and a parallel loop's threads the same stack
+    crow_runtime::cores::deep_stacks();
     match std::thread::Builder::new().name("main".to_string()).stack_size(crow_runtime::stops::STACK).spawn(crow_main) {
         Ok(h) => {
             if h.join().is_err() {
@@ -2074,6 +2076,11 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
     let (ctx, mut program, shown) = match rust_names::rename_rust_keywords(&stmts) {
         None => (ctx, program, std::collections::BTreeMap::new()),
         Some((renamed, shown)) => {
+            // (a record renamed out of Rust's way shows as it was declared)
+            for (to, from) in &shown {
+                let from = declared_record_name(from);
+                DECLARED_RECORDS.with(|d| d.borrow_mut().insert(to.clone(), from));
+            }
             let (ctx, program) = infer_and_lower(&renamed, describing(), &name).unwrap_or_else(|e| refuse(entry, &source, &e));
             (ctx, program, shown)
         }
@@ -2247,6 +2254,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
         });
         drop(handed);
         if !output.status.success() {
+            stopped_build(&output.status);
             let stderr = String::from_utf8_lossy(&output.stderr);
             let translated = translate_rust_compile_error(&stderr);
             eprintln!("{}", translated);
@@ -2264,12 +2272,30 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
         });
         drop(handed);
         if !status.success() {
+            stopped_build(&status);
             eprintln!("compilation failed");
             process::exit(1);
         }
     }
 
     binary_path
+}
+
+/// A build a signal ended — a time limit's alarm, an interrupt — is no
+/// refusal of the program: said as what it is, it exits as the signal would.
+/// (It had been reported as the Rust compiler refusing what Crow accepted, a
+/// bug in Crow; Rosetta Code, Integer sequence.)
+fn stopped_build(status: &std::process::ExitStatus) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            eprintln!("error: the build was stopped by a signal ({}) before it finished", sig);
+            process::exit(128 + sig);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = status;
 }
 
 /// What a build says when the program's Rust does not compile. Crow's own
@@ -2983,7 +3009,11 @@ extern "C" fn hand_on_signal(sig: i32) {
     }
 }
 
-const HANDED_SIGNALS: [i32; 3] = [1, 2, 15]; // SIGHUP, SIGINT, SIGTERM
+// SIGHUP, SIGINT, SIGQUIT, SIGALRM, SIGTERM: an alarm a time limit set
+// (`perl -e 'alarm 120; exec @ARGV' crow run p.co`) had ended crow alone,
+// and the compiled program it ran counted on, an orphan writing 22 GB
+// (Rosetta Code, Integer sequence)
+const HANDED_SIGNALS: [i32; 5] = [1, 2, 3, 14, 15];
 
 /// While a child crow started runs — the program `crow run` runs, the cargo
 /// a build runs — a signal to crow is handed on to it, as a signal to the

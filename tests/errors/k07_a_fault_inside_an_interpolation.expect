@@ -1,0 +1,3 @@
+k07_a_fault_inside_an_interpolation.co:9:1: this ')' closes nothing — no bracket is open before it
+  9 │ log['`x + )`']
+    │ ^^^^^^^^^^^^^^

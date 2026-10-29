@@ -1,0 +1,47 @@
+--- Rosetta Code: Detect division by zero
+--- https://rosettacode.org/wiki/Detect_division_by_zero
+--- An int divided by zero stops the program (no int can carry the failure), so
+--- the int division is made exactly, as a fraction: a fraction whose bottom is
+--- zero is an error value of kind 'math', which int[] hands on to the caller.
+--- A float divided by zero is IEEE's infinity, or NaN for zero by zero, so the
+--- float quotient tells by its value (an overflow is infinite too: 1e308 / 0.1).
+
+use math
+
+--- x / y between ints, cut toward zero as / cuts, or an error value
+fn divide[x, y]
+    int[fraction[x, y]]
+
+--- whether x / y divides by zero, asked of the quotient, not of y
+fn div_check[x, y]
+    q = divide[x, y]
+    return not q.ok
+
+fn float_div_check[x, y]
+    q = x / y
+    return q ne q or abs[q] eq inf
+
+fn one_place[x]
+    fmt[x, decimals = 1]
+
+log['Ints:']
+for pair in [[7, 2], [-7, 2], [7, 0], [0, 0]]
+    x = pair[0]
+    y = pair[1]
+    q = divide[x, y]
+    if q.ok
+        log['`x` / `y` = `q`']
+    else
+        log['`x` / `y`: division by zero detected (`q.kind`: `q.reason`)']
+
+log['Floats:']
+for pair in [[7.0, 2.0], [7.0, 0.0], [-7.0, 0.0], [0.0, 0.0]]
+    x = one_place[pair[0]]
+    y = one_place[pair[1]]
+    q = pair[0] / pair[1]
+    if float_div_check[pair[0], pair[1]]
+        log['`x` / `y`: division by zero detected (the quotient is `q`)']
+    else
+        log['`x` / `y` = `q`']
+
+log['div_check[1, 0] is `div_check[1, 0]`, div_check[1, 1] is `div_check[1, 1]`']

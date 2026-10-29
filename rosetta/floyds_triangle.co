@@ -1,0 +1,18 @@
+--- Rosetta Code: Floyd's triangle
+--- https://rosettacode.org/wiki/Floyd's_triangle
+--- Row r (counting from 1) starts at r(r - 1)/2 + 1. Each column is as wide as its
+--- number in the last row, the widest in the column, so one space parts the last row.
+
+fn floyd[n]
+    last_start = n * (n - 1) / 2 + 1
+    widths = for j in range[n]
+        len[str[last_start + j]]
+    for r in range[1, n + 1]
+        start = r * (r - 1) / 2 + 1
+        cells = for j in range[r]
+            fmt[start + j, width = widths[j]]
+        log[join[cells, ' ']]
+
+floyd[5]
+log['']
+floyd[14]

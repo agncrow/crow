@@ -1,0 +1,50 @@
+--- Rosetta Code: Numbers which are not the sum of distinct squares
+--- https://rosettacode.org/wiki/Numbers_which_are_not_the_sum_of_distinct_squares
+--- The sums of distinct squares from 1, 4, …, k² are found by adding one square
+--- at a time to the sums so far (a list of truths, one for each number). Why the
+--- search may stop: if every number from s = (k + 1)² to 2s − 1 is a sum of
+--- distinct squares up to k², that run is as long as the next square. Adding
+--- (k + 1)² to each of its sums uses no square twice and extends the run to
+--- 3s − 1: 2s numbers, at least (k + 2)² (2m² ≥ (m + 1)² once m ≥ 3). The same
+--- step with (k + 2)², (k + 3)², … extends it for ever, so every number from s on
+--- is such a sum. A number below s can use no square past k², so the sums so far
+--- decide it: the ones missing are all there are.
+
+fn with_square[sums, q]
+    --- which numbers are sums of distinct squares once q may be one of them too
+    grown = for n in range[len[sums] + q]
+        (n lt len[sums] and sums[n]) or (n gte q and sums[n - q])
+    grown
+
+fn all_sums[sums, low, high]
+    --- whether every number from low to high is a sum
+    if high gte len[sums]
+        return false
+    for n in range[low, high + 1]
+        if not sums[n]
+            return false
+    true
+
+sums = [true]
+k = 0
+s = 1
+run_found = false
+while not run_found
+    k = k + 1
+    sums = with_square[sums, k * k]
+    s = (k + 1) * (k + 1)
+    run_found = all_sums[sums, s, 2 * s - 1]
+
+missing = for n in range[1, s]
+    if not sums[n]
+        str[n]
+log['Numbers which are not the sum of distinct squares (`len[missing]` of them):']
+log[join[missing, ' ']]
+log['']
+square_after = (k + 2) * (k + 2)
+log['Why that is all of them: with the squares 1 to `k * k`, every number from `s` to']
+log['`2 * s - 1` is a sum of distinct squares, a run as long as the next square, `s`.']
+log['Adding `s` to each of those sums extends the run to `3 * s - 1` (`2 * s` numbers), more']
+log['than the square after, `square_after`; adding `square_after` extends it again, and so on for every']
+log['square, so every number from `s` on is such a sum. A number below `s` can use no']
+log['square past `k * k`, so the list above is complete.']

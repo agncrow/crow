@@ -1,0 +1,28 @@
+Payloads: Payload#0, Payload#1, Payload#2, Payload#3, Payload#4, Payload#5, Payload#6
+
+Template: [[[1, 2], [3, 4, 1], 5]]
+With its payloads:
+    [[['Payload#1', 'Payload#2'],
+      ['Payload#3', 'Payload#4', 'Payload#1'],
+      'Payload#5']]
+Unused payloads: Payload#0, Payload#6
+Indices without a payload: -
+
+Template: [[[1, 2], [10, 4, 1], 5]]
+With its payloads:
+    [[['Payload#1', 'Payload#2'],
+      ['??#10', 'Payload#4', 'Payload#1'],
+      'Payload#5']]
+Unused payloads: Payload#0, Payload#3, Payload#6
+Indices without a payload: ??#10
+
+Template: [[[6, [0, [], [-1, 4]]], 2], 6, 10]
+With its payloads:
+    [[['Payload#6',
+       ['Payload#0', [], ['??#-1', 'Payload#4']]],
+      'Payload#2'],
+     'Payload#6',
+     '??#10']
+Unused payloads: Payload#1, Payload#3, Payload#5
+Indices without a payload: ??#-1, ??#10
+

@@ -1,0 +1,12 @@
+n                                    n % 2   remainder bit       digit     halving
+0                                        0   even      even      even      even
+1                                        1   odd       odd       odd       odd
+2                                        0   even      even      even      even
+7                                        1   odd       odd       odd       odd
+-3                                      -1   odd       odd       odd       odd
+-4                                       0   even      even      even      even
+42                                       0   even      even      even      even
+9223372036854775807                      1   odd       odd       odd       odd
+1267650600228229401496703205376          0   even      even      even      even
+1267650600228229401496703205377          1   odd       odd       odd       odd
+-2503155504993241601315571986085849     -1   odd       odd       odd       odd

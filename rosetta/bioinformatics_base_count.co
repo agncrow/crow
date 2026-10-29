@@ -1,0 +1,35 @@
+--- Rosetta Code: Bioinformatics/Base count
+--- https://rosettacode.org/wiki/Bioinformatics/Base_count
+--- Prints the sequence fifty bases a line, each line led by the position of
+--- its first base, then counts each base with `occurs`.
+
+fn pretty_print[dna, width]
+    for start in range[0, len[dna], width]
+        part = slice[dna, start, start + width]
+        log['`fmt[start, width = 5]`: `part`']
+
+fn base_count[dna]
+    log['BASE COUNT:']
+    total = 0
+    for base in ['A', 'C', 'G', 'T']
+        count = occurs[dna, base]
+        total = total + count
+        log['    `base`: `fmt[count, width = 4]`']
+    log['  TOTAL: `fmt[total, width = 4]`']
+
+dna = join[[
+    'CGTAAAAAATTACAACGTCCTTTGGCTATCTCTTAAACTCCTGCTAAATG',
+    'CTCGTGCTTTCCAATTATGTAAGCGTTCCGAGACGGGGTGGTCGATTCTG',
+    'AGGACAAAGGTCAAGATGGAGCGCATCGAACGCAATAAGGATCATTTGAT',
+    'GGGACGTTTCGTCGACAAAGTCTTGTTTCGAGAGTAACGGCTACCGTCTT',
+    'CGATTCTGCTTATAACACTATGTTCTTATGAAATGGATGTTCTGAGTTGG',
+    'TCAGTCCCAATGTGCGGGGTTTCTTTTAGTACGTCGGGAGTGGTATTATA',
+    'TTTAATTTTTCTATATAGCGATCTGTATTTAAGCAATTCATTTAGGTTAT',
+    'CGCCGCGATGCTCGGTTCGGACCGCCAAGCATCTGGCTCCACTGCTAGTG',
+    'TCCTAAATTTGAATGGCAAACACAAATAAGATTTAGCAATTCGTGTAGAC',
+    'GACCGGGGACTTGCATGATGGGAGCAGCTTTGTTAAACTACGAACGTAAT'], '']
+
+log['SEQUENCE:']
+pretty_print[dna, 50]
+log['']
+base_count[dna]

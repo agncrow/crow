@@ -1,0 +1,29 @@
+--- a list pushed onto another before its own items are known (`groups =
+--- push[groups, group]` while `group` is still `[]`) makes the holder's
+--- items what the list settles on: met in order, the holder had stayed a
+--- list of lists of nothing known, compiled as lists of text, which did
+--- not build (Rosetta Code, Brilliant numbers)
+
+fn groups_of[n]
+    groups = []
+    group = []
+    groups = push[groups, group]
+    group = push[group, n]
+    return push[groups, group]
+
+log[groups_of[1]]
+
+fn rows_of[n]
+    m = map[]
+    row = []
+    m = set[m, 'a', row]
+    row = push[row, n]
+    return set[m, 'b', row]
+
+log[rows_of[2]]
+
+groups = []
+group = []
+groups = push[groups, group]
+group = push[group, 1]
+log[push[groups, group]]

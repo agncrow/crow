@@ -1,0 +1,19 @@
+--- Rosetta Code: Convert seconds to compound duration
+--- https://rosettacode.org/wiki/Convert_seconds_to_compound_duration
+--- Divide by each unit's length in seconds, the largest unit first, and keep
+--- the units whose count is not zero.
+
+fn compound[seconds]
+    lengths = [7 * 24 * 60 * 60, 24 * 60 * 60, 60 * 60, 60, 1]
+    names = ['wk', 'd', 'hr', 'min', 'sec']
+    parts = []
+    left = seconds
+    for i in range[len[lengths]]
+        count = left / lengths[i]
+        left = left % lengths[i]
+        if count gt 0
+            parts = push[parts, '`count` `names[i]`']
+    return join[parts, ', ']
+
+for seconds in [7259, 86400, 6000000, 1, 100, 3600, 604801, 987654321]
+    log['`fmt[seconds, width = 9]` -> `compound[seconds]`']

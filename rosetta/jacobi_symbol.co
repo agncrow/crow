@@ -1,0 +1,98 @@
+--- Rosetta Code: Jacobi symbol
+--- https://rosettacode.org/wiki/Jacobi_symbol
+--- The usual algorithm by quadratic reciprocity: halve a, flipping the sign when
+--- n is 3 or 5 mod 8, then swap a and n, flipping it when both are 3 mod 4.
+--- Every value is checked against the definition: the product of the Legendre
+--- symbols (a | p)^k over n's prime factors, each by Euler's criterion.
+
+fn jacobi[a, n]
+    if n lte 0 or n % 2 eq 0
+        return error['the Jacobi symbol (a | n) takes an odd positive n, not `n`', 'math']
+    x = a % n
+    if x lt 0
+        x = x + n
+    m = n
+    result = 1
+    while x ne 0
+        while x % 2 eq 0
+            x = x / 2
+            r = m % 8
+            if r eq 3 or r eq 5
+                result = -result
+        x, m = m, x
+        if x % 4 eq 3 and m % 4 eq 3
+            result = -result
+        x = x % m
+    if m eq 1
+        return result
+    return 0
+
+--- b^e mod m by repeated squaring
+fn power_mod[b, e, m]
+    result = 1
+    base = b % m
+    if base lt 0
+        base = base + m
+    k = e
+    while k gt 0
+        if k % 2 eq 1
+            result = result * base % m
+        base = base * base % m
+        k = k / 2
+    return result
+
+--- (a | p) for an odd prime p, by Euler's criterion: a^((p - 1) / 2) mod p
+fn legendre[a, p]
+    t = power_mod[a, (p - 1) / 2, p]
+    if t eq p - 1
+        return -1
+    return t
+
+--- (a | n) by the definition, n factored by trial division
+fn jacobi_by_definition[a, n]
+    result = 1
+    m = n
+    p = 3
+    while p * p lte m
+        while m % p eq 0
+            result = result * legendre[a, p]
+            m = m / p
+        p = p + 2
+    if m gt 1
+        result = result * legendre[a, m]
+    return result
+
+log['Table of jacobi[a, n]:']
+heads = for a in range[1, 16]
+    fmt[a, width = 3]
+head = join[heads, ' ']
+log['n\\a `head`']
+log[repeat['-', 63]]
+for n in range[1, 30, 2]
+    cells = for a in range[1, 16]
+        j = jacobi[a, n]
+        assert[j eq jacobi_by_definition[a, n]]
+        fmt[j, width = 3]
+    row = join[cells, ' ']
+    log['`fmt[n, width = 3]` `row`']
+log['']
+
+--- the Wikipedia article's examples, a negative a, and a Mersenne prime n
+--- (prime, so the symbol is Legendre's, checked by Euler's criterion alone)
+mersenne = 2 ^ 127 - 1
+tops = [1001, 19, 8, 5, -4, 3, 5]
+bottoms = [9907, 45, 21, 21, 15]
+bottoms = push[bottoms, mersenne]
+bottoms = push[bottoms, mersenne]
+for i in range[len[tops]]
+    a = tops[i]
+    n = bottoms[i]
+    j = jacobi[a, n]
+    if n eq mersenne
+        assert[j eq legendre[a, n]]
+    else
+        assert[j eq jacobi_by_definition[a, n]]
+    log['jacobi[`a`, `n`] = `j`']
+
+bad = jacobi[3, 10]
+log['jacobi[3, 10]: `bad.reason`']

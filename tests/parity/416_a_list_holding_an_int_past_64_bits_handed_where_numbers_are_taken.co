@@ -1,0 +1,15 @@
+--- A list holding an int past 64 bits, handed where a tensor of numbers is
+--- taken (math's `sum`, `max`, `mean`), is its numbers, that int its
+--- nearest float, as `float[n]` reads it (spec, Element-wise). The
+--- interpreter had stopped, "a list of int is not a list of numbers",
+--- where the compiled program answered (Rosetta Code, CSV data
+--- manipulation).
+use math
+
+big = []
+big = push[big, 2 ^ 70]
+big = push[big, 1]
+log[sum[big]]
+log[max[big]]
+log[mean[big]]
+log[sum[big] eq float[2 ^ 70]]

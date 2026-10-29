@@ -1,0 +1,170 @@
+--- Rosetta Code: Quad-power prime seeds
+--- https://rosettacode.org/wiki/Quad-power_prime_seeds
+--- n is a seed when n ^ k + n + 1 is prime for k = 1 to 4. Past 1000 a sieve
+--- over blocks of n drops every n where one of the four values is a multiple of
+--- an odd prime below 1000 (for each such prime p, the residues r where
+--- r ^ k + r + 1 is 0 mod p). What is left takes the strong probable-prime test
+--- to base 2 for all four values, and only then Miller-Rabin with the first 13
+--- primes as bases (certain below 3.3 * 10^24, beyond almost certain).
+
+--- the k-th of the four values
+fn value[n, k]
+    return n ^ k + n + 1
+
+--- base ^ exp modulo m, by repeated squaring
+fn pow_mod[base, exp, m]
+    result = 1
+    b = base % m
+    e = exp
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+--- whether odd n > a passes the strong probable-prime test to base a
+fn strong_probable[n, a]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    x = pow_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return true
+    i = 1
+    while i lt s
+        x = x * x % n
+        if x eq n - 1
+            return true
+        i = i + 1
+    return false
+
+fn is_prime[n]
+    bases = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41]
+    if n lt 2
+        return false
+    if n in bases
+        return true
+    i = 0
+    while i lt len[bases]
+        if n % bases[i] eq 0
+            return false
+        i = i + 1
+    i = 0
+    while i lt len[bases]
+        if not strong_probable[n, bases[i]]
+            return false
+        i = i + 1
+    return true
+
+--- every value takes base 2 first: a composite almost always fails there
+--- (the values are odd and at least 3)
+fn is_seed[n]
+    k = 1
+    while k lte 4
+        if not strong_probable[value[n, k], 2]
+            return false
+        k = k + 1
+    k = 1
+    while k lte 4
+        if not is_prime[value[n, k]]
+            return false
+        k = k + 1
+    return true
+
+fn primes_below[limit]
+    sieve = for i in range[limit]
+        i gte 2
+    primes = []
+    for n in range[2, limit]
+        if sieve[n]
+            primes = push[primes, n]
+            m = n * n
+            while m lt limit
+                sieve[m] = false
+                m = m + n
+    return primes
+
+--- whether one of the four values at n is a multiple of p
+fn hits[n, p]
+    k = 1
+    while k lte 4
+        if value[n, k] % p eq 0
+            return true
+        k = k + 1
+    return false
+
+--- the residues r mod p where one of the four values is a multiple of p
+fn dropped[p]
+    found = for r in range[p]
+        if hits[r, p]
+            r
+    return found
+
+--- the seeds among lo to lo + size - 1, for lo at least 1000: there every value
+--- is past 2000, so one that is a multiple of a sieving prime is no prime
+fn seeds_in_block[lo, size, primes, drops]
+    clear = for j in range[size]
+        true
+    i = 0
+    while i lt len[primes]
+        p = primes[i]
+        residues = drops[i]
+        t = 0
+        while t lt len[residues]
+            j = (residues[t] - lo % p + p) % p
+            while j lt size
+                clear[j] = false
+                j = j + p
+            t = t + 1
+        i = i + 1
+    found = for j in range[size]
+        if clear[j] and is_seed[lo + j]
+            lo + j
+    return found
+
+fn ordinal[n]
+    if n % 100 gte 11 and n % 100 lte 13
+        return '`n`th'
+    if n % 10 eq 1
+        return '`n`st'
+    if n % 10 eq 2
+        return '`n`nd'
+    if n % 10 eq 3
+        return '`n`rd'
+    return '`n`th'
+
+--- the values are always odd, so the sieving primes start at 3
+primes = slice[primes_below[1000], 1, 1000]
+drops = for p in primes
+    dropped[p]
+
+--- below 1000 a value may be one of the sieving primes itself: every n is tried
+seeds = for n in range[1, 1000]
+    if is_seed[n]
+        n
+--- blocks of 100,000, sixteen at once, until a seed passes ten million
+millions = 10
+size = 100000
+lo = 1000
+while seeds[-1] lte millions * 1000000
+    blocks = for b in range[16]
+        seeds_in_block[lo + b * size, size, primes, drops]
+    for found in blocks
+        seeds = concat[seeds, found]
+    lo = lo + 16 * size
+
+log['The first fifty quad-power prime seeds:']
+for row in range[5]
+    shown = for n in slice[seeds, 10 * row, 10 * row + 10]
+        fmt[n, width = 8, commas = true]
+    log[join[shown, '']]
+log['']
+log['The first quad-power prime seed greater than:']
+i = 0
+for m in range[1, millions + 1]
+    while seeds[i] lte m * 1000000
+        i = i + 1
+    log['`fmt[m, width = 3]` million is the `ordinal[i + 1]`: `fmt[seeds[i], width = 11, commas = true]`']

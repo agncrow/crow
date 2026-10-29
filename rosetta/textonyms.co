@@ -1,0 +1,84 @@
+--- Rosetta Code: Textonyms
+--- https://rosettacode.org/wiki/Textonyms
+--- Each word of a list is typed on a phone's keypad as the digits of its letters'
+--- keys; a word holding a character on no key is left out. Words that share their
+--- digits are textonyms. The report is made for unixdict.txt on the English keypad,
+--- then (the extra credit) for the 50,000 words most used in Russian subtitles
+--- (ru_50k.txt, OpenSubtitles 2018 via hermitdave's FrequencyWords: a word and its
+--- count a line) on the Russian keypad, 2 абвг 3 деёжз 4 ийкл 5 мноп 6 рсту 7 фхцч
+--- 8 шщъы 9 ьэюя. Each report shows the combinations typing the most words and the
+--- longest combinations typing more than one.
+
+--- a keypad written as 'digit letters digit letters …': each letter's digit
+fn keypad_of[written]
+    parts = split[written, ' ']
+    pad = map[]
+    i = 0
+    while i lt len[parts]
+        for c in split[parts[i + 1], '']
+            pad[c] = parts[i]
+        i = i + 2
+    return pad
+
+--- the digits that type the word, or '' where one of its characters is on no key
+fn digits_of[word, pad]
+    chars = split[lower[word], '']
+    digits = []
+    i = 0
+    while i lt len[chars] and chars[i] in pad
+        digits = push[digits, pad[chars[i]]]
+        i = i + 1
+    if i lt len[chars]
+        return ''
+    return join[digits, '']
+
+--- the list's words: the first on each line
+fn words_of[path]
+    text = read[path]
+    words = for line in split[text, '\n']
+        if trim[line] ne ''
+            split[trim[line], ' '][0]
+    return words
+
+fn shown[combos, digits]
+    typed = join[combos[digits], ', ']
+    return '  `digits` -> `typed`'
+
+fn report[path, keypad]
+    pad = keypad_of[keypad]
+    combos = map[]
+    count = 0
+    for w in words_of[path]
+        d = digits_of[w, pad]
+        if d ne ''
+            count = count + 1
+            if d in combos
+                combos[d] = push[combos[d], w]
+            else
+                combos[d] = [w]
+    most = 0
+    longest = 0
+    textonyms = 0
+    for d in keys[combos]
+        n = len[combos[d]]
+        most = max[most, n]
+        if n gt 1
+            textonyms = textonyms + 1
+            longest = max[longest, len[d]]
+    log['There are `count` words in `path` which can be represented by the digit key mapping.']
+    log['They require `len[combos]` digit combinations to represent them.']
+    log['`textonyms` digit combinations represent Textonyms.']
+    log['']
+    log['The combinations typing the most words, `most` each:']
+    for d in keys[combos]
+        if len[combos[d]] eq most
+            log[shown[combos, d]]
+    log['']
+    log['The longest textonyms, `longest` digits:']
+    for d in keys[combos]
+        if len[d] eq longest and len[combos[d]] gt 1
+            log[shown[combos, d]]
+
+report['unixdict.txt', '2 abc 3 def 4 ghi 5 jkl 6 mno 7 pqrs 8 tuv 9 wxyz']
+log['']
+report['ru_50k.txt', '2 абвг 3 деёжз 4 ийкл 5 мноп 6 рсту 7 фхцч 8 шщъы 9 ьэюя']

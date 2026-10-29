@@ -1,0 +1,101 @@
+--- Rosetta Code: French Republican calendar
+--- https://rosettacode.org/wiki/French_Republican_calendar
+--- Both calendars are counted in days from 1 Vendémiaire 1 = 22 September 1792. A
+--- Gregorian date becomes a day by Crow's own calendar (a moment, in seconds); a
+--- Republican date by its years of 365 or 366 days, twelve months of 30 days and the
+--- Sansculottides. Past the year 14 the years are leap by the continuous method: a year
+--- y is leap when y + 1 is a Gregorian leap year (3, 7, 11, 15, 19, ...).
+
+fn gregorian_months[]
+    return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+fn republican_months[]
+    return ['Vendémiaire', 'Brumaire', 'Frimaire', 'Nivôse', 'Pluviôse', 'Ventôse', 'Germinal', 'Floréal', 'Prairial', 'Messidor', 'Thermidor', 'Fructidor']
+
+fn sansculottides[]
+    return ['Fête de la vertu', 'Fête du génie', 'Fête du travail', 'Fête de l\'opinion', 'Fête des récompenses', 'Fête de la Révolution']
+
+--- where a name is in a list of names, or an error value
+fn index_of[names, name]
+    i = 0
+    while i lt len[names]
+        if names[i] eq name
+            return i
+        i = i + 1
+    return error['no such name: `name`', 'parse']
+
+fn republican_leap[year]
+    y = year + 1
+    return y % 4 eq 0 and (y % 100 ne 0 or y % 400 eq 0)
+
+fn year_length[year]
+    if republican_leap[year]
+        return 366
+    return 365
+
+--- the first day of the calendar, as a moment
+fn epoch[]
+    return moment[1792, 9, 22]
+
+--- '20 May 1795' as a day of the Republic (0 is its first)
+fn day_of_gregorian[text]
+    parts = split[trim[text], ' ']
+    month = index_of[gregorian_months[], parts[1]] + 1
+    t = moment[int[parts[2]], month, int[parts[0]]]
+    return (int[t] - int[epoch[]]) / 86400
+
+fn gregorian_of_day[day]
+    t = epoch[] + day * 86400
+    return '`t.day` `gregorian_months[][t.month - 1]` `t.year`'
+
+--- '1 Prairial 3' or 'Fête de la Révolution 11' as a day of the Republic
+fn day_of_republican[text]
+    words = split[trim[text], ' ']
+    year = int[words[-1]]
+    in_year = 0
+    if matches[words[0], '^[0-9]+$']
+        in_year = 30 * index_of[republican_months[], words[1]] + int[words[0]] - 1
+    else
+        name = join[slice[words, 0, -1], ' ']
+        in_year = 360 + index_of[sansculottides[], name]
+    day = in_year
+    y = 1
+    while y lt year
+        day = day + year_length[y]
+        y = y + 1
+    return day
+
+fn republican_of_day[day]
+    year = 1
+    left = day
+    while left gte year_length[year]
+        left = left - year_length[year]
+        year = year + 1
+    if left lt 360
+        return '`left % 30 + 1` `republican_months[][left / 30]` `year`'
+    return '`sansculottides[][left - 360]` `year`'
+
+fn show[from, to]
+    log['    `fmt[from, width = 26]``to`']
+
+--- the task's five dates, then a Sansculottide of the year 9 and five dates past 1805
+gregorian = ['22 September 1792', '20 May 1795', '15 July 1799', '23 September 1803', '31 December 1805', '21 September 1801', '18 March 1871', '25 August 1944', '19 September 2016', '22 September 2017', '28 September 2017']
+republican = ['1 Vendémiaire 1', '1 Prairial 3', '27 Messidor 7', 'Fête de la Révolution 11', '10 Nivôse 14', 'Fête de l\'opinion 9', '27 Ventôse 79', '7 Fructidor 152', 'Fête du travail 224', '1 Vendémiaire 226', '7 Vendémiaire 226']
+
+log['Gregorian to Republican:']
+for g in gregorian
+    show[g, republican_of_day[day_of_gregorian[g]]]
+log['']
+log['Republican to Gregorian:']
+for r in republican
+    show[r, gregorian_of_day[day_of_republican[r]]]
+
+--- every day the calendar was in use, there and back as text
+last = day_of_gregorian['31 December 1805']
+wrong = 0
+for day in range[last + 1]
+    there = republican_of_day[day]
+    if day_of_republican[there] ne day or day_of_gregorian[gregorian_of_day[day]] ne day
+        wrong = wrong + 1
+log['']
+log['Every day from 22 September 1792 to 31 December 1805 (`last + 1` days) taken there and back: `wrong` wrong.']

@@ -1,0 +1,66 @@
+--- Rosetta Code: List rooted trees
+--- https://rosettacode.org/wiki/List_rooted_trees
+--- A configuration of n bags is a bag holding a collection of smaller configurations
+--- whose sizes add up to n - 1. The configurations of each size are made in turn from
+--- the smaller ones; a bag's contents are chosen from a list of the smaller ones (the
+--- larger first), each choice at or after the one before it, so a collection is made
+--- once whatever order its bags lie in.
+
+--- Every way to fill remaining places with configurations from texts (each of size
+--- sizes[i]), taken from position start on, each written after prefix.
+fn fillings[prefix, remaining, texts, sizes, start]
+    if remaining eq 0
+        return [prefix]
+    found = []
+    i = start
+    while i lt len[texts]
+        if sizes[i] lte remaining
+            more = fillings['`prefix``texts[i]`', remaining - sizes[i], texts, sizes, i]
+            found = concat[found, more]
+        i = i + 1
+    return found
+
+--- The configurations of 1 to n bags: item k - 1 lists those of k bags.
+fn nestings[n]
+    by_size = [['()']]
+    k = 2
+    while k lte n
+        texts = []
+        sizes = []
+        size = k - 1
+        while size gte 1
+            for t in by_size[size - 1]
+                texts = push[texts, t]
+                sizes = push[sizes, size]
+            size = size - 1
+        inside = fillings['', k - 1, texts, sizes, 0]
+        bags = for c in inside
+            '(`c`)'
+        by_size = push[by_size, bags]
+        k = k + 1
+    return by_size
+
+fn counted[n, word]
+    if n eq 1
+        return '1 `word`'
+    return '`n` `word`s'
+
+--- How many bags to list: 5, or the number the command line gives.
+fn bags_asked[given]
+    if len[given] gt 0
+        asked = int[given[0]]
+        if asked.ok and asked gt 0
+            return asked
+    return 5
+
+n = bags_asked[args[]]
+every = nestings[max[n, 12]]
+for k in range[1, n + 1]
+    ways = every[k - 1]
+    log['`counted[k, \'bag\']`, `counted[len[ways], \'way\']`:']
+    for w in ways
+        log['  `w`']
+    log['']
+counts = for k in range[12]
+    str[len[every[k]]]
+log['The number of ways for 1 to 12 bags: `join[counts, \', \']`']

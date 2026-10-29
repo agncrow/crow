@@ -1,0 +1,28 @@
+--- Rosetta Code: Compare a list of strings
+--- https://rosettacode.org/wiki/Compare_a_list_of_strings
+--- Both tests ask a question of each string beside the one after it, and `all`
+--- is true of no pairs, so a list of fewer than two strings passes both. The
+--- list is only read: nothing changes it.
+
+--- each string paired with the one after it
+fn neighbours[strings]
+    pairs = for i in range[1, len[strings]]
+        [strings[i - 1], strings[i]]
+    return pairs
+
+fn same[pair]
+    return pair[0] eq pair[1]
+
+fn rising[pair]
+    return pair[0] lt pair[1]
+
+fn all_equal[strings]
+    return all[neighbours[strings], same]
+
+fn ascending[strings]
+    return all[neighbours[strings], rising]
+
+lists = [[], ['AA'], ['AA', 'AA', 'AA'], ['AA', 'ACB', 'BB', 'CC'], ['AA', 'ACB', 'BB', 'BB'], ['AA', 'CC', 'BB']]
+for strings in lists
+    shown = fmt[str[strings], width = 28]
+    log['`shown` all equal: `all_equal[strings]`, strictly ascending: `ascending[strings]`']

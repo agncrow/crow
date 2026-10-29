@@ -1,0 +1,137 @@
+--- Rosetta Code: Penholodigital squares
+--- https://rosettacode.org/wiki/Penholodigital_squares
+--- A square holding the digits 1 to b - 1 once has b - 1 digits, so its roots lie
+--- between two bounds; it is b (b - 1) / 2 mod b - 1, as its digit sum is, and its
+--- last four digits, fixed by the root mod b ^ 4, must be good. Only the roots
+--- whose residues mod (b - 1) b ^ 4 pass both are tried, four digits at a time
+--- through a table of the digit masks of every four-digit chunk. Bases 2 to 12 in
+--- full, then the first and last square of each base up to the first argument
+--- (15 by default; 16 takes the interpreter several times as long as 15).
+
+use bits
+
+--- the largest x with x * x <= n, by Newton's method on ints
+fn isqrt[n]
+    if n lt 2
+        return n
+    x = n
+    y = (x + 1) / 2
+    while y lt x
+        x = y
+        y = (x + n / x) / 2
+    return x
+
+--- the digits of v in base b as bits (bit d for digit d), or -1 where a digit is 0
+--- or repeats; `count` digits are read, leading zeros included, or all of v's
+--- digits when count is 0
+fn digit_mask[v, b, count]
+    mask = 0
+    x = v
+    i = 0
+    while (count eq 0 and x gt 0) or i lt count
+        d = x % b
+        bit = shift[1, d]
+        if d eq 0 or bitand[mask, bit] ne 0
+            return -1
+        mask = bitor[mask, bit]
+        x = x / b
+        i = i + 1
+    return mask
+
+--- the masks of every value below span = b ^ digits: as a chunk of the square
+--- (`digits` long) and as its top (no leading zeros)
+struct Tables [span, full, top]
+
+fn tables[b, digits]
+    span = b ^ digits
+    full = for v in range[span]
+        digit_mask[v, b, digits]
+    top = for v in range[span]
+        digit_mask[v, b, 0]
+    return Tables[span, full, top]
+
+--- whether the square's digits above its last chunk are good and unlike the
+--- digits of that chunk, whose mask is given
+fn rest_is_good[square, mask, t]
+    seen = mask
+    rest = square / t.span
+    while rest gte t.span
+        m = t.full[rest % t.span]
+        if m eq -1 or bitand[seen, m] ne 0
+            return false
+        seen = bitor[seen, m]
+        rest = rest / t.span
+    if rest gt 0
+        m = t.top[rest]
+        if m eq -1 or bitand[seen, m] ne 0
+            return false
+    return true
+
+--- the roots of the penholodigital squares in base b, in order
+fn penholodigital_roots[b]
+    size = b - 1
+    t = tables[b, min[4, size]]
+    lo = isqrt[b ^ (size - 1) - 1] + 1
+    hi = isqrt[b ^ size - 1]
+    want = b * (b - 1) / 2 % (b - 1)
+    period = (b - 1) * t.span
+    residues = for r in range[period]
+        if r * r % (b - 1) eq want and t.full[r * r % t.span] ne -1
+            r
+    --- the blocks of one period each are searched at once
+    blocks = for start in range[lo - lo % period, hi + 1, period]
+        roots_in_block[start, residues, lo, hi, t]
+    roots = []
+    for block in blocks
+        roots = concat[roots, block]
+    return roots
+
+--- the roots between lo and hi in the block from start to start + period
+fn roots_in_block[start, residues, lo, hi, t]
+    roots = []
+    for r in residues
+        n = start + r
+        if n gte lo and n lte hi and rest_is_good[n * n, t.full[n * n % t.span], t]
+            roots = push[roots, n]
+    return roots
+
+fn in_base[n, b]
+    digits = '0123456789abcdefghijklmnopqrstuvwxyz'
+    if n eq 0
+        return '0'
+    shown = []
+    x = n
+    while x gt 0
+        shown = push[shown, digits[x % b]]
+        x = x / b
+    return join[reverse[shown], '']
+
+fn squared[n, b]
+    return '`in_base[n, b]`² = `in_base[n * n, b]`'
+
+fn report[b, whole]
+    roots = penholodigital_roots[b]
+    count = len[roots]
+    if count eq 1
+        log['There is 1 penholodigital square in base `b`:']
+    else
+        log['There are `count` penholodigital squares in base `b`:']
+    if whole
+        i = 0
+        while i lt count
+            line = for n in slice[roots, i, i + 3]
+                squared[n, b]
+            log[join[line, '  ']]
+            i = i + 3
+    else if count gt 0
+        log['`squared[roots[0], b]` ... `squared[roots[-1], b]`']
+    log['']
+
+given = args[]
+last = 15
+if len[given] gt 0
+    last = int[given[0]]
+for b in range[2, 13]
+    report[b, true]
+for b in range[13, last + 1]
+    report[b, false]

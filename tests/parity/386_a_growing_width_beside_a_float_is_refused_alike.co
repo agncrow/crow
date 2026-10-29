@@ -1,0 +1,9 @@
+--- a growing int handed to `fmt` chooses the form that keeps every digit
+--- only where it is the value: a width past 64 bits beside a float had
+--- chosen it, and the float reached the growing value's place — an
+--- internal error in both modes (crow check --self). The width stops, as
+--- an int of 64 bits does, in both modes
+
+log[fmt[2 ^ 100, commas = true]]
+log[fmt[2.5, decimals = 2]]
+log[fmt[2.5, width = 2 ^ 100]]

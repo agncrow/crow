@@ -1,0 +1,87 @@
+--- Rosetta Code: Pentagram
+--- https://rosettacode.org/wiki/Pentagram
+--- Five points on a circle, each joined to the point two along. Drawn two ways:
+--- in characters, # for the stroke (a cell whose centre is within 0.6 of a line,
+--- in cells), + for the fill and . for the background; and as an SVG, a red stroke
+--- round a blue star on green, written to pentagram.svg in the current directory
+--- (the last line removes it again: leave that line out to keep the picture).
+--- A point is inside the star, its five triangles and its pentagon, when it lies
+--- on the centre's side of at least four of the star's five lines.
+
+use math
+
+struct Point [x, y]
+
+--- the star's points in the order the pen draws them, the first at the top
+fn star[centre, radius]
+    points = for k in range[5]
+        angle = (90 + 72 * k) * pi / 180
+        Point[centre.x + radius * cos[angle], centre.y + radius * sin[angle]]
+    path = for i in range[5]
+        points[2 * i % 5]
+    return path
+
+--- which side of the line through a and b the point p is on, as a sign
+fn side[p, a, b]
+    return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)
+
+fn inside[p, path, centre]
+    count = 0
+    for i in range[5]
+        a = path[i]
+        b = path[(i + 1) % 5]
+        if side[p, a, b] * side[centre, a, b] gt 0.0
+            count = count + 1
+    return count gte 4
+
+fn distance_to_segment[p, u, v]
+    dx = v.x - u.x
+    dy = v.y - u.y
+    t = ((p.x - u.x) * dx + (p.y - u.y) * dy) / (dx * dx + dy * dy)
+    t = min[max[t, 0.0], 1.0]
+    ex = u.x + t * dx - p.x
+    ey = u.y + t * dy - p.y
+    return sqrt[ex * ex + ey * ey]
+
+fn on_stroke[p, path]
+    near = for i in range[5]
+        distance_to_segment[p, path[i], path[(i + 1) % 5]]
+    return min[near] lt 0.6
+
+--- the star in a grid of cols x rows cells, a cell twice as high as it is wide,
+--- its radius counted in columns; x counts columns and y rows from the top, so
+--- the star is turned over to stand the right way up on the screen
+fn picture[cols, rows, centre, radius]
+    path = star[centre, radius]
+    upright = for p in path
+        Point[p.x, centre.y - (p.y - centre.y) / 2.0]
+    lines = for r in range[rows]
+        cells = for c in range[cols]
+            p = Point[c + 0.5, r + 0.5]
+            shown = '.'
+            if on_stroke[p, upright]
+                shown = '#'
+            else if inside[p, upright, centre]
+                shown = '+'
+            shown
+        join[cells, '']
+    return lines
+
+fn svg[size]
+    centre = Point[size / 2.0, size * 0.53]
+    path = star[centre, size * 0.45]
+    --- the screen's y axis points down: turn the star the right way up
+    pairs = for p in path
+        '`fmt[p.x, decimals = 1]`,`fmt[2.0 * centre.y - p.y, decimals = 1]`'
+    points = join[pairs, ' ']
+    head = '<svg xmlns="http://www.w3.org/2000/svg" width="`size`" height="`size`">'
+    ground = '<rect width="100%" height="100%" fill="#2e7d32"/>'
+    shape = '<polygon points="`points`" fill="#1e63c9" stroke="#e53935" stroke-width="6" stroke-linejoin="round" fill-rule="nonzero"/>'
+    return '`head`\n`ground`\n`shape`\n</svg>\n'
+
+for line in picture[61, 29, Point[30.5, 16.0], 29.0]
+    log[line]
+log['']
+written = write['pentagram.svg', svg[400]]
+log['The pentagram as a 400 x 400 SVG, written to pentagram.svg: `written.ok`']
+_gone = rm['pentagram.svg']

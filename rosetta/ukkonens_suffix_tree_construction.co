@@ -1,0 +1,324 @@
+--- Rosetta Code: Ukkonen’s suffix tree construction
+--- https://rosettacode.org/wiki/Ukkonen’s_suffix_tree_construction
+--- Ukkonen's algorithm as the GeeksforGeeks articles give it (an active point,
+--- suffix links, a leaf's edge running to the end of the text). A node is a
+--- number, its fields held in lists side by side: where its edge starts and
+--- ends in the text, its suffix link, and a row of children, one per character
+--- of the text's alphabet. Every tree is checked: every suffix reaches its own
+--- leaf, and for the small texts every suffix is spelled out, character by
+--- character, along its path. The longest repeated substrings (overlaps
+--- allowed) are the labels of the deepest inner nodes, checked by brute force.
+--- Pi's places come from Machin's formula with ints that grow: the AGM of the
+--- task's link (rosetta/arithmetic_geometric_mean_calculate_pi.co) takes about
+--- four times as long at 100,000 places, so it only checks the first 10,000.
+--- The algorithm's rounds are counted to show it linear: about three a
+--- character at every size. Wall-clock times are shown when the program is
+--- given the argument `time` (they differ from run to run, the rest does not).
+
+struct Tree [codes, alphabet, froms, tos, children, depth, leaf_of, rounds]
+
+--- each distinct character numbered in order of first appearance
+fn numbering[chars]
+    numbers = map[]
+    for ch in chars
+        if ch not in numbers
+            numbers = set[numbers, ch, len[numbers]]
+    return numbers
+
+--- the suffix tree of `text`, whose last character appears nowhere else
+fn build[text]
+    chars = split[text, '']
+    numbers = numbering[chars]
+    codes = for ch in chars
+        numbers[ch]
+    alphabet = len[numbers]
+    n = len[codes]
+    --- node 0 is the root; a leaf's edge runs to the end of the text
+    froms = [-1]
+    tos = [-1]
+    links = [0]
+    children = for i in range[(2 * n + 1) * alphabet]
+        -1
+    active_node = 0
+    active_edge = 0
+    active_length = 0
+    remaining = 0
+    rounds = 0
+    pos = 0
+    while pos lt n
+        remaining = remaining + 1
+        last_new = -1
+        while remaining gt 0
+            rounds = rounds + 1
+            if active_length eq 0
+                active_edge = pos
+            slot = active_node * alphabet + codes[active_edge]
+            child = children[slot]
+            if child eq -1
+                --- rule 2: a new leaf at the active node
+                children[slot] = len[froms]
+                froms = push[froms, pos]
+                tos = push[tos, n - 1]
+                links = push[links, 0]
+                if last_new ne -1
+                    links[last_new] = active_node
+                    last_new = -1
+            else
+                length = tos[child] - froms[child] + 1
+                if active_length gte length
+                    --- walk down past the whole edge
+                    active_edge = active_edge + length
+                    active_length = active_length - length
+                    active_node = child
+                    continue
+                if codes[froms[child] + active_length] eq codes[pos]
+                    --- rule 3: already there, so this phase ends
+                    if last_new ne -1 and active_node ne 0
+                        links[last_new] = active_node
+                        last_new = -1
+                    active_length = active_length + 1
+                    break
+                --- rule 2 inside an edge: split it, a new leaf below the split
+                inner = len[froms]
+                froms = push[froms, froms[child]]
+                tos = push[tos, froms[child] + active_length - 1]
+                links = push[links, 0]
+                children[slot] = inner
+                children[inner * alphabet + codes[pos]] = len[froms]
+                froms = push[froms, pos]
+                tos = push[tos, n - 1]
+                links = push[links, 0]
+                froms[child] = froms[child] + active_length
+                children[inner * alphabet + codes[froms[child]]] = child
+                if last_new ne -1
+                    links[last_new] = inner
+                last_new = inner
+            remaining = remaining - 1
+            if active_node eq 0 and active_length gt 0
+                active_length = active_length - 1
+                active_edge = pos - remaining + 1
+            else if active_node ne 0
+                active_node = links[active_node]
+        pos = pos + 1
+    --- each node's string depth, and each leaf's suffix, by a walk from the root
+    nodes = len[froms]
+    depth = for i in range[nodes]
+        0
+    leaf_of = for i in range[nodes]
+        -1
+    stack = [0]
+    while len[stack] gt 0
+        v = stack[-1]
+        stack = pop[stack]
+        is_leaf = true
+        c = 0
+        while c lt alphabet
+            u = children[v * alphabet + c]
+            if u ne -1
+                is_leaf = false
+                depth[u] = depth[v] + tos[u] - froms[u] + 1
+                stack = push[stack, u]
+            c = c + 1
+        if is_leaf
+            leaf_of[v] = n - depth[v]
+    return Tree[codes, alphabet, froms, tos, children, depth, leaf_of, rounds]
+
+--- a leaf below v: its first child's, down to the bottom
+fn some_leaf[t, v]
+    while t.leaf_of[v] eq -1
+        c = 0
+        while t.children[v * t.alphabet + c] eq -1
+            c = c + 1
+        v = t.children[v * t.alphabet + c]
+    return v
+
+--- the labels of the deepest inner nodes, in order
+fn longest_repeats[t, text]
+    best = 0
+    deepest = []
+    v = 1
+    while v lt len[t.depth]
+        if t.leaf_of[v] eq -1
+            if t.depth[v] gt best
+                best = t.depth[v]
+                deepest = [v]
+            else if t.depth[v] eq best
+                deepest = push[deepest, v]
+        v = v + 1
+    found = for v in deepest
+        i = t.leaf_of[some_leaf[t, v]]
+        slice[text, i, i + best]
+    return sort[found]
+
+--- every suffix spelled from the root, character by character, ends at its own leaf
+fn spelled[t]
+    codes = t.codes
+    n = len[codes]
+    i = 0
+    while i lt n
+        v = 0
+        k = i
+        good = true
+        while k lt n and good
+            u = t.children[v * t.alphabet + codes[k]]
+            if u eq -1
+                good = false
+            else
+                j = t.froms[u]
+                while j lte t.tos[u] and good
+                    if k gte n or codes[j] ne codes[k]
+                        good = false
+                    j = j + 1
+                    k = k + 1
+                v = u
+        if not good or t.leaf_of[v] ne i
+            return false
+        i = i + 1
+    return true
+
+--- every suffix reaches its own leaf, each edge chosen by its first character
+fn reached[t]
+    codes = t.codes
+    n = len[codes]
+    i = 0
+    while i lt n
+        v = 0
+        k = i
+        while k lt n
+            u = t.children[v * t.alphabet + codes[k]]
+            if u eq -1
+                return false
+            k = k + t.tos[u] - t.froms[u] + 1
+            v = u
+        if k ne n or t.leaf_of[v] ne i
+            return false
+        i = i + 1
+    return true
+
+--- the substrings of `size` characters found twice or more, by brute force
+fn repeated_of_size[text, size]
+    seen = map[]
+    twice = map[]
+    i = 0
+    while i + size lte len[text]
+        s = slice[text, i, i + size]
+        if s in seen
+            twice = set[twice, s, true]
+        else
+            seen = set[seen, s, true]
+        i = i + 1
+    return sort[keys[twice]]
+
+--- the brute force finds the same longest ones, and none a character longer
+fn brute_agrees[text, found]
+    size = 0
+    if len[found] gt 0
+        size = len[found[0]]
+    return repeated_of_size[text, size + 1] eq [] and (size eq 0 or repeated_of_size[text, size] eq found)
+
+--- the tree drawn as an outline: each edge's label, a leaf's suffix in brackets
+fn outline[t, chars, v, indent]
+    by_label = map[]
+    for c in range[t.alphabet]
+        u = t.children[v * t.alphabet + c]
+        if u ne -1
+            label = join[slice[chars, t.froms[u], t.tos[u] + 1], '']
+            by_label = set[by_label, label, u]
+    lines = []
+    for label in sort[keys[by_label]]
+        u = by_label[label]
+        if t.leaf_of[u] eq -1
+            lines = push[lines, '`indent``label`']
+            lines = concat[lines, outline[t, chars, u, '`indent`    ']]
+        else
+            lines = push[lines, '`indent``label` [`t.leaf_of[u]`]']
+    return lines
+
+fn shown_repeats[found]
+    if len[found] eq 0
+        return 'no repeated substring'
+    return join[found, ', ']
+
+--- arctan(1/x) scaled by `unity`, an int
+fn arctan_inverse[x, unity]
+    total = unity / x
+    term = total
+    k = 1
+    while term ne 0
+        term = term / (x * x)
+        if k % 2 eq 1
+            total = total - term / (2 * k + 1)
+        else
+            total = total + term / (2 * k + 1)
+        k = k + 1
+    return total
+
+--- pi's first `places` decimal places, by Machin's formula
+fn pi_places[places]
+    unity = 10 ^ (places + 10)
+    pi = 4 * (4 * arctan_inverse[5, unity] - arctan_inverse[239, unity])
+    whole = str[pi / 10 ^ 10]
+    return slice[whole, 1, places + 1]
+
+--- the same by the arithmetic-geometric mean, in decimals
+fn pi_places_by_agm[places]
+    work = places + 10
+    one = decimal[1, digits = work]
+    tiny = one / 10 ^ (places + 5)
+    a = one
+    g = one / sqrt[decimal[2, digits = work]]
+    total = decimal[0, digits = work]
+    power = 4
+    while true
+        c = (a - g) / 2
+        if c lt tiny
+            break
+        a, g = (a + g) / 2, sqrt[a * g]
+        total = total + power * c * c
+        power = power * 2
+    pi = 4 * a * a / (1 - total)
+    whole = str[int[pi * 10 ^ places]]
+    return slice[whole, 1, places + 1]
+
+timed = 'time' in args[]
+
+log['Longest repeated substrings, overlaps allowed:']
+tests = ['GEEKSFORGEEKS$', 'AAAAAAAAAA$', 'ABCDEFG$', 'ABABABA$', 'ATCGATCGA$', 'banana$', 'abcpqrabpqpq$', 'pqrpqpqabab$', 'CAAAABAAAABD$']
+every = true
+for text in tests
+    t = build[text]
+    found = longest_repeats[t, text]
+    every = every and spelled[t] and reached[t] and brute_agrees[text, found]
+    log['  `fmt[text, width = 15]` `shown_repeats[found]`']
+log['(each tree spells every suffix to its own leaf, and the brute force agrees: `every`)']
+log['']
+
+log['The suffix tree of banana$:']
+banana = build['banana$']
+for line in outline[banana, split['banana$', ''], 0, '    ']
+    log[line]
+log['']
+
+started = now[]
+digits = pi_places[100000]
+log['Pi to 100,000 places by Machin\'s formula: 3.`slice[digits, 0, 20]`…`slice[digits, 99980, 100000]`']
+log['(its first 10,000 places as the AGM gives them: `pi_places_by_agm[10000] eq slice[digits, 0, 10000]`)']
+if timed
+    log['(pi took `fmt[now[] - started, decimals = 3]` s)']
+log['']
+for places in [1000, 10000, 100000]
+    started = now[]
+    text = '`slice[digits, 0, places]`$'
+    t = build[text]
+    found = longest_repeats[t, text]
+    elapsed = now[] - started
+    log['The first `fmt[places, commas = true]` places of pi:']
+    log['  longest repeated: `shown_repeats[found]` (`len[found[0]]` digits)']
+    per = fmt[t.rounds / float[len[text]], decimals = 3]
+    log['  `fmt[len[t.depth], commas = true]` nodes, built in `fmt[t.rounds, commas = true]` rounds of the loop: `per` a character']
+    if timed
+        log['  (the tree and its answer took `fmt[elapsed, decimals = 3]` s)']
+    checked = reached[t] and brute_agrees[text, found]
+    if places eq 1000
+        checked = checked and spelled[t]
+    log['  every suffix found at its own leaf, the brute force agrees: `checked`']

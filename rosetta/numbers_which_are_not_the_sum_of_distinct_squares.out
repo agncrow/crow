@@ -1,0 +1,9 @@
+Numbers which are not the sum of distinct squares (31 of them):
+2 3 6 7 8 11 12 15 18 19 22 23 24 27 28 31 32 33 43 44 47 48 60 67 72 76 92 96 108 112 128
+
+Why that is all of them: with the squares 1 to 121, every number from 144 to
+287 is a sum of distinct squares, a run as long as the next square, 144.
+Adding 144 to each of those sums extends the run to 431 (288 numbers), more
+than the square after, 169; adding 169 extends it again, and so on for every
+square, so every number from 144 on is such a sum. A number below 144 can use no
+square past 121, so the list above is complete.

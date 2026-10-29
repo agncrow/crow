@@ -1,0 +1,38 @@
+--- Rosetta Code: Determine if a string is squeezable
+--- https://rosettacode.org/wiki/Determine_if_a_string_is_squeezable
+--- Walk the characters once: a character is dropped when it is the specified one and the
+--- character before it is the same, so each run of it keeps its first character only.
+
+struct Case [text, squeezers]
+
+fn squeeze[s, c]
+    kept = []
+    prev = ''
+    for ch in split[s, '']
+        if ch ne c or prev ne c
+            kept = push[kept, ch]
+        prev = ch
+    return join[kept, '']
+
+fn report[s, c]
+    t = squeeze[s, c]
+    log['specified character = \'`c`\'']
+    log['original : length = `fmt[len[s], width = 2]`, string = «««`s`»»»']
+    log['squeezed : length = `fmt[len[t], width = 2]`, string = «««`t`»»»']
+    log['']
+
+truman = '                                                   ---  Harry S Truman  '
+cases = [
+    Case['', [' ']],
+    Case['"If I were two-faced, would I be wearing this one?" --- Abraham Lincoln ', ['-']],
+    Case['..1111111111111111111111111111111111111111111111111111111111111117777888', ['7']],
+    Case['I never give \'em hell, I just tell the truth, and they think it\'s hell. ', ['.']],
+    Case[truman, [' ', '-', 'r']],
+    Case['The better the 4-wheel drive, the further you\'ll be from help when ya get stuck!', ['e']],
+    Case['headmistressship', ['s']],
+    Case['aardvark', ['a']],
+    Case['😍😀🙌💃😍😍😍🙌', ['😍']]
+]
+for k in cases
+    for c in k.squeezers
+        report[k.text, c]

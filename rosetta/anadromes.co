@@ -1,0 +1,18 @@
+--- Rosetta Code: Anadromes
+--- https://rosettacode.org/wiki/Anadromes
+--- Words of more than six characters (from dwyl's words.txt) whose reversal is another
+--- word of the list; each pair is shown once, its alphabetically first word on the left.
+
+words = split[trim[read['words.txt']], '\n']
+long = for w in words
+    if len[w] gt 6
+        w
+present = for w in long
+    true
+known = map[long, present]
+firsts = for w in long
+    backwards = reverse[w]
+    if w lt backwards and backwards in known
+        w
+for w in sort[firsts]
+    log['`fmt[w, width = 9]` `reverse[w]`']

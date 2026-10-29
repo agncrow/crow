@@ -1,0 +1,21 @@
+--- A list pushed as an item of a list of lists keeps its items apart from
+--- the outer list's: joined, a row's ints had been ranged as the rows, and
+--- a doubling through a list of rows stayed a 64-bit multiply that
+--- overflowed compiled. And a nested collect whose rows hold ints past 64
+--- bits is grown at each depth, where the outer list had been converted
+--- again from rows it no longer held (Rosetta Code, Bell numbers, Abelian
+--- sandpile model).
+fn doubled[row]
+    return push[[], row[-1] * 2]
+
+rows = push[[], push[[], 1]]
+while len[rows] lt 70
+    rows = push[rows, doubled[rows[-1]]]
+log[rows[-1][0]]
+
+g = for r in range[2]
+    row = for c in range[2]
+        0
+    row
+g[0][0] = 2 ^ 70
+log[g]

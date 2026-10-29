@@ -1,0 +1,23 @@
+--- Rosetta Code: Start from a main routine
+--- https://rosettacode.org/wiki/Start_from_a_main_routine
+--- Crow needs no trickery here: it has no main() and opens no window at startup.
+--- `crow run file.co`, and the program `crow build` makes, run the file's top-level
+--- lines in order, top to bottom; the declarations (fn, struct, view, test) are not
+--- run but known wherever they stand, so a line may call a function written below it.
+--- Waiting for events is something a program asks for: its pages and routes are
+--- served only when a top-level line calls serve[port]. To start from a main routine,
+--- write a function named main and make calling it the program's top-level line; a
+--- function sees no top-level variable, so main reads what it needs itself (here the
+--- command line's arguments) or is handed it. The two lines around the call show the
+--- order the top level runs in.
+
+log['1. the first top-level line runs first']
+main[]
+log['3. the last top-level line runs once main has returned']
+
+fn main[]
+    log['2. main runs, with `len[args[]]` command-line arguments']
+    log[greeting['Rosetta Code']]
+
+fn greeting[name]
+    return '   Hello from main, `name`!'

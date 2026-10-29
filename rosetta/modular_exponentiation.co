@@ -1,0 +1,56 @@
+--- Rosetta Code: Modular exponentiation
+--- https://rosettacode.org/wiki/Modular_exponentiation
+--- Right-to-left binary exponentiation: the base is squared once for each bit of
+--- the exponent and multiplied into the result where the bit is 1, everything
+--- reduced modulo m at each step, so no number grows past m squared. Crow's ints
+--- grow without limit, so a, b and m may have any number of digits.
+
+--- a ^ b modulo m, for any integers a and b >= 0 and m > 0
+fn mod_pow[a, b, m]
+    if b lt 0
+        return error['the exponent `b` is negative', 'math']
+    if m lte 0
+        return error['the modulus `m` is not positive', 'math']
+    base = a % m
+    if base lt 0
+        base = base + m
+    result = 1 % m
+    e = b
+    while e gt 0
+        if e % 2 eq 1
+            result = result * base % m
+        e = e / 2
+        if e gt 0
+            base = base * base % m
+    return result
+
+--- the same, the slow way: a ^ b computed whole, then reduced into 0 .. m-1
+fn whole_mod[a, b, m]
+    r = (a ^ b) % m
+    if r lt 0
+        r = r + m
+    return r
+
+--- a number as a base is written: in parentheses where it is negative
+fn as_base[x]
+    if x lt 0
+        return '(`x`)'
+    return str[x]
+
+a = 2988348162058574136915891421498819466320163312926952423791023078876139
+b = 2351399303373464486466122544523690094744975233415544072992656881240319
+m = 10 ^ 40
+last = mod_pow[a, b, m]
+log['a = `a`']
+log['b = `b`']
+digits = fmt[last, width = 40, fill = '0']
+log['the last 40 digits of a ^ b: `digits`']
+
+log['']
+log['checked against a ^ b % m computed whole:']
+cases = [[2, 10, 1000], [-3, 3, 5], [7, 0, 13], [7, 5, 1], [123456789, 97, 1000000007], [-2, 61, 10 ^ 12]]
+for c in cases
+    log['  `as_base[c[0]]` ^ `c[1]` mod `c[2]` = `mod_pow[c[0], c[1], c[2]]` (whole: `whole_mod[c[0], c[1], c[2]]`)']
+
+log['']
+log['refused: 2 ^ -1 mod 7 -> `mod_pow[2, -1, 7].reason`; 2 ^ 3 mod 0 -> `mod_pow[2, 3, 0].reason`']

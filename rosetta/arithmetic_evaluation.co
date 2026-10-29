@@ -1,0 +1,125 @@
+--- Rosetta Code: Arithmetic evaluation
+--- https://rosettacode.org/wiki/Arithmetic_evaluation
+--- A recursive-descent parser builds the abstract syntax tree, a record per node
+--- whose children are records (0 for none):
+---     expression := term (('+' | '-') term)*
+---     term       := factor (('*' | '/') factor)*
+---     factor     := number | '(' expression ')' | '-' factor
+--- and a walk of the tree evaluates it. A malformed expression is an error value
+--- that says what is wrong.
+
+struct Node [op, value, left, right]
+
+--- a parse's tree, and the position of the first token it did not read
+struct Parsed [node, next]
+
+fn is_digit[c]
+    return c gte '0' and c lte '9'
+
+--- the expression's numbers, operators and brackets, in order
+fn tokens_of[text]
+    chars = split[text, '']
+    tokens = []
+    i = 0
+    while i lt len[chars]
+        c = chars[i]
+        if is_digit[c] or c eq '.'
+            start = i
+            while i lt len[chars] and (is_digit[chars[i]] or chars[i] eq '.')
+                i = i + 1
+            tokens = push[tokens, join[slice[chars, start, i], '']]
+        else
+            if c ne ' '
+                if c not in ['+', '-', '*', '/', '(', ')']
+                    return error['unexpected character \'`c`\'', 'parse']
+                tokens = push[tokens, c]
+            i = i + 1
+    return tokens
+
+--- the token at a position, or empty text past the end
+fn token_at[tokens, i]
+    if i lt len[tokens]
+        return tokens[i]
+    return ''
+
+fn parse_factor[tokens, i]
+    t = token_at[tokens, i]
+    if t eq ''
+        return error['the expression ends too soon', 'parse']
+    if t eq '('
+        inner = parse_expression[tokens, i + 1]
+        if token_at[tokens, inner.next] ne ')'
+            return error['a bracket is not closed', 'parse']
+        return Parsed[inner.node, inner.next + 1]
+    if t eq '-'
+        operand = parse_factor[tokens, i + 1]
+        return Parsed[Node['neg', 0.0, operand.node, 0], operand.next]
+    n = float[t]
+    if not n.ok
+        return error['a number was expected, not \'`t`\'', 'parse']
+    return Parsed[Node['num', n, 0, 0], i + 1]
+
+fn parse_term[tokens, i]
+    first = parse_factor[tokens, i]
+    node = first.node
+    at = first.next
+    while token_at[tokens, at] eq '*' or token_at[tokens, at] eq '/'
+        right = parse_factor[tokens, at + 1]
+        node = Node[tokens[at], 0.0, node, right.node]
+        at = right.next
+    return Parsed[node, at]
+
+fn parse_expression[tokens, i]
+    first = parse_term[tokens, i]
+    node = first.node
+    at = first.next
+    while token_at[tokens, at] eq '+' or token_at[tokens, at] eq '-'
+        right = parse_term[tokens, at + 1]
+        node = Node[tokens[at], 0.0, node, right.node]
+        at = right.next
+    return Parsed[node, at]
+
+--- a whole expression parsed: its tree is the answer's node
+fn parse[text]
+    tokens = tokens_of[text]
+    whole = parse_expression[tokens, 0]
+    if whole.next lt len[tokens]
+        return error['\'`tokens[whole.next]`\' was not expected', 'parse']
+    return whole
+
+fn evaluate[node]
+    if node.op eq 'num'
+        return node.value
+    if node.op eq 'neg'
+        return -evaluate[node.left]
+    a = evaluate[node.left]
+    b = evaluate[node.right]
+    if node.op eq '+'
+        return a + b
+    if node.op eq '-'
+        return a - b
+    if node.op eq '*'
+        return a * b
+    return a / b
+
+--- the tree written out, an operator before its operands
+fn shown[node]
+    if node.op eq 'num'
+        return str[node.value]
+    if node.op eq 'neg'
+        return '(neg `shown[node.left]`)'
+    return '(`node.op` `shown[node.left]` `shown[node.right]`)'
+
+--- a line of the table: the expression, then its value and tree, or what is wrong
+fn report[text]
+    quoted = fmt['\'`text`\'', width = 27]
+    parsed = parse[text]
+    if not parsed.ok
+        return '`quoted`  error: `parsed.reason`'
+    tree = parsed.node
+    value = fmt[str[evaluate[tree]], width = 6, align = 'right']
+    return '`quoted``value`   `shown[tree]`'
+
+log['`fmt[\'expression\', width = 27]` value   tree']
+for text in ['(1+3)*7', '1 + 2 * 3', '(1 + 2) * 3', '2 * (3 + 4) * 5 / 7 - 1', '10 - 4 - 3', '64 / 4 / 2', '-(5 - 8) * 2.5', '1 / 8', '(1 + 2', '1 + 2)', '2 * * 3', '3 $ 4', '']
+    log[report[text]]

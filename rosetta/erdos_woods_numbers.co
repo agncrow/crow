@@ -1,0 +1,123 @@
+--- Rosetta Code: Erdős–Woods numbers
+--- https://rosettacode.org/wiki/Erd%C5%91s%E2%80%93Woods_numbers
+--- After the search posted on Code Golf by ovs and xash: each prime below k is
+--- given to a, to a + k, or to neither, and a set of primes is one int's bits
+--- (bit j for the j-th prime). The numbers a + i between the ends are taken
+--- the most constrained first; a choice that leaves one without a factor shared
+--- with an end branches on each free prime that would give it one. Every choice
+--- that survives fixes a by the Chinese remainder theorem, and the least is kept.
+
+use bits
+
+--- the primes given to a, those given to a + k, and those not given yet
+struct Split [low, high, free]
+
+fn primes_below[n]
+    found = []
+    for m in range[2, n]
+        prime = true
+        for p in found
+            if m % p eq 0
+                prime = false
+        if prime
+            found = push[found, m]
+    return found
+
+--- the primes dividing m, as bits
+fn mask_of[m, primes]
+    mask = 0
+    for j in range[len[primes]]
+        if m % primes[j] eq 0
+            mask = bitor[mask, shift[1, j]]
+    return mask
+
+--- the index of the lowest bit set, -1 for none
+fn lowest_bit[mask]
+    if mask eq 0
+        return -1
+    j = 0
+    while bitand[shift[mask, -j], 1] eq 0
+        j = j + 1
+    return j
+
+--- 1 to k - 1, those whose smallest prime (of i and of k - i) is largest
+--- first, and those with none (which no choice covers) last
+fn search_order[k, divs, count]
+    order = []
+    for key in range[count - 1, -2, -1]
+        for i in range[1, k]
+            if lowest_bit[bitor[divs[i], divs[k - i]]] eq key
+                order = push[order, i]
+    return order
+
+--- x with a * x leaving 1 over m, for a and m with no common factor
+fn inverse[a, m]
+    r0 = m
+    r1 = a % m
+    t0 = 0
+    t1 = 1
+    while r1 ne 0
+        q = r0 / r1
+        r0, r1 = r1, r0 - q * r1
+        t0, t1 = t1, t0 - q * t1
+    return (t0 % m + m) % m
+
+--- the product of the primes whose bits are set
+fn product_of[mask, primes]
+    p = 1
+    for j in range[len[primes]]
+        if bitand[shift[mask, -j], 1] eq 1
+            p = p * primes[j]
+    return p
+
+--- every way of giving the primes to the ends that covers 1 to k - 1
+fn splits_for[k, primes]
+    divs = for m in range[k]
+        mask_of[m, primes]
+    splits = [Split[0, 0, shift[1, len[primes]] - 1]]
+    for i in search_order[k, divs, len[primes]]
+        f = divs[i]
+        g = divs[k - i]
+        next = []
+        for s in splits
+            if bitand[f, s.low] ne 0 or bitand[g, s.high] ne 0
+                next = push[next, s]
+            else
+                m = bitand[f, s.free]
+                while m ne 0
+                    w = bitand[m, -m]
+                    m = bitxor[m, w]
+                    next = push[next, Split[bitor[s.low, w], s.high, bitxor[s.free, w]]]
+                m = bitand[g, s.free]
+                while m ne 0
+                    w = bitand[m, -m]
+                    m = bitxor[m, w]
+                    next = push[next, Split[s.low, bitor[s.high, w], bitxor[s.free, w]]]
+        splits = next
+    return splits
+
+--- the least a for which k is an Erdős–Woods number, or 0 where it is none
+fn least_start[k]
+    primes = primes_below[k]
+    best = 0
+    for s in splits_for[k, primes]
+        x = product_of[s.low, primes]
+        y = product_of[s.high, primes]
+        --- a = x t, with x t + k leaving 0 over y
+        t = (y - k * inverse[x, y] % y) % y
+        if t eq 0
+            t = y
+        a = x * t
+        if best eq 0 or a lt best
+            best = a
+    return best
+
+log['The first 20 Erdős–Woods numbers and the least start of each:']
+count = 0
+k = 3
+while count lt 20
+    a = least_start[k]
+    if a gt 0
+        log['`fmt[k, width = 3]` -> `a`']
+        count = count + 1
+    k = k + 1

@@ -1,0 +1,78 @@
+--- Rosetta Code: Geohash
+--- https://rosettacode.org/wiki/Geohash
+--- Encoding halves the longitude's range, then the latitude's, in turn, a bit for each
+--- half taken (1 the upper), five bits to a character of the base-32 alphabet. Decoding
+--- (the extra credit) halves the ranges again as each bit says, and answers the cell.
+
+fn alphabet[]
+    return split['0123456789bcdefghjkmnpqrstuvwxyz', '']
+
+--- the geohash of a point, precision characters long
+fn geohash[lat, lng, precision]
+    digits = alphabet[]
+    lat_lo, lat_hi = -90.0, 90.0
+    lng_lo, lng_hi = -180.0, 180.0
+    chars = []
+    value = 0
+    for i in range[5 * precision]
+        value = value * 2
+        if i % 2 eq 0
+            mid = (lng_lo + lng_hi) / 2.0
+            if lng lt mid
+                lng_hi = mid
+            else
+                lng_lo = mid
+                value = value + 1
+        else
+            mid = (lat_lo + lat_hi) / 2.0
+            if lat lt mid
+                lat_hi = mid
+            else
+                lat_lo = mid
+                value = value + 1
+        if i % 5 eq 4
+            chars = push[chars, digits[value]]
+            value = 0
+    return join[chars, '']
+
+--- the cell a geohash names: [lowest latitude, highest, lowest longitude, highest]
+fn cell[code]
+    digits = alphabet[]
+    place = map[]
+    for i in range[32]
+        place = set[place, digits[i], i]
+    lat_lo, lat_hi = -90.0, 90.0
+    lng_lo, lng_hi = -180.0, 180.0
+    longitude = true
+    for c in split[code, '']
+        value = place[c]
+        bit = 16
+        while bit gt 0
+            high = (value / bit) % 2 eq 1
+            if longitude
+                mid = (lng_lo + lng_hi) / 2.0
+                if high
+                    lng_lo = mid
+                else
+                    lng_hi = mid
+            else
+                mid = (lat_lo + lat_hi) / 2.0
+                if high
+                    lat_lo = mid
+                else
+                    lat_hi = mid
+            longitude = not longitude
+            bit = bit / 2
+    return [lat_lo, lat_hi, lng_lo, lng_hi]
+
+--- a range as its middle, plus or minus half its width
+fn middle[lo, hi]
+    return '`(lo + hi) / 2.0` ± `(hi - lo) / 2.0`'
+
+struct Point [lat, lng, precision]
+
+for p in [Point[51.433718, -0.214126, 2], Point[51.433718, -0.214126, 9], Point[57.64911, 10.40744, 11], Point[57.64911, 10.40744, 22]]
+    code = geohash[p.lat, p.lng, p.precision]
+    log['geohash[`fmt[p.lat, decimals = 6]`, `fmt[p.lng, decimals = 6]`, `p.precision`] = `code`']
+    c = cell[code]
+    log['    decoded: latitude `middle[c[0], c[1]]`, longitude `middle[c[2], c[3]]`']

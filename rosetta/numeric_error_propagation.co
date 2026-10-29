@@ -1,0 +1,63 @@
+--- Rosetta Code: Numeric error propagation
+--- https://rosettacode.org/wiki/Numeric_error_propagation
+--- An uncertain number is a record of its value and its standard uncertainty σ.
+--- Crow has no operator overloading, so the arithmetic is five named functions. A
+--- plain number takes part as one with no uncertainty (exact[c]): the rules for
+--- two uncertain numbers then reduce to the task's rules for a constant (a ± c
+--- keeps σa, ca has |cσa|). Multiplication and division are written so that no
+--- value is divided by: σ of ab is √((bσa)² + (aσb)²), the task's f²((σa/a)² +
+--- (σb/b)²) with f² multiplied in.
+
+struct Uncertain [value, sigma]
+
+fn exact[c]
+    --- a plain number, as an uncertain one with no uncertainty
+    Uncertain[float[c], 0.0]
+
+fn plus[a, b]
+    Uncertain[a.value + b.value, sqrt[a.sigma ^ 2 + b.sigma ^ 2]]
+
+fn minus[a, b]
+    Uncertain[a.value - b.value, sqrt[a.sigma ^ 2 + b.sigma ^ 2]]
+
+fn times[a, b]
+    Uncertain[a.value * b.value, sqrt[(b.value * a.sigma) ^ 2 + (a.value * b.sigma) ^ 2]]
+
+fn over[a, b]
+    f = a.value / b.value
+    Uncertain[f, sqrt[(a.sigma / b.value) ^ 2 + (f * b.sigma / b.value) ^ 2]]
+
+fn power[a, c]
+    --- a raised to a plain number c: σ is |f c σa / a|
+    f = a.value ^ c
+    Uncertain[f, abs[f * c * a.sigma / a.value]]
+
+fn shown[u]
+    '`u.value` ± `u.sigma`'
+
+fn distance[x1, y1, x2, y2]
+    --- √((x1 − x2)² + (y1 − y2)²)
+    dx = minus[x1, x2]
+    dy = minus[y1, y2]
+    power[plus[power[dx, 2.0], power[dy, 2.0]], 0.5]
+
+x1 = Uncertain[100.0, 1.1]
+y1 = Uncertain[50.0, 1.2]
+x2 = Uncertain[200.0, 2.2]
+y2 = Uncertain[100.0, 2.3]
+log['p1 = (`shown[x1]`, `shown[y1]`)']
+log['p2 = (`shown[x2]`, `shown[y2]`)']
+d = distance[x1, y1, x2, y2]
+log['distance d = `d.value`']
+log['its error  = `d.sigma`']
+log['']
+log['With plain numbers:']
+log['    x1 + 10   = `shown[plus[x1, exact[10]]]`']
+log['    20 - y1   = `shown[minus[exact[20], y1]]`']
+log['    3 x1      = `shown[times[exact[3], x1]]`']
+log['    x2 / 4    = `shown[over[x2, exact[4]]]`']
+log['    1 / y2    = `shown[over[exact[1], y2]]`']
+log['    x1 ^ 3    = `shown[power[x1, 3.0]]`']
+log['And two uncertain numbers:']
+log['    x1 y1     = `shown[times[x1, y1]]`']
+log['    x2 / y2   = `shown[over[x2, y2]]`']

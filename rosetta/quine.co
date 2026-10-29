@@ -1,0 +1,17 @@
+--- Rosetta Code: Quine
+--- https://rosettacode.org/wiki/Quine
+--- The text of the program is held in s, with an at sign where s itself is
+--- written; it is printed with that sign replaced by s between quotes, the
+--- sign and the quote made from their character codes.
+use bits
+q = char[39]
+s = '--- Rosetta Code: Quine
+--- https://rosettacode.org/wiki/Quine
+--- The text of the program is held in s, with an at sign where s itself is
+--- written; it is printed with that sign replaced by s between quotes, the
+--- sign and the quote made from their character codes.
+use bits
+q = char[39]
+s = @
+log[replace[s, char[64], concat[[q, s, q]]]]'
+log[replace[s, char[64], concat[[q, s, q]]]]

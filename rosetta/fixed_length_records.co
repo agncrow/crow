@@ -1,0 +1,116 @@
+--- Rosetta Code: Fixed length records
+--- https://rosettacode.org/wiki/Fixed_length_records
+--- The task's sample is written as lines (sample.txt) and blocked into 80-column
+--- records with no line ends (infile.dat, as dd conv=block makes it); each record is
+--- reversed into outfile.dat, and both are shown unblocked (dd conv=unblock: the
+--- trailing spaces cut, a line end added). The bonus: text to Forth blocks of 16
+--- lines of 64 columns (forth.blk) and back. Every file is removed at the end.
+--- A Crow program reads and writes files as text (UTF-8), so a record is 80
+--- characters: NUL and line ends inside a record pass through (checked below), but
+--- bytes 128 to 255 do not, since the byte layer (sys) is the standard library's own.
+
+use bits
+
+--- a line cut to width columns, or padded with spaces to it
+fn fixed[line, width]
+    if len[line] gte width
+        return slice[line, 0, width]
+    return fmt[line, width = width]
+
+--- the lines of a text, without the empty piece after its last line end
+fn lines_of[text]
+    pieces = split[text, '\n']
+    if len[pieces] gt 0 and pieces[-1] eq ''
+        return slice[pieces, 0, -1]
+    return pieces
+
+--- dd conv=block: each line a record of width columns, with no line ends
+fn blocked[text, width]
+    records = for line in lines_of[text]
+        fixed[line, width]
+    return join[records, '']
+
+--- the records of fixed-length data, width columns each
+fn records_of[data, width]
+    records = for i in range[len[data] / width]
+        slice[data, i * width, (i + 1) * width]
+    return records
+
+--- dd conv=unblock: each record without its trailing spaces, as a line
+fn unblocked[data, width]
+    lines = for record in records_of[data, width]
+        sub[record, ' +$', '']
+    return lines
+
+--- each record of the data reversed, as fixed-length data again
+fn reversed_records[data, width]
+    records = for record in records_of[data, width]
+        reverse[record]
+    return join[records, '']
+
+--- text as Forth blocks: each line cut or padded to 64 columns, the last block
+--- filled to 1024 with blanks
+fn to_blocks[text]
+    body = blocked[text, 64]
+    short = len[body] % 1024
+    if short gt 0
+        body = fmt[body, width = len[body] + 1024 - short]
+    return body
+
+fn show[title, lines]
+    log[title]
+    for line in lines
+        log[line]
+    log['']
+
+sample = ['Line 1...1.........2.........3.........4.........5.........6.........7.........8',
+    'Line 2',
+    'Line 3',
+    'Line 4',
+    '',
+    'Line 6',
+    'Line 7',
+    '     Indented line 8............................................................',
+    'Line 9                                                                 RT MARGIN']
+text = join[sample, '\n']
+write['sample.txt', '`text`\n']
+
+write['infile.dat', blocked[read['sample.txt'], 80]]
+data = read['infile.dat']
+write['outfile.dat', reversed_records[data, 80]]
+log['infile.dat holds `len[data]` bytes: `len[data] / 80` records of 80 columns, no line ends']
+log['']
+show['dd if=infile.dat cbs=80 conv=unblock', unblocked[data, 80]]
+show['dd if=outfile.dat cbs=80 conv=unblock', unblocked[read['outfile.dat'], 80]]
+
+--- NUL, a line end and a tab are data inside a record like any other character
+odd = fixed[concat[['NUL ', char[0], ', a line end ', '\n', ' and a tab ', char[9], ' in one record']], 80]
+write['odd.dat', odd]
+write['odd_reversed.dat', reversed_records[read['odd.dat'], 80]]
+again = reversed_records[read['odd_reversed.dat'], 80]
+log['A record holding NUL, a line end and a tab, reversed into a file and back: the same 80 characters: `again eq odd`']
+log['']
+
+forth = ['( The bonus round: a Forth screen, 16 lines of 64 columns )',
+    '( A line longer than 64 columns is cut at the 64th: the rest of this one is lost )',
+    ': SQUARE  ( n -- n*n )  DUP * ;',
+    ': CUBE  ( n -- n*n*n )  DUP SQUARE * ;',
+    ': STARS  ( n -- )  0 ?DO [CHAR] * EMIT LOOP ;',
+    ': TRIANGLE  ( n -- )  1+ 1 DO CR I STARS LOOP ;',
+    ': COUNTDOWN  ( n -- )  BEGIN DUP . 1- DUP 0= UNTIL DROP ;',
+    '',
+    '5 TRIANGLE',
+    '3 CUBE .',
+    '10 COUNTDOWN']
+source = join[forth, '\n']
+write['forth.txt', '`source`\n']
+write['forth.blk', to_blocks[read['forth.txt']]]
+blk = read['forth.blk']
+log['forth.blk holds `len[blk]` bytes: `len[blk] / 1024` block of 16 lines of 64 columns']
+log['forth.blk as text, its lines numbered (the trailing spaces left out):']
+lines = unblocked[blk, 64]
+for i in range[len[lines]]
+    log['`fmt[i + 1, width = 2]`|`lines[i]`']
+
+for name in ['sample.txt', 'infile.dat', 'outfile.dat', 'odd.dat', 'odd_reversed.dat', 'forth.txt', 'forth.blk']
+    _gone = rm[name]

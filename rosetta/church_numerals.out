@@ -1,0 +1,8 @@
+zero  -> 0
+three -> 3
+four  -> 4
+three + four -> 7
+three * four -> 12
+four ^ three -> 64
+three ^ four -> 81
+5 -> church -> 5

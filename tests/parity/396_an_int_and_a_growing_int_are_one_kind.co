@@ -1,0 +1,20 @@
+--- an int is a whole number of any size: a variable first given 0 and
+--- then a growing int (`floor` of a fraction, an int past 64 bits) holds
+--- it — the program had been refused, "cannot reassign 'answer' from int
+--- to int", in a function and at the top level (Rosetta Code, Prime
+--- reciprocal sum)
+
+fn pick[m]
+    answer = 0
+    answer = m + 1
+    return answer
+
+log[pick[floor[fraction[7, 2]]]]
+log[pick[2 ^ 70]]
+x = 0
+f = fraction[7, 2]
+x = floor[f]
+log[x]
+y = 5
+y = 2 ^ 80
+log[y]

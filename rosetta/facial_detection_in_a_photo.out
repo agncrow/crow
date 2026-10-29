@@ -1,0 +1,14 @@
+AOBABA176.jpg: 2048 x 1365 pixels, decoded in gray at half size (1024 x 682)
+haarcascade_frontalface_alt.xml: 22 stages of 2135 Haar features on a 20 x 20 window
+319 windows passed every stage; grouped, they are 8 faces
+
+Detected 8 faces, as [x, y, width, height] in the photo's pixels:
+Face 1: [530, 416, 100, 100]
+Face 2: [662, 424, 94, 94]
+Face 3: [886, 352, 102, 102]
+Face 4: [1062, 652, 88, 88]
+Face 5: [1068, 364, 90, 90]
+Face 6: [1254, 358, 92, 92]
+Face 7: [1322, 574, 94, 94]
+Face 8: [1478, 320, 96, 96]
+faces.svg draws them over the photo

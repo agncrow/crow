@@ -1,0 +1,12 @@
+10 x 10 grid, A at row 1, column 1 and B at row 6, column 7 (counted from 0):
+  R = 455859137025721/283319837425200 ohm (exact)
+    = 1.6089912417307297 ohm
+  math's solve in floats: 1.6089912417307306 ohm
+
+An infinite grid, from a node to the node m columns and n rows away:
+  m  n  by the integral    closed form
+  1  0  0.500000000000000  0.500000000000000 = 1/2
+  1  1  0.636619772367581  0.636619772367581 = 2/pi
+  2  0  0.726760455264837  0.726760455264837 = 2 - 4/pi
+  2  1  0.773239544735163  0.773239544735163 = 4/pi - 1/2
+xkcd 356, a knight's move apart: 4/pi - 1/2 = 0.7732395447351628 ohm

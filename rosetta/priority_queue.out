@@ -1,0 +1,16 @@
+size 5, top: 1 Solve RC tasks
+Priority  Task
+       1  Solve RC tasks
+       2  Tax return
+       3  Clear drains
+       4  Feed cat
+       5  Make tea
+peek at the empty queue: the queue is empty
+
+Twelve jobs of random priority, as they come out:
+1 job 10, 4 job 5, 13 job 9, 41 job 4, 42 job 6, 51 job 12, 53 job 1, 54 job 2, 64 job 3, 74 job 7, 85 job 8, 93 job 11
+
+Two queues merged:
+1 Fix outage, 2 Pay bills, 6 Write report, 7 Mow lawn, 9 Paint fence
+
+100,000 random priorities: 100,000 out, in order: true

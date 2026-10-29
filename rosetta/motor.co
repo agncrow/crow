@@ -1,0 +1,124 @@
+--- Rosetta Code: Motor
+--- https://rosettacode.org/wiki/Motor
+--- The task gives only its links; as in the other entries, a motor is rigid
+--- geometric algebra's: a rigid motion (a rotation about a line and a slide along
+--- it, a screw) held as two quaternions, the rotor (weight) and the screw part
+--- (bulk) — the dual quaternion r + e s. Motors are built for a rotation, a
+--- translation and a screw, composed by the dual product, applied to points and
+--- undone by their reverse; the other entries' cross3 of two rotors is shown with
+--- their numbers. Quaternions are (x, y, z, w), w the scalar.
+
+use math
+
+struct Quat [x, y, z, w]
+struct Motor [rotor, screw]
+struct Point [x, y, z]
+
+--- the Hamilton product
+fn qmul[a, b]
+    x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y
+    y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x
+    z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w
+    w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+    return Quat[x, y, z, w]
+
+fn qadd[a, b]
+    return Quat[a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w]
+
+fn qconj[q]
+    return Quat[-q.x, -q.y, -q.z, q.w]
+
+--- the motion b, then a: (ra + e sa)(rb + e sb) = ra rb + e (ra sb + sa rb)
+fn product[a, b]
+    return Motor[qmul[a.rotor, b.rotor], qadd[qmul[a.rotor, b.screw], qmul[a.screw, b.rotor]]]
+
+fn unit_vector[v]
+    n = sqrt[v.x * v.x + v.y * v.y + v.z * v.z]
+    return Point[v.x / n, v.y / n, v.z / n]
+
+--- a turn by angle (radians) about the line through c along axis, and a slide by
+--- disp along it: rotor (u sin, cos) of the half angle, screw (m sin + u disp/2 cos,
+--- -disp/2 sin) with m = c x u the line's moment
+fn screw_motion[angle, axis, c, disp]
+    u = unit_vector[axis]
+    s = sin[angle / 2.0]
+    k = cos[angle / 2.0]
+    mx = c.y * u.z - c.z * u.y
+    my = c.z * u.x - c.x * u.z
+    mz = c.x * u.y - c.y * u.x
+    h = disp / 2.0
+    rotor = Quat[u.x * s, u.y * s, u.z * s, k]
+    screw = Quat[mx * s + h * u.x * k, my * s + h * u.y * k, mz * s + h * u.z * k, -h * s]
+    return Motor[rotor, screw]
+
+--- a turn about the line through the origin along axis
+fn rotation[angle, axis]
+    return screw_motion[angle, axis, Point[0.0, 0.0, 0.0], 0.0]
+
+fn translation[t]
+    return Motor[Quat[0.0, 0.0, 0.0, 1.0], Quat[t.x / 2.0, t.y / 2.0, t.z / 2.0, 0.0]]
+
+--- the motion undone
+fn reversed[m]
+    return Motor[qconj[m.rotor], qconj[m.screw]]
+
+--- where the motion takes p: r p r* + t, the translation t = 2 s r*
+fn moved[m, p]
+    turned = qmul[qmul[m.rotor, Quat[p.x, p.y, p.z, 0.0]], qconj[m.rotor]]
+    t = qmul[m.screw, qconj[m.rotor]]
+    return Point[turned.x + 2.0 * t.x, turned.y + 2.0 * t.y, turned.z + 2.0 * t.z]
+
+--- the other entries' cross3: the cross product of the rotors' vector parts
+fn cross3[a, b]
+    r = a.rotor
+    q = b.rotor
+    return Quat[r.y * q.z - r.z * q.y, r.z * q.x - r.x * q.z, r.x * q.y - r.y * q.x, 0]
+
+--- a number to four places, without a negative zero
+fn num[x]
+    return float[round[x * 10000.0]] / 10000.0
+
+fn quat_shown[q]
+    return '(`num[q.x]`, `num[q.y]`, `num[q.z]`, `num[q.w]`)'
+
+fn motor_shown[m]
+    return '(`quat_shown[m.rotor]`, `quat_shown[m.screw]`)'
+
+fn point_shown[p]
+    return '(`num[p.x]`, `num[p.y]`, `num[p.z]`)'
+
+m1 = Motor[Quat[1, 2, 3, 4], Quat[0, 0, 0, 0]]
+m2 = Motor[Quat[5, 6, 7, 8], Quat[0, 0, 0, 0]]
+log['The other entries\' motors and cross3:']
+log['  m1: `motor_shown[m1]`']
+log['  m2: `motor_shown[m2]`']
+log['  m1 x m2 = `quat_shown[cross3[m1, m2]]`']
+
+z = Point[0.0, 0.0, 1.0]
+origin = Point[0.0, 0.0, 0.0]
+p = Point[1.0, 0.0, 0.0]
+quarter = rotation[pi / 2.0, z]
+shift = translation[Point[1.0, 2.0, 3.0]]
+log['']
+log['A quarter turn about the z axis: `motor_shown[quarter]`']
+log['  moves `point_shown[p]` to `point_shown[moved[quarter, p]]`']
+log['A translation by (1, 2, 3): `motor_shown[shift]`']
+log['  moves `point_shown[p]` to `point_shown[moved[shift, p]]`']
+both = product[shift, quarter]
+log['The turn and then the translation, as one motor: `motor_shown[both]`']
+log['  moves `point_shown[p]` to `point_shown[moved[both, p]]` (one after the other: `point_shown[moved[shift, moved[quarter, p]]]`)']
+other = product[quarter, shift]
+log['The translation and then the turn: `motor_shown[other]`']
+log['  moves `point_shown[p]` to `point_shown[moved[other, p]]`']
+around = screw_motion[pi / 2.0, z, Point[1.0, 1.0, 0.0], 0.0]
+log['A quarter turn about the vertical line through (1, 1, 0): `motor_shown[around]`']
+log['  moves (2, 1, 0) to `point_shown[moved[around, Point[2.0, 1.0, 0.0]]]`']
+screw = screw_motion[pi, z, origin, 4.0]
+log['A screw: a half turn about the z axis with a slide of 4 along it: `motor_shown[screw]`']
+log['  moves `point_shown[p]` to `point_shown[moved[screw, p]]`, and done twice to `point_shown[moved[product[screw, screw], p]]`']
+tilted = screw_motion[pi / 2.0, Point[1.0, 1.0, 1.0], Point[1.0, 0.0, 0.0], 3.0]
+q = Point[0.5, -2.0, 7.0]
+there = moved[tilted, q]
+log['A screw about the line through (1, 0, 0) along (1, 1, 1), a quarter turn and a slide of 3:']
+log['  `motor_shown[tilted]`']
+log['  moves `point_shown[q]` to `point_shown[there]`, and its reverse brings it back to `point_shown[moved[reversed[tilted], there]]`']

@@ -1,0 +1,21 @@
+--- Rosetta Code: Split a character string based on change of character
+--- https://rosettacode.org/wiki/Split_a_character_string_based_on_change_of_character
+--- Walk the characters left to right, growing the current run while the character
+--- repeats and starting a new run where it changes; the runs are joined by a comma
+--- and a blank. Blanks and commas are characters like any other: the second example
+--- shows its runs as a list, each run quoted, so they can be seen.
+
+fn runs_of[text]
+    runs = []
+    run = ''
+    for c in split[text, '']
+        if run ne '' and c ne run[0]
+            runs = push[runs, run]
+            run = ''
+        run = '`run``c`'
+    if run ne ''
+        runs = push[runs, run]
+    return runs
+
+log[join[runs_of['gHHH5YY++///\\'], ', ']]
+log[runs_of['aa  ,,,b  c']]

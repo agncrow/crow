@@ -1,0 +1,79 @@
+--- Rosetta Code: Sum and product puzzle
+--- https://rosettacode.org/wiki/Sum_and_product_puzzle
+--- Every pair 2 ≤ X < Y with X + Y ≤ 100 is a candidate, and each line of the conversation
+--- keeps the candidates it allows: products and sums are counted over the candidates left.
+
+struct Pair [x, y]
+
+--- every candidate pair whose sum is at most `largest`
+fn candidates[largest]
+    found = []
+    for x in range[2, largest / 2 + 1]
+        for y in range[x + 1, largest - x + 1]
+            found = push[found, Pair[x, y]]
+    return found
+
+--- how many times each number occurs in the list
+fn tally[numbers]
+    counts = map[]
+    for k in numbers
+        if k in counts
+            counts[k] = counts[k] + 1
+        else
+            counts[k] = 1
+    return counts
+
+fn products[pairs]
+    xs = for p in pairs
+        p.x * p.y
+    return xs
+
+fn sums[pairs]
+    xs = for p in pairs
+        p.x + p.y
+    return xs
+
+--- S, knowing the sum s, is sure P cannot know: every way to write s as a + b
+--- (2 ≤ a < b) has a product that more than one candidate shares
+fn p_cannot_know[s, product_counts]
+    a = 2
+    while a lt s - a
+        if product_counts[a * (s - a)] eq 1
+            return false
+        a = a + 1
+    return true
+
+fn shown[pairs]
+    parts = for p in pairs
+        '(`p.x`, `p.y`)'
+    return join[parts, ' ']
+
+pairs = candidates[100]
+log['Candidates, 2 ≤ X < Y and X + Y ≤ 100: `len[pairs]`']
+
+--- S says "P does not know X and Y."
+all_products = tally[products[pairs]]
+fact1 = for p in pairs
+    if p_cannot_know[p.x + p.y, all_products]
+        p
+sums1 = keys[tally[sums[fact1]]]
+listed = for s in sums1
+    str[s]
+listed_sums = join[listed, ' ']
+log['After S\'s first line: `len[fact1]` pairs, with the sums `listed_sums`']
+
+--- P says "Now I know X and Y.": of the pairs left, one alone has P's product
+products1 = tally[products[fact1]]
+fact2 = for p in fact1
+    if products1[p.x * p.y] eq 1
+        p
+log['After P\'s line: `len[fact2]` pairs']
+
+--- S says "Now I also know X and Y!": of the pairs left, one alone has S's sum
+sums2 = tally[sums[fact2]]
+fact3 = for p in fact2
+    if sums2[p.x + p.y] eq 1
+        p
+log['After S\'s second line: `shown[fact3]`']
+for p in fact3
+    log['X = `p.x`, Y = `p.y` (S knew the sum `p.x + p.y`, P the product `p.x * p.y`)']

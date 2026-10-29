@@ -1,0 +1,7 @@
+--- Rosetta Code: Halt and catch fire
+--- https://rosettacode.org/wiki/Halt_and_catch_fire
+--- halt stops the program at once, in both modes, with its reason and its line
+--- on stderr and exit status 1; nothing after it runs. (An int divided by zero,
+--- 1 / 0, stops it too, with "division by zero".)
+
+halt['halt and catch fire']

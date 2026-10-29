@@ -1,0 +1,92 @@
+Pig: two players, one die, first to bank 100 points wins.
+
+Player 1 (banked 0, this turn 0): roll or hold?   Rolled 2: 2 points this turn.
+Player 1 (banked 0, this turn 2): roll or hold?   Rolled 1: player 1 loses the 2 points of this turn.
+Player 2 (banked 0, this turn 0): roll or hold?   Rolled 4: 4 points this turn.
+Player 2 (banked 0, this turn 4): roll or hold?   Rolled 6: 10 points this turn.
+Player 2 (banked 0, this turn 10): roll or hold?   Rolled 1: player 2 loses the 10 points of this turn.
+Player 1 (banked 0, this turn 0): roll or hold?   Rolled 6: 6 points this turn.
+Player 1 (banked 0, this turn 6): roll or hold?   'x' is not a choice: r rolls, h holds, q quits.
+Player 1 (banked 0, this turn 6): roll or hold?   Rolled 3: 9 points this turn.
+Player 1 (banked 0, this turn 9): roll or hold?   Rolled 6: 15 points this turn.
+Player 1 (banked 0, this turn 15): roll or hold?   Rolled 6: 21 points this turn.
+Player 1 (banked 0, this turn 21): roll or hold?   Player 1 holds: 21 points banked.
+Player 2 (banked 0, this turn 0): roll or hold?   Rolled 4: 4 points this turn.
+Player 2 (banked 0, this turn 4): roll or hold?   Rolled 6: 10 points this turn.
+Player 2 (banked 0, this turn 10): roll or hold?   Rolled 4: 14 points this turn.
+Player 2 (banked 0, this turn 14): roll or hold?   Rolled 2: 16 points this turn.
+Player 2 (banked 0, this turn 16): roll or hold?   Player 2 holds: 16 points banked.
+Player 1 (banked 21, this turn 0): roll or hold?   Rolled 2: 2 points this turn.
+Player 1 (banked 21, this turn 2): roll or hold?   Rolled 3: 5 points this turn.
+Player 1 (banked 21, this turn 5): roll or hold?   Rolled 5: 10 points this turn.
+Player 1 (banked 21, this turn 10): roll or hold?   Rolled 4: 14 points this turn.
+Player 1 (banked 21, this turn 14): roll or hold?   Rolled 1: player 1 loses the 14 points of this turn.
+Player 2 (banked 16, this turn 0): roll or hold?   Rolled 2: 2 points this turn.
+Player 2 (banked 16, this turn 2): roll or hold?   Rolled 4: 6 points this turn.
+Player 2 (banked 16, this turn 6): roll or hold?   Rolled 6: 12 points this turn.
+Player 2 (banked 16, this turn 12): roll or hold?   Rolled 6: 18 points this turn.
+Player 2 (banked 16, this turn 18): roll or hold?   Player 2 holds: 34 points banked.
+Player 1 (banked 21, this turn 0): roll or hold?   Rolled 5: 5 points this turn.
+Player 1 (banked 21, this turn 5): roll or hold?   Rolled 6: 11 points this turn.
+Player 1 (banked 21, this turn 11): roll or hold?   Rolled 3: 14 points this turn.
+Player 1 (banked 21, this turn 14): roll or hold?   Rolled 3: 17 points this turn.
+Player 1 (banked 21, this turn 17): roll or hold?   Rolled 2: 19 points this turn.
+Player 1 (banked 21, this turn 19): roll or hold?   Rolled 2: 21 points this turn.
+Player 1 (banked 21, this turn 21): roll or hold?   Player 1 holds: 42 points banked.
+Player 2 (banked 34, this turn 0): roll or hold?   Rolled 1: player 2 loses the 0 points of this turn.
+Player 1 (banked 42, this turn 0): roll or hold?   Rolled 6: 6 points this turn.
+Player 1 (banked 42, this turn 6): roll or hold?   Rolled 1: player 1 loses the 6 points of this turn.
+Player 2 (banked 34, this turn 0): roll or hold?   Rolled 3: 3 points this turn.
+Player 2 (banked 34, this turn 3): roll or hold?   Rolled 6: 9 points this turn.
+Player 2 (banked 34, this turn 9): roll or hold?   Rolled 4: 13 points this turn.
+Player 2 (banked 34, this turn 13): roll or hold?   Rolled 3: 16 points this turn.
+Player 2 (banked 34, this turn 16): roll or hold?   Player 2 holds: 50 points banked.
+Player 1 (banked 42, this turn 0): roll or hold?   Rolled 3: 3 points this turn.
+Player 1 (banked 42, this turn 3): roll or hold?   Rolled 2: 5 points this turn.
+Player 1 (banked 42, this turn 5): roll or hold?   Rolled 4: 9 points this turn.
+Player 1 (banked 42, this turn 9): roll or hold?   Rolled 1: player 1 loses the 9 points of this turn.
+Player 2 (banked 50, this turn 0): roll or hold?   Rolled 1: player 2 loses the 0 points of this turn.
+Player 1 (banked 42, this turn 0): roll or hold?   Rolled 2: 2 points this turn.
+Player 1 (banked 42, this turn 2): roll or hold?   Rolled 6: 8 points this turn.
+Player 1 (banked 42, this turn 8): roll or hold?   Rolled 3: 11 points this turn.
+Player 1 (banked 42, this turn 11): roll or hold?   Rolled 5: 16 points this turn.
+Player 1 (banked 42, this turn 16): roll or hold?   Rolled 5: 21 points this turn.
+Player 1 (banked 42, this turn 21): roll or hold?   Player 1 holds: 63 points banked.
+Player 2 (banked 50, this turn 0): roll or hold?   Rolled 2: 2 points this turn.
+Player 2 (banked 50, this turn 2): roll or hold?   Rolled 5: 7 points this turn.
+Player 2 (banked 50, this turn 7): roll or hold?   Rolled 2: 9 points this turn.
+Player 2 (banked 50, this turn 9): roll or hold?   Rolled 3: 12 points this turn.
+Player 2 (banked 50, this turn 12): roll or hold?   Rolled 4: 16 points this turn.
+Player 2 (banked 50, this turn 16): roll or hold?   Player 2 holds: 66 points banked.
+Player 1 (banked 63, this turn 0): roll or hold?   Rolled 4: 4 points this turn.
+Player 1 (banked 63, this turn 4): roll or hold?   Rolled 2: 6 points this turn.
+Player 1 (banked 63, this turn 6): roll or hold?   Rolled 6: 12 points this turn.
+Player 1 (banked 63, this turn 12): roll or hold?   Rolled 1: player 1 loses the 12 points of this turn.
+Player 2 (banked 66, this turn 0): roll or hold?   Rolled 5: 5 points this turn.
+Player 2 (banked 66, this turn 5): roll or hold?   Rolled 3: 8 points this turn.
+Player 2 (banked 66, this turn 8): roll or hold?   Rolled 6: 14 points this turn.
+Player 2 (banked 66, this turn 14): roll or hold?   Rolled 3: 17 points this turn.
+Player 2 (banked 66, this turn 17): roll or hold?   Player 2 holds: 83 points banked.
+Player 1 (banked 63, this turn 0): roll or hold?   Rolled 4: 4 points this turn.
+Player 1 (banked 63, this turn 4): roll or hold?   Rolled 6: 10 points this turn.
+Player 1 (banked 63, this turn 10): roll or hold?   Rolled 2: 12 points this turn.
+Player 1 (banked 63, this turn 12): roll or hold?   Rolled 4: 16 points this turn.
+Player 1 (banked 63, this turn 16): roll or hold?   Rolled 5: 21 points this turn.
+Player 1 (banked 63, this turn 21): roll or hold?   Player 1 holds: 84 points banked.
+Player 2 (banked 83, this turn 0): roll or hold?   Rolled 3: 3 points this turn.
+Player 2 (banked 83, this turn 3): roll or hold?   Rolled 3: 6 points this turn.
+Player 2 (banked 83, this turn 6): roll or hold?   Rolled 5: 11 points this turn.
+Player 2 (banked 83, this turn 11): roll or hold?   Rolled 1: player 2 loses the 11 points of this turn.
+Player 1 (banked 84, this turn 0): roll or hold?   Rolled 2: 2 points this turn.
+Player 1 (banked 84, this turn 2): roll or hold?   Rolled 6: 8 points this turn.
+Player 1 (banked 84, this turn 8): roll or hold?   Rolled 4: 12 points this turn.
+Player 1 (banked 84, this turn 12): roll or hold?   Rolled 1: player 1 loses the 12 points of this turn.
+Player 2 (banked 83, this turn 0): roll or hold?   Rolled 5: 5 points this turn.
+Player 2 (banked 83, this turn 5): roll or hold?   Rolled 2: 7 points this turn.
+Player 2 (banked 83, this turn 7): roll or hold?   Rolled 5: 12 points this turn.
+Player 2 (banked 83, this turn 12): roll or hold?   Rolled 2: 14 points this turn.
+Player 2 (banked 83, this turn 14): roll or hold?   Rolled 6: 20 points this turn.
+Player 2 (banked 83, this turn 20): roll or hold?   Player 2 holds: 103 points banked.
+
+Player 2 wins with 103 points.
+Player 1 has 84 points banked, player 2 has 103.

@@ -1,0 +1,58 @@
+--- Rosetta Code: Numbers which are the cube roots of the product of their proper divisors
+--- https://rosettacode.org/wiki/Numbers_which_are_the_cube_roots_of_the_product_of_their_proper_divisors
+--- The divisors of n pair off as d and n / d, so all of them multiply to n^(c/2)
+--- for c divisors, and the proper ones to n^(c/2 − 1): that is n³ exactly when n
+--- has 8 divisors (1 is counted too, as OEIS A111398 does). The divisors of every
+--- number to a limit are counted by a sieve, the limit doubled until 50,000 are
+--- found. The first 50 are also checked the long way, multiplying their divisors.
+
+fn divisor_counts[limit]
+    --- how many divisors each number from 0 to limit has
+    counts = for n in range[limit + 1]
+        0
+    for d in range[1, limit + 1]
+        for m in range[d, limit + 1, d]
+            counts[m] = counts[m] + 1
+    counts
+
+fn cube_roots_to[limit]
+    --- the numbers up to limit that are the cube root of their proper divisors' product
+    counts = divisor_counts[limit]
+    found = for n in range[1, limit + 1]
+        if n eq 1 or counts[n] eq 8
+            n
+    found
+
+fn proper_product[n]
+    --- the product of n's proper divisors, the long way
+    product = 1
+    for d in range[1, n]
+        if n % d eq 0
+            product = product * d
+    product
+
+fn ordinal[n]
+    '`fmt[n, commas = true]`th'
+
+limit = 1000
+found = cube_roots_to[limit]
+while len[found] lt 50000
+    limit = limit * 2
+    found = cube_roots_to[limit]
+
+log['The first 50:']
+for start in range[0, 50, 10]
+    row = for n in slice[found, start, start + 10]
+        fmt[n, width = 5]
+    log[join[row, '']]
+wrong = for n in slice[found, 0, 50]
+    if proper_product[n] ne n ^ 3
+        str[n]
+if len[wrong] eq 0
+    log['(each one checked: its proper divisors multiply to its cube)']
+else
+    shown = join[wrong, ' ']
+    log['Not the cube root of their proper divisors\' product: `shown`']
+log['']
+for place in [500, 5000, 50000]
+    log['The `ordinal[place]`: `fmt[found[place - 1], commas = true]`']

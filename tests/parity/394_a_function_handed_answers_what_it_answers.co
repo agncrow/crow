@@ -1,0 +1,17 @@
+--- a function handed as a value types the parameter by what it answers
+--- once the functions it calls are copied: `next_of` calls `wrap`'s copy
+--- for ints, and the parameter had kept an earlier round's guess — the
+--- list of text `wrap`'s other copy answers — so the compiled call did not
+--- build (Rosetta Code, Monads/List monad)
+
+fn wrap[x]
+    return [x]
+
+fn applied[x, f]
+    return f[x]
+
+fn next_of[x]
+    return wrap[x + 1]
+
+log[applied[1, next_of]]
+log[wrap['a']]

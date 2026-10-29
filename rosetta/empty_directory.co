@@ -1,0 +1,35 @@
+--- Rosetta Code: Empty directory
+--- https://rosettacode.org/wiki/Empty_directory
+--- ls answers a directory's entries, hidden ones included and never . or ..,
+--- so a directory is empty when it lists nothing; a path that is no directory
+--- is an error value, reported with its reason. The program makes the
+--- directories it tests in the current directory and removes them at its end;
+--- any paths given as arguments are tested after them.
+
+fn is_empty[path]
+    len[ls[path]] eq 0
+
+fn report[path]
+    empty = is_empty[path]
+    if not empty.ok
+        log['`path`: cannot tell — `empty.reason`']
+    else if empty
+        log['`path` is empty']
+    else
+        log['`path` is not empty']
+
+root = 'empty_directory_demo'
+_made = mkdir['`root`/empty']
+_full = mkdir['`root`/with_a_file']
+_note = write['`root`/with_a_file/note.txt', 'hello']
+_hidden = mkdir['`root`/with_a_hidden_file']
+_secret = write['`root`/with_a_hidden_file/.secret', 'hush']
+_nested = mkdir['`root`/with_an_empty_subdirectory/inner']
+
+for name in ['empty', 'with_a_file', 'with_a_hidden_file', 'with_an_empty_subdirectory', 'with_an_empty_subdirectory/inner', 'with_a_file/note.txt', 'missing']
+    report['`root`/`name`']
+
+for path in args[]
+    report[path]
+
+_gone = rm[root]

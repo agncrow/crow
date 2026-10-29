@@ -1,0 +1,83 @@
+--- Rosetta Code: 100 prisoners
+--- https://rosettacode.org/wiki/100_prisoners
+--- Plays many seeded games with each strategy — fifty drawers opened at random,
+--- and the chain of cards followed from the prisoner's own drawer — and compares
+--- the share of games won with the probabilities the mathematics predicts.
+
+use math
+
+fn shuffled[xs]
+    --- Fisher–Yates: each place from the end takes an item not yet placed.
+    i = len[xs] - 1
+    while i gt 0
+        j = rand[i + 1]
+        t = xs[i]
+        xs[i] = xs[j]
+        xs[j] = t
+        i = i - 1
+    return xs
+
+fn random_search[drawers, prisoner, tries]
+    --- Open `tries` different drawers, each picked at random from those still shut.
+    order = range[len[drawers]]
+    i = 0
+    while i lt tries
+        j = rand[i, len[order] - 1]
+        t = order[i]
+        order[i] = order[j]
+        order[j] = t
+        if drawers[order[i]] eq prisoner
+            return true
+        i = i + 1
+    return false
+
+fn chain_search[drawers, prisoner, tries]
+    --- Open his own drawer first, then the drawer each card found names.
+    drawer = prisoner
+    opened = 0
+    while opened lt tries
+        card = drawers[drawer]
+        if card eq prisoner
+            return true
+        drawer = card
+        opened = opened + 1
+    return false
+
+fn everyone_finds[drawers, search]
+    n = len[drawers]
+    prisoner = 0
+    while prisoner lt n
+        if not search[drawers, prisoner, n / 2]
+            return false
+        prisoner = prisoner + 1
+    return true
+
+fn games_won[games, prisoners, search]
+    won = 0
+    for game in range[games]
+        drawers = shuffled[range[prisoners]]
+        if everyone_finds[drawers, search]
+            won = won + 1
+    won
+
+fn percent[part, whole]
+    fmt[100.0 * part / whole, decimals = 2]
+
+seed[100]
+games = 10000
+prisoners = 100
+random_wins = games_won[games, prisoners, random_search]
+chain_wins = games_won[games, prisoners, chain_search]
+
+--- The chains win unless some cycle of the permutation is longer than half
+--- the drawers: 1 - (1/51 + 1/52 + … + 1/100). Random opening wins only when
+--- every prisoner's one-in-two chance comes up: once in 2 ^ 100 games.
+long_cycle = 0.0
+for k in range[prisoners / 2 + 1, prisoners + 1]
+    long_cycle = long_cycle + 1.0 / k
+chain_odds = 1.0 - long_cycle
+random_odds = 2 ^ prisoners
+
+log['Simulated `games` games of each strategy with `prisoners` prisoners.']
+log['Random play: won `random_wins` games, `percent[random_wins, games]`% (expected: once in `random_odds` games)']
+log['Chain play:  won `chain_wins` games, `percent[chain_wins, games]`% (expected `percent[chain_odds, 1]`%)']

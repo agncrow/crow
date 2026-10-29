@@ -1,0 +1,85 @@
+--- Rosetta Code: Determinant and permanent
+--- https://rosettacode.org/wiki/Determinant_and_permanent
+--- Both straight from their definitions, in exact ints: a sum over every
+--- permutation of the columns of the product the permutation picks, signed by
+--- the parity of its inversions for the determinant. For a matrix whose rows
+--- are orthonormal basis vectors the determinant is the Levi-Civita symbol of
+--- the permutation of the basis.
+
+--- every ordering of the items: each item in turn, after each ordering of the rest
+fn permutations_of[items]
+    if len[items] lt 2
+        return [items]
+    found = []
+    for i in range[len[items]]
+        rest = concat[slice[items, 0, i], slice[items, i + 1, len[items]]]
+        for p in permutations_of[rest]
+            found = push[found, push[p, items[i]]]
+    return found
+
+--- 1 for an even number of inversions, -1 for an odd one
+fn sign[p]
+    inversions = 0
+    for i in range[len[p]]
+        for j in range[i + 1, len[p]]
+            if p[i] gt p[j]
+                inversions = inversions + 1
+    if inversions % 2 eq 0
+        return 1
+    return -1
+
+--- the product of the entries in row i, column p[i]
+fn product[m, p]
+    r = 1
+    for i in range[len[p]]
+        r = r * m[i][p[i]]
+    r
+
+fn determinant[m]
+    total = 0
+    for p in permutations_of[range[len[m]]]
+        total = total + sign[p] * product[m, p]
+    total
+
+fn permanent[m]
+    total = 0
+    for p in permutations_of[range[len[m]]]
+        total = total + product[m, p]
+    total
+
+fn report[m]
+    for row in m
+        cells = for x in row
+            fmt[x, width = 3]
+        log[join[cells, ' ']]
+    log['determinant `determinant[m]`, permanent `permanent[m]`']
+    log['']
+
+--- where the 1 of a basis vector lies, counted from 1
+fn basis_index[row]
+    found = for c in range[len[row]]
+        if row[c] eq 1
+            c + 1
+    found[0]
+
+fn levi_civita[m]
+    names = for row in m
+        'e`basis_index[row]`'
+    indices = for row in m
+        str[basis_index[row]]
+    rows = join[names, ' ']
+    symbol = join[indices, '']
+    log['rows `rows`: determinant ε(`symbol`) = `determinant[m]`, permanent `permanent[m]`']
+
+report[[[1, 2], [3, 4]]]
+report[[[2, 9, 4], [7, 5, 3], [6, 1, 8]]]
+report[[[1, 2, 3, 4], [4, 5, 6, 7], [7, 8, 9, 10], [10, 11, 12, 13]]]
+report[[[0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [10, 11, 12, 13, 14], [15, 16, 17, 18, 19], [20, 21, 22, 23, 24]]]
+
+log['Matrices of orthonormal basis vectors:']
+levi_civita[[[1, 0, 0], [0, 1, 0], [0, 0, 1]]]
+levi_civita[[[0, 1, 0], [1, 0, 0], [0, 0, 1]]]
+levi_civita[[[0, 1, 0], [0, 0, 1], [1, 0, 0]]]
+levi_civita[[[0, 0, 1], [0, 1, 0], [1, 0, 0]]]
+levi_civita[[[0, 0, 0, 1], [0, 0, 1, 0], [0, 1, 0, 0], [1, 0, 0, 0]]]
+levi_civita[[[0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [1, 0, 0, 0]]]

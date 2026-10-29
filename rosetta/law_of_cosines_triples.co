@@ -1,0 +1,76 @@
+--- Rosetta Code: Law of cosines - triples
+--- https://rosettacode.org/wiki/Law_of_cosines_-_triples
+--- For sides x <= y about the angle, C^2 = x^2 + y^2 - 2 cos(angle) xy, where
+--- 2 cos(angle) is 0 at 90°, 1 at 60° and -1 at 120°: a triple is kept where that
+--- is the square of a side up to 13. Extra credit: every 60° triangle is a
+--- multiple of one in lowest terms on the line of slope p/q through (0, 1) of
+--- X^2 - X + 1 = Y^2 (X = a/b, Y = c/b): a = q(q + 2p), b = q^2 - p^2 and
+--- c = q^2 + pq + p^2, for -q/2 < p < q, with p and q coprime.
+
+fn twice_cosine[angle]
+    if angle eq 60
+        return 1
+    if angle eq 120
+        return -1
+    return 0
+
+fn root_of[n]
+    --- the whole square root of n, or -1 where n is no square
+    r = round[sqrt[n]]
+    if r * r eq n
+        return r
+    return -1
+
+fn triples[limit, angle]
+    found = []
+    for x in range[1, limit + 1]
+        for y in range[x, limit + 1]
+            c = root_of[x * x + y * y - twice_cosine[angle] * x * y]
+            if c gte 1 and c lte limit
+                t = sort[[x, y, c]]
+                found = push[found, '(`t[0]`, `t[1]`, `t[2]`)']
+    return found
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+fn uneven_sixty[limit]
+    --- 60° triangles with sides up to limit whose sides are not all the same: in
+    --- lowest terms a > b (the largest side; b = a is the equilateral), then each
+    --- multiple that still fits
+    total = 0
+    q = 1
+    while q * q lte 4 * limit
+        p = -((q - 1) / 2)
+        while p lt q
+            if gcd[abs[p], q] eq 1
+                a = q * (q + 2 * p)
+                b = q * q - p * p
+                c = q * q + p * q + p * p
+                g = gcd[gcd[a, b], c]
+                if a gt b and a / g lte limit
+                    total = total + limit / (a / g)
+            p = p + 1
+        q = q + 1
+    return total
+
+fn uneven_sixty_by_search[limit]
+    --- the same count, trying every pair of sides b < a
+    total = 0
+    for a in range[1, limit + 1]
+        for b in range[1, a]
+            c = root_of[a * a - a * b + b * b]
+            if c gte 1 and c lte limit
+                total = total + 1
+    return total
+
+log['Integer triangular triples for sides 1..13:']
+for angle in [90, 60, 120]
+    found = triples[13, angle]
+    shown = join[found, ', ']
+    log['  `fmt[angle, width = 3]`° has `len[found]` solutions:']
+    log['    [`shown`]']
+log['Extra credit: `uneven_sixty[10000]` 60° triples with sides 1..10000, not all the same length']
+log['(by every pair of sides up to 300: `uneven_sixty_by_search[300]`, by the formula: `uneven_sixty[300]`)']

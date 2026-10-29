@@ -1,0 +1,60 @@
+--- Rosetta Code: Eertree
+--- https://rosettacode.org/wiki/Eertree
+--- The tree is a list of nodes: node 0 the even root (length 0), node 1 the odd
+--- root (length -1). Each node keeps its suffix link and its edges by character.
+
+struct Node [length, link, edges]
+
+--- Whether the palindrome of the given length ending before position i can be
+--- grown by the character at i (one copy before it, one at i).
+fn grows[chars, i, length]
+    b = i - length - 1
+    b gte 0 and chars[b] eq chars[i]
+
+fn eertree[text]
+    chars = split[text, '']
+    tree = [Node[0, 1, map[]], Node[-1, 1, map[]]]
+    longest = 1
+    i = 0
+    while i lt len[chars]
+        c = chars[i]
+        n = longest
+        while not grows[chars, i, tree[n].length]
+            n = tree[n].link
+        if c in tree[n].edges
+            longest = tree[n].edges[c]
+        else
+            longest = len[tree]
+            tree = push[tree, Node[tree[n].length + 2, 0, map[]]]
+            tree[n].edges = set[tree[n].edges, c, longest]
+            if tree[longest].length gt 1
+                n = tree[n].link
+                while not grows[chars, i, tree[n].length]
+                    n = tree[n].link
+                tree[longest].link = tree[n].edges[c]
+        i = i + 1
+    return tree
+
+--- The palindrome of the child along edge c of node n, whose palindrome is p.
+fn grown[n, p, c]
+    if n eq 1
+        return c
+    return '`c``p``c`'
+
+--- Every palindrome below node n, each child's descendants before the child.
+fn below[tree, n, p]
+    found = []
+    edges = tree[n].edges
+    for c in keys[edges]
+        q = grown[n, p, c]
+        found = concat[found, below[tree, edges[c], q]]
+        found = push[found, q]
+    return found
+
+text = 'eertree'
+tree = eertree[text]
+log['Processing string \'`text`\'']
+log['Number of sub-palindromes: `len[tree] - 2`']
+found = concat[below[tree, 1, ''], below[tree, 0, '']]
+shown = join[found, ', ']
+log['Sub-palindromes: [`shown`]']

@@ -1,0 +1,80 @@
+--- Rosetta Code: MAC vendor lookup
+--- https://rosettacode.org/wiki/MAC_vendor_lookup
+--- An address is looked up at api.macvendors.com, which answers the vendor's name,
+--- or 404 for an address it holds no vendor for (not found, multicast, locally
+--- administered): that is 'N/A'. Any other answer, or a request that fails, is an
+--- error value, Crow's null. The service throttles quick callers, so a lookup waits
+--- a second before the next.
+---     crow run mac_vendor_lookup.co                asks nothing: the answers the service
+---                                                  gave on 2026-10-28, as recorded in
+---                                                  mac_vendor_lookup.json
+---     crow run mac_vendor_lookup.co record         asks the service, keeps its answers
+---     crow run mac_vendor_lookup.co 88:53:2E:...   asks the service about those addresses
+--- Without the record the output would change with the service; with it, every run
+--- prints the same. A lookup at a port where nothing listens shows the null.
+
+struct Answer [address, status, body]
+
+fn asked[service, address]
+    --- what the service answers for one address; a request that fails is held as
+    --- status 0 with the reason
+    reply = request['`service`/`address`']
+    if not reply.ok
+        return Answer[address, 0, reply.reason]
+    Answer[address, reply.status, reply.body]
+
+fn vendor[answer]
+    --- the vendor's name, 'N/A' where the service knows none, an error value where
+    --- the service or the network failed
+    if answer.status eq 200
+        return answer.body
+    if answer.status eq 404
+        return 'N/A'
+    if answer.status eq 0
+        return error[answer.body, 'network']
+    error['the service answered `answer.status`: `answer.body`', 'service']
+
+fn shown[answer]
+    found = vendor[answer]
+    if not found.ok
+        return 'null (`found.kind` error)'
+    found
+
+fn ask_all[service, addresses]
+    --- every address asked in turn, a second apart
+    answers = []
+    for address in addresses
+        if len[answers] gt 0
+            sleep[1000]
+        answers = push[answers, asked[service, address]]
+    answers
+
+fn recorded[path]
+    found = for item in json[read[path]]
+        Answer[str[item.address], int[item.status], str[item.body]]
+    found
+
+fn report[answers]
+    for a in answers
+        log['`fmt[a.address, width = 20]` `shown[a]`']
+
+service = 'https://api.macvendors.com'
+examples = [
+    '88:53:2E:67:07:BE', 'FC:FB:FB:01:FA:21', 'D4:F4:6F:C9:EF:8D', '00-00-5E-00-53-AF',
+    '0050.5600.0001', '23:45:67', '02:00:00:00:00:01', 'not-a-mac'
+]
+record = 'mac_vendor_lookup.json'
+given = args[]
+if given eq ['record']
+    answers = ask_all[service, examples]
+    report[answers]
+    kept = write[record, encode[answers]]
+    log['kept in `record`']
+else if len[given] gt 0
+    report[ask_all[service, given]]
+else
+    log['What `service` answered (recorded 2026-10-28):']
+    report[recorded[record]]
+    log['']
+    log['With the service out of reach (a lookup sent where nothing listens):']
+    report[[asked['http://127.0.0.1:9', examples[0]]]]

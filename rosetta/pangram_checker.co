@@ -1,0 +1,31 @@
+--- Rosetta Code: Pangram checker
+--- https://rosettacode.org/wiki/Pangram_checker
+--- A sentence is a pangram when no letter of the alphabet is missing from it, upper
+--- and lower case alike; the checker also says which letters are missing.
+
+fn missing_letters[sentence]
+    --- the letters of the English alphabet the sentence does not hold
+    text = lower[sentence]
+    absent = for letter in split['abcdefghijklmnopqrstuvwxyz', '']
+        if letter not in text
+            letter
+    return absent
+
+fn is_pangram[sentence]
+    return len[missing_letters[sentence]] eq 0
+
+sentences = [
+    'The quick brown fox jumps over the lazy dog',
+    'The quick brown fox jumped over the lazy dog',
+    'Pack my box with five dozen liquor jugs.',
+    'Sphinx of black quartz, judge my vow!',
+    'THE FIVE BOXING WIZARDS JUMP QUICKLY',
+    'Hello, world',
+    ''
+]
+for sentence in sentences
+    if is_pangram[sentence]
+        log['"`sentence`" is a pangram']
+    else
+        missing = join[missing_letters[sentence], '']
+        log['"`sentence`" is not a pangram: it lacks `missing`']

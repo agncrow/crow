@@ -1,0 +1,24 @@
+In the region       1 < n <=       2: max a(n)/n = 0.5000 at n = 2
+In the region       2 < n <=       4: max a(n)/n = 0.6667 at n = 3
+In the region       4 < n <=       8: max a(n)/n = 0.6667 at n = 6
+In the region       8 < n <=      16: max a(n)/n = 0.6364 at n = 11
+In the region      16 < n <=      32: max a(n)/n = 0.6087 at n = 23
+In the region      32 < n <=      64: max a(n)/n = 0.5909 at n = 44
+In the region      64 < n <=     128: max a(n)/n = 0.5761 at n = 92
+In the region     128 < n <=     256: max a(n)/n = 0.5674 at n = 178
+In the region     256 < n <=     512: max a(n)/n = 0.5595 at n = 370
+In the region     512 < n <=    1024: max a(n)/n = 0.5549 at n = 719
+In the region    1024 < n <=    2048: max a(n)/n = 0.5501 at n = 1487
+In the region    2048 < n <=    4096: max a(n)/n = 0.5475 at n = 2897
+In the region    4096 < n <=    8192: max a(n)/n = 0.5441 at n = 5969
+In the region    8192 < n <=   16384: max a(n)/n = 0.5424 at n = 11651
+In the region   16384 < n <=   32768: max a(n)/n = 0.5401 at n = 22223
+In the region   32768 < n <=   65536: max a(n)/n = 0.5388 at n = 45083
+In the region   65536 < n <=  131072: max a(n)/n = 0.5370 at n = 89516
+In the region  131072 < n <=  262144: max a(n)/n = 0.5360 at n = 181385
+In the region  262144 < n <=  524288: max a(n)/n = 0.5346 at n = 353683
+In the region  524288 < n <= 1048576: max a(n)/n = 0.5338 at n = 722589
+
+a(n)/n is exactly 0.5 at every power of 2 from 2 to 2^20: true
+The maxima fall from each region to the next, from the region 4 < n <= 8 on: true
+Mallows' number: a(1489)/1489 = 0.550034, and a(n)/n < 0.55 for every n from 1490 to 2^20.

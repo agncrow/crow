@@ -1,0 +1,111 @@
+--- Rosetta Code: Polyspiral
+--- https://rosettacode.org/wiki/Polyspiral
+--- A polyspiral of 150 segments from the centre, the first 5 long and each 3 longer
+--- than the one before, each turned incr degrees further than the last. The animation
+--- is an animated SVG, polyspiral.svg, written to the current directory and removed at
+--- the end unless the program is given the argument keep: one frame for each incr from
+--- 1 to 360 degrees, a tenth of a second each, played round and round by the browser
+--- (SMIL's animate of the polyline's points, a discrete step a frame). Crow draws on no
+--- screen of its own, so the console shows single frames instead, in braille.
+
+use math, bits
+
+struct Point [x, y]
+
+--- the corners of the polyspiral of the given number of segments turning incr
+--- degrees a segment, from the centre of a square of the given side, y downwards as
+--- the screen has it
+fn spiral[incr, side, segments]
+    x = side / 2.0
+    y = side / 2.0
+    length = 5.0
+    angle = incr
+    points = [Point[x, y]]
+    for i in range[segments]
+        x = x + cos[angle * pi / 180.0] * length
+        y = y - sin[angle * pi / 180.0] * length
+        points = push[points, Point[x, y]]
+        length = length + 3.0
+        angle = (angle + incr) % 360
+    return points
+
+fn at[value]
+    return fmt[value, decimals = 1]
+
+fn frame[incr, side]
+    corners = for p in spiral[incr, side, 150]
+        '`at[p.x]`,`at[p.y]`'
+    return join[corners, ' ']
+
+--- every frame as one polyline whose points change, frame by frame
+fn animation[side, seconds_each]
+    frames = for incr in range[1, 361]
+        frame[incr, side]
+    first = frames[0]
+    every = join[frames, ';']
+    seconds = fmt[seconds_each * len[frames], decimals = 1]
+    head = '<svg xmlns="http://www.w3.org/2000/svg" width="`side`" height="`side`" viewBox="0 0 `side` `side`">'
+    background = '<rect width="100%" height="100%" fill="white"/>'
+    line = '<polyline fill="none" stroke="crimson" stroke-width="1.5" points="`first`">'
+    play = '<animate attributeName="points" dur="`seconds`s" repeatCount="indefinite" calcMode="discrete" values="`every`"/>'
+    return '`head`\n`background`\n`line`\n`play`\n</polyline>\n</svg>\n'
+
+--- a frame in braille: a character holds two dots across and four down, U+2800
+--- (10240) and a bit for each dot that is set, so a dot is a square of side / (2
+--- columns) pixels; the blank characters after a line's last dot, and the lines
+--- above and below the spiral, are left off
+fn sketch[incr, side, columns]
+    across = 2 * columns
+    rows = columns / 2
+    dots = for i in range[across * across]
+        false
+    points = spiral[incr, side, 150]
+    scale = float[across] / side
+    for i in range[len[points] - 1]
+        ax = points[i].x * scale
+        ay = points[i].y * scale
+        bx = points[i + 1].x * scale
+        by = points[i + 1].y * scale
+        steps = 1 + floor[max[abs[bx - ax], abs[by - ay]]]
+        for k in range[steps + 1]
+            x = floor[ax + (bx - ax) * k / steps]
+            y = floor[ay + (by - ay) * k / steps]
+            if x gte 0 and x lt across and y gte 0 and y lt across
+                dots[y * across + x] = true
+    weights = [1, 8, 2, 16, 4, 32, 64, 128]
+    lines = for r in range[rows]
+        cells = for c in range[columns]
+            pattern = 0
+            for d in range[8]
+                if dots[(4 * r + d / 2) * across + 2 * c + d % 2]
+                    pattern = pattern + weights[d]
+            pattern
+        last = columns - 1
+        while last gte 0 and cells[last] eq 0
+            last = last - 1
+        shown = for pattern in slice[cells, 0, last + 1]
+            char[10240 + pattern]
+        join[shown, '']
+    first = 0
+    while first lt rows and lines[first] eq ''
+        first = first + 1
+    final = rows - 1
+    while final gt first and lines[final] eq ''
+        final = final - 1
+    return slice[lines, first, final + 1]
+
+side = 640
+saved = write['polyspiral.svg', animation[side, 0.1]]
+if not saved.ok
+    halt['polyspiral.svg could not be written: `saved.reason`']
+log['polyspiral.svg: 360 frames of `side` x `side` pixels, incr from 1 to 360 degrees, 36 seconds a round']
+for incr in [31, 89, 175]
+    log['']
+    log['The frame where incr is `incr` degrees:']
+    for line in sketch[incr, side, 50]
+        log[line]
+given = args[]
+if 'keep' not in given
+    removed = rm['polyspiral.svg']
+    if not removed.ok
+        halt['polyspiral.svg could not be removed: `removed.reason`']

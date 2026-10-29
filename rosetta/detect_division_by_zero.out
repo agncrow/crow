@@ -1,0 +1,11 @@
+Ints:
+7 / 2 = 3
+-7 / 2 = -3
+7 / 0: division by zero detected (math: fraction[7, 0]: a fraction's bottom is not zero)
+0 / 0: division by zero detected (math: fraction[0, 0]: a fraction's bottom is not zero)
+Floats:
+7.0 / 2.0 = 3.5
+7.0 / 0.0: division by zero detected (the quotient is inf)
+-7.0 / 0.0: division by zero detected (the quotient is -inf)
+0.0 / 0.0: division by zero detected (the quotient is NaN)
+div_check[1, 0] is true, div_check[1, 1] is false

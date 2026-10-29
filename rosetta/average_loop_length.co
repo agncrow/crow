@@ -1,0 +1,46 @@
+--- Rosetta Code: Average loop length
+--- https://rosettacode.org/wiki/Average_loop_length
+--- A random mapping is drawn as it is followed: each new value's image is a fresh
+--- uniform draw, and the values seen are an int's bits; 100,000 trials for each n.
+--- The expected length is the sum over k of n! / ((n - k)! n^k). Draws are seeded,
+--- so every run agrees.
+
+use bits
+use math
+
+--- how many values 1, f(1), f(f(1)), ... runs through before one comes again
+--- (the values 1 to n held as 0 to n - 1)
+fn loop_length[n]
+    seen = 0
+    x = 0
+    count = 0
+    while bitand[seen, shift[1, x]] eq 0
+        seen = bitor[seen, shift[1, x]]
+        count = count + 1
+        x = rand[n]
+    return count
+
+fn average_length[n, trials]
+    total = 0
+    for t in range[trials]
+        total = total + loop_length[n]
+    return float[total] / trials
+
+--- the sum over k of n! / ((n - k)! n^k), each term made from the one before
+fn expected_length[n]
+    total = 0.0
+    term = 1.0
+    for k in range[1, n + 1]
+        term = term * (n - k + 1) / float[n]
+        total = total + term
+    return total
+
+seed[2026]
+trials = 100000
+log[' N    average    analytical    (error)']
+log['===  =========  ============  =========']
+for n in range[1, 21]
+    average = average_length[n, trials]
+    expected = expected_length[n]
+    off = abs[average - expected] / expected * 100
+    log['`fmt[n, width = 3]`  `fmt[average, width = 9, decimals = 4]`  `fmt[expected, width = 12, decimals = 4]`  (`fmt[off, width = 6, decimals = 2]`%)']

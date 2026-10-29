@@ -1,0 +1,32 @@
+--- Rosetta Code: Gapful numbers
+--- https://rosettacode.org/wiki/Gapful_numbers
+--- A number of three digits or more is gapful when the two-digit number made of its
+--- first and last digits divides it: the first digit by dividing by ten until one is left.
+
+--- the leading decimal digit of n
+fn first_digit[n]
+    d = n
+    while d gte 10
+        d = d / 10
+    return d
+
+fn is_gapful[n]
+    return n % (10 * first_digit[n] + n % 10) eq 0
+
+--- the first count gapful numbers from start on
+fn gapful_from[start, count]
+    found = []
+    n = start
+    while len[found] lt count
+        if is_gapful[n]
+            found = push[found, n]
+        n = n + 1
+    return found
+
+for task in [[100, 30], [1000000, 15], [1000000000, 10]]
+    start = task[0]
+    count = task[1]
+    shown = join[gapful_from[start, count], ' ']
+    log['First `count` gapful numbers starting at `fmt[start, commas = true]`:']
+    log[shown]
+    log['']

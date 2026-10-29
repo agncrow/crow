@@ -330,6 +330,15 @@ fn test_fn(i: usize) -> String {
 fn wide_arith(walk: &mut Walk, e: &Expr) -> bool {
     match e {
         Expr::Binary { op, ty, .. } if matches!(op.as_str(), "add" | "sub" | "mul" | "pow") && matches!(ty.payload(), Ty::Int) => !walk.iv_of(e).fits(),
+        // (a division passes 64 bits at -2^63 / -1 alone: where the dividend
+        // is known negative to there and the divisor holds no 0, the corners
+        // say so — `(-2^63) / -1` had stopped compiled where the interpreter
+        // answered 2^63; a dividend of any 64-bit int keeps the division in
+        // 64 bits, its one overflow a stop in both modes)
+        Expr::Binary { op, l, r, ty } if op == "div" && matches!(ty.payload(), Ty::Int) => {
+            let (a, b) = (walk.iv_of(l), walk.iv_of(r));
+            a.hi < 0 && !(b.lo <= 0 && b.hi >= 0) && !walk.iv_of(e).fits()
+        }
         // (a shift whose answer may pass 64 bits: its form that grows)
         Expr::Call { target: Target::Row(row), .. } if row.id == "bits.shift" => !walk.iv_of(e).fits(),
         _ => false,
@@ -535,8 +544,11 @@ impl Walk {
             Expr::Convert { expr, .. } => self.place_of(expr),
             // (a record made where it is read — `Box[…].v` — lends no type:
             // its own is read, or its field had read as any 64-bit int)
+            // (through a record-or-none link too: a field held as a growing
+            // int, read through one, had been read as a 64-bit int, and the
+            // compiled program did not build; Rosetta Code, AVL tree)
             Expr::Field { base, name, .. } => match Some(base.ty()).as_ref().map(|t| t.payload()) {
-                Some(Ty::Record(s)) => Some(Place::Field(s.clone(), name.clone())),
+                Some(Ty::Record(s) | Ty::OptRecord(s)) => Some(Place::Field(s.clone(), name.clone())),
                 _ => None,
             },
             Expr::Index { base, .. } => self.place_of(base).map(|p| Place::Items(Box::new(p))),
@@ -665,17 +677,52 @@ impl Walk {
                 // a list the row makes of the lists it is given (push, concat,
                 // slice, sort, reverse…): their items and its own share a range,
                 // and a pushed item is written into them
+                // (by depth: a list pushed as an item of a list of lists is
+                // an item, its items the lists' items — joined with the
+                // outer list's own, a row's ints had been ranged as the
+                // rows, and a doubling through a list of rows stayed a
+                // 64-bit multiply that overflowed compiled; Rosetta Code,
+                // Bell numbers)
                 false => {
-                    for a in args {
-                        if holds_ints(a.ty_ref()) && same_shape(a.ty_ref(), e.ty_ref()) {
+                    let de = depth(e.ty_ref());
+                    // (an int is an item only where the row takes one: `set`'s
+                    // key and `slice`'s positions are not held — a key past
+                    // 64 bits had made a map's values growing ints, and the
+                    // lowered program disagreed with itself; Rosetta Code,
+                    // anaprimes)
+                    let kinds = crate::table::kinds_of(row.params, args.len());
+                    let an_item = |n: usize| kinds.as_ref().is_none_or(|k| matches!(k.get(n), Some(crate::table::Kind::Item | crate::table::Kind::ItemRef)));
+                    // (a list made of a map's values — `values[m]` — holds
+                    // what the map holds: unjoined, a function answering a
+                    // map's growing values had narrowed them to 64 bits)
+                    let of_a_map = |n: usize| matches!(row.ret, crate::table::Kind::List) && kinds.as_ref().is_some_and(|k| matches!(k.get(n), Some(crate::table::Kind::MapRef | crate::table::Kind::MapOf)));
+                    for (n, a) in args.iter().enumerate() {
+                        let da = depth(a.ty_ref());
+                        if holds_ints(a.ty_ref()) && (same_shape(a.ty_ref(), e.ty_ref()) || of_a_map(n)) && da == de {
                             if let Some(p) = self.place_of(a) {
                                 let ty = e.ty_ref().map(|t| t.payload().clone()).unwrap_or(Ty::Unknown);
                                 self.flow_items(at, &p, ty);
                                 self.made_items(&p, a);
                             }
-                        } else if is_int(a.ty_ref()) && item_of(e.ty_ref()) {
+                        } else if holds_ints(a.ty_ref()) && de == da + 1 {
+                            self.flow(&items, a);
+                        } else if holds_ints(a.ty_ref()) && da == de + 1 {
+                            // (a list of lists made into one list of their items)
+                            if let Some(p) = self.place_of(a) {
+                                let ty = e.ty_ref().map(|t| t.payload().clone()).unwrap_or(Ty::Unknown);
+                                self.flow_items(at, &Place::Items(Box::new(p.clone())), ty);
+                                self.made_items(&p, a);
+                            }
+                        } else if is_int(a.ty_ref()) && item_of(e.ty_ref()) && an_item(n) {
                             self.write(&items, a);
                         }
+                    }
+                    // (a map's int keys are no place the pass ranges: any
+                    // 64-bit int — unranged, an item read of `keys[m]` had
+                    // read as fitting anywhere, and `p ^ 70` overflowed
+                    // compiled; Rosetta Code, Least common multiple)
+                    if matches!(row.ret, crate::table::Kind::Keys) && item_of(e.ty_ref()) {
+                        self.widen_base(&items, Iv::I64);
                     }
                 }
             },
@@ -695,7 +742,7 @@ impl Walk {
             // (a record made where it is read — `Box[…].v` — lends no type:
             // its own is read, or its field had read as any 64-bit int)
             Expr::Field { base, name, .. } => match Some(base.ty()).as_ref().map(|t| t.payload()) {
-                Some(Ty::Record(s)) => self.get(&Place::Field(s.clone(), name.clone())),
+                Some(Ty::Record(s) | Ty::OptRecord(s)) => self.get(&Place::Field(s.clone(), name.clone())),
                 // (a frame's column, a parsed value's field: 64-bit cells)
                 _ => Iv::I64,
             },
@@ -1007,7 +1054,6 @@ impl Walk {
                 self.written = self.written.intersection(&then_written).cloned().collect();
             }
             Stmt::While { cond, body } => {
-                self.calls_in(cond);
                 let cmp = compared(cond);
                 let cmp = &cmp;
                 // the rounds of one entry: a counter stepping toward its bound
@@ -1033,6 +1079,12 @@ impl Walk {
                 }
                 self.rels.retain(|(a, b, _)| !assigned.contains(a) && !assigned.contains(b));
                 self.bounds.retain(|v, _| !assigned.contains(v));
+                // the condition runs before every round, so what it hands a
+                // call is what the body leaves too: read before the reset, a
+                // call took the value from before the loop, and `while not
+                // check[big]` of a `big` the body doubles held `big` in 64
+                // bits and stopped (Rosetta Code, Primes: n*2^m+1)
+                self.calls_in(cond);
                 let (outside, written_outside, rels_outside) = (self.cur.clone(), self.written.clone(), self.rels.clone());
                 let bounds_outside = self.bounds.clone();
                 self.loops.push(LoopCtx { rounds: None, entry, fresh });
@@ -1066,7 +1118,17 @@ impl Walk {
                         (r, 48)
                     }
                 };
-                if matches!(iter.ty_ref().map(|t| t.payload()), Some(Ty::List(t)) if matches!(t.as_ref(), Ty::Int | Ty::Big)) || matches!(iter, Expr::Call { target: Target::Row(_), .. }) {
+                // (a vector of whole numbers walked — a literal's, `for a in
+                // [2, 3]` — gives its numbers too: the variable had had no
+                // range, read as any 64-bit int, and `a * a * a * 10 ^ 18`
+                // overflowed compiled where it grows; Rosetta Code, Euclid–
+                // Mullin sequence. A literal walked where it is written is
+                // its items; another vector's numbers are floats, whole
+                // within 2^53, as its index reads them)
+                let ints_vector = matches!(iter.ty_ref().map(|t| t.payload()), Some(Ty::Tensor(t, d)) if matches!(t.as_ref(), Ty::Int) && d.as_ref().is_none_or(|d| d.len() <= 1));
+                let r = if ints_vector && !matches!(iter, Expr::ListLit(..)) { Iv::new(-(1 << 53), 1 << 53) } else { r };
+                let walks_ints = ints_vector || matches!(iter.ty_ref().map(|t| t.payload()), Some(Ty::List(t)) if matches!(t.as_ref(), Ty::Int | Ty::Big)) || matches!(iter, Expr::Call { target: Target::Row(_), .. });
+                if walks_ints {
                     self.widen_base(&place, r);
                 }
                 if let Some(p) = self.place_of(iter)
@@ -1088,7 +1150,7 @@ impl Walk {
                 self.bounds.retain(|v, _| !assigned.contains(v));
                 let (outside, written_outside, rels_outside) = (self.cur.clone(), self.written.clone(), self.rels.clone());
                 let bounds_outside = self.bounds.clone();
-                if matches!(iter.ty_ref().map(|t| t.payload()), Some(Ty::List(t)) if matches!(t.as_ref(), Ty::Int | Ty::Big)) || matches!(iter, Expr::Call { target: Target::Row(_), .. }) {
+                if walks_ints {
                     self.cur.insert(var.clone(), r);
                 }
                 self.loops.push(LoopCtx { rounds: if outermost { Some(rounds) } else { None }, entry: Some(rounds), fresh });
@@ -1177,7 +1239,7 @@ impl Walk {
             // (a record made where it is read — `Box[…].v` — lends no type:
             // its own is read, or its field had read as any 64-bit int)
             Expr::Field { base, name, .. } => match Some(base.ty()).as_ref().map(|t| t.payload()) {
-                Some(Ty::Record(s)) => Some(Place::Field(s.clone(), name.clone())),
+                Some(Ty::Record(s) | Ty::OptRecord(s)) => Some(Place::Field(s.clone(), name.clone())),
                 _ => None,
             },
             Expr::Index { base, .. } => self.read_place(base).map(|p| Place::Items(Box::new(p))),
@@ -1895,6 +1957,14 @@ fn holds_ints(t: Option<&Ty>) -> bool {
     }
 }
 
+/// How deep lists and maps nest in a type (a list of lists of ints is 2).
+fn depth(t: Option<&Ty>) -> usize {
+    match t.map(|t| t.payload()) {
+        Some(Ty::List(i)) | Some(Ty::Map(_, i)) => 1 + depth(Some(i)),
+        _ => 0,
+    }
+}
+
 fn same_shape(a: Option<&Ty>, b: Option<&Ty>) -> bool {
     matches!((a.map(|t| t.payload()), b.map(|t| t.payload())), (Some(Ty::List(_)), Some(Ty::List(_))) | (Some(Ty::Map(..)), Some(Ty::Map(..))))
 }
@@ -1934,6 +2004,13 @@ fn bits_span(a: Iv, b: Iv) -> Iv {
 /// the row keeps them, any other a 64-bit int.
 fn row_iv(row: &crate::table::Row, ivs: &[Iv]) -> Iv {
     use crate::table::IntRange as R;
+    // (a row that answers a growing int is bounded by nothing: a numeral past
+    // 64 bits, `__whole`, had been read as a 64-bit int, and a list written
+    // down holding one was narrowed to 64 bits — Rosetta Code, Abundant odd
+    // numbers)
+    if matches!(row.ret, crate::table::Kind::Big) {
+        return Iv::TOP;
+    }
     let first = ivs.first().copied().unwrap_or(Iv::I64);
     match row.range {
         R::Count => Iv::new(0, COUNT),
@@ -2250,7 +2327,10 @@ fn to_type(e: Expr, want: &Ty) -> Expr {
         (Ty::Big, Ty::Int) => Expr::Convert { how: crate::ir::Convert::ToSmall(crate::ir::Who::Held), expr: Box::new(e), ty: keep(Ty::Int) },
         // (a tensor's number: the nearest float)
         (Ty::Big, Ty::Float) => Expr::Convert { how: crate::ir::Convert::IntToFloat, expr: Box::new(e), ty: keep(Ty::Float) },
-        (Ty::List(a), Ty::List(b)) | (Ty::Map(_, a), Ty::Map(_, b)) if has_big(a) != has_big(b) => {
+        // (lists whose items differ in width alone: a guard's failure of
+        // another kind — `return delta` of growing ints where the function
+        // answers records — is handed on as its failure, never converted)
+        (Ty::List(a), Ty::List(b)) | (Ty::Map(_, a), Ty::Map(_, b)) if has_big(a) != has_big(b) && small_of(a.payload()) == small_of(b.payload()) => {
             let how = if has_big(b) { crate::ir::Convert::ToBig } else { crate::ir::Convert::ToSmall(crate::ir::Who::Held) };
             // (typed as what it makes: items that can fail only where the
             // items given could — typed as a field's list whose items can
@@ -2311,8 +2391,12 @@ impl<'a> Retype<'a> {
                 }
                 self.expr(expr);
                 let mut ty = self.var_ty(var).unwrap_or(Ty::Unknown);
+                // (through a holder that can fail, as its payload: a list
+                // of growing ints that can fail, written a 64-bit int by
+                // position, had taken it unconverted — an internal error;
+                // Rosetta Code, Solve a Numbrix puzzle)
                 for p in path.iter() {
-                    ty = match (&ty, p) {
+                    ty = match (ty.payload(), p) {
                         (Ty::Record(s), PathStep::Field(f)) => self.sigs.fields.get(&(s.clone(), f.clone())).cloned().unwrap_or(Ty::Unknown),
                         (Ty::List(i), PathStep::Index(_)) | (Ty::Map(_, i), PathStep::Index(_)) => (**i).clone(),
                         (Ty::Tensor(..), PathStep::Index(_)) => Ty::Float,
@@ -2417,7 +2501,7 @@ impl<'a> Retype<'a> {
             }
             Expr::Field { base, name, ty } => {
                 self.expr(base);
-                if let Ty::Record(s) = base.ty().payload() {
+                if let Ty::Record(s) | Ty::OptRecord(s) = base.ty().payload() {
                     if let Some(t) = self.sigs.fields.get(&(s.clone(), name.clone())) {
                         *ty = t.clone();
                     }
@@ -2459,11 +2543,12 @@ impl<'a> Retype<'a> {
                         *ty = big_of(ty);
                     }
                 } else if big && op == "pow" && matches!(l.ty().payload(), Ty::Decimal | Ty::Fraction) && matches!(r.ty().payload(), Ty::Big) {
-                    // an exact number's power is by an int of 64 bits: a
-                    // growing one is refused past them, in one wording (it
-                    // had been made a float, and the compiled program had not
-                    // built — crow check --self)
-                    *r = Box::new(handed(take(r), crate::table::TakesBig::Refused, crate::ir::Who::Held));
+                    // an exact number's power takes a growing int as it is:
+                    // 0, 1 and -1 to any power are exact, and the runtime
+                    // refuses any other past 32 bits in its own words, naming
+                    // the `^` (held to 64 bits here, `fraction[1, 1] ^ (2 ^
+                    // 70)` had been refused as no 64-bit int; made a float, it
+                    // had not built — crow check --self)
                 } else if big {
                     // a whole number past 64 bits beside a float: its float
                     for side in [&mut *l, &mut *r] {
@@ -2520,9 +2605,23 @@ impl<'a> Retype<'a> {
                         // the row that keeps every digit: where its answer may
                         // grow (`int[text]`, `floor[x]`), or a big int is
                         // handed to one that keeps it (`abs`, `min`, `max`)
-                        let grows = (row.range == crate::table::IntRange::Any && row.big.is_some()) || (row.range == crate::table::IntRange::Shift && wide);
+                        // (`abs` of what is known negative to -2^63 is 2^63:
+                        // its 64-bit row had stopped in both modes; of any
+                        // 64-bit int it stays 64-bit, -2^63's a stop)
+                        let abs_grows = row.range == crate::table::IntRange::Abs
+                            && row.big.is_some()
+                            && args.first().is_some_and(|a| {
+                                let iv = self.walk.iv_of(a);
+                                iv.hi < 0 && !iv.neg().fits()
+                            });
+                        let grows = (row.range == crate::table::IntRange::Any && row.big.is_some()) || (row.range == crate::table::IntRange::Shift && wide) || abs_grows;
+                        // (a growing int handed where the growing form takes
+                        // one — `fmt[2 ^ 100]`'s value, not its width: a width
+                        // past 64 bits beside a float had chosen the form for
+                        // growing ints, and the float reached its value's
+                        // place — crow check --self)
                         if let Some(big) = crate::table::big_form(row.id)
-                            && (grows || args.iter().any(|a| has_big(&a.ty())))
+                            && (grows || args.iter().enumerate().any(|(i, a)| has_big(&a.ty()) && matches!(big.params.get(i), Some(crate::table::Kind::Big | crate::table::Kind::Bigs))))
                         {
                             let name = row.name;
                             *row = big;
@@ -2565,11 +2664,17 @@ impl<'a> Retype<'a> {
                             // `push[[], 2 ^ 100]` had narrowed the item to 64
                             // bits, the answer's ints, and stopped — crow
                             // check --self)
-                            let grows = args.iter().zip(&kinds).any(|(a, k)| matches!(k, Kind::Item | Kind::ItemRef) && has_big(&a.ty()));
-                            if grows {
+                            let grown_item = args.iter().zip(&kinds).find(|(a, k)| matches!(k, Kind::Item | Kind::ItemRef) && has_big(&a.ty())).map(|(a, _)| a.ty().payload().clone());
+                            if let Some(item) = grown_item {
+                                // (the item as it is: a row of growing ints
+                                // pushed onto `[]` makes a list of such rows —
+                                // made a list of growing ints, the lowered
+                                // program had disagreed with itself; Rosetta
+                                // Code, Lah numbers)
+                                let item = if is_int(Some(&item)) { Ty::Big } else { item };
                                 collection = match collection {
-                                    Some(Ty::List(_)) => Some(Ty::List(Box::new(Ty::Big))),
-                                    Some(Ty::Map(key, _)) => Some(Ty::Map(key, Box::new(Ty::Big))),
+                                    Some(Ty::List(_)) => Some(Ty::List(Box::new(item))),
+                                    Some(Ty::Map(key, _)) => Some(Ty::Map(key, Box::new(item))),
                                     other => other,
                                 };
                                 if let (Some(i), Some(c)) = (at, collection.clone()) {
@@ -2579,6 +2684,23 @@ impl<'a> Retype<'a> {
                                         _ => {}
                                     }
                                 }
+                            }
+                        }
+                        // (the lists a row joins — `concat[xs, ys]` — hold one
+                        // kind: one of growing ints grows the others, as an
+                        // item that grows does; a range beside a list of
+                        // growing ints had been handed on as 64-bit ints, and
+                        // the compiled program did not build; Rosetta Code,
+                        // Christofides algorithm)
+                        if matches!(row.ret, Kind::List) {
+                            let lists: Vec<usize> = kinds.iter().enumerate().filter(|(i, k)| matches!(k, Kind::List | Kind::Seq) && matches!(args[*i].ty().payload(), Ty::List(_))).map(|(i, _)| i).collect();
+                            if lists.len() >= 2 && lists.iter().any(|&i| has_big(&args[i].ty())) {
+                                let want = lists.iter().fold(args[lists[0]].ty().payload().clone(), |w, &i| grown_like(&w, &args[i].ty()));
+                                for &i in &lists {
+                                    args[i] = to_type(take(&mut args[i]), &want);
+                                }
+                                *ty = if ty.is_result() { Ty::Result(Box::new(want.clone())) } else { want.clone() };
+                                collection = Some(want);
                             }
                         }
                         // (a list or a map of 64-bit ints handed an item that
@@ -2610,8 +2732,16 @@ impl<'a> Retype<'a> {
                                     *a = to_type(take(a), item);
                                 }
                             }
-                            if has_big(item) && matches!(row.ret, Kind::List | Kind::MapOf) && let Some(c) = &collection {
-                                *ty = if ty.is_result() { Ty::Result(Box::new(c.clone())) } else { c.clone() };
+                            // (the answer is the collection where the row answers
+                            // one of its kind; `values` of a map answers a list
+                            // of its values, which had been typed as the map)
+                            let answer = match (&row.ret, &collection) {
+                                (Kind::List, Some(c @ Ty::List(_))) | (Kind::MapOf, Some(c @ Ty::Map(..))) => Some(c.clone()),
+                                (Kind::List, Some(Ty::Map(_, values))) => Some(Ty::List(values.clone())),
+                                _ => None,
+                            };
+                            if has_big(item) && let Some(c) = answer {
+                                *ty = if ty.is_result() { Ty::Result(Box::new(c)) } else { c };
                             }
                         }
                         for (i, a) in args.iter_mut().enumerate() {
@@ -2740,12 +2870,35 @@ impl<'a> Retype<'a> {
                         }
                     }
                 }
+                // (a literal typed as growing ints holds its whole numbers
+                // grown: a literal returned where the answer's items grow)
+                if let Ty::List(item) = ty && matches!(item.payload(), Ty::Big) {
+                    for i in items.iter_mut() {
+                        if matches!(i.ty().payload(), Ty::Int) {
+                            *i = to_type(take(i), &Ty::Big);
+                        }
+                    }
+                }
                 if items.iter().any(|i| matches!(i.ty().payload(), Ty::Big)) && let Ty::List(item) = ty {
                     let item = big_of(item);
                     for i in items.iter_mut() {
                         *i = to_type(take(i), &Ty::Big);
                     }
                     *ty = Ty::List(Box::new(item));
+                }
+                // a list of lists one of whose lists grew holds growing
+                // lists, each of the others converted: `[row]` of a row
+                // given `int[text]` had stayed a list of 64-bit rows holding
+                // a growing one, and the lowered program disagreed with
+                // itself (Rosetta Code, Maximum triangle path sum)
+                if let Ty::List(item) = ty && matches!(item.payload(), Ty::List(_) | Ty::Map(..)) {
+                    let want = items.iter().fold((**item).clone(), |w, i| grown_like(&w, &i.ty()));
+                    if want != **item {
+                        for i in items.iter_mut() {
+                            *i = to_type(take(i), &want);
+                        }
+                        *ty = Ty::List(Box::new(want));
+                    }
                 }
             }
             Expr::MapLit(pairs, ty) => {
@@ -2790,8 +2943,14 @@ impl<'a> Retype<'a> {
                 // grown where any grows
                 let mut tails = Vec::new();
                 tails_of(body, &mut tails);
-                if tails.iter().any(|y| matches!(y.ty().payload(), Ty::Big)) && let Ty::List(item) = ty {
-                    let grown = big_of(item);
+                // (a round's value holding growing ints anywhere — a row of
+                // a nested collect, grown where it is written — grows the
+                // item at the same place: grown only where the value itself
+                // was one, the outer list had been converted again from
+                // rows of 64-bit ints it no longer held, and did not build;
+                // Rosetta Code, Abelian sandpile model)
+                if tails.iter().any(|y| has_big(&y.ty())) && let Ty::List(item) = ty {
+                    let grown = tails.iter().fold((**item).clone(), |acc, y| grown_like(&acc, &y.ty()));
                     for y in tails {
                         *y = to_type(take(y), &grown);
                     }
@@ -2874,6 +3033,19 @@ fn tails_of<'b>(body: &'b mut Block, out: &mut Vec<&'b mut Expr>) {
             }
         }
         _ => {}
+    }
+}
+
+/// `t` with its ints grown wherever `like` holds a growing one at the same
+/// place: a list's items, a map's values, a payload.
+fn grown_like(t: &Ty, like: &Ty) -> Ty {
+    match (t, like) {
+        (Ty::Result(i), _) => Ty::Result(Box::new(grown_like(i, like.payload()))),
+        (_, Ty::Result(l)) => grown_like(t, l),
+        (Ty::Int | Ty::Big, Ty::Big) => Ty::Big,
+        (Ty::List(i), Ty::List(l)) => Ty::List(Box::new(grown_like(i, l))),
+        (Ty::Map(k, i), Ty::Map(_, l)) => Ty::Map(*k, Box::new(grown_like(i, l))),
+        _ => t.clone(),
     }
 }
 

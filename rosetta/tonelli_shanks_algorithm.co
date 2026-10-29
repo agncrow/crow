@@ -1,0 +1,74 @@
+--- Rosetta Code: Tonelli-Shanks algorithm
+--- https://rosettacode.org/wiki/Tonelli-Shanks_algorithm
+--- The algorithm as the task writes it, over Crow's ints, which grow without
+--- limit, so the extra credit's 51-digit prime needs nothing more. Each pair of
+--- roots is checked: r * r and n leave the same remainder modulo p. The roots
+--- are a record: a list literal of them, `[r, p - r]`, stops at the 51-digit
+--- prime (an open finding: a list literal holding a computed int past 64 bits).
+
+struct Case [n, p]
+struct Roots [one, other]
+
+--- base ^ e modulo m, by squaring
+fn pow_mod[base, e, m]
+    result = 1
+    b = base % m
+    k = e
+    while k gt 0
+        if k % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        k = k / 2
+    return result
+
+--- the Legendre symbol (a | p) as the task defines it: 1, p - 1 or 0
+fn legendre[a, p]
+    return pow_mod[a, (p - 1) / 2, p]
+
+--- the two square roots of n modulo the odd prime p, or why there are none
+fn tonelli[n, p]
+    a = n % p
+    if legendre[a, p] ne 1
+        return error['`n` is not a square modulo `p`', 'math']
+    --- step 1: p - 1 = q * 2 ^ s with q odd
+    q = p - 1
+    s = 0
+    while q % 2 eq 0
+        q = q / 2
+        s = s + 1
+    if s eq 1
+        r = pow_mod[a, (p + 1) / 4, p]
+        return Roots[r, p - r]
+    --- step 2: a non-square z
+    z = 2
+    while legendre[z, p] ne p - 1
+        z = z + 1
+    c = pow_mod[z, q, p]
+    --- steps 3 and 4
+    r = pow_mod[a, (q + 1) / 2, p]
+    t = pow_mod[a, q, p]
+    m = s
+    while t ne 1
+        --- the least i, 0 < i < m, with t ^ (2 ^ i) = 1
+        i = 1
+        t2 = t * t % p
+        while t2 ne 1
+            t2 = t2 * t2 % p
+            i = i + 1
+        b = pow_mod[c, 2 ^ (m - i - 1), p]
+        r = r * b % p
+        c = b * b % p
+        t = t * c % p
+        m = i
+    return Roots[r, p - r]
+
+cases = [Case[10, 13], Case[56, 101], Case[1030, 10009], Case[1032, 10009], Case[44402, 100049], Case[665820697, 1000000009], Case[881398088036, 1000000000039], Case[41660815127637347468140745042827704103445750172002, 10 ^ 50 + 577]]
+
+for c in cases
+    log['n = `c.n`, p = `c.p`']
+    roots = tonelli[c.n, c.p]
+    if roots.ok
+        good = (roots.one * roots.one - c.n) % c.p eq 0 and (roots.other * roots.other - c.n) % c.p eq 0
+        log['    roots: `roots.one` and `roots.other` (squared, each is n modulo p: `good`)']
+    else
+        log['    no roots: `roots.reason`']

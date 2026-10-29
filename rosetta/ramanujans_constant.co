@@ -1,0 +1,34 @@
+--- Rosetta Code: Ramanujan's constant
+--- https://rosettacode.org/wiki/Ramanujan's_constant
+--- A decimal keeps the digits it is given through sqrt, exp and atan: pi is
+--- 4 atan(1) to 70 significant digits, and e^(pi sqrt(163)) is computed to as
+--- many, then shown to 32 places. For the last four Heegner numbers d, the power
+--- lies just below the integer x^3 + 744 (x = 96, 960, 5280, 640320), as the
+--- j-function says it must.
+
+use math
+
+fn power_of_e[d, half_turn]
+    return exp[half_turn * sqrt[decimal[d, digits = 70]]]
+
+half_turn = 4 * atan[decimal[1, digits = 70]]
+constant = power_of_e[163, half_turn]
+log['Ramanujan\'s constant to 32 decimal places is:']
+log[fmt[constant, decimals = 32]]
+log['']
+log['Heegner numbers yielding almost integers:']
+heegner = [19, 43, 67, 163]
+cubed = [96, 960, 5280, 640320]
+for i in range[4]
+    d = heegner[i]
+    r = power_of_e[d, half_turn]
+    near = round[r]
+    shown = fmt[r, decimals = 32, width = 51]
+    gap = fmt[near - r, decimals = 32]
+    log['`fmt[d, width = 3]`: `shown` ≈ `fmt[near, width = 18]` (diff: `gap`)']
+log['']
+log['Each nearby integer is x^3 + 744:']
+for i in range[4]
+    x = cubed[i]
+    near = round[power_of_e[heegner[i], half_turn]]
+    log['`fmt[heegner[i], width = 3]`: `fmt[x, width = 6]`^3 + 744 = `fmt[x ^ 3 + 744, width = 18]`, the same: `near eq x ^ 3 + 744`']

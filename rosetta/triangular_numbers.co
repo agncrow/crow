@@ -1,0 +1,90 @@
+--- Rosetta Code: Triangular numbers
+--- https://rosettacode.org/wiki/Triangular_numbers
+--- The nth r-simplex number is the binomial (n + r - 1 choose r), counted from
+--- n = 0 as OEIS counts, and checked against r rounds of running sums over
+--- 0, 1, 1, 1, …. The roots are computed with decimals of 40 digits, the cube
+--- roots as exp(ln(y) / 3); a root is shown whole where the number is exactly
+--- a simplex number of that dimension, else to 20 places.
+
+use math
+
+fn binomial[n, k]
+    c = 1
+    for i in range[k]
+        c = c * (n - i) / (i + 1)
+    return c
+
+fn simplex[n, r]
+    return binomial[n + r - 1, r]
+
+fn simplices[r, count]
+    xs = for n in range[count]
+        simplex[n, r]
+    return xs
+
+--- the same numbers as running sums, r times over 0, 1, 1, 1, … (dimension 0)
+fn summed[r, count]
+    row = for n in range[count]
+        if n eq 0
+            0
+        else
+            1
+    for d in range[r]
+        total = 0
+        sums = []
+        for x in row
+            total = total + x
+            sums = push[sums, total]
+        row = sums
+    return row
+
+fn table[xs, columns]
+    width = len[str[xs[-1]]]
+    lines = []
+    line = []
+    for x in xs
+        line = push[line, fmt[x, width = width]]
+        if len[line] eq columns
+            lines = push[lines, join[line, ' ']]
+            line = []
+    return join[lines, '\n']
+
+fn cbrt[y]
+    return exp[ln[y] / 3]
+
+fn tri_root[x]
+    return (sqrt[x * 8 + 1] - 1) / 2
+
+--- 3x - sqrt(9x^2 - 1/27) is written (1/27) / (3x + sqrt(9x^2 - 1/27)):
+--- the two near-equal terms are never subtracted
+fn tet_root[x]
+    s = sqrt[x * x * 9 - decimal[1, digits = 40] / 27]
+    big = x * 3 + s
+    small = decimal[1, digits = 40] / 27 / big
+    return cbrt[big] + cbrt[small] - 1
+
+fn pent_root[x]
+    return (sqrt[sqrt[x * 24 + 1] * 4 + 5] - 3) / 2
+
+--- the root shown whole where x is exactly the simplex number of its rounding
+fn shown_root[root, x, r]
+    n = round[root]
+    if simplex[n, r] eq x
+        return str[n]
+    return str[round[root, 20]]
+
+names = map['2' = 'triangular', '3' = 'tetrahedral', '4' = 'pentatopic', '12' = '12-simplex']
+for r in [2, 3, 4, 12]
+    xs = simplices[r, 30]
+    log['The first 30 `names[str[r]]` numbers (r = `r`):']
+    log[table[xs, 6]]
+    log['(the same as r rounds of running sums over 0, 1, 1, 1, …: `summed[r, 30] eq xs`)']
+    log['']
+
+for x in [7140, 21408696, 26728085384, 14545501785001]
+    d = decimal[x, digits = 40]
+    log['Roots of `x`:']
+    log['   triangular: `shown_root[tri_root[d], x, 2]`']
+    log['  tetrahedral: `shown_root[tet_root[d], x, 3]`']
+    log['   pentatopic: `shown_root[pent_root[d], x, 4]`']
+    log['']

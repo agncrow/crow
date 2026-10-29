@@ -1,0 +1,76 @@
+--- Rosetta Code: Anagram generator
+--- https://rosettacode.org/wiki/Anagram_generator
+--- Each letter stands for a prime, so a word's product of primes is the same for all
+--- its anagrams, and a word fits in what is left of a phrase exactly when its product
+--- divides what is left. Words of unixdict.txt of four letters or more, taken in
+--- alphabetical order so each multiset of words is found once.
+
+use bits, math
+
+fn signature[word]
+    primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101]
+    product = 1
+    for c in split[word, '']
+        product = product * primes[code[c] - 97]
+    return product
+
+fn letters_of[phrase]
+    kept = for c in split[lower[phrase], '']
+        if c gte 'a' and c lte 'z'
+            c
+    return join[kept, '']
+
+--- every phrase of words[start ...] whose letters are exactly those `rest` stands for
+fn phrases[words, sigs, rest, start, chosen]
+    if rest eq 1
+        return [join[chosen, ' ']]
+    found = []
+    for i in range[start, len[words]]
+        if rest % sigs[i] eq 0
+            found = concat[found, phrases[words, sigs, rest / sigs[i], i, push[chosen, words[i]]]]
+    return found
+
+fn anagrams[given, words, sigs]
+    target = signature[letters_of[given]]
+    fits = for i in range[len[words]]
+        if target % sigs[i] eq 0
+            i
+    fit_words = for i in fits
+        words[i]
+    fit_sigs = for i in fits
+        sigs[i]
+    found = phrases[fit_words, fit_sigs, target, 0, []]
+    return found
+
+fn shortest_word[phrase]
+    lengths = for w in split[phrase, ' ']
+        len[w]
+    return min[lengths]
+
+--- the best: the fewest words, and of those the ones whose shortest word is longest
+fn best[found]
+    fewest = 1000
+    for p in found
+        fewest = min[fewest, len[split[p, ' ']]]
+    few = for p in found
+        if len[split[p, ' ']] eq fewest
+            p
+    longest = 0
+    for p in few
+        longest = max[longest, shortest_word[p]]
+    chosen = for p in few
+        if shortest_word[p] eq longest
+            p
+    return chosen
+
+dictionary = split[trim[read['unixdict.txt']], '\n']
+words = for w in dictionary
+    if len[w] gte 4 and matches[w, '^[a-z]+$']
+        w
+sigs = for w in words
+    signature[w]
+for given in ['Rosetta Code', 'Petelomax', 'Crow language', 'Alfred Aho']
+    found = anagrams[given, words, sigs]
+    log['`given`: `len[found]` anagrams; the best:']
+    for p in best[found]
+        log['    `p`']

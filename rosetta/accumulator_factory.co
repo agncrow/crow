@@ -1,0 +1,26 @@
+--- Rosetta Code: Accumulator factory
+--- https://rosettacode.org/wiki/Accumulator_factory
+--- Deviations, as the task asks them described. Crow has no closures and no
+--- hidden mutable state, by design (the spec's "No Lambdas or Closures" and
+--- "No Ambient Mutability"), so no function can answer a function that keeps
+--- a running total (rule 4). Instead the accumulator is a value: a record
+--- holding its total, which foo makes; calling it is accumulate[g, i], which
+--- answers the accumulator with i added, and the caller keeps what it answers.
+--- Nothing global holds the total (rule 5), and every number handed to an
+--- accumulator stays in its total (rule 3). Rule 2 bends: an int or a float
+--- is decided before the program runs, so where any accumulator is handed a
+--- float every total is a float (a whole float still shows as an int).
+
+struct Accumulator [total]
+
+fn foo[n]
+    return Accumulator[n]
+
+fn accumulate[g, i]
+    return Accumulator[g.total + i]
+
+x = foo[1]
+x = accumulate[x, 5]
+_other = foo[3]
+x = accumulate[x, 2.3]
+log[x.total]

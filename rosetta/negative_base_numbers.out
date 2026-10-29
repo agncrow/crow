@@ -1,0 +1,8 @@
+  10 in base  -2: 11110  (expected 11110), and back: 10
+ 146 in base  -3: 21102  (expected 21102), and back: 146
+  15 in base -10: 195    (expected 195), and back: 15
+
+-2659246 in base -62 is Crow
+
+-1000 to 1000 and 2^100 + 12345 round trip in every base from -2 to -62: true
+2^100 + 12345 in negabinary: 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000111000001001001

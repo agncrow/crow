@@ -1,0 +1,28 @@
+--- a literal list of numbers returned where the function answers a list
+--- of numbers that can fail, or grow, is that list, its numbers as written
+--- (grown where the items grow): it had stayed a tensor beside `return [a,
+--- a]` of `a = int[text]`, and the lowered program disagreed with itself
+--- (Rosetta Code, Honeycombs)
+
+fn pair_of[text]
+    if text eq ''
+        return [5, 4]
+    a = int[text]
+    return [a, a]
+
+fn halves[text]
+    if text eq ''
+        return [5, 4]
+    a = float[text]
+    return [a, a]
+
+fn whole[text]
+    if text eq ''
+        return [5, 4]
+    return [2 ^ 70, 1]
+
+log[pair_of['']]
+log[pair_of['3']]
+log[pair_of['x']]
+log[halves[''], halves['2.5']]
+log[whole[''], whole['a']]

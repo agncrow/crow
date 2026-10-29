@@ -1,0 +1,53 @@
+{| class="wikitable" style="text-align: center;"
+|-
+| style="background: #ffffe6; " colspan=7 | Display an outline as a nested table.
+|-
+| style="background: #ffebd2; " colspan=3 | Parse the outline to a tree,
+| style="background: #f0fff0; " colspan=2 | count the leaves descending from each node,
+| style="background: #e6ffff; " colspan=2 | and write out a table with 'colspan' values
+|-
+| style="background: #ffebd2; " | measuring the indent of each line,
+| style="background: #ffebd2; " | translating the indentation to a nested structure,
+| style="background: #ffebd2; " | and padding the tree to even depth.
+| style="background: #f0fff0; " | defining the width of a leaf as 1,
+| style="background: #f0fff0; " | and the width of a parent node as a sum.
+| style="background: #e6ffff; " | either as a wiki table,
+| style="background: #e6ffff; " | or as HTML.
+|-
+|  | 
+|  | 
+|  | 
+|  | 
+| style="background: #f0fff0; " | (The sum of the widths of its children)
+|  | 
+|  | 
+|}
+
+{| class="wikitable" style="text-align: center;"
+|-
+| style="background: #ffffe6; " colspan=9 | Display an outline as a nested table.
+|-
+| style="background: #ffebd2; " colspan=3 | Parse the outline to a tree,
+| style="background: #f0fff0; " colspan=3 | count the leaves descending from each node,
+| style="background: #e6ffff; " colspan=2 | and write out a table with 'colspan' values
+| style="background: #ffeeff; " | Optionally add color to the nodes.
+|-
+| style="background: #ffebd2; " | measuring the indent of each line,
+| style="background: #ffebd2; " | translating the indentation to a nested structure,
+| style="background: #ffebd2; " | and padding the tree to even depth.
+| style="background: #f0fff0; " | defining the width of a leaf as 1,
+| style="background: #f0fff0; " colspan=2 | and the width of a parent node as a sum.
+| style="background: #e6ffff; " | either as a wiki table,
+| style="background: #e6ffff; " | or as HTML.
+|  | 
+|-
+|  | 
+|  | 
+|  | 
+|  | 
+| style="background: #f0fff0; " | (The sum of the widths of its children)
+| style="background: #f0fff0; " | Propagating the sums upward as necessary.
+|  | 
+|  | 
+|  | 
+|}

@@ -1,0 +1,7 @@
+Words:       ['Rosetta', 'Code', 'is', 'a', 'programming', 'chrestomathy', 'site']
+Decorated:   {Rosetta, 7}, {Code, 4}, {is, 2}, {a, 1}, {programming, 11}, {chrestomathy, 12}, {site, 4}
+Sorted:      {a, 1}, {is, 2}, {Code, 4}, {site, 4}, {Rosetta, 7}, {programming, 11}, {chrestomathy, 12}
+Undecorated: ['a', 'is', 'Code', 'site', 'Rosetta', 'programming', 'chrestomathy']
+
+Schwartzian transform by length: ['a', 'is', 'Code', 'site', 'Rosetta', 'programming', 'chrestomathy']
+Schwartzian transform by vowels: ['is', 'a', 'Code', 'site', 'Rosetta', 'programming', 'chrestomathy']

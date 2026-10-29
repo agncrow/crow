@@ -1,0 +1,25 @@
+--- An empty map is open, and its first key decides its keys' kind however
+--- the key is written: `m[1] = 'one'` had kept the map keyed by text — the
+--- interpreter stopped and the compiled program did not build. And the
+--- keys of a map a function answers are not guessed as text before the
+--- function is typed: bound at the top level, an int-keyed map's keys had
+--- been refused as a reassignment (Rosetta Code, Achilles numbers).
+m = map[]
+m[1] = 'one'
+m[7] = 'seven'
+log[m[1]]
+log[keys[m]]
+
+fn one[]
+    return map[[0, 5], [true, false]]
+
+ks = keys[one[]]
+log[ks]
+
+counts = map[]
+for w in ['a', 'b', 'a']
+    if w in counts
+        counts[w] = counts[w] + 1
+    else
+        counts[w] = 1
+log[counts]

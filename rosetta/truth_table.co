@@ -1,0 +1,172 @@
+--- Rosetta Code: Truth table
+--- https://rosettacode.org/wiki/Truth_table
+--- Reads a Boolean expression a line from standard input, until an empty line
+--- or the end of input, parses it by recursive descent into reverse Polish
+--- order and prints its truth table: a column per variable, in the order they
+--- first appear, the rows counting up in binary. Infix, in symbols or words:
+--- ! ~ not, & and, ^ xor, | or, -> (implies), <-> or = (equivalence), 0 and 1
+--- (or true and false) and parentheses, binding from the tightest to the
+--- loosest in that order, -> grouping to the right. Any number of variables.
+
+struct Parsed [code, pos]
+
+fn is_letter[c]
+    return matches[c, '^[A-Za-z_]$']
+
+fn is_word_char[c]
+    return matches[c, '^[A-Za-z0-9_]$']
+
+fn is_name[t]
+    return is_letter[split[t, ''][0]]
+
+--- one spelling for each operator and constant
+fn canonical[t]
+    words = map['not' = '!', '~' = '!', 'and' = '&', 'or' = '|', 'xor' = '^', '=' = '<->', 'true' = '1', 'false' = '0']
+    if t in words
+        return words[t]
+    return t
+
+fn tokens_of[text]
+    cs = split[text, '']
+    n = len[cs]
+    ts = []
+    i = 0
+    while i lt n
+        c = cs[i]
+        if c eq ' ' or c eq '\t'
+            i = i + 1
+        else if is_word_char[c]
+            j = i + 1
+            while j lt n and is_word_char[cs[j]]
+                j = j + 1
+            ts = push[ts, canonical[join[slice[cs, i, j], '']]]
+            i = j
+        else if c eq '-' and i + 1 lt n and cs[i + 1] eq '>'
+            ts = push[ts, '->']
+            i = i + 2
+        else if c eq '<' and i + 2 lt n and cs[i + 1] eq '-' and cs[i + 2] eq '>'
+            ts = push[ts, '<->']
+            i = i + 3
+        else
+            ts = push[ts, canonical[c]]
+            i = i + 1
+    return ts
+
+--- the binary operators, loosest first
+fn operator_at[level]
+    ops = ['<->', '->', '|', '^', '&']
+    return ops[level]
+
+--- an expression whose operators bind at `level` or tighter
+fn parse_level[ts, pos, level]
+    if level eq 5
+        return parse_unary[ts, pos]
+    op = operator_at[level]
+    left = parse_level[ts, pos, level + 1]
+    code = left.code
+    p = left.pos
+    if op eq '->'
+        if p lt len[ts] and ts[p] eq op
+            right = parse_level[ts, p + 1, level]
+            return Parsed[push[concat[code, right.code], op], right.pos]
+        return Parsed[code, p]
+    while p lt len[ts] and ts[p] eq op
+        right = parse_level[ts, p + 1, level + 1]
+        code = push[concat[code, right.code], op]
+        p = right.pos
+    return Parsed[code, p]
+
+--- a negation, a parenthesized expression, a constant or a variable
+fn parse_unary[ts, pos]
+    if pos gte len[ts]
+        return error['the expression ends too soon', 'parse']
+    t = ts[pos]
+    if t eq '!'
+        inner = parse_unary[ts, pos + 1]
+        return Parsed[push[inner.code, '!'], inner.pos]
+    if t eq '('
+        inner = parse_level[ts, pos + 1, 0]
+        if inner.pos gte len[ts] or ts[inner.pos] ne ')'
+            return error['a ( is not closed', 'parse']
+        return Parsed[inner.code, inner.pos + 1]
+    if t eq '0' or t eq '1' or is_name[t]
+        return Parsed[[t], pos + 1]
+    return error['`t` is not where a value goes', 'parse']
+
+fn parse[text]
+    ts = tokens_of[text]
+    r = parse_level[ts, 0, 0]
+    if r.pos lt len[ts]
+        return error['`ts[r.pos]` is not where an operator goes', 'parse']
+    return r.code
+
+--- the variables, in the order they first appear
+fn names_in[code]
+    names = []
+    for t in code
+        if is_name[t] and t not in names
+            names = push[names, t]
+    return names
+
+fn combine[op, a, b]
+    if op eq '&'
+        return a and b
+    if op eq '|'
+        return a or b
+    if op eq '^'
+        return a ne b
+    if op eq '->'
+        return not a or b
+    return a eq b
+
+--- the reverse Polish code run on a stack, each variable's value in `assigned`
+fn holds[code, assigned]
+    stack = []
+    for t in code
+        if t eq '!'
+            top = stack[-1]
+            stack = push[pop[stack], not top]
+        else if t in ['&', '|', '^', '->', '<->']
+            b = stack[-1]
+            a = stack[-2]
+            stack = push[pop[pop[stack]], combine[t, a, b]]
+        else if t eq '1'
+            stack = push[stack, true]
+        else if t eq '0'
+            stack = push[stack, false]
+        else
+            stack = push[stack, assigned[t]]
+    return stack[0]
+
+fn table[text]
+    code = parse[text]
+    if not code.ok
+        log['cannot read `text`: `code.reason`']
+        return
+    names = names_in[code]
+    n = len[names]
+    heading = join[names, ' ']
+    log['`heading` : `text`']
+    trues = 0
+    for i in range[2 ^ n]
+        assigned = map[]
+        cells = []
+        for k in range[n]
+            bit = i / 2 ^ (n - 1 - k) % 2
+            assigned = set[assigned, names[k], bit eq 1]
+            cells = push[cells, fmt[str[bit], width = len[names[k]]]]
+        value = int[holds[code, assigned]]
+        trues = trues + value
+        row = join[cells, ' ']
+        log['`row` : `value`']
+    if trues eq 2 ^ n
+        log['(true in every row: a tautology)']
+
+line = input[]
+while line.ok
+    expression = trim[line]
+    if expression eq ''
+        break
+    table[expression]
+    log['']
+    line = input[]

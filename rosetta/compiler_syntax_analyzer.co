@@ -1,0 +1,186 @@
+--- Rosetta Code: Compiler/syntax analyzer
+--- https://rosettacode.org/wiki/Compiler/syntax_analyzer
+--- Reads the lexical analyzer's tokens from standard input, parses them by recursive
+--- descent (statements) and precedence climbing (expressions), as the task's
+--- pseudo-code does, and writes the tree flattened, a node a line, ';' for none.
+--- A tree is a record per node whose children are records, 0 for none.
+
+--- a token: its place, its name, and its value (empty text where it has none)
+struct Token [line, col, name, value]
+
+--- a node: a leaf's value is its text; an inner node's children are nodes
+struct Node [tag, value, left, right]
+
+--- a parse's tree, and the position of the first token it did not read
+struct Parsed [node, next]
+
+--- what the parser knows of the tokens: how an error names each, and each
+--- binary operator's precedence and node
+struct Grammar [shown, precedence, nodes]
+
+fn grammar[]
+    shown = map['End_of_input' = 'EOI', 'Op_multiply' = '*', 'Op_divide' = '/', 'Op_mod' = '%', 'Op_add' = '+', 'Op_subtract' = '-', 'Op_negate' = '-', 'Op_not' = '!', 'Op_less' = '<', 'Op_lessequal' = '<=', 'Op_greater' = '>', 'Op_greaterequal' = '>=', 'Op_equal' = '==', 'Op_notequal' = '!=', 'Op_assign' = '=', 'Op_and' = '&&', 'Op_or' = '||', 'Keyword_if' = 'if', 'Keyword_else' = 'else', 'Keyword_while' = 'while', 'Keyword_print' = 'print', 'Keyword_putc' = 'putc', 'LeftParen' = '(', 'RightParen' = ')', 'LeftBrace' = '{', 'RightBrace' = '}', 'Semicolon' = ';', 'Comma' = ',', 'Identifier' = 'Ident', 'Integer' = 'Integer literal', 'String' = 'String literal']
+    precedence = map['Op_multiply' = 13, 'Op_divide' = 13, 'Op_mod' = 13, 'Op_add' = 12, 'Op_subtract' = 12, 'Op_less' = 10, 'Op_lessequal' = 10, 'Op_greater' = 10, 'Op_greaterequal' = 10, 'Op_equal' = 9, 'Op_notequal' = 9, 'Op_and' = 5, 'Op_or' = 4]
+    nodes = map['Op_multiply' = 'Multiply', 'Op_divide' = 'Divide', 'Op_mod' = 'Mod', 'Op_add' = 'Add', 'Op_subtract' = 'Subtract', 'Op_less' = 'Less', 'Op_lessequal' = 'LessEqual', 'Op_greater' = 'Greater', 'Op_greaterequal' = 'GreaterEqual', 'Op_equal' = 'Equal', 'Op_notequal' = 'NotEqual', 'Op_and' = 'And', 'Op_or' = 'Or']
+    return Grammar[shown, precedence, nodes]
+
+--- the tokens on standard input, a line each: line, column, name, value
+fn read_tokens[g]
+    tokens = []
+    line = input[]
+    while line.ok
+        if trim[line] ne ''
+            m = find[line, '^\s*([0-9]+)\s+([0-9]+)\s+(\S+)\s*(.*)$']
+            if not m.ok or m.groups[3] not in g.shown
+                return error['not a token: `line`', 'parse']
+            tokens = push[tokens, Token[int[m.groups[1]], int[m.groups[2]], m.groups[3], trim[m.groups[4]]]]
+        line = input[]
+    if len[tokens] eq 0 or tokens[-1].name ne 'End_of_input'
+        return error['the tokens do not end with End_of_input', 'parse']
+    return tokens
+
+--- a syntax error, at the token where it was found
+fn failure[t, message]
+    return error['(`t.line`, `t.col`) `message`', 'parse']
+
+--- the token at i must be the one named; the answer is the position after it
+fn expect[tokens, i, what, name, g]
+    t = tokens[i]
+    if t.name eq name
+        return i + 1
+    return failure[t, '`what`: Expecting \'`g.shown[name]`\', found \'`g.shown[t.name]`\'']
+
+fn leaf[tag, value]
+    return Node[tag, value, 0, 0]
+
+fn node[tag, left, right]
+    return Node[tag, '', left, right]
+
+--- '(' expr ')'
+fn paren_expr[tokens, i, g]
+    open = expect[tokens, i, 'paren_expr', 'LeftParen', g]
+    inner = expr[tokens, open, 0, g]
+    close = expect[tokens, inner.next, 'paren_expr', 'RightParen', g]
+    return Parsed[inner.node, close]
+
+--- a primary: a name, a number, a bracketed expression, or one after a unary operator
+fn primary[tokens, i, g]
+    t = tokens[i]
+    if t.name eq 'LeftParen'
+        return paren_expr[tokens, i, g]
+    if t.name eq 'Op_add'
+        return expr[tokens, i + 1, 14, g]
+    if t.name eq 'Op_subtract' or t.name eq 'Op_not'
+        operand = expr[tokens, i + 1, 14, g]
+        tag = 'Not'
+        if t.name eq 'Op_subtract'
+            tag = 'Negate'
+        return Parsed[node[tag, operand.node, 0], operand.next]
+    if t.name eq 'Identifier' or t.name eq 'Integer'
+        return Parsed[leaf[t.name, t.value], i + 1]
+    return failure[t, 'Expecting a primary, found: `g.shown[t.name]`']
+
+--- precedence climbing: binary operators that bind at least as tightly as p
+fn expr[tokens, i, p, g]
+    first = primary[tokens, i, g]
+    tree = first.node
+    i = first.next
+    while tokens[i].name in g.precedence and g.precedence[tokens[i].name] gte p
+        op = tokens[i].name
+        right = expr[tokens, i + 1, g.precedence[op] + 1, g]
+        tree = node[g.nodes[op], tree, right.node]
+        i = right.next
+    return Parsed[tree, i]
+
+--- print '(' (string | expr) {',' (string | expr)} ')' ';'
+fn print_statement[tokens, i, g]
+    i = expect[tokens, i, 'Print', 'LeftParen', g]
+    items = 0
+    while true
+        t = tokens[i]
+        if t.name eq 'String'
+            items = node['Sequence', items, node['Prts', leaf['String', t.value], 0]]
+            i = i + 1
+        else
+            e = expr[tokens, i, 0, g]
+            items = node['Sequence', items, node['Prti', e.node, 0]]
+            i = e.next
+        if tokens[i].name ne 'Comma'
+            break
+        i = i + 1
+    close = expect[tokens, i, 'Print', 'RightParen', g]
+    after = expect[tokens, close, 'Print', 'Semicolon', g]
+    return Parsed[items, after]
+
+fn statement[tokens, i, g]
+    t = tokens[i]
+    if t.name eq 'Keyword_if'
+        cond = paren_expr[tokens, i + 1, g]
+        yes = statement[tokens, cond.next, g]
+        if tokens[yes.next].name eq 'Keyword_else'
+            no = statement[tokens, yes.next + 1, g]
+            return Parsed[node['If', cond.node, node['If', yes.node, no.node]], no.next]
+        return Parsed[node['If', cond.node, node['If', yes.node, 0]], yes.next]
+    if t.name eq 'Keyword_putc'
+        e = paren_expr[tokens, i + 1, g]
+        after = expect[tokens, e.next, 'Putc', 'Semicolon', g]
+        return Parsed[node['Prtc', e.node, 0], after]
+    if t.name eq 'Keyword_print'
+        return print_statement[tokens, i + 1, g]
+    if t.name eq 'Semicolon'
+        return Parsed[0, i + 1]
+    if t.name eq 'Identifier'
+        at = expect[tokens, i + 1, 'assign', 'Op_assign', g]
+        e = expr[tokens, at, 0, g]
+        after = expect[tokens, e.next, 'assign', 'Semicolon', g]
+        return Parsed[node['Assign', leaf['Identifier', t.value], e.node], after]
+    if t.name eq 'Keyword_while'
+        cond = paren_expr[tokens, i + 1, g]
+        body = statement[tokens, cond.next, g]
+        return Parsed[node['While', cond.node, body.node], body.next]
+    if t.name eq 'LeftBrace'
+        list = 0
+        i = i + 1
+        while tokens[i].name ne 'RightBrace' and tokens[i].name ne 'End_of_input'
+            s = statement[tokens, i, g]
+            list = node['Sequence', list, s.node]
+            i = s.next
+        after = expect[tokens, i, 'Lbrace', 'RightBrace', g]
+        return Parsed[list, after]
+    if t.name eq 'End_of_input'
+        return Parsed[0, i]
+    return failure[t, 'Expecting start of statement, found: `g.shown[t.name]`']
+
+--- the whole program: a sequence of statements to the end of the input
+fn parse[tokens, g]
+    tree = 0
+    i = 0
+    while true
+        s = statement[tokens, i, g]
+        tree = node['Sequence', tree, s.node]
+        i = s.next
+        if tokens[i].name eq 'End_of_input'
+            break
+    return tree
+
+--- the tree flattened: a node, then its left subtree, then its right
+fn write_tree[t]
+    if t eq 0
+        log[';']
+    else if t.tag eq 'Identifier' or t.tag eq 'Integer' or t.tag eq 'String'
+        log['`fmt[t.tag, width = 14]``t.value`']
+    else
+        log[t.tag]
+        write_tree[t.left]
+        write_tree[t.right]
+
+g = grammar[]
+tokens = read_tokens[g]
+if not tokens.ok
+    log[tokens.reason]
+else
+    tree = parse[tokens, g]
+    if tree.ok
+        write_tree[tree]
+    else
+        log[tree.reason]

@@ -1,0 +1,145 @@
+--- Rosetta Code: UTF-8 encode and decode
+--- https://rosettacode.org/wiki/UTF-8_encode_and_decode
+--- By arithmetic on the code point's bits: one byte below U+0080, then two, three
+--- or four, the lead byte's high bits saying how many (110, 1110, 11110) and every
+--- byte after it 10 and six bits of the code point. The decoder reads them back
+--- and refuses what is not UTF-8: a stray continuation byte, a missing one, an
+--- overlong form, a surrogate, a code point past U+10FFFF.
+
+use bits
+
+--- n in hex, upper case, at least `width` digits.
+fn hex[n, width]
+    figures = '0123456789ABCDEF'
+    out = ''
+    while n gt 0 or len[out] lt width
+        out = concat[figures[n % 16], out]
+        n = n / 16
+    return out
+
+--- The value of one hex digit.
+fn digit_value[c]
+    figures = split['0123456789ABCDEF', '']
+    i = 0
+    while figures[i] ne c
+        i = i + 1
+    return i
+
+--- Bytes written in hex, two digits each, a space between.
+fn from_hex[text]
+    bytes = for pair in split[text, ' ']
+        digit_value[pair[0]] * 16 + digit_value[pair[1]]
+    return bytes
+
+fn hex_bytes[bytes]
+    shown = for b in bytes
+        hex[b, 2]
+    return join[shown, ' ']
+
+--- A byte after the lead: 10, then six bits of point from bit `low` up.
+fn continuation[point, low]
+    return bitor[128, bitand[shift[point, -low], 63]]
+
+--- The UTF-8 bytes of a code point (128 is 0x80, 2048 0x800, 65536 0x10000;
+--- 192, 224 and 240 are the lead bytes' marks 110, 1110 and 11110).
+fn utf8_encode[point]
+    if point lt 0 or point gt 1114111
+        return error['U+`hex[point, 4]` is past U+10FFFF, the last code point', 'utf8']
+    if point gte 55296 and point lte 57343
+        return error['U+`hex[point, 4]` is a surrogate, which UTF-8 does not encode', 'utf8']
+    if point lt 128
+        return [point]
+    if point lt 2048
+        return [bitor[192, shift[point, -6]], continuation[point, 0]]
+    if point lt 65536
+        return [bitor[224, shift[point, -12]], continuation[point, 6], continuation[point, 0]]
+    return [bitor[240, shift[point, -18]], continuation[point, 12], continuation[point, 6], continuation[point, 0]]
+
+--- How many bytes a sequence that begins with `lead` holds; 0 for a byte that
+--- begins none (a continuation byte 10xxxxxx, or 11111xxx).
+fn length_of[lead]
+    if lead lt 128
+        return 1
+    if lead lt 192
+        return 0
+    if lead lt 224
+        return 2
+    if lead lt 240
+        return 3
+    if lead lt 248
+        return 4
+    return 0
+
+--- The code point of one character's bytes, or why they are not UTF-8.
+fn utf8_decode[bytes]
+    if len[bytes] eq 0
+        return error['no bytes', 'utf8']
+    lead = bytes[0]
+    count = length_of[lead]
+    if count eq 0
+        return error['`hex[lead, 2]` begins no character', 'utf8']
+    if len[bytes] ne count
+        return error['`hex[lead, 2]` begins a character of `count` bytes, and there are `len[bytes]`', 'utf8']
+    --- the lead's own bits: 7, 5, 4 or 3 of them
+    marks = [0, 127, 31, 15, 7]
+    point = bitand[lead, marks[count]]
+    for i in range[1, count]
+        b = bytes[i]
+        if bitand[b, 192] ne 128
+            return error['byte `i + 1`, `hex[b, 2]`, is not a continuation byte 10xxxxxx', 'utf8']
+        point = bitor[shift[point, 6], bitand[b, 63]]
+    least = [0, 0, 128, 2048, 65536]
+    if point lt least[count]
+        return error['an overlong form of U+`hex[point, 4]`, which takes fewer bytes', 'utf8']
+    if point gte 55296 and point lte 57343
+        return error['U+`hex[point, 4]` is a surrogate, which UTF-8 does not encode', 'utf8']
+    if point gt 1114111
+        return error['U+`hex[point, 4]` is past U+10FFFF, the last code point', 'utf8']
+    return point
+
+--- A whole text's bytes, a character at a time, back into text.
+fn utf8_decode_all[bytes]
+    out = []
+    i = 0
+    while i lt len[bytes]
+        count = max[length_of[bytes[i]], 1]
+        point = utf8_decode[slice[bytes, i, i + count]]
+        out = push[out, char[point]]
+        i = i + count
+    return join[out, '']
+
+characters = ['A', 'ö', 'Ж', '€', '𝄞']
+names = ['LATIN CAPITAL LETTER A', 'LATIN SMALL LETTER O WITH DIAERESIS', 'CYRILLIC CAPITAL LETTER ZHE', 'EURO SIGN', 'MUSICAL SYMBOL G CLEF']
+
+log['Character  Name                                 Unicode  UTF-8 (hex)  Decoded']
+log[repeat['-', 76]]
+everything = []
+for i in range[len[characters]]
+    ch = characters[i]
+    point = code[ch]
+    bytes = utf8_encode[point]
+    back = utf8_decode[bytes]
+    everything = concat[everything, bytes]
+    unicode = 'U+`hex[point, 4]`'
+    log['`fmt[ch, width = 10]` `fmt[names[i], width = 36]` `fmt[unicode, width = 8]` `fmt[hex_bytes[bytes], width = 12]` `char[back]`']
+log['']
+
+--- The language's own UTF-8 says the same: a URL escape writes each byte of a
+--- character past ASCII as %XX ('A' it leaves as it is).
+agree = true
+for ch in slice[characters, 1, len[characters]]
+    escaped = replace[encode[ch, 'url'], '%', ' ']
+    agree = agree and trim[escaped] eq hex_bytes[utf8_encode[code[ch]]]
+log['The bytes agree with the URL escapes of the characters: `agree`']
+log['The bytes of all five, `hex_bytes[everything]`, decode to `utf8_decode_all[everything]`']
+log['']
+
+log['Bytes the decoder refuses:']
+broken = ['C0 80', 'ED A0 80', 'F4 90 80 80', '80', 'E2 82', 'E2 28 AC', 'FF']
+for written in broken
+    point = utf8_decode[from_hex[written]]
+    log['  `fmt[written, width = 12]` `point.reason`']
+log['Code points the encoder refuses:']
+for point in [55296, 1114112]
+    bytes = utf8_encode[point]
+    log['  `bytes.reason`']

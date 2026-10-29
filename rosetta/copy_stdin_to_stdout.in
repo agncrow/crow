@@ -1,0 +1,5 @@
+Copy stdin to stdout: every line read is written back as it came.
+
+    An indented line, a	tab, and an empty line above.
+Unicode passes through: π ≈ 3.14159, “quotes”, ✓
+The last line.

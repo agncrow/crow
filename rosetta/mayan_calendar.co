@@ -1,0 +1,65 @@
+--- Rosetta Code: Mayan calendar
+--- https://rosettacode.org/wiki/Mayan_calendar
+--- A Gregorian date's Julian day number less the correlation (GMT: 584283, the day number
+--- of the creation date 13.0.0.0.0) is the Long Count's count of days; the Calendar Round
+--- and the Lord of the Night are that count's remainders, set by the creation date's own
+--- 4 Ajaw 8 Kumk’u G9. The dates are the task's, fixed (no wall clock). Dates are ISO text.
+
+struct Mayan [tzolkin, haab, long_count, lord]
+
+fn julian_day[date]
+    t = moment[date]
+    a = (14 - t.month) / 12
+    y = t.year + 4800 - a
+    m = t.month + 12 * a - 3
+    return t.day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045
+
+--- A remainder that is never negative.
+fn modulo[a, n]
+    return (a % n + n) % n
+
+fn tzolkin[days]
+    names = ['Imix’', 'Ik’', 'Ak’bal', 'K’an', 'Chikchan', 'Kimi', 'Manik’', 'Lamat', 'Muluk', 'Ok', 'Chuwen', 'Eb', 'Ben', 'Hix', 'Men', 'K’ib’', 'Kaban', 'Etz’nab’', 'Kawak', 'Ajaw']
+    number = 1 + modulo[days + 3, 13]
+    name = names[modulo[days + 19, 20]]
+    return '`number` `name`'
+
+--- The day of the month runs 1 to 19, and the 20th (the 5th of Wayeb’) is the seating,
+--- Chum, of the next month.
+fn haab[days]
+    months = ['Pop', 'Wo’', 'Sip', 'Sotz’', 'Sek', 'Xul', 'Yaxk’in', 'Mol', 'Ch’en', 'Yax', 'Sak’', 'Keh', 'Mak', 'K’ank’in', 'Muwan', 'Pax', 'K’ayab', 'Kumk’u', 'Wayeb’']
+    place = modulo[days + 8 + 17 * 20, 365]
+    day = place % 20
+    month = months[place / 20]
+    if day eq 0
+        return 'Chum `month`'
+    return '`day` `month`'
+
+--- bak’tun (144,000 days) . k’atun (7,200) . tun (360) . winal (20) . k’in (1)
+fn long_count[days]
+    baktun = days / 144000
+    katun = days / 7200 % 20
+    tun = days / 360 % 20
+    winal = days / 20 % 18
+    kin = days % 20
+    return '`baktun`.`katun`.`tun`.`winal`.`kin`'
+
+fn lord[days]
+    return 'G`1 + modulo[days + 8, 9]`'
+
+fn mayan[date, correlation = 584283]
+    days = julian_day[date] - correlation
+    return Mayan[tzolkin[days], haab[days], long_count[days], lord[days]]
+
+fn row[date, m]
+    return '`date`   `fmt[m.tzolkin, width = 13]``fmt[m.haab, width = 16]``fmt[m.long_count, width = 17]``m.lord`'
+
+log['Gregorian    Tzolk’in     Haab’           Long Count       Lord of']
+log['date                                                       the Night']
+log[repeat['-', 69]]
+for date in ['1963-11-21', '2004-06-19', '2012-12-18', '2012-12-21', '2019-01-19', '2019-03-27', '2020-02-29', '2020-03-01', '2071-05-16']
+    log[row[date, mayan[date]]]
+
+log['']
+log['Another correlation, Lounsbury’s 584285 (two days later):']
+log[row['2012-12-21', mayan['2012-12-21', correlation = 584285]]]

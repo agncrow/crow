@@ -1,0 +1,177 @@
+--- Rosetta Code: Repunit primes
+--- https://rosettacode.org/wiki/Repunit_primes
+--- The repunit of p ones in base b is (b^p - 1) / (b - 1), an int that grows; only
+--- a prime p can give a prime. For an odd p, a prime factor of it is p itself or 1
+--- more than a multiple of 2p, so those below a million are tried first; in a base
+--- that is a power, b = a^k, the repunit of p ones in base a divides it whenever p
+--- does not divide k, so that one is tried too. What no small factor divides is
+--- tested by Miller-Rabin to four prime bases that do not divide b.
+--- Every base 2 to 16 to 1000 digits (the task), then the stretch's 2700 for the
+--- bases that fit in a few seconds more: 2, 3, 4, 8, 9 and 16. A limit on the
+--- command line runs every base to it (crow run repunit_primes.co 2700 takes minutes).
+
+struct Power [root, exponent]
+
+fn primes_below[n]
+    composite = for i in range[n]
+        false
+    found = []
+    for i in range[2, n]
+        if not composite[i]
+            found = push[found, i]
+            j = i * i
+            while j lt n
+                composite[j] = true
+                j = j + i
+    return found
+
+fn repunit[b, p]
+    return (b ^ p - 1) / (b - 1)
+
+--- b as a^k with the least root a; k is 1 when b is no power.
+fn as_power[b]
+    a = 2
+    while a * a lte b
+        x = a
+        k = 1
+        while x lt b
+            x = x * a
+            k = k + 1
+        if x eq b
+            return Power[a, k]
+        a = a + 1
+    return Power[b, 1]
+
+fn small_prime[n]
+    if n lt 2
+        return false
+    d = 2
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 1
+    return true
+
+--- The first four primes that do not divide b: b itself, or its root, would pass
+--- every repunit of base b.
+fn witnesses[b]
+    chosen = []
+    for a in [2, 3, 5, 7, 11, 13, 17, 19]
+        if b % a ne 0 and len[chosen] lt 4
+            chosen = push[chosen, a]
+    return chosen
+
+--- The bits of e, most significant first.
+fn bits_of[e]
+    bits = []
+    while e gt 0
+        bits = push[bits, e % 2]
+        e = e / 2
+    return reverse[bits]
+
+--- a^e mod m, left to right over e's bits: a squaring for each bit, and for each
+--- one bit a multiply by the small a.
+fn power_mod[a, e, m]
+    x = 1
+    for bit in bits_of[e]
+        x = x * x % m
+        if bit eq 1
+            x = x * a % m
+    return x
+
+--- Miller-Rabin: whether the odd m is a strong probable prime to base a.
+fn strong_probable[m, a]
+    d = m - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    x = power_mod[a, d, m]
+    if x eq 1 or x eq m - 1
+        return true
+    i = 1
+    while i lt s
+        x = x * x % m
+        if x eq m - 1
+            return true
+        i = i + 1
+    return false
+
+fn probable_prime[m, bases]
+    i = 0
+    while i lt len[bases]
+        if not strong_probable[m, bases[i]]
+            return false
+        i = i + 1
+    return true
+
+--- 'composite' when a small factor divides r, 'prime' when none up to its root
+--- does, else 'unknown': the factors of a repunit of an odd prime p ones are p
+--- and numbers 1 more than a multiple of 2p.
+fn sieved[r, p, bound]
+    if r % p eq 0 and r ne p
+        return 'composite'
+    q = 2 * p + 1
+    while q lte bound
+        if q * q gt r
+            return 'prime'
+        if r % q eq 0
+            return 'composite'
+        q = q + 2 * p
+    return 'unknown'
+
+fn repunit_prime[b, p, power, bases]
+    r = repunit[b, p]
+    if p eq 2
+        return small_prime[r]
+    if power.exponent gt 1 and r % repunit[power.root, p] eq 0
+        return false
+    verdict = sieved[r, p, 1000000]
+    if verdict ne 'unknown'
+        return verdict eq 'prime'
+    return probable_prime[r, bases]
+
+--- The numbers of digits, among ps, of the repunit primes of base b.
+fn repunit_primes[b, ps]
+    power = as_power[b]
+    bases = witnesses[b]
+    found = for p in ps
+        if repunit_prime[b, p, power, bases]
+            p
+    return found
+
+fn shown[ps]
+    if len[ps] eq 0
+        return 'none'
+    words = for p in ps
+        str[p]
+    return join[words, ', ']
+
+fn report[bases, found, limit]
+    log['Repunit primes up to `limit` digits, as their numbers of digits:']
+    for i in range[len[bases]]
+        log['base `fmt[bases[i], width = 2]`: `shown[found[i]]`']
+
+--- The repunit primes of each base, the numbers of digits among ps.
+fn search[bases, ps]
+    found = for b in bases
+        repunit_primes[b, ps]
+    return found
+
+given = args[]
+if len[given] gt 0
+    limit = int[given[0]]
+    every = range[2, 17]
+    report[every, search[every, primes_below[limit + 1]], limit]
+else
+    every = range[2, 17]
+    found = search[every, primes_below[1001]]
+    report[every, found, 1000]
+    log['']
+    stretch = for p in primes_below[2701]
+        if p gt 1000
+            p
+    some = [2, 3, 4, 8, 9, 16]
+    more = for b in some
+        concat[found[b - 2], repunit_primes[b, stretch]]
+    report[some, more, 2700]

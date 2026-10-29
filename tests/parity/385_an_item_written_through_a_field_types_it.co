@@ -1,0 +1,16 @@
+--- an item written through a record's field (`s.lists[1] = xs`, the field
+--- made a list of `[]`s) types the field's items, as an item write into a
+--- local does: the field had stayed a list of lists of nothing, compiled
+--- as lists of text, which did not build (Rosetta Code, Christofides
+--- algorithm)
+
+struct S [lists]
+
+nothing = for i in range[3]
+    []
+s = S[nothing]
+xs = []
+xs = push[xs, 5]
+s.lists[1] = xs
+log[s.lists]
+log[len[s.lists[1]] + s.lists[1][0]]

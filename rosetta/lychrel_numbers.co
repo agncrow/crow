@@ -1,0 +1,66 @@
+--- Rosetta Code: Lychrel numbers
+--- https://rosettacode.org/wiki/Lychrel_numbers
+--- Each start from 1 to 10000 is reversed and added up to 500 times (the ints grow
+--- past 64 bits as they need); a start that meets no palindrome is a Lychrel
+--- candidate. Taken in order, a candidate whose series shares a number with an
+--- earlier candidate's is related, and otherwise a seed.
+
+struct Candidate [n, series]
+
+fn reversed[digits]
+    int[reverse[digits]]
+
+fn lychrel_series[n, limit]
+    --- the texts of the numbers the series from n passes through, n included, or
+    --- [] when one of them after n is a palindrome within `limit` steps
+    x = n
+    series = [str[n]]
+    step = 0
+    while step lt limit
+        x = x + reversed[str[x]]
+        digits = str[x]
+        if digits eq reverse[digits]
+            return []
+        series = push[series, digits]
+        step = step + 1
+    series
+
+fn meets[seen, series]
+    --- whether any number of the series is already in `seen`
+    i = 0
+    while i lt len[series]
+        if series[i] in seen
+            return true
+        i = i + 1
+    false
+
+fn spaced[numbers]
+    shown = for x in numbers
+        str[x]
+    join[shown, ' ']
+
+limit = 500
+top = 10000
+candidates = for n in range[1, top + 1]
+    series = lychrel_series[n, limit]
+    if len[series] gt 0
+        Candidate[n, series]
+
+seen = map[]
+seeds = []
+related = []
+palindromes = []
+for c in candidates
+    if meets[seen, c.series]
+        related = push[related, c.n]
+    else
+        seeds = push[seeds, c.n]
+    for digits in c.series
+        seen = set[seen, digits, true]
+    if str[c.n] eq reverse[str[c.n]]
+        palindromes = push[palindromes, c.n]
+
+log['Starts 1 to `top`, each reversed and added at most `limit` times:']
+log['  `len[seeds]` seed Lychrel numbers: `spaced[seeds]`']
+log['  `len[related]` related Lychrel numbers']
+log['  `len[palindromes]` of them palindromes: `spaced[palindromes]`']

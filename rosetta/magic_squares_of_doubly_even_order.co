@@ -1,0 +1,75 @@
+--- Rosetta Code: Magic squares of doubly even order
+--- https://rosettacode.org/wiki/Magic_squares_of_doubly_even_order
+--- Count 1 to n^2 across the rows, then cut the square into 4 x 4 blocks of side
+--- n / 4: a cell whose block row and block column are both edge blocks, or both
+--- inner ones, keeps its number i; every other cell takes n^2 + 1 - i, the number
+--- counted from the other end. Each square is checked: every row, column and
+--- diagonal sums to n(n^2 + 1) / 2, and 1 to n^2 each appear once.
+
+fn on_edge[block]
+    block eq 0 or block eq 3
+
+fn cell[n, r, c]
+    side = n / 4
+    i = r * n + c + 1
+    if on_edge[r / side] eq on_edge[c / side]
+        return i
+    n * n + 1 - i
+
+fn magic_square[n]
+    rows = for r in range[n]
+        row = for c in range[n]
+            cell[n, r, c]
+        row
+    rows
+
+fn total[xs]
+    t = 0
+    for x in xs
+        t = t + x
+    t
+
+fn sums[square]
+    --- the sums of the rows, the columns and the two diagonals
+    n = len[square]
+    row_sums = for row in square
+        total[row]
+    column_sums = for c in range[n]
+        column = for row in square
+            row[c]
+        total[column]
+    down = for i in range[n]
+        square[i][i]
+    up = for i in range[n]
+        square[i][n - 1 - i]
+    concat[concat[row_sums, column_sums], [total[down], total[up]]]
+
+fn is_magic[square]
+    n = len[square]
+    target = n * (n * n + 1) / 2
+    numbers = []
+    for row in square
+        numbers = concat[numbers, row]
+    off = for s in sums[square]
+        if s ne target
+            s
+    len[off] eq 0 and sort[numbers] eq range[1, n * n + 1]
+
+fn show[square]
+    n = len[square]
+    width = len[str[n * n]] + 1
+    for row in square
+        cells = for x in row
+            fmt[x, width = width]
+        log[join[cells, '']]
+
+square = magic_square[8]
+show[square]
+log['']
+log['Every row, column and diagonal sums to `8 * (8 * 8 + 1) / 2`: `is_magic[square]`']
+log['']
+checked = for n in range[4, 41, 4]
+    if is_magic[magic_square[n]]
+        str[n]
+shown = join[checked, ' ']
+log['Orders built the same way and found magic: `shown`']

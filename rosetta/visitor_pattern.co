@@ -1,0 +1,60 @@
+--- Rosetta Code: Visitor pattern
+--- https://rosettacode.org/wiki/Visitor_pattern
+--- Wikipedia's car, translated. Crow has records and functions, no classes and
+--- no methods, so nothing dispatches on an element's class: each kind of element
+--- is a record, a visitor is a function for each kind, and accept is the one walk
+--- of the structure, which hands each element to the visitor's function for its
+--- kind (a car's parts first, then the car). A new operation is a new set of
+--- functions; the records and the walk stay as they are. (Body and Engine hold
+--- a name only because a record of no fields does not build compiled yet.)
+
+struct Wheel [name]
+
+struct Body [name]
+
+struct Engine [name]
+
+struct Car [wheels, body, engine]
+
+fn new_car[]
+    wheels = [Wheel['front left'], Wheel['front right'], Wheel['back left'], Wheel['back right']]
+    return Car[wheels, Body['body'], Engine['engine']]
+
+--- The walk: every element of the car, handed to the visitor's function for its
+--- kind.
+fn accept[car, on_wheel, on_body, on_engine, on_car]
+    for wheel in car.wheels
+        on_wheel[wheel]
+    on_body[car.body]
+    on_engine[car.engine]
+    on_car[car]
+
+--- The printing visitor.
+fn print_wheel[wheel]
+    log['Visiting my `wheel.name` wheel.']
+
+fn print_body[body]
+    log['Visiting body.']
+
+fn print_engine[engine]
+    log['Visiting my engine.']
+
+fn print_car[car]
+    log['Visiting car.']
+
+--- The doing visitor.
+fn kick_wheel[wheel]
+    log['Kicking my `wheel.name` wheel.']
+
+fn move_body[body]
+    log['Moving my body.']
+
+fn start_engine[engine]
+    log['Starting my engine.']
+
+fn start_car[car]
+    log['Starting my car.']
+
+car = new_car[]
+accept[car, print_wheel, print_body, print_engine, print_car]
+accept[car, kick_wheel, move_body, start_engine, start_car]

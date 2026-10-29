@@ -1,0 +1,66 @@
+--- Rosetta Code: JSON
+--- https://rosettacode.org/wiki/JSON
+--- json[text] loads JSON into a parsed value, whose objects are read by key or
+--- by field and whose arrays by position; encode[value] writes any Crow value
+--- as JSON: a record as an object of its fields, a list as an array, a map as
+--- an object. A small walker prints a parsed document indented, by kind.
+
+--- a parsed value written as indented JSON; JSON's null is a value that
+--- failed (its reason null), so it is written before anything reads it
+fn pretty[value, indent]
+    kind = type[value]
+    inner = '`indent`  '
+    if kind eq 'map'
+        if len[value] eq 0
+            return '{}'
+        lines = for key in keys[value]
+            item = value[key]
+            if item.ok
+                '`inner``encode[key]`: `pretty[item, inner]`'
+            else
+                '`inner``encode[key]`: null'
+        body = join[lines, ',\n']
+        return '{\n`body`\n`indent`}'
+    if kind eq 'array'
+        if len[value] eq 0
+            return '[]'
+        lines = for item in value
+            if item.ok
+                '`inner``pretty[item, inner]`'
+            else
+                '`inner`null'
+        body = join[lines, ',\n']
+        return '[\n`body`\n`indent`]'
+    return encode[value]
+
+text = '{"name": "Rosetta Code", "founded": 2007, "languages": ["Crow", "Python", "Go"], "wiki": {"tasks": 1340, "drafts": 290, "logo": null}}'
+log['Loaded:']
+data = json[text]
+log[pretty[data, '']]
+log['']
+log['name: `data.name`']
+log['founded: `data.founded`']
+log['the second language: `data.languages[1]`']
+log['languages: `len[data.languages]`']
+log['tasks and drafts: `data.wiki.tasks + data.wiki.drafts`']
+log['a logo: `data.wiki.logo.ok`']
+for key in keys[data]
+    log['  `key` holds a value of kind `type[data[key]]`']
+
+bad = json['{"name": "Rosetta Code", "founded": }']
+log['A malformed text: `bad.reason`']
+log['']
+
+struct Point [x, y]
+
+struct Shape [name, note, closed, corners, tags, fill]
+
+triangle = Shape['triangle', 'half of a "3-4-5" rectangle\'s area: 6', true, [Point[0, 0], Point[4, 0], Point[0, 3]], ['right', 'small'], map[red = 255, green = 128, blue = 0]]
+written = encode[triangle]
+log['Written:']
+log[written]
+back = json[written]
+--- a position in a parsed array counts from its start: one before it is null
+last = back.corners[len[back.corners] - 1]
+log['read back: `back.ok`, its corners: `len[back.corners]`, the last corner: (`last.x`, `last.y`)']
+log[pretty[back, '']]

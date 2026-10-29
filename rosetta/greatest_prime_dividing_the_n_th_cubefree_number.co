@@ -1,0 +1,93 @@
+--- Rosetta Code: Greatest prime dividing the n-th cubefree number
+--- https://rosettacode.org/wiki/Greatest_prime_dividing_the_n-th_cubefree_number
+--- The cubefree numbers up to x are counted by inclusion and exclusion over the
+--- cubes of squarefree d: Q(x) = the sum of mu(d) * floor(x / d^3) for d^3 <= x,
+--- with mu the Moebius function. The n-th cubefree number is the least x with
+--- Q(x) >= n, found by bisection, and its greatest prime by trial division: so the
+--- 10 billionth term takes as little as the 1,000th, with no sieve of millions.
+--- The first hundred terms come from the cubefree numbers in turn.
+
+fn moebius_upto[limit]
+    --- mu[d] for d from 1 to limit: 0 where a square divides d, else -1 to the
+    --- number of its primes
+    mu = for i in range[limit + 1]
+        1
+    composite = for i in range[limit + 1]
+        false
+    p = 2
+    while p lte limit
+        if not composite[p]
+            m = p
+            while m lte limit
+                if m gt p
+                    composite[m] = true
+                mu[m] = -mu[m]
+                m = m + p
+            m = p * p
+            while m lte limit
+                mu[m] = 0
+                m = m + p * p
+        p = p + 1
+    return mu
+
+fn cubefree_count[x, mu]
+    --- how many of 1 .. x no cube above 1 divides
+    total = 0
+    d = 1
+    while d * d * d lte x
+        total = total + mu[d] * (x / (d * d * d))
+        d = d + 1
+    return total
+
+fn nth_cubefree[n, mu]
+    lo = 1
+    hi = 2 * n
+    while lo lt hi
+        mid = (lo + hi) / 2
+        if cubefree_count[mid, mu] lt n
+            lo = mid + 1
+        else
+            hi = mid
+    return lo
+
+fn is_cubefree[n]
+    p = 2
+    while p * p * p lte n
+        if n % (p * p * p) eq 0
+            return false
+        p = p + 1
+    return true
+
+fn greatest_prime[n]
+    --- the greatest prime dividing n, and 1 for 1, as the task's a[1]
+    greatest = 1
+    p = 2
+    while p * p lte n
+        while n % p eq 0
+            greatest = p
+            n = n / p
+        p = p + 1
+    if n gt 1
+        greatest = n
+    return greatest
+
+terms = []
+x = 1
+while len[terms] lt 100
+    if is_cubefree[x]
+        terms = push[terms, greatest_prime[x]]
+    x = x + 1
+log['First 100 terms of a[n]:']
+for row in range[10]
+    cells = for t in slice[terms, row * 10, row * 10 + 10]
+        fmt[t, width = 4]
+    log[join[cells, '']]
+log['']
+
+--- the cube root of the largest x bisected (2 * 10^10) is below 2,800
+mu = moebius_upto[2800]
+n = 1000
+while n lte 10 ^ 10
+    c = nth_cubefree[n, mu]
+    log['The `fmt[n, commas = true]`th term of a[n] is `fmt[greatest_prime[c], commas = true]` (the cubefree number `fmt[c, commas = true]`)']
+    n = n * 10

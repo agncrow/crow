@@ -1,0 +1,189 @@
+--- Rosetta Code: Draw the Empire State Building
+--- https://rosettacode.org/wiki/Draw_the_Empire_State_Building
+--- The building as a stack of blocks, its setbacks roughly to scale in metres: the
+--- five-storey base, the wings to the 21st floor, the steps at the 25th and 30th,
+--- the shaft to the 72nd, the crown's steps at the 81st and 85th, the 86th-floor
+--- observatory, the mooring mast to the 102nd floor, and the antenna. It is drawn
+--- in characters by casting a ray from each cell into the scene, seen from a little
+--- above: the nearest face the ray meets is shaded by how squarely it faces a light
+--- at the viewer's upper left, on the ramp .:-=+*#%@ from dark to bright, every
+--- other bay of a wall a shade darker for the windows. For the extra credit it
+--- turns: after the big picture come four frames of a quarter turn, 30 degrees
+--- apart (each half turn it looks as it did); run with the argument `live` and it
+--- turns round in the terminal, each frame drawn over the last by ANSI codes.
+
+use math
+use bits
+
+--- a block: its half width (x) and half depth (z) about the building's axis, from
+--- `bottom` up to `top`, in metres
+struct Block [hx, hz, bottom, top]
+
+struct V3 [x, y, z]
+
+--- where a ray meets a block: how far along it, the outward normal of the face
+--- there, and which block
+struct Hit [t, n, block]
+
+fn add[a, b]
+    return V3[a.x + b.x, a.y + b.y, a.z + b.z]
+
+fn scaled[a, k]
+    return V3[a.x * k, a.y * k, a.z * k]
+
+fn dot3[a, b]
+    return a.x * b.x + a.y * b.y + a.z * b.z
+
+fn sign_of[v]
+    if v lt 0.0
+        return -1.0
+    return 1.0
+
+fn building[]
+    return [Block[64.0, 28.0, 0.0, 24.0], Block[50.0, 24.0, 24.0, 84.0], Block[44.0, 22.0, 84.0, 100.0], Block[38.0, 20.0, 100.0, 120.0], Block[30.0, 18.0, 120.0, 282.0], Block[24.0, 15.0, 282.0, 316.0], Block[18.0, 12.0, 316.0, 330.0], Block[14.0, 11.0, 330.0, 336.0], Block[9.0, 9.0, 336.0, 357.0], Block[7.0, 7.0, 357.0, 373.0], Block[4.0, 4.0, 373.0, 381.0]]
+
+--- the antenna, from the roof to the tip
+fn antenna[]
+    return [381.0, 443.0]
+
+--- where along one axis the ray o + t d lies between lo and hi, as [from, to];
+--- a ray that never does gives a stretch that ends before it starts
+fn slab[o, d, lo, hi]
+    if abs[d] lt 0.000000001
+        if o lt lo or o gt hi
+            return [1.0, 0.0]
+        return [-1000000000.0, 1000000000.0]
+    t1 = (lo - o) / d
+    t2 = (hi - o) / d
+    return [min[t1, t2], max[t1, t2]]
+
+--- where the ray first meets block i, its t -1 where it misses
+fn meet[blocks, i, o, d]
+    b = blocks[i]
+    sx = slab[o.x, d.x, -b.hx, b.hx]
+    sy = slab[o.y, d.y, b.bottom, b.top]
+    sz = slab[o.z, d.z, -b.hz, b.hz]
+    near = max[max[sx[0], sy[0]], sz[0]]
+    far = min[min[sx[1], sy[1]], sz[1]]
+    if near gt far or near lt 0.0
+        return Hit[-1.0, V3[0.0, 0.0, 0.0], i]
+    if near eq sx[0]
+        return Hit[near, V3[-sign_of[d.x], 0.0, 0.0], i]
+    if near eq sy[0]
+        return Hit[near, V3[0.0, -sign_of[d.y], 0.0], i]
+    return Hit[near, V3[0.0, 0.0, -sign_of[d.z]], i]
+
+--- the viewer, turned `angle` round the building and looking down by `tilt`:
+--- the screen's right and up, the way back toward the viewer, and the light
+struct View [right, up, back, light]
+
+fn view_at[angle, tilt]
+    back = V3[sin[angle] * cos[tilt], sin[tilt], cos[angle] * cos[tilt]]
+    right = V3[cos[angle], 0.0, -sin[angle]]
+    up = V3[-sin[angle] * sin[tilt], cos[tilt], -cos[angle] * sin[tilt]]
+    --- the light is fixed to the viewer, at the upper left and in front
+    light = add[add[scaled[right, -0.6], scaled[up, 0.5]], scaled[back, 0.62]]
+    return View[right, up, back, light]
+
+fn frac[v]
+    return v - floor[v]
+
+--- the character for the face a ray met at point p: a wall is striped with
+--- windows, every other bay of `bay` metres a shade darker (none where bay is 0)
+fn shade[v, hit, p, bay]
+    ramp = split['.:-=+*#%@', '']
+    lit = dot3[hit.n, v.light]
+    if lit lt 0.0
+        lit = 0.0
+    k = 0.15 + 0.85 * lit
+    --- across a wall: x on the faces that look along z, z on the others
+    across = p.x
+    if abs[hit.n.x] gt 0.5
+        across = p.z
+    if bay gt 0.0 and abs[hit.n.y] lt 0.5 and frac[across / bay] lt 0.5
+        k = k - 0.25
+    i = floor[k * len[ramp]]
+    return ramp[max[0, min[i, len[ramp] - 1]]]
+
+--- the cell at a point of the screen, sx to the right of the building's axis and
+--- sy up, in metres
+fn cell[blocks, v, sx, sy, metres, bay]
+    o = add[add[scaled[v.right, sx], scaled[v.up, sy]], scaled[v.back, 1000.0]]
+    d = scaled[v.back, -1.0]
+    best = Hit[-1.0, V3[0.0, 0.0, 0.0], 0]
+    for i in range[len[blocks]]
+        h = meet[blocks, i, o, d]
+        if h.t gte 0.0 and (best.t lt 0.0 or h.t lt best.t)
+            best = h
+    if best.t gte 0.0
+        return shade[v, best, add[o, scaled[d, best.t]], bay]
+    --- the antenna stands on the axis, which the screen shows in its middle
+    --- column, each metre of height up.y metres up the screen
+    mast = antenna[]
+    height = sy / v.up.y
+    if abs[sx] lt metres / 2.0 and height gt mast[0] and height lt mast[1]
+        return '|'
+    --- the street round the block, at the foot of the building
+    if d.y lt 0.0
+        t = -o.y / d.y
+        g = add[o, scaled[d, t]]
+        if abs[g.x] lt 72.0 and abs[g.z] lt 36.0
+            return '_'
+    return ' '
+
+--- the picture, `cols` wide (odd, so that a column lies on the axis) and `rows`
+--- tall, `metres` across a column and twice that up a row, its top row at `top`
+fn picture[blocks, v, cols, rows, metres, top, bay]
+    lines = for row in range[rows]
+        cells = for col in range[cols]
+            cell[blocks, v, (col - (cols - 1) / 2.0) * metres, top - row * 2.0 * metres, metres, bay]
+        join[cells, '']
+    return lines
+
+--- text without the blanks at its end
+fn trim_end[s]
+    cs = split[s, '']
+    last = len[cs] - 1
+    while last gte 0 and cs[last] eq ' '
+        last = last - 1
+    return join[slice[cs, 0, last + 1], '']
+
+--- the lines from the first that holds a mark to the last
+fn trimmed[lines]
+    first = 0
+    while first lt len[lines] and trim_end[lines[first]] eq ''
+        first = first + 1
+    last = len[lines] - 1
+    while last gt first and trim_end[lines[last]] eq ''
+        last = last - 1
+    kept = for line in slice[lines, first, last + 1]
+        trim_end[line]
+    return kept
+
+fn live[blocks]
+    esc = char[27]
+    log['`esc`[2J']
+    for k in range[180]
+        v = view_at[k * pi / 90.0, 0.2]
+        text = join[picture[blocks, v, 51, 70, 3.7, 460.0, 7.4], '\n']
+        log['`esc`[H`text`']
+        sleep[40]
+
+blocks = building[]
+if 'live' in args[]
+    live[blocks]
+else
+    --- the bays two columns wide on the wide face, as the screen shows it
+    angle = 0.45
+    for line in trimmed[picture[blocks, view_at[angle, 0.2], 51, 70, 3.7, 460.0, 7.4 / cos[angle]]]
+        log[line]
+    log['']
+    log['Turning, 30 degrees a frame:']
+    frames = for k in range[4]
+        picture[blocks, view_at[k * pi / 6.0, 0.2], 21, 34, 7.7, 460.0, 0.0]
+    rows = for r in range[34]
+        parts = for f in frames
+            f[r]
+        join[parts, '  ']
+    for line in trimmed[rows]
+        log[line]

@@ -1,0 +1,148 @@
+--- Rosetta Code: Pan base non-primes
+--- https://rosettacode.org/wiki/Pan_base_non-primes
+--- The digits of n are read in every base they are valid in, from one past the
+--- largest digit up to n (composite that far means composite in every base), and a
+--- prime ends the search. Two shortcuts decide many at once: a last digit 0 (past
+--- 10) or digits with a common factor make a composite in every base. Primality is
+--- trial division by the primes below 200, then Miller-Rabin with the witnesses
+--- 2 to 17, exact below 341,550,071,728,321 (the values here stay under 10^11).
+
+fn primes_below[limit]
+    --- the primes below limit, by a sieve
+    composite = for i in range[limit]
+        false
+    found = []
+    p = 2
+    while p lt limit
+        if not composite[p]
+            found = push[found, p]
+            m = p * p
+            while m lt limit
+                composite[m] = true
+                m = m + p
+        p = p + 1
+    return found
+
+fn power_mod[b, e, m]
+    --- b^e mod m by repeated squaring
+    result = 1
+    b = b % m
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+fn passes_witness[n, a]
+    --- whether odd n > a is a strong probable prime to the base a
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    x = power_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return true
+    r = 1
+    while r lt s
+        x = x * x % n
+        if x eq n - 1
+            return true
+        r = r + 1
+    return false
+
+fn is_prime[n, small]
+    --- small: the primes below 200, in order
+    i = 0
+    while i lt len[small]
+        p = small[i]
+        if n % p eq 0
+            return n eq p
+        if p * p gt n
+            return n gt 1
+        i = i + 1
+    witnesses = [2, 3, 5, 7, 11, 13, 17]
+    i = 0
+    while i lt len[witnesses]
+        if not passes_witness[n, witnesses[i]]
+            return false
+        i = i + 1
+    return true
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+fn digits_of[n]
+    --- the decimal digits of n, the leading one first
+    ds = []
+    while n gt 0
+        ds = push[ds, n % 10]
+        n = n / 10
+    return reverse[ds]
+
+fn value_in[ds, b]
+    --- the digits read in base b
+    v = 0
+    for d in ds
+        v = v * b + d
+    return v
+
+fn pan_base_non_prime[n, small]
+    --- whether n's digits make no prime in any base they are valid in
+    ds = digits_of[n]
+    if len[ds] eq 1
+        return not is_prime[n, small]
+    if ds[-1] eq 0 and n gt 10
+        return true
+    g = 0
+    largest = 0
+    for d in ds
+        g = gcd[g, d]
+        largest = max[largest, d]
+    if g gt 1
+        return true
+    b = largest + 1
+    while b lte n
+        if is_prime[value_in[ds, b], small]
+            return false
+        b = b + 1
+    return true
+
+fn show_rows[numbers]
+    for row in range[0, len[numbers], 10]
+        cells = for n in slice[numbers, row, row + 10]
+            fmt[n, width = 4]
+        log[join[cells, '']]
+
+fn report[numbers, limit]
+    --- the count up to limit and the share of odd and even ones
+    upto = for n in numbers
+        if n lte limit
+            n
+    odd = for n in upto
+        if n % 2 eq 1
+            n
+    total = len[upto]
+    odd_share = fmt[100.0 * len[odd] / total, decimals = 2]
+    even_share = fmt[100.0 * (total - len[odd]) / total, decimals = 2]
+    log['Up to `limit`: `total`, of which `len[odd]` odd (`odd_share`%) and `total - len[odd]` even (`even_share`%)']
+
+small = primes_below[200]
+numbers = for n in range[2, 2501]
+    if pan_base_non_prime[n, small]
+        n
+odd = for n in numbers
+    if n % 2 eq 1
+        n
+
+log['The first 40 pan-base non-primes:']
+show_rows[slice[numbers, 0, 40]]
+log['']
+log['The first 20 odd pan-base non-primes:']
+show_rows[slice[odd, 0, 20]]
+log['']
+report[numbers, 1000]
+report[numbers, 2500]

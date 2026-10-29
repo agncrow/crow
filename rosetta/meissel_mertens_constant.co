@@ -1,0 +1,172 @@
+--- Rosetta Code: Meissel-Mertens constant
+--- https://rosettacode.org/wiki/Meissel-Mertens_constant
+--- M = γ + Σ over the primes p of (ln(1 - 1/p) + 1/p). Summed prime by prime in floats it
+--- creeps in (ten million gives eight digits). Expanding ln(1 - 1/p) as a power series and
+--- summing over all primes at once turns it into Σ over m ≥ 2 of μ(m)/m · ln ζ(m); with the
+--- primes 2, 3, 5 and 7 taken out of ζ and summed directly, the terms fall like 11^-m.
+--- Ints grow without limit, so ints scaled by 10^(digits + 10) are fixed-point numbers of
+--- any precision: here 100 digits, with γ and ζ computed along the way.
+
+use math
+
+fn sieve[limit]
+    composite = for i in range[limit + 1]
+        false
+    p = 2
+    while p * p lte limit
+        if not composite[p]
+            q = p * p
+            while q lte limit
+                composite[q] = true
+                q = q + p
+        p = p + 1
+    return composite
+
+--- The sum over the primes below 10^3, 10^4, ... 10^top, in floats.
+fn prime_sums[top]
+    gamma_float = 0.5772156649015329
+    limit = 10 ^ top
+    composite = sieve[limit]
+    total = 0.0
+    count = 0
+    mark = 1000
+    n = 2
+    while n lte limit
+        if not composite[n]
+            x = 1.0 / n
+            total = total + ln[1.0 - x] + x
+            count = count + 1
+        if n eq mark
+            log['`fmt[mark, commas = true, width = 12]` `fmt[count, commas = true, width = 9]`   `gamma_float + total`']
+            mark = mark * 10
+        n = n + 1
+
+--- ln(p / q) for whole p, q > 0, in fixed point (`one` stands for 1): 2 atanh z, z = (p - q) / (p + q).
+fn ln_ratio[p, q, one]
+    z = (p - q) * one / (p + q)
+    z2 = z * z / one
+    term = z
+    total = 0
+    k = 0
+    while term ne 0
+        total = total + term / (2 * k + 1)
+        term = term * z2 / one
+        k = k + 1
+    return 2 * total
+
+--- Borwein's weights d_0 ... d_n for the alternating series of ζ: whole numbers, the partial
+--- sums of a Chebyshev polynomial's coefficients.
+fn borwein_weights[n]
+    weights = []
+    e = 1
+    d = 0
+    i = 0
+    while i lte n
+        d = d + e
+        weights = push[weights, d]
+        e = e * (n + i) * (n - i) * 4 / ((2 * i + 1) * (2 * i + 2))
+        i = i + 1
+    return weights
+
+--- ζ(s) = -1 / (d_n (1 - 2^(1-s))) Σ k < n of (-1)^k (d_k - d_n) / (k + 1)^s, off by 5.8^-n.
+fn zeta[s, weights, one]
+    n = len[weights] - 1
+    dn = weights[n]
+    total = 0
+    k = 0
+    while k lt n
+        term = (weights[k] - dn) * one / (k + 1) ^ s
+        if k % 2 eq 1
+            term = -term
+        total = total + term
+        k = k + 1
+    half = 2 ^ (s - 1)
+    return -total * half / (dn * (half - 1))
+
+fn moebius[n]
+    m = n
+    sign = 1
+    p = 2
+    while p * p lte m
+        if m % p eq 0
+            m = m / p
+            if m % p eq 0
+                return 0
+            sign = -sign
+        p = p + 1
+    if m gt 1
+        sign = -sign
+    return sign
+
+--- Euler's constant by Brent and McMillan's series with N = 2^power: off by about e^-4N.
+fn euler_gamma[one, power]
+    big_n = 2 ^ power
+    a = -power * ln_ratio[2, 1, one]
+    b = one
+    u = a
+    v = b
+    k = 1
+    while a ne 0 or b ne 0
+        b = b * big_n * big_n / (k * k)
+        a = (a * big_n * big_n / k + b) / k
+        u = u + a
+        v = v + b
+        k = k + 1
+    return u * one / v
+
+--- ζ(m) times (1 - p^-m) for p = 2, 3, 5 and 7: the sum over the n with no such factor.
+--- (A while over the list: a `for` over a list's ints gives its variable no range, and
+--- p ^ m overflows 64 bits compiled.)
+fn without_small_primes[z, m]
+    primes = [2, 3, 5, 7]
+    out = z
+    i = 0
+    while i lt 4
+        p = primes[i]
+        out = out * (p ^ m - 1) / p ^ m
+        i = i + 1
+    return out
+
+struct Constants [m, gamma]
+
+--- M and γ to `digits` places, as whole numbers M * 10^digits and γ * 10^digits.
+fn meissel_mertens[digits]
+    guard = 10
+    one = 10 ^ (digits + guard)
+    power = 1
+    while 2 ^ power * 10 lt (digits + guard) * 6
+        power = power + 1
+    gamma_fixed = euler_gamma[one, power]
+    total = gamma_fixed
+    for p in [2, 3, 5, 7]
+        total = total + ln_ratio[p - 1, p, one] + one / p
+    weights = borwein_weights[(digits + guard) * 4 / 3 + 5]
+    m = 2
+    while 11 ^ m lt one
+        mu = moebius[m]
+        if mu ne 0
+            z = without_small_primes[zeta[m, weights, one], m]
+            total = total + mu * ln_ratio[z, one, one] / m
+        m = m + 1
+    return Constants[total / 10 ^ guard, gamma_fixed / 10 ^ guard]
+
+--- 0. and the digits, fifty to a line.
+fn shown[name, fixed, digits]
+    text = fmt[fixed, width = digits, fill = '0']
+    log['`name` = 0.`slice[text, 0, 50]`']
+    at = 50
+    while at lt digits
+        log['       `slice[text, at, at + 50]`']
+        at = at + 50
+
+log['Meissel-Mertens constant M = γ + Σ over primes p of (ln(1 - 1/p) + 1/p)']
+log['']
+log['Summed over the primes up to n, in floats:']
+log['           n    primes   M']
+prime_sums[7]
+log['']
+log['From the series in ζ, to 100 places (truncated):']
+digits = 100
+both = meissel_mertens[digits]
+shown['M', both.m, digits]
+shown['γ', both.gamma, digits]

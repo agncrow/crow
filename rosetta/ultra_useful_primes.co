@@ -1,0 +1,130 @@
+--- Rosetta Code: Ultra useful primes
+--- https://rosettacode.org/wiki/Ultra_useful_primes
+--- For each n the odd k are taken in order, a block at a time: a small prime p
+--- divides 2^(2^n) - k exactly when k is 2^(2^n) mod p, so the primes below
+--- 100,000 strike out most k at once, and each k left is tried by Miller–Rabin
+--- with the first 20 primes as bases, with ints that grow. Below 2^64 (n ≤ 6)
+--- those bases prove a number prime; past it the answers are probable primes,
+--- as gmpy2 and the other entries take them. Every modular product is reduced
+--- by the form of the modulus: 2^w is k modulo 2^w - k, so x = q 2^w + r is
+--- q k + r, shifts and masks in place of a division. The stretch goes to
+--- n = 12; n = 13 (k = 2439, a number of 8,192 bits) takes about 15 s more.
+
+use bits
+
+fn primes_below[limit]
+    sieve = for i in range[limit]
+        i gte 2
+    p = 2
+    while p * p lt limit
+        if sieve[p]
+            q = p * p
+            while q lt limit
+                sieve[q] = false
+                q = q + p
+        p = p + 1
+    found = for i in range[3, limit]
+        if sieve[i]
+            i
+    return found
+
+--- x modulo 2^w - k
+fn reduced[x, w, k]
+    mask = shift[1, w] - 1
+    while x gt mask
+        x = shift[x, -w] * k + bitand[x, mask]
+    if x gte mask + 1 - k
+        x = x - (mask + 1 - k)
+    return x
+
+--- b^e modulo 2^w - k
+fn power_mod[b, e, w, k]
+    result = 1
+    while e gt 0
+        if e % 2 eq 1
+            result = reduced[result * b, w, k]
+        b = reduced[b * b, w, k]
+        e = e / 2
+    return result
+
+--- Miller–Rabin's test of 2^w - k to base a: false proves it composite
+fn strong_probable_prime[w, k, a]
+    n = shift[1, w] - k
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    x = power_mod[a, d, w, k]
+    if x eq 1 or x eq n - 1
+        return true
+    r = 1
+    while r lt s
+        x = reduced[x * x, w, k]
+        if x eq n - 1
+            return true
+        r = r + 1
+    return false
+
+fn passes[w, k, bases]
+    n = shift[1, w] - k
+    i = 0
+    while i lt len[bases]
+        if bases[i] % n ne 0 and not strong_probable_prime[w, k, bases[i]]
+            return false
+        i = i + 1
+    return true
+
+--- the smallest k for which 2^(2^n) - k is prime
+fn ultra_useful[n, primes, bases]
+    w = 2 ^ n
+    m = 2 ^ w
+    --- 2^(2^n) mod p, squaring 2 n times
+    residues = for p in primes
+        r = 2
+        for i in range[n]
+            r = r * r % p
+        r
+    block = 1024
+    lo = 1
+    while lo lt m
+        --- k = lo + 2j for j below block; strike out the k a small prime divides
+        struck = for j in range[block]
+            false
+        i = 0
+        while i lt len[primes]
+            p = primes[i]
+            --- the first j with lo + 2j ≡ residue (mod p); (p + 1) / 2 halves mod p
+            j = (residues[i] - lo) % p
+            if j lt 0
+                j = j + p
+            j = j * ((p + 1) / 2) % p
+            while j lt block
+                if m - (lo + 2 * j) ne p
+                    struck[j] = true
+                j = j + p
+            i = i + 1
+        j = 0
+        while j lt block
+            k = lo + 2 * j
+            if k lt m - 1 and not struck[j] and passes[w, k, bases]
+                return k
+            j = j + 1
+        lo = lo + 2 * block
+    return -1
+
+fn shown_prime[n, k]
+    p = 2 ^ 2 ^ n - k
+    digits = len[str[p]]
+    if digits lte 20
+        return '2^`2 ^ n` - `k` = `p`'
+    return '2^`2 ^ n` - `k`, a prime of `digits` digits'
+
+primes = primes_below[100000]
+bases = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71]
+log[' n  a(n)']
+for n in range[1, 13]
+    if n eq 11
+        log['and the stretch:']
+    k = ultra_useful[n, primes, bases]
+    log['`fmt[n, width = 2]`  `fmt[k, width = 4]`   `shown_prime[n, k]`']

@@ -1,0 +1,17 @@
+SHA-1 of the task's string:
+Rosetta Code -> 48c98f7e5a6e736d790ab740dfc3f51a61abe2b5
+
+Test vectors (FIPS 180-1 and others), each against Python's hashlib.sha1:
+48c98f7e5a6e736d790ab740dfc3f51a61abe2b5  as hashlib  'Rosetta Code'
+da39a3ee5e6b4b0d3255bfef95601890afd80709  as hashlib  the empty string
+a9993e364706816aba3e25717850c26c9cd0d89d  as hashlib  'abc'
+84983e441c3bd26ebaae4aa1f95129e5e54670f1  as hashlib  'abcdbcde...nopq', 56 octets: the length takes a second block
+a49b2446a02c645bf419f995b67091253a04a259  as hashlib  'abcdefghbcdefghi...nopqrstu', 112 octets
+2fd4e1c67a2d28fced849ee1bb76e7391b93eb12  as hashlib  the quick brown fox ... dog
+de9f2c7fd25e1b3afad3e85a0bd17d9b100db4b3  as hashlib  the quick brown fox ... cog
+c1c8bbdc22796e28c0e15163d20899b65621d65a  as hashlib  55 a's: the padding just fits
+c2db330f6083854c99d4b5bfb6e8f29f201be699  as hashlib  56 a's: it does not
+0098ba824b5c16427bd7a1122a5a442a25ec644d  as hashlib  64 a's: one whole block
+9df1cedabd04ac74932d9507b3ce096ff292985c  as hashlib  Größe – 日本語 – 🐦, 30 octets of UTF-8
+a080cbda64850abb7b7f67ee875ba068074ff6fe  as hashlib  10,000 a's
+34aa973cd4c4daa4f61eeb2bdbad27316534016f  as hashlib  a million a's

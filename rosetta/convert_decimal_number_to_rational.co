@@ -1,0 +1,66 @@
+--- Rosetta Code: Convert decimal number to rational
+--- https://rosettacode.org/wiki/Convert_decimal_number_to_rational
+--- Crow's decimals and fractions are exact, so a decimal as written is
+--- fraction[decimal[x]], in lowest terms. A repeating decimal is written with
+--- its repeating digits in parentheses, 0.9(054), which names its fraction
+--- exactly; and the closest fraction with a small bottom is found by walking
+--- the Stern-Brocot tree toward the number (Python's limit_denominator).
+
+--- a decimal written with its repeating digits in parentheses ('0.9(054)',
+--- '-1.(3)'), as the exact fraction it names
+fn of_repeating[text]
+    sign = 1
+    if starts[text, '-']
+        sign = -1
+        text = slice[text, 1, len[text]]
+    pieces = split[replace[text, ')', ''], '(']
+    head = split[pieces[0], '.']
+    places = ''
+    if len[head] gt 1
+        places = head[1]
+    fixed = int[join[[head[0], places], '']]
+    shift = 10 ^ len[places]
+    if len[pieces] eq 1
+        return fraction[sign * fixed, shift]
+    repeating = pieces[1]
+    digits = int[join[[head[0], places, repeating], '']]
+    return fraction[sign * (digits - fixed), shift * (10 ^ len[repeating] - 1)]
+
+--- the closest fraction to x whose bottom is at most most: the Stern-Brocot
+--- walk toward x ends between two neighbours, and x is nearer one of them
+fn closest[x, most]
+    lo_top = floor[x]
+    lo_bottom = 1
+    hi_top = lo_top + 1
+    hi_bottom = 1
+    while lo_bottom + hi_bottom lte most
+        top = lo_top + hi_top
+        bottom = lo_bottom + hi_bottom
+        mediant = fraction[top, bottom]
+        if mediant eq x
+            return mediant
+        if mediant lt x
+            lo_top, lo_bottom = top, bottom
+        else
+            hi_top, hi_bottom = top, bottom
+    lo = fraction[lo_top, lo_bottom]
+    hi = fraction[hi_top, hi_bottom]
+    if x - lo lte hi - x
+        return lo
+    return hi
+
+log['decimal       exactly              closest with a bottom of at most 100']
+for text in ['0.9054054', '0.518518', '0.75', '3.14159265', '-0.625', '0.1', '42']
+    exact = fraction[decimal[text]]
+    near = closest[exact, 100]
+    log['`fmt[text, width = 14]``fmt[str[exact], width = 21]``near`']
+
+log['']
+log['A float is read as the shortest decimal that gives it back:']
+for x in [0.9054054, 0.518518, 0.75]
+    log['`fmt[str[x], width = 14]``fraction[decimal[x]]`']
+
+log['']
+log['With its repeating digits in parentheses, a decimal names its fraction:']
+for text in ['0.9(054)', '0.(518)', '0.(3)', '1.2(34)', '-0.(142857)', '0.75']
+    log['`fmt[text, width = 14]``of_repeating[text]`']

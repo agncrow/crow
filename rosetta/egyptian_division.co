@@ -1,0 +1,58 @@
+--- Rosetta Code: Egyptian division
+--- https://rosettacode.org/wiki/Egyptian_division
+--- The table's two columns, powers of 2 and doublings of the divisor, grow by
+--- adding each row to itself; then the rows are read bottom-up, each taken when
+--- it still fits under the dividend.
+
+struct Table [powers, doublings]
+struct Division [quotient, remainder]
+
+fn table[dividend, divisor]
+    powers = [1]
+    doublings = [divisor]
+    while doublings[-1] + doublings[-1] lte dividend
+        powers = push[powers, powers[-1] + powers[-1]]
+        doublings = push[doublings, doublings[-1] + doublings[-1]]
+    return Table[powers, doublings]
+
+fn egyptian_divide[dividend, divisor, show]
+    t = table[dividend, divisor]
+    answer = 0
+    accumulator = 0
+    i = len[t.powers] - 1
+    while i gte 0
+        row = '`fmt[t.powers[i], width = 11]`  `fmt[t.doublings[i], width = 9]`'
+        if accumulator + t.doublings[i] lte dividend
+            accumulator = accumulator + t.doublings[i]
+            answer = answer + t.powers[i]
+            if show
+                log['`row`  taken: answer `answer`, accumulator `accumulator`']
+        else if show
+            log['`row`  passed over']
+        i = i - 1
+    return Division[answer, abs[accumulator - dividend]]
+
+fn show_table[dividend, divisor]
+    t = table[dividend, divisor]
+    log['powers_of_2  doublings']
+    for i in range[len[t.powers]]
+        log['`fmt[t.powers[i], width = 11]`  `fmt[t.doublings[i], width = 9]`']
+
+dividend = 580
+divisor = 34
+log['The table for `dividend` / `divisor`:']
+show_table[dividend, divisor]
+log['']
+log['Its rows, bottom-up:']
+d = egyptian_divide[dividend, divisor, true]
+log['']
+log['`dividend` divided by `divisor` using the Egyptian method is `d.quotient` remainder `d.remainder`']
+
+--- The method agrees with integer division and remainder.
+agree = true
+for a in range[101]
+    for b in range[1, 21]
+        e = egyptian_divide[a, b, false]
+        if e.quotient ne a / b or e.remainder ne a % b
+            agree = false
+log['Agrees with / and % for every dividend 0 to 100 and divisor 1 to 20: `agree`']

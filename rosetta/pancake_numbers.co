@@ -1,0 +1,99 @@
+--- Rosetta Code: Pancake numbers
+--- https://rosettacode.org/wiki/Pancake_numbers
+--- A breadth-first search from the sorted stack over every flip of the top k
+--- pancakes (a flip undoes itself, so the stacks k flips from sorted are the ones
+--- sorted in k flips at best): the last level reached holds the stacks that need
+--- the most, p(n), and its first stack is the example. A stack is kept as a number,
+--- four bits a pancake with the top in the lowest four, and the stacks seen in a map.
+--- The pancake sort of the Pancake sort task does not look for the fewest flips: on
+--- the examples it uses as many or more, and up to 2n - 3 on its own worst stacks.
+
+struct Worst [flips, stack]
+
+fn code_of[stack]
+    --- the stack as a number, the top pancake in the lowest four bits
+    code = 0
+    i = len[stack] - 1
+    while i gte 0
+        code = code * 16 + stack[i]
+        i = i - 1
+    return code
+
+fn stack_of[code, n]
+    --- the n pancakes of a stack's number, the top first
+    stack = []
+    while len[stack] lt n
+        stack = push[stack, code % 16]
+        code = code / 16
+    return stack
+
+fn flip_code[code, k, power]
+    --- the stack with its top k pancakes flipped; power is 16^k
+    top = code % power
+    flipped = 0
+    i = 0
+    while i lt k
+        flipped = flipped * 16 + top % 16
+        top = top / 16
+        i = i + 1
+    return code - code % power + flipped
+
+fn pancake_number[n]
+    --- p(n) and a stack of n pancakes that needs p(n) flips
+    sorted = for k in range[1, n + 1]
+        k
+    start = code_of[sorted]
+    powers = for k in range[n + 1]
+        16 ^ k
+    seen = set[map[], start, true]
+    level = push[[], start]
+    last = level
+    flips = -1
+    while len[level] gt 0
+        next = []
+        j = 0
+        while j lt len[level]
+            code = level[j]
+            k = 2
+            while k lte n
+                flipped = flip_code[code, k, powers[k]]
+                if flipped not in seen
+                    seen[flipped] = true
+                    next = push[next, flipped]
+                k = k + 1
+            j = j + 1
+        last = level
+        level = next
+        flips = flips + 1
+    return Worst[flips, stack_of[last[0], n]]
+
+fn flip_list[stack, k]
+    --- the stack with its top k pancakes turned over
+    return concat[reverse[slice[stack, 0, k]], slice[stack, k, len[stack]]]
+
+fn pancake_sort_flips[stack]
+    --- the flips the pancake sort of the Pancake sort task makes: the largest
+    --- pancake not yet in place is flipped to the top, then down into its place
+    flips = 0
+    size = len[stack]
+    while size gt 1
+        largest = 0
+        i = 1
+        while i lt size
+            if stack[i] gt stack[largest]
+                largest = i
+            i = i + 1
+        if largest ne size - 1
+            if largest gt 0
+                stack = flip_list[stack, largest + 1]
+                flips = flips + 1
+            stack = flip_list[stack, size]
+            flips = flips + 1
+        size = size - 1
+    return flips
+
+log[' n  p(n)  a stack needing p(n) flips    pancake sort flips on it']
+for n in range[1, 10]
+    worst = pancake_number[n]
+    example = fmt[str[worst.stack], width = 28]
+    log['`fmt[n, width = 2]`  `fmt[worst.flips, width = 4]`  `example`  `fmt[pancake_sort_flips[worst.stack], width = 4]`']

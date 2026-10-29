@@ -1,0 +1,156 @@
+--- Rosetta Code: Plot coordinate pairs
+--- https://rosettacode.org/wiki/Plot_coordinate_pairs
+--- The pairs are plotted twice: as an SVG image (axes on a grid of round ticks, the
+--- points joined by a line) written to plot_coordinate_pairs.svg in the current
+--- directory, which is removed at the end unless the program is given the argument
+--- keep; and as a picture in characters on the console.
+
+use math
+
+--- an axis: the round numbers it runs between, the step of its ticks, and how many
+--- decimals a tick's label shows
+struct Axis [low, high, step, decimals]
+
+--- ticks a step of 1, 2 or 5 times a power of ten apart, from five to ten of them
+--- over the values, the axis running from the tick below the least value to the tick
+--- above the greatest
+fn axis_for[numbers]
+    least = min[numbers]
+    most = max[numbers]
+    span = most - least
+    if span eq 0.0
+        span = 1.0
+    power = 1.0
+    while span / power gt 10.0
+        power = power * 10.0
+    while span / power lt 1.0
+        power = power / 10.0
+    step = power
+    if span / power lte 2.0
+        step = power / 5.0
+    else if span / power lte 5.0
+        step = power / 2.0
+    decimals = 0
+    unit = step
+    while unit lt 0.999
+        unit = unit * 10.0
+        decimals = decimals + 1
+    return Axis[step * floor[least / step], step * ceil[most / step], step, decimals]
+
+fn ticks[a]
+    count = round[(a.high - a.low) / a.step]
+    shown = for i in range[count + 1]
+        a.low + i * a.step
+    return shown
+
+fn label[a, value]
+    return fmt[value, decimals = a.decimals]
+
+--- where a value falls on an axis drawn from start to finish
+fn place[a, value, start, finish]
+    return start + (value - a.low) / (a.high - a.low) * (finish - start)
+
+fn at[value]
+    return fmt[value, decimals = 1]
+
+fn svg[xs, ys, title, width, height]
+    ax = axis_for[xs]
+    ay = axis_for[ys]
+    left = 70.0
+    right = width - 30.0
+    top = 50.0
+    bottom = height - 60.0
+    parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="`width`" height="`height`" font-family="sans-serif" font-size="13">']
+    parts = push[parts, '<rect width="100%" height="100%" fill="white"/>']
+    parts = push[parts, '<text x="`at[(left + right) / 2.0]`" y="30" text-anchor="middle" font-size="17">`title`</text>']
+    for t in ticks[ax]
+        x = at[place[ax, t, left, right]]
+        parts = push[parts, '<line x1="`x`" y1="`at[top]`" x2="`x`" y2="`at[bottom]`" stroke="#dddddd"/>']
+        parts = push[parts, '<text x="`x`" y="`at[bottom + 20.0]`" text-anchor="middle">`label[ax, t]`</text>']
+    for t in ticks[ay]
+        y = at[place[ay, t, bottom, top]]
+        parts = push[parts, '<line x1="`at[left]`" y1="`y`" x2="`at[right]`" y2="`y`" stroke="#dddddd"/>']
+        parts = push[parts, '<text x="`at[left - 8.0]`" y="`y`" text-anchor="end" dominant-baseline="middle">`label[ay, t]`</text>']
+    parts = push[parts, '<rect x="`at[left]`" y="`at[top]`" width="`at[right - left]`" height="`at[bottom - top]`" fill="none" stroke="black"/>']
+    parts = push[parts, '<text x="`at[(left + right) / 2.0]`" y="`at[height - 15.0]`" text-anchor="middle">x</text>']
+    parts = push[parts, '<text x="20" y="`at[(top + bottom) / 2.0]`" text-anchor="middle" dominant-baseline="middle">y</text>']
+    points = for i in range[len[xs]]
+        '`at[place[ax, xs[i], left, right]]`,`at[place[ay, ys[i], bottom, top]]`'
+    joined = join[points, ' ']
+    parts = push[parts, '<polyline points="`joined`" fill="none" stroke="steelblue" stroke-width="2"/>']
+    for p in points
+        pair = split[p, ',']
+        parts = push[parts, '<circle cx="`pair[0]`" cy="`pair[1]`" r="4" fill="navy"/>']
+    parts = push[parts, '</svg>']
+    text = join[parts, '\n']
+    return '`text`\n'
+
+--- a line of cells as text, without the blanks after its last mark
+fn row_text[cells]
+    last = len[cells] - 1
+    while last gte 0 and cells[last] eq ' '
+        last = last - 1
+    return join[slice[cells, 0, last + 1], '']
+
+--- the picture in characters: a row for each half tick of y, a column for each
+--- sixth of a tick of x; the line between points in dots, each point a star
+fn sketch[xs, ys]
+    ax = axis_for[xs]
+    ay = axis_for[ys]
+    columns = round[(ax.high - ax.low) / ax.step] * 6 + 1
+    rows = round[(ay.high - ay.low) / ay.step] * 2 + 1
+    cells = for i in range[columns * rows]
+        ' '
+    for i in range[len[xs] - 1]
+        for k in range[1, 40]
+            x = xs[i] + (xs[i + 1] - xs[i]) * k / 40.0
+            y = ys[i] + (ys[i + 1] - ys[i]) * k / 40.0
+            c = round[place[ax, x, 0.0, columns - 1.0]]
+            r = round[place[ay, y, rows - 1.0, 0.0]]
+            cells[r * columns + c] = '.'
+    for i in range[len[xs]]
+        c = round[place[ax, xs[i], 0.0, columns - 1.0]]
+        r = round[place[ay, ys[i], rows - 1.0, 0.0]]
+        cells[r * columns + c] = '*'
+    margin = 0
+    for t in ticks[ay]
+        margin = max[margin, len[label[ay, t]]]
+    lines = []
+    for r in range[rows]
+        mark = '|'
+        name = ''
+        if r % 2 eq 0
+            mark = '+'
+            name = label[ay, ay.high - r / 2 * ay.step]
+        row = row_text[slice[cells, r * columns, (r + 1) * columns]]
+        name = fmt[name, width = margin, align = 'right']
+        lines = push[lines, '`name` `mark``row`']
+    under = for i in range[columns]
+        if i % 6 eq 0
+            '+'
+        else
+            '-'
+    rule = join[under, '']
+    indent = repeat[' ', margin + 1]
+    lines = push[lines, '`indent``rule`']
+    names = for t in ticks[ax]
+        fmt[label[ax, t], width = 6, align = 'left']
+    shown = row_text[split[join[names, ''], '']]
+    lines = push[lines, '`indent``shown`']
+    return lines
+
+xs = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+ys = [2.7, 2.8, 31.4, 38.1, 58.0, 76.2, 100.5, 130.0, 149.3, 180.0]
+
+saved = write['plot_coordinate_pairs.svg', svg[xs, ys, 'Coordinate pairs', 640, 480]]
+if not saved.ok
+    halt['plot_coordinate_pairs.svg could not be written: `saved.reason`']
+log['plot_coordinate_pairs.svg: the ten pairs, x from 0 to 9 and y from 2.7 to 180']
+log['']
+for line in sketch[xs, ys]
+    log[line]
+given = args[]
+if 'keep' not in given
+    removed = rm['plot_coordinate_pairs.svg']
+    if not removed.ok
+        halt['plot_coordinate_pairs.svg could not be removed: `removed.reason`']

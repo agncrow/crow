@@ -1,0 +1,122 @@
+--- Rosetta Code: File size distribution
+--- https://rosettacode.org/wiki/File_size_distribution
+--- The tree is walked with ls (a path ls cannot list is a file), and the files are
+--- binned by the number of digits of their size: a power of ten a bin, empty files a
+--- bin of their own. A Crow program has no stat (the sys layer is the standard
+--- library's own), so wc -c, through shell, measures each file. With no argument
+--- the program makes a tree of files of fixed sizes in the current directory, walks
+--- it and removes it; a directory given as the argument is walked instead.
+
+--- every file under dir, hidden ones too (ls lists them); links are followed
+fn files_under[dir]
+    found = []
+    for name in ls[dir]
+        path = '`dir`/`name`'
+        if ls[path].ok
+            found = concat[found, files_under[path]]
+        else
+            found = push[found, path]
+    return found
+
+--- a file's size in bytes, as wc counts them
+fn size_of[path]
+    quoted = replace[path, '\'', '\'\\\'\'']
+    r = shell['wc -c < \'`quoted`\'']
+    if r.status ne 0
+        return error[trim[r.stderr], 'io']
+    return int[trim[r.stdout]]
+
+--- 0 for an empty file, else how many digits its size has
+fn bin_of[size]
+    if size eq 0
+        return 0
+    return len[str[size]]
+
+--- 10 ^ k bytes, in the unit that keeps it under a thousand
+fn power_label[k]
+    units = ['B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB']
+    return '`10 ^ (k % 3)` `units[k / 3]`'
+
+fn bin_label[b]
+    if b eq 0
+        return 'empty'
+    return '`power_label[b - 1]` to `power_label[b]`'
+
+fn report[root]
+    paths = files_under[root]
+    if not paths.ok
+        log['cannot walk `root`: `paths.reason`']
+        return
+    sizes = []
+    for path in paths
+        size = size_of[path]
+        if size.ok
+            sizes = push[sizes, size]
+        else
+            log['skipped `path`: `size.reason`']
+    if len[sizes] eq 0
+        log['no files under `root`']
+        return
+    top = 0
+    for size in sizes
+        top = max[top, bin_of[size]]
+    counts = for b in range[top + 1]
+        0
+    totals = for b in range[top + 1]
+        0
+    for size in sizes
+        b = bin_of[size]
+        counts[b] = counts[b] + 1
+        totals[b] = totals[b] + size
+    most = 0
+    for count in counts
+        most = max[most, count]
+    bytes_in_all = 0
+    for size in sizes
+        bytes_in_all = bytes_in_all + size
+    log['Files under `root`: `len[sizes]`, `fmt[bytes_in_all, commas = true]` bytes']
+    log['(each bin holds its lower size and not its upper)']
+    log['']
+    log['size             files          bytes']
+    for b in range[top + 1]
+        bar = repeat['#', (counts[b] * 40 + most - 1) / most]
+        log['`fmt[bin_label[b], width = 15]` `fmt[counts[b], width = 6]` `fmt[totals[b], width = 14, commas = true]`  `bar`']
+    log['']
+    ordered = sort[sizes]
+    median = ordered[(len[ordered] - 1) / 2]
+    held = 0
+    largest = 0
+    while 2 * held lt bytes_in_all
+        largest = largest + 1
+        held = held + ordered[len[ordered] - largest]
+    log['Half the files are `fmt[median, commas = true]` bytes or smaller; half the bytes are in the `largest` largest.']
+
+struct Planted [path, size]
+
+--- the demo tree: each file's path under the root and its size in bytes
+fn demo_files[]
+    return [
+        Planted['.keep', 0], Planted['LOCK', 0], Planted['README', 1234],
+        Planted['notes/todo.txt', 37], Planted['notes/ideas.txt', 512], Planted['notes/empty.flag', 0],
+        Planted['src/main.c', 4096], Planted['src/util.c', 2048], Planted['src/util.h', 300],
+        Planted['src/Makefile', 99], Planted['src/build/main.o', 16384], Planted['src/build/util.o', 8192],
+        Planted['src/build/app', 65536], Planted['data/small.csv', 5], Planted['data/sample.csv', 750],
+        Planted['data/full.csv', 250000], Planted['data/archive/2025.csv', 1500000], Planted['data/archive/2024.csv', 1200000],
+        Planted['logs/a.log', 3], Planted['logs/b.log', 8], Planted['logs/c.log', 64],
+        Planted['logs/d.log', 10000]
+    ]
+
+fn make_demo[root]
+    for dir in ['notes', 'src/build', 'data/archive', 'logs']
+        _made = mkdir['`root`/`dir`']
+    for file in demo_files[]
+        _written = write['`root`/`file.path`', repeat['x', file.size]]
+
+given = args[]
+if len[given] gt 0
+    report[given[0]]
+else
+    root = 'file_size_distribution_demo'
+    make_demo[root]
+    report[root]
+    _gone = rm[root]

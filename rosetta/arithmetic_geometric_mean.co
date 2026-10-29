@@ -1,0 +1,17 @@
+--- Rosetta Code: Arithmetic-geometric mean
+--- https://rosettacode.org/wiki/Arithmetic-geometric_mean
+--- a, g = (a + g) / 2, sqrt(a g) until the two agree within a tolerance: once in
+--- floats, and once in decimals of 80 digits (Crow's big float), shown to 70 places.
+
+--- the arithmetic-geometric mean of a and g, to within tolerance
+fn agm[a, g, tolerance]
+    while abs[a - g] gt tolerance
+        a, g = (a + g) / 2, sqrt[a * g]
+    return a
+
+log['agm(1, 1/sqrt(2)) in floats:']
+log[agm[1.0, 1.0 / sqrt[2.0], 10.0 ^ -15]]
+
+one = decimal[1, digits = 80]
+log['agm(1, 1/sqrt(2)) to 70 places:']
+log[round[agm[one, one / sqrt[decimal[2, digits = 80]], one / 10 ^ 75], 70]]

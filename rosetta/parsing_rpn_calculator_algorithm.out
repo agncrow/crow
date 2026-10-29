@@ -1,0 +1,33 @@
+For RPN expression: 3 4 2 * 1 5 - 2 3 ^ ^ / +
+
+Token  Action                      Stack
+3      Push num onto top of stack  3
+4      Push num onto top of stack  3 4
+2      Push num onto top of stack  3 4 2
+*      Apply op to top of stack    3 8
+1      Push num onto top of stack  3 8 1
+5      Push num onto top of stack  3 8 1 5
+-      Apply op to top of stack    3 8 -4
+2      Push num onto top of stack  3 8 -4 2
+3      Push num onto top of stack  3 8 -4 2 3
+^      Apply op to top of stack    3 8 -4 8
+^      Apply op to top of stack    3 8 65536
+/      Apply op to top of stack    3 0.0001220703125
++      Apply op to top of stack    3.0001220703125
+
+The final value is 3.0001220703125
+
+For RPN expression: 5 1 2 + 4 * + 3 -
+
+Token  Action                      Stack
+5      Push num onto top of stack  5
+1      Push num onto top of stack  5 1
+2      Push num onto top of stack  5 1 2
++      Apply op to top of stack    5 3
+4      Push num onto top of stack  5 3 4
+*      Apply op to top of stack    5 12
++      Apply op to top of stack    17
+3      Push num onto top of stack  17 3
+-      Apply op to top of stack    14
+
+The final value is 14

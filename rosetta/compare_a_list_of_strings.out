@@ -1,0 +1,6 @@
+[]                           all equal: true, strictly ascending: true
+['AA']                       all equal: true, strictly ascending: true
+['AA', 'AA', 'AA']           all equal: true, strictly ascending: false
+['AA', 'ACB', 'BB', 'CC']    all equal: false, strictly ascending: true
+['AA', 'ACB', 'BB', 'BB']    all equal: false, strictly ascending: false
+['AA', 'CC', 'BB']           all equal: false, strictly ascending: false

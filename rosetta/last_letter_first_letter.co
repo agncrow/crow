@@ -1,0 +1,84 @@
+--- Rosetta Code: Last letter-first letter
+--- https://rosettacode.org/wiki/Last_letter-first_letter
+--- A depth-first search from every name, through the names that begin with the
+--- last name's final letter and are not yet used, held on a stack (a path and,
+--- for each step, the next follower to try) instead of recursion; it counts the
+--- chains of the greatest length and keeps the first one found.
+
+struct Search [best, count, tried]
+
+fn followers_of[name, names]
+    last = name[-1]
+    next = for j in range[len[names]]
+        if names[j][0] eq last
+            j
+    return next
+
+fn longest_chains[names]
+    links = for name in names
+        followers_of[name, names]
+    used = for name in names
+        false
+    best = []
+    count = 0
+    tried = 0
+    start = 0
+    while start lt len[names]
+        path = [start]
+        next = [0]
+        used[start] = true
+        tried = tried + 1
+        if len[best] lt 1
+            best = path
+            count = 1
+        else if len[best] eq 1
+            count = count + 1
+        while len[path] gt 0
+            depth = len[path] - 1
+            node = path[depth]
+            if next[depth] lt len[links[node]]
+                follower = links[node][next[depth]]
+                next[depth] = next[depth] + 1
+                if not used[follower]
+                    used[follower] = true
+                    path = push[path, follower]
+                    next = push[next, 0]
+                    tried = tried + 1
+                    if len[path] eq len[best]
+                        count = count + 1
+                    else if len[path] gt len[best]
+                        best = path
+                        count = 1
+            else
+                used[node] = false
+                path = pop[path]
+                next = pop[next]
+        start = start + 1
+    return Search[best, count, tried]
+
+pokemon = [
+    'audino', 'bagon', 'baltoy', 'banette', 'bidoof', 'braviary', 'bronzor',
+    'carracosta', 'charmeleon', 'cresselia', 'croagunk', 'darmanitan', 'deino',
+    'emboar', 'emolga', 'exeggcute', 'gabite', 'girafarig', 'gulpin', 'haxorus',
+    'heatmor', 'heatran', 'ivysaur', 'jellicent', 'jumpluff', 'kangaskhan',
+    'kricketune', 'landorus', 'ledyba', 'loudred', 'lumineon', 'lunatone',
+    'machamp', 'magnezone', 'mamoswine', 'nosepass', 'petilil', 'pidgeotto',
+    'pikachu', 'pinsir', 'poliwrath', 'poochyena', 'porygon2', 'porygonz',
+    'registeel', 'relicanth', 'remoraid', 'rufflet', 'sableye', 'scolipede',
+    'scrafty', 'seaking', 'sealeo', 'silcoon', 'simisear', 'snivy', 'snorlax',
+    'spoink', 'starly', 'tirtouga', 'trapinch', 'treecko', 'tyrogue', 'vigoroth',
+    'vulpix', 'wailord', 'wartortle', 'whismur', 'wingull', 'yamask'
+]
+
+found = longest_chains[pokemon]
+log['Maximum path length: `len[found.best]`']
+log['Paths of that length: `found.count`']
+log['Chains tried: `found.tried`']
+log['Example path of that length:']
+names = for i in found.best
+    pokemon[i]
+row = 0
+while row lt len[names]
+    shown = join[slice[names, row, row + 7], ' ']
+    log['  `shown`']
+    row = row + 7

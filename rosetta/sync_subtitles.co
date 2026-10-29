@@ -1,0 +1,61 @@
+--- Rosetta Code: Sync subtitles
+--- https://rosettacode.org/wiki/Sync_subtitles
+--- An .srt file is blocks of a number, a timing line `start --> end` and the text. Each
+--- timing line's times are read as milliseconds, moved by the shift and written back; every
+--- other line, and whatever follows the end time, is kept as it was. A time moved before the
+--- start of the film is held at 00:00:00,000. With no arguments, the task's movie.srt is
+--- moved 9 seconds on and 9 seconds back, each result written to a file in the current
+--- directory, shown, and removed at the end; `crow run sync_subtitles.co file.srt -2.5`
+--- moves the file given by the seconds given and shows the result.
+
+--- a time hh:mm:ss,mmm as milliseconds
+fn millis[h, m, s, ms]
+    return ((int[h] * 60 + int[m]) * 60 + int[s]) * 1000 + int[ms]
+
+fn padded[n, width]
+    return fmt[n, width = width, fill = '0']
+
+--- milliseconds as a time hh:mm:ss,mmm (before the start, the start)
+fn stamp[total]
+    t = max[total, 0]
+    h = padded[t / 3600000, 2]
+    m = padded[t / 60000 % 60, 2]
+    s = padded[t / 1000 % 60, 2]
+    ms = padded[t % 1000, 3]
+    return '`h`:`m`:`s`,`ms`'
+
+--- the subtitles moved by `shift` milliseconds (later where it is positive)
+fn synced[srt, shift]
+    timing = '^(\d+):(\d\d):(\d\d),(\d\d\d) --> (\d+):(\d\d):(\d\d),(\d\d\d)(.*)$'
+    lines = for line in split[srt, '\n']
+        t = find[line, timing]
+        if t.ok
+            g = t.groups
+            start = millis[g[1], g[2], g[3], g[4]] + shift
+            end = millis[g[5], g[6], g[7], g[8]] + shift
+            '`stamp[start]` --> `stamp[end]``g[9]`'
+        else
+            line
+    return join[lines, '\n']
+
+--- the file moved by `shift` milliseconds, written to `out` and read back
+fn sync_file[path, shift, out]
+    _written = write[out, synced[read[path], shift]]
+    return read[out]
+
+given = args[]
+if len[given] eq 2
+    log[synced[read[given[0]], round[float[given[1]] * 1000]]]
+else
+    log['After fast-forwarding 9 seconds:']
+    log['']
+    log[sync_file['movie.srt', 9000, 'movie_forward.srt']]
+    log['After rolling back 9 seconds:']
+    log['']
+    log[sync_file['movie.srt', -9000, 'movie_back.srt']]
+    log['Rolled back 95 seconds, the first start falls before the film\'s:']
+    log['']
+    back95 = split[synced[read['movie.srt'], -95000], '\n']
+    log[join[slice[back95, 0, 9], '\n']]
+    _gone = rm['movie_forward.srt']
+    _gone2 = rm['movie_back.srt']

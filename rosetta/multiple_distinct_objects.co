@@ -1,0 +1,52 @@
+--- Rosetta Code: Multiple distinct objects
+--- https://rosettacode.org/wiki/Multiple_distinct_objects
+--- n is read from standard input. A Crow value never changes where it lies: writing
+--- a field or an item gives that one variable or item a fresh value. So n records
+--- made by a collecting for are n distinct objects, each initialized, and even n
+--- copies of one record cannot be "the same object" -- changing one leaves the rest.
+--- A program has no shared references to make the negative example's mistake with:
+--- what one name holds, no other name can change.
+
+struct Counter [id, count, label]
+
+fn fresh[i]
+    return Counter[i, 0, 'counter `i`']
+
+fn shown[cs]
+    parts = for c in cs
+        '`c.label`=`c.count`'
+    return join[parts, ', ']
+
+fn read_n[]
+    --- n from standard input, at least 2; 4 where no number is given
+    line = input[]
+    if line.ok
+        n = int[trim[line]]
+        if n.ok
+            return max[n, 2]
+    return 4
+
+fn show[what, value]
+    log['`fmt[what, width = 34]``value`']
+
+n = read_n[]
+log['n = `n`, read at run time']
+k = n / 2
+
+--- n distinct, initialized objects: the record is made anew for each item
+counters = for i in range[n]
+    fresh[i]
+show['n distinct objects:', shown[counters]]
+show['counters[0] eq counters[1]:', counters[0] eq counters[1]]
+counters[k].count = 10
+show['after counters[`k`].count = 10:', shown[counters]]
+
+--- the negative example: one record copied n times. The copies are equal, but they
+--- are n values still, and writing one leaves the others as they were
+one = fresh[0]
+copies = for i in range[n]
+    one
+show['n copies of one object:', shown[copies]]
+show['copies[0] eq copies[1]:', copies[0] eq copies[1]]
+copies[k].count = 7
+show['after copies[`k`].count = 7:', shown[copies]]

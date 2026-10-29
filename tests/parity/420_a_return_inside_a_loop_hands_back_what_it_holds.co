@@ -1,0 +1,48 @@
+--- A `return` inside a loop hands back what the function holds where it
+--- lies: nothing reads the name after it (a record returned from inside a
+--- `while` had been copied at every call, compiled; Rosetta Code,
+--- Universal lambda machine). What a `for` walks stays lent to the loop:
+--- a return that hands it back beside its item builds and answers alike.
+
+struct M [term, head]
+
+struct R [name, n]
+
+fn run[m, c]
+    k = 0
+    while true
+        if k lt 3
+            m.term = push[m.term, k + c]
+            k = k + 1
+        else
+            m.head = len[m.term]
+            return m
+
+fn drive[n]
+    m = M[[], 0]
+    r = 0
+    while r lt n
+        m = run[m, r]
+        r = r + 1
+    return m
+
+fn found[k]
+    rs = [R['a', 1]]
+    rs = push[rs, R[k, 2]]
+    for r in rs
+        if r.name eq k
+            return push[rs, r]
+    return []
+
+fn named[k]
+    xs = ['a']
+    xs = push[xs, k]
+    for x in xs
+        if x eq k
+            return push[xs, x]
+    return []
+
+d = drive[4]
+log[d.head, d.term]
+log[len[found['z']]]
+log[named['q']]

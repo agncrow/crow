@@ -1,0 +1,57 @@
+--- Rosetta Code: 4-rings or 4-squares puzzle
+--- https://rosettacode.org/wiki/4-rings_or_4-squares_puzzle
+--- The four squares hold a + b, b + c + d, d + e + f and f + g. Choosing a, b, c
+--- and e fixes the rest: the common sum is a + b, so d = sum - b - c,
+--- f = sum - d - e and g = sum - f; a choice is kept when they fall in range.
+
+fn distinct[xs]
+    n = len[xs]
+    i = 0
+    while i lt n
+        j = i + 1
+        while j lt n
+            if xs[i] eq xs[j]
+                return false
+            j = j + 1
+        i = i + 1
+    true
+
+fn within[xs, low, high]
+    for x in xs
+        if x lt low or x gt high
+            return false
+    true
+
+fn solutions[low, high, unique]
+    found = []
+    for a in range[low, high + 1]
+        for b in range[low, high + 1]
+            total = a + b
+            for c in range[low, high + 1]
+                d = total - b - c
+                for e in range[low, high + 1]
+                    f = total - d - e
+                    g = total - f
+                    letters = [a, b, c, d, e, f, g]
+                    if within[letters, low, high] and (not unique or distinct[letters])
+                        found = push[found, letters]
+    found
+
+fn shown[letters]
+    words = for x in letters
+        str[x]
+    join[words, ' ']
+
+fn show_all[low, high]
+    found = solutions[low, high, true]
+    log['Unique digits from `low` to `high`:']
+    log['    a b c d e f g']
+    for letters in found
+        log['    `shown[letters]`']
+    log['`len[found]` solutions']
+    log['']
+
+show_all[1, 7]
+show_all[3, 9]
+counted = solutions[0, 9, false]
+log['Digits from 0 to 9, repeats allowed: `len[counted]` solutions']

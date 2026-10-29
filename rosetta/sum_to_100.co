@@ -1,0 +1,86 @@
+--- Rosetta Code: Sum to 100
+--- https://rosettacode.org/wiki/Sum_to_100
+--- Each of the 3^9 choices of an operator before the digits 1 to 9 (nothing, + or -)
+--- is a number written in base 3; a + before the 1 says what nothing says, so those
+--- are skipped. Every expression is evaluated once, its sum counted in a map.
+
+--- the operators before the digits 1 to 9 that the base-3 digits of code name:
+--- 0 joins the digit to the number before it, 1 adds it, 2 subtracts it
+fn operators[code]
+    ops = []
+    rest = code
+    while len[ops] lt 9
+        ops = push[ops, rest % 3]
+        rest = rest / 3
+    return ops
+
+fn value_of[ops]
+    total = 0
+    term = 0
+    sign = 1
+    d = 1
+    while d lte 9
+        op = ops[d - 1]
+        if op eq 0
+            term = term * 10 + d
+        else
+            total = total + sign * term
+            term = d
+            if op eq 1
+                sign = 1
+            else
+                sign = -1
+        d = d + 1
+    return total + sign * term
+
+fn text_of[ops]
+    text = ''
+    if ops[0] eq 2
+        text = '-'
+    d = 1
+    while d lte 9
+        op = ops[d - 1]
+        if d gt 1 and op eq 1
+            text = '`text` + '
+        else if d gt 1 and op eq 2
+            text = '`text` - '
+        text = '`text``d`'
+        d = d + 1
+    return text
+
+target = 100
+solutions = []
+counts = map[]
+for code in range[3 ^ 9]
+    ops = operators[code]
+    if ops[0] ne 1
+        v = value_of[ops]
+        if v in counts
+            counts[v] = counts[v] + 1
+        else
+            counts[v] = 1
+        if v eq target
+            solutions = push[solutions, text_of[ops]]
+
+log['The `len[solutions]` solutions for `target`:']
+for s in sort[solutions]
+    log['    `s` = `target`']
+
+most = 0
+best = 0
+for v in keys[counts]
+    if v gte 0 and counts[v] gt most
+        most = counts[v]
+        best = v
+log['The sum with the most solutions: `best`, with `most` of them']
+
+lowest = 1
+while lowest in counts
+    lowest = lowest + 1
+log['The lowest positive sum that cannot be expressed: `lowest`']
+
+sums = keys[counts]
+highest = for i in range[10]
+    str[sums[len[sums] - 1 - i]]
+shown = join[highest, ', ']
+log['The ten highest sums: `shown`']

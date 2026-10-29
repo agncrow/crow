@@ -1,0 +1,38 @@
+--- Rosetta Code: Descending primes
+--- https://rosettacode.org/wiki/Descending_primes
+--- The 1,022 positive numbers whose digits strictly descend are made breadth
+--- first, each by appending a smaller digit to a shorter one, so they come in
+--- increasing order and only those are tested for primality.
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    if n % 2 eq 0
+        return n eq 2
+    d = 3
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 2
+    return true
+
+--- every positive number whose digits strictly descend, smallest first
+fn descending_numbers[]
+    found = range[1, 10]
+    i = 0
+    while i lt len[found]
+        n = found[i]
+        for digit in range[n % 10]
+            found = push[found, n * 10 + digit]
+        i = i + 1
+    return found
+
+numbers = descending_numbers[]
+primes = for n in numbers
+    if is_prime[n]
+        n
+log['`len[numbers]` numbers have strictly descending digits, the largest `numbers[-1]`; `len[primes]` of them are prime:']
+for start in range[0, len[primes], 8]
+    cells = for p in slice[primes, start, start + 8]
+        fmt[p, width = 9]
+    log[join[cells, ' ']]

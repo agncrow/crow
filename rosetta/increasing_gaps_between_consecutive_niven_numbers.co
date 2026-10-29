@@ -1,0 +1,54 @@
+--- Rosetta Code: Increasing gaps between consecutive Niven numbers
+--- https://rosettacode.org/wiki/Increasing_gaps_between_consecutive_Niven_numbers
+--- The numbers are walked ten at a time: n = 10q + r has the digit sum of q
+--- plus r, and the digit sum of q is kept from one q to the next (a carry out
+--- of k nines takes 9k off). A Niven number further from the one before it
+--- than any gap so far starts a new record gap.
+
+struct Gap [index, size, niven_index, niven]
+
+--- the record gaps among the first `count` Niven numbers, and the last of them
+struct Search [gaps, last]
+
+fn record_gaps[count]
+    gaps = []
+    widest = 0
+    previous = 1
+    index = 1
+    q = 0
+    q_sum = 0
+    while index lt count
+        r = 0
+        while r lt 10 and index lt count
+            n = 10 * q + r
+            s = q_sum + r
+            if n gt 1 and n % s eq 0
+                if n - previous gt widest
+                    widest = n - previous
+                    gaps = push[gaps, Gap[len[gaps] + 1, widest, index, previous]]
+                previous = n
+                index = index + 1
+            r = r + 1
+        q = q + 1
+        --- the digit sum of the next q
+        q_sum = q_sum + 1
+        m = q
+        while m % 10 eq 0
+            q_sum = q_sum - 9
+            m = m / 10
+    return Search[gaps, previous]
+
+fn commas[n]
+    return fmt[n, commas = true]
+
+count = 10000000
+found = record_gaps[count]
+log['Gap index   Gap   Niven index   Niven number']
+for g in found.gaps
+    a = fmt[g.index, width = 9]
+    b = fmt[g.size, width = 5]
+    c = fmt[commas[g.niven_index], width = 13, align = 'right']
+    d = fmt[commas[g.niven], width = 14, align = 'right']
+    log['`a` `b` `c`  `d`']
+log['']
+log['(every record gap up to the `commas[count]`th Niven number, `commas[found.last]`)']

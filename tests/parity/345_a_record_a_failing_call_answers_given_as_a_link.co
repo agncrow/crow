@@ -1,0 +1,17 @@
+--- A record answered by a call that can fail, handed where a function
+--- takes a record or none, is the link: its payload had been passed bare,
+--- and the compiled program did not build (Rosetta Code, Arithmetic
+--- evaluation).
+struct Node [left]
+
+fn depth[node]
+    if node eq 0
+        return 0
+    return 1 + depth[node.left]
+
+fn make[n]
+    if n lt 0
+        return error['negative']
+    return Node[Node[0]]
+
+log[depth[make[1]]]

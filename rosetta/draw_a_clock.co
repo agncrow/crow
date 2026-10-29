@@ -1,0 +1,101 @@
+--- Rosetta Code: Draw a clock
+--- https://rosettacode.org/wiki/Draw_a_clock
+--- An analog clock face drawn in characters: the twelve hours round the rim, the
+--- hour hand (#), the minute hand (+) and the second hand (*). A clock redraws
+--- itself each second, sleeping between frames; so that every run prints the same,
+--- this one starts at a fixed moment, 10:09:58, and draws three frames a second
+--- apart (the second hand wraps round to 0 and the minute hand moves on). Run with
+--- the argument `live` and it follows the system clock instead, for a minute, in
+--- UTC or in the zone the TZ variable names.
+
+use math
+
+--- a character cell is about twice as tall as it is wide, so x is stretched by 2
+struct Face [radius, cols, rows, cx, cy]
+
+fn face_of[radius]
+    return Face[radius, 4 * radius + 7, 2 * radius + 1, 2 * radius + 3, radius]
+
+fn plot[cells, face, x, y, mark]
+    c = round[x]
+    r = round[y]
+    if c gte 0 and c lt face.cols and r gte 0 and r lt face.rows
+        cells[r * face.cols + c] = mark
+    return cells
+
+--- the point `reach` rows out from the centre at an angle in degrees, clockwise
+--- from twelve o'clock
+fn point_x[face, degrees, reach]
+    return face.cx + 2.0 * reach * sin[degrees * pi / 180.0]
+
+fn point_y[face, degrees, reach]
+    return face.cy - reach * cos[degrees * pi / 180.0]
+
+fn hand[cells, face, degrees, length, mark]
+    steps = int[length * 4.0]
+    for i in range[1, steps + 1]
+        d = i / 4.0
+        cells = plot[cells, face, point_x[face, degrees, d], point_y[face, degrees, d], mark]
+    return cells
+
+fn label[cells, face, hour]
+    text = str[hour]
+    x = point_x[face, hour * 30.0, face.radius - 1.0]
+    y = point_y[face, hour * 30.0, face.radius - 1.0]
+    --- a number of two digits is centred on the point
+    start = x - (len[text] - 1) / 2.0
+    digits = split[text, '']
+    for i in range[len[digits]]
+        cells = plot[cells, face, start + i, y, digits[i]]
+    return cells
+
+fn row_text[cells, face, r]
+    row = slice[cells, r * face.cols, (r + 1) * face.cols]
+    last = len[row] - 1
+    while last gte 0 and row[last] eq ' '
+        last = last - 1
+    return join[slice[row, 0, last + 1], '']
+
+fn draw[face, hour, minute, second]
+    cells = for i in range[face.cols * face.rows]
+        ' '
+    for a in range[0, 360, 3]
+        cells = plot[cells, face, point_x[face, a, face.radius], point_y[face, a, face.radius], '.']
+    for h in range[1, 13]
+        cells = label[cells, face, h]
+    hours = (hour % 12) * 30.0 + minute * 0.5
+    minutes = minute * 6.0 + second * 0.1
+    cells = hand[cells, face, hours, face.radius * 0.45, '#']
+    cells = hand[cells, face, minutes, face.radius * 0.7, '+']
+    cells = hand[cells, face, second * 6.0, face.radius * 0.8, '*']
+    cells = plot[cells, face, face.cx, face.cy, 'o']
+    lines = for r in range[face.rows]
+        row_text[cells, face, r]
+    return lines
+
+fn two[n]
+    return fmt[n, width = 2, fill = '0']
+
+fn show[face, t]
+    for line in draw[face, t.hour, t.minute, t.second]
+        log[line]
+    clock = '`two[t.hour]`:`two[t.minute]`:`two[t.second]`'
+    log[fmt[clock, width = face.cx + 4, align = 'right']]
+
+face = face_of[9]
+if 'live' in args[]
+    zone = env['TZ', 'UTC']
+    for i in range[60]
+        if i gt 0
+            log['']
+        show[face, moment[now[], tz = zone]]
+        --- sleep to the start of the next second
+        sleep[1000 - int[float[now[]] * 1000.0] % 1000]
+else
+    --- a fixed moment, so that the output is the same every run
+    t = moment[2026, 10, 28, hour = 10, minute = 9, second = 58]
+    for i in range[3]
+        if i gt 0
+            sleep[1000]
+            log['']
+        show[face, t + i]

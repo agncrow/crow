@@ -1,0 +1,84 @@
+--- Rosetta Code: UPC
+--- https://rosettacode.org/wiki/UPC
+--- Between the quiet zones a UPC-A code is 95 modules: the three guards are checked, and
+--- each seven modules are looked up among the left digits' codes (on the right, their
+--- complements). A line that reads as no code is read again reversed, as a code entered
+--- upside down, and the check digit (weights 3, 1, 3, 1, ...) confirms what was read.
+
+--- The left-hand codes of the digits 0 to 9, a space for 0 and '#' for 1; on the
+--- right-hand side '#' is 0 and a space 1.
+fn codes[side]
+    bits = ['0001101', '0011001', '0010011', '0111101', '0100011', '0110001', '0101111', '0111011', '0110111', '0001011']
+    marks = ' #'
+    if side eq 'right'
+        marks = '# '
+    shown = for b in bits
+        translate[b, '01', marks]
+    return shown
+
+--- The digit whose code is these seven modules, or -1 for none.
+fn digit_of[modules, side_codes]
+    i = 0
+    while i lt 10
+        if side_codes[i] eq modules
+            return i
+        i = i + 1
+    return -1
+
+--- The twelve digits 95 modules write, or [] where they write none.
+fn read_modules[bars]
+    if len[bars] ne 95 or slice[bars, 0, 3] ne '# #' or slice[bars, 45, 50] ne ' # # ' or slice[bars, 92, 95] ne '# #'
+        return []
+    left = codes['left']
+    right = codes['right']
+    digits = []
+    for i in range[6]
+        digits = push[digits, digit_of[slice[bars, 3 + 7 * i, 10 + 7 * i], left]]
+    for i in range[6]
+        digits = push[digits, digit_of[slice[bars, 50 + 7 * i, 57 + 7 * i], right]]
+    if -1 in digits
+        return []
+    return digits
+
+fn checksum_ok[digits]
+    total = 0
+    for i in range[12]
+        weight = 1
+        if i % 2 eq 0
+            weight = 3
+        total = total + weight * digits[i]
+    return total % 10 eq 0
+
+fn upc[line]
+    bars = trim[line]
+    digits = read_modules[bars]
+    way = ''
+    if len[digits] eq 0
+        digits = read_modules[reverse[bars]]
+        way = ' (upside down)'
+    if len[digits] eq 0
+        return 'rejected: no UPC-A code either way up'
+    shown = for d in digits
+        str[d]
+    written = join[shown, ' ']
+    if not checksum_ok[digits]
+        return 'rejected: `written` fails the check digit'
+    return '`written``way`'
+
+scans = [
+    '         # #   # ##  #  ## #   ## ### ## ### ## #### # # # ## ##  #   #  ##  ## ###  # ##  ## ### #  # #',
+    '        # # #   ##   ## # #### #   # ## #   ## #   ## # # # ###  # ###  ##  ## ###  # #  ### ###  # # #',
+    '         # #    # # #  ###  #   #    # #  #   #    # # # # ## #   ## #   ## #   ##   # # #### ### ## # #',
+    '       # # ##  ## ##  ##   #  #   #  # ###  # ##  ## # # #   ## ##  #  ### ## ## #   # #### ## #   # #',
+    '         # # ### ## #   ## ## ###  ##  # ##   #   # ## # # ### #  ## ##  #    # ### #  ## ##  #      # #',
+    '          # #  #   # ##  ##  #   #   #  # ##  ##  #   # # # # #### #  ##  # #### #### # #  ##  # #### # #',
+    '         # #  #  ##  ##  # #   ## ##   # ### ## ##   # # # #  #   #   #  #  ### # #    ###  # #  #   # #',
+    '        # # #    # ##  ##   #  # ##  ##  ### #   #  # # # ### ## ## ### ## ### ### ## #  ##  ### ## # #',
+    '         # # ### ##   ## # # #### #   ## # #### # #### # # #   #  # ###  #    # ###  # #    # ###  # # #',
+    '        # # # #### ##   # #### # #   ## ## ### #### # # # #  ### # ###  ###  # # ###  #    # #  ### # #',
+    --- not in the task: the last code with its eleventh digit changed from 3 to 2
+    '        # # # #### ##   # #### # #   ## ## ### #### # # # #  ### # ###  ###  # # ###  ## ##  #  ### # #'
+]
+
+for i in range[len[scans]]
+    log['`fmt[i + 1, width = 2]`: `upc[scans[i]]`']

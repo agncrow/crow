@@ -1,0 +1,185 @@
+--- Rosetta Code: ASCII art diagram converter
+--- https://rosettacode.org/wiki/ASCII_art_diagram_converter
+--- The diagram is read into a list of fields (name, bits, first bit) and checked
+--- thoroughly on the way: an error value says what is wrong and where. A header
+--- is then decoded field by field from its bits, and stored back from values.
+
+struct Field [name, bits, start]
+
+fn rfc1035_header[]
+    return '
+        +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        |                      ID                       |
+        +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        |QR|   Opcode  |AA|TC|RD|RA|   Z    |   RCODE   |
+        +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        |                    QDCOUNT                    |
+        +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        |                    ANCOUNT                    |
+        +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        |                    NSCOUNT                    |
+        +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+        |                    ARCOUNT                    |
+        +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+    '
+
+--- the diagram's lines, each trimmed, the blank ones left out
+fn diagram_lines[text]
+    lines = for line in split[text, '\n']
+        if trim[line] ne ''
+            trim[line]
+    return lines
+
+--- the fields of the row on line `number`, the row's first bit at `first`
+fn row_fields[line, number, first]
+    fields = []
+    edge = 0
+    i = 1
+    while i lt len[line]
+        if line[i] eq '|'
+            name = trim[slice[line, edge + 1, i]]
+            if name eq ''
+                return error['line `number`: a field has no name', 'diagram']
+            if ' ' in name or '+' in name or '-' in name
+                return error['line `number`: `name` is no field name', 'diagram']
+            if i % 3 ne 0
+                return error['line `number`: the field `name` ends between two bits', 'diagram']
+            fields = push[fields, Field[name, (i - edge) / 3, first + edge / 3]]
+            edge = i
+        i = i + 1
+    return fields
+
+--- the fields a diagram defines, in order, or an error saying what is wrong
+fn parse_diagram[text]
+    lines = diagram_lines[text]
+    if len[lines] eq 0
+        return error['the diagram is empty', 'diagram']
+    border = lines[0]
+    width = (len[border] - 1) / 3
+    cells = repeat['+--', width]
+    if border ne '`cells`+'
+        return error['line 1 is no border: `border`', 'diagram']
+    if width not in [8, 16, 32, 64]
+        return error['a diagram is 8, 16, 32 or 64 bits wide, not `width`', 'diagram']
+    if len[lines] eq 1
+        return error['the diagram has no rows of fields', 'diagram']
+    if len[lines] % 2 eq 0
+        return error['line `len[lines]`: the last row has no border under it', 'diagram']
+    fields = []
+    i = 1
+    while i lt len[lines]
+        line = lines[i]
+        if len[line] ne len[border] or not starts[line, '|'] or not ends[line, '|']
+            return error['line `i + 1` is no row of `width` bits between bars', 'diagram']
+        if lines[i + 1] ne border
+            return error['line `i + 2` is not the border', 'diagram']
+        row = row_fields[line, i + 1, (i - 1) / 2 * width]
+        if not row.ok
+            return row
+        fields = concat[fields, row]
+        i = i + 2
+    names = map[]
+    for f in fields
+        if f.name in names
+            return error['the field `f.name` is named twice', 'diagram']
+        names = set[names, f.name, true]
+    return fields
+
+--- n in binary, `width` digits
+fn binary[n, width]
+    digits = for i in range[width]
+        str[n / 2 ^ (width - 1 - i) % 2]
+    return join[digits, '']
+
+--- the number a text of binary digits writes
+fn value_of[bits]
+    n = 0
+    for b in split[bits, '']
+        n = n * 2
+        if b eq '1'
+            n = n + 1
+    return n
+
+--- the bits of hexadecimal text, four to a digit
+fn hex_bits[hex]
+    digit_values = map[split['0123456789abcdef', ''], range[16]]
+    pieces = for c in split[lower[hex], '']
+        binary[digit_values[c], 4]
+    return join[pieces, '']
+
+--- hexadecimal text of bits, four to a digit
+fn bits_hex[bits]
+    digits = '0123456789abcdef'
+    pieces = for start in range[0, len[bits], 4]
+        digits[value_of[slice[bits, start, start + 4]]]
+    return join[pieces, '']
+
+--- each field's bits in a header given in hexadecimal
+fn unpack[fields, hex]
+    if not matches[hex, '^[0-9a-fA-F]*$']
+        return error['`hex` is not hexadecimal', 'header']
+    bits = hex_bits[hex]
+    last = fields[-1]
+    if len[bits] ne last.start + last.bits
+        return error['a header of this diagram is `last.start + last.bits` bits, not `len[bits]`', 'header']
+    pieces = for f in fields
+        slice[bits, f.start, f.start + f.bits]
+    return pieces
+
+--- a header in hexadecimal, each field holding its value in `given`, or 0
+fn pack[fields, given]
+    names = for f in fields
+        f.name
+    for name in keys[given]
+        if name not in names
+            return error['the diagram has no field `name`', 'header']
+    for f in fields
+        if f.name in given and (given[f.name] lt 0 or given[f.name] gte 2 ^ f.bits)
+            return error['`f.name` is `f.bits` bits, too few for `given[f.name]`', 'header']
+    pieces = for f in fields
+        v = 0
+        if f.name in given
+            v = given[f.name]
+        binary[v, f.bits]
+    return bits_hex[join[pieces, '']]
+
+fn show_lines[lines]
+    for line in lines
+        log[line]
+
+fields = parse_diagram[rfc1035_header[]]
+log['The diagram, trimmed:']
+show_lines[diagram_lines[rfc1035_header[]]]
+log['']
+log['Field     Bits  Start  End']
+for f in fields
+    log['`fmt[f.name, width = 8]` `fmt[f.bits, width = 5]`  `fmt[f.start, width = 5]`  `fmt[f.start + f.bits - 1, width = 3]`']
+
+header = '78477bbf5496e12e1bf169a4'
+log['']
+log['A header in hexadecimal: `header`']
+log['Its bits: `hex_bits[header]`']
+log['']
+log['Field     Bits              Value']
+pieces = unpack[fields, header]
+for k in range[len[fields]]
+    log['`fmt[fields[k].name, width = 8]`  `fmt[pieces[k], width = 16]`  `value_of[pieces[k]]`']
+
+given = map[]
+for k in range[len[fields]]
+    given = set[given, fields[k].name, value_of[pieces[k]]]
+log['']
+log['Stored back from those values: `pack[fields, given]`']
+log['A query (ID 4660, RD set, one question): `pack[fields, map[ID = 4660, RD = 1, QDCOUNT = 1]]`']
+short = '78477bbf'
+log['Refused: `pack[fields, map[RCODE = 16]].reason`; `pack[fields, map[QD = 1]].reason`; `unpack[fields, short].reason`']
+
+log['']
+log['Diagrams refused, and why:']
+border = '+--+--+--+--+--+--+--+--+'
+refused = [[''], ['+--+--+--+', '|A |B |C |', '+--+--+--+'], ['+--+--+--+--++-+--+--+--+', '|  A  |   B    |   C    |', border], [border, '|  A  |   B    |   C    |', '+--+--+--+--+--+--+--+--+--+'], [border, '|  A   |   B    |   C   |', border], [border, '|  A  |     |     C     |', border], [border, '|    A B    |     C     |', border], [border, '|  A  |    B   |    C  |', border], [border, '|  A  |   B    |   C    |'], [border, '|     A     |     B     |', border, '|     C     |     A     |', border]]
+for rows in refused
+    log['']
+    show_lines[rows]
+    parsed = parse_diagram[join[rows, '\n']]
+    log['  -> `parsed.reason`']

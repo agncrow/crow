@@ -1,0 +1,64 @@
+--- Rosetta Code: Iterated digits squaring
+--- https://rosettacode.org/wiki/Iterated_digits_squaring
+--- The talk page's quick way: a number's chain depends only on the sum of its
+--- digits' squares, so count the strings of k digits by that sum, a digit at a
+--- time, and add up the counts of the sums whose chains end at 89. The answer
+--- below 10^8 is checked against the chains of every number below 10^5 too.
+
+fn step[n]
+    total = 0
+    m = n
+    while m gt 0
+        d = m % 10
+        total = total + d * d
+        m = m / 10
+    return total
+
+fn ends_at_89[n]
+    m = n
+    while m ne 1 and m ne 89
+        m = step[m]
+    return m eq 89
+
+--- counts[s]: how many strings of k digits (leading zeros allowed) have s as
+--- the sum of their digits' squares
+fn sum_counts[k]
+    counts = [1]
+    for i in range[k]
+        grown = for s in range[len[counts] + 81]
+            0
+        for s in range[len[counts]]
+            for d in range[10]
+                grown[s + d * d] = grown[s + d * d] + counts[s]
+        counts = grown
+    return counts
+
+--- how many of 1 … 10^k - 1 have chains ending at 89
+fn count_89[k]
+    counts = sum_counts[k]
+    total = 0
+    for s in range[1, len[counts]]
+        if ends_at_89[s]
+            total = total + counts[s]
+    return total
+
+--- the same count one number at a time, for a check
+fn count_89_by_chains[limit]
+    total = 0
+    n = 1
+    while n lt limit
+        if ends_at_89[step[n]]
+            total = total + 1
+        n = n + 1
+    return total
+
+log['Numbers 1 <= n < 100,000,000 whose chains end at 89: `fmt[count_89[8], commas = true]`']
+log['Below 10^5, by the sums: `count_89[5]`, by every chain: `count_89_by_chains[100000]`']
+log['']
+log['Below 10^k:']
+title = fmt['end at 1', width = 30, align = 'right']
+log['   k `title`                      end at 89']
+for k in range[1, 21]
+    at_89 = count_89[k]
+    at_1 = 10 ^ k - 1 - at_89
+    log['`fmt[k, width = 4]` `fmt[at_1, width = 30, commas = true]` `fmt[at_89, width = 30, commas = true]`']

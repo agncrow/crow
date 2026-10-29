@@ -1,0 +1,25 @@
+--- a failure made where an item goes — `error[…]` in a list literal whose
+--- items can fail, or pushed onto a list — is a failure of an item: typed
+--- as no value, the literal had held an item of another kind (the lowered
+--- program disagreed with itself) and the push handed `()` on compiled,
+--- which did not build (Rosetta Code, Monads/Maybe monad)
+
+fn half[x]
+    if x % 2 eq 1
+        return error['odd', 'maybe']
+    return x / 2
+
+xs = [1, error['nothing', 'maybe']]
+log[len[xs]]
+log[xs[1].reason]
+log[xs[0] + 1]
+
+ys = [half[4], error['nothing', 'maybe']]
+log[ys]
+
+fn grown[]
+    zs = [3]
+    zs = push[zs, error['none']]
+    return zs
+
+log[grown[].reason]

@@ -1,0 +1,31 @@
+--- Rosetta Code: Exponentiation with infix operators in (or operating on) the base
+--- https://rosettacode.org/wiki/Exponentiation_with_infix_operators_in_(or_operating_on)_the_base
+--- Crow's power operator is ^. It binds tighter than a minus sign before it, as in mathematics
+--- (and Python, Julia): -x ^ p is -(x ^ p). Crow has no unary plus, so +5 is written 5.
+
+fn cell[text, value]
+    shown = fmt[value, width = 4]
+    return '`text` = `shown`'
+
+fn variables[x, p]
+    --- the four forms, with x and p variables
+    forms = [cell['-x ^ p', -x ^ p], cell['-(x) ^ p', -(x) ^ p], cell['(-x) ^ p', (-x) ^ p], cell['-(x ^ p)', -(x ^ p)]]
+    shown = fmt[x, width = 2]
+    line = join[forms, ';  ']
+    return 'x = `shown`, p = `p`:  `line`'
+
+log['With variables:']
+for x in [-5, 5]
+    for p in [2, 3]
+        log[variables[x, p]]
+
+log['']
+log['With literals:']
+literals = [
+    [cell['-5 ^ 2', -5 ^ 2], cell['-(5) ^ 2', -(5) ^ 2], cell['(-5) ^ 2', (-5) ^ 2], cell['-(5 ^ 2)', -(5 ^ 2)]],
+    [cell['-5 ^ 3', -5 ^ 3], cell['-(5) ^ 3', -(5) ^ 3], cell['(-5) ^ 3', (-5) ^ 3], cell['-(5 ^ 3)', -(5 ^ 3)]],
+    [cell['- -5 ^ 2', - -5 ^ 2], cell['-(-5) ^ 2', -(-5) ^ 2], cell['(- -5) ^ 2', (- -5) ^ 2], cell['-(-5 ^ 2)', -(-5 ^ 2)]],
+    [cell['- -5 ^ 3', - -5 ^ 3], cell['-(-5) ^ 3', -(-5) ^ 3], cell['(- -5) ^ 3', (- -5) ^ 3], cell['-(-5 ^ 3)', -(-5 ^ 3)]]
+]
+for forms in literals
+    log[join[forms, ';  ']]

@@ -1,0 +1,512 @@
+--- Rosetta Code: Routh–Hurwitz stability criterion
+--- https://rosettacode.org/wiki/Routh–Hurwitz_stability_criterion
+--- The Routh array in exact arithmetic: each entry is a ratio of polynomials in
+--- ε with fraction coefficients, kept in lowest terms, so a zero in the first
+--- column, replaced by ε, is carried exactly and every sign is the one it takes
+--- as ε falls to 0 (an entry holding ε is shown by that leading term). A row of
+--- zeros is replaced by the derivative of the auxiliary polynomial the row above
+--- makes. The first column's sign changes count the roots in the right
+--- half-plane; the first auxiliary polynomial's degree less twice the changes
+--- from its row down counts the roots on the imaginary axis, some repeated where
+--- a second row of zeros has some there. Each verdict is checked against the
+--- roots found numerically by the Durand–Kerner method.
+
+--- Polynomials in ε are lists of fractions, the coefficient of ε^i at i.
+
+fn trimmed[p]
+    n = len[p]
+    while n gt 1 and p[n - 1] eq 0
+        n = n - 1
+    slice[p, 0, n]
+
+fn is_nothing[p]
+    t = trimmed[p]
+    len[t] eq 1 and t[0] eq 0
+
+fn coefficient[p, i]
+    if i lt len[p]
+        return p[i]
+    fraction[0]
+
+fn plus[a, b]
+    sums = for i in range[max[len[a], len[b]]]
+        coefficient[a, i] + coefficient[b, i]
+    trimmed[sums]
+
+fn scaled[p, c]
+    out = for x in p
+        x * c
+    trimmed[out]
+
+fn minus[a, b]
+    plus[a, scaled[b, fraction[-1]]]
+
+fn times[a, b]
+    out = for k in range[len[a] + len[b] - 1]
+        fraction[0]
+    i = 0
+    while i lt len[a]
+        j = 0
+        while j lt len[b]
+            out[i + j] = out[i + j] + a[i] * b[j]
+            j = j + 1
+        i = i + 1
+    trimmed[out]
+
+--- ε^k times p
+fn raised[p, k]
+    zeros = for i in range[k]
+        fraction[0]
+    concat[zeros, p]
+
+struct Division [whole, rest]
+
+--- long division of a by b (b not zero)
+fn divided[a, b]
+    d = trimmed[b]
+    top = len[d] - 1
+    rest = trimmed[a]
+    whole = [fraction[0]]
+    while len[rest] - 1 gte top and not is_nothing[rest]
+        k = len[rest] - 1 - top
+        c = rest[len[rest] - 1] / d[top]
+        whole = plus[whole, raised[[c], k]]
+        rest = minus[rest, raised[scaled[d, c], k]]
+    Division[whole, rest]
+
+--- the greatest common divisor, its leading coefficient 1
+fn common[a, b]
+    x = trimmed[a]
+    y = trimmed[b]
+    while not is_nothing[y]
+        r = divided[x, y].rest
+        x = y
+        y = r
+    scaled[x, fraction[1] / x[len[x] - 1]]
+
+--- the place of the lowest power of ε a polynomial (not zero) holds
+fn lowest[p]
+    i = 0
+    while i lt len[p] - 1 and p[i] eq 0
+        i = i + 1
+    i
+
+--- num / den, in lowest terms, the denominator's lowest coefficient 1
+struct Ratio [num, den]
+
+fn ratio[num, den]
+    if is_nothing[num]
+        return Ratio[[fraction[0]], [fraction[1]]]
+    g = common[num, den]
+    top = divided[num, g].whole
+    bottom = divided[den, g].whole
+    c = fraction[1] / bottom[lowest[bottom]]
+    Ratio[scaled[top, c], scaled[bottom, c]]
+
+fn constant[n]
+    Ratio[[fraction[n]], [fraction[1]]]
+
+fn epsilon[]
+    Ratio[[fraction[0], fraction[1]], [fraction[1]]]
+
+fn product[a, b]
+    ratio[times[a.num, b.num], times[a.den, b.den]]
+
+fn difference[a, b]
+    ratio[minus[times[a.num, b.den], times[b.num, a.den]], times[a.den, b.den]]
+
+fn quotient[a, b]
+    ratio[times[a.num, b.den], times[a.den, b.num]]
+
+fn multiple[a, n]
+    ratio[scaled[a.num, fraction[n]], a.den]
+
+fn is_zero[a]
+    is_nothing[a.num]
+
+fn is_constant[a]
+    len[a.num] eq 1 and len[a.den] eq 1
+
+--- 1 or -1, the sign as ε falls to 0 (0 for zero)
+fn sign_of[a]
+    if is_zero[a]
+        return 0
+    lead = a.num[lowest[a.num]] / a.den[lowest[a.den]]
+    if lead gt 0
+        return 1
+    -1
+
+--- an entry as it shows: a number, or the leading term in ε of one holding ε
+fn entry_text[a]
+    if is_zero[a]
+        return '0'
+    i = lowest[a.num]
+    j = lowest[a.den]
+    lead = a.num[i] / a.den[j]
+    e = i - j
+    number = str[lead]
+    if e eq 0
+        return number
+    if '/' in number
+        number = '(`number`)'
+    power = 'ε'
+    if abs[e] gt 1
+        power = 'ε^`abs[e]`'
+    if e lt 0
+        return '`number`/`power`'
+    if lead eq 1
+        number = ''
+    else if lead eq -1
+        number = '-'
+    '`number``power`'
+
+--- a polynomial in s from its coefficients, the highest power first
+fn polynomial_text[cs]
+    top = len[cs] - 1
+    text = ''
+    i = 0
+    while i lt len[cs]
+        c = cs[i]
+        k = top - i
+        if not is_zero[c]
+            sign = '+'
+            body = '(`entry_text[c]`)'
+            if is_constant[c]
+                v = c.num[0]
+                if v lt 0
+                    sign = '-'
+                body = str[abs[v]]
+                if k gt 0 and abs[v] eq 1
+                    body = ''
+                else if k gt 0 and '/' in body
+                    body = '(`body`)'
+            if k eq 1
+                body = '`body`s'
+            else if k gt 1
+                body = '`body`s^`k`'
+            if text eq ''
+                if sign eq '-'
+                    body = '-`body`'
+                text = body
+            else
+                text = '`text` `sign` `body`'
+        i = i + 1
+    if text eq ''
+        return '0'
+    text
+
+fn constants[coeffs]
+    out = for c in coeffs
+        constant[c]
+    out
+
+--- the Routh array: its rows (s^n first, each of one width), a note for each
+--- row, and the places of the rows that made an auxiliary polynomial
+struct Routh [rows, notes, auxiliary]
+
+fn row_of[coeffs, start, width]
+    out = for j in range[width]
+        k = start + 2 * j
+        if k lt len[coeffs]
+            constant[coeffs[k]]
+        else
+            constant[0]
+    out
+
+fn item[row, j]
+    if j lt len[row]
+        return row[j]
+    constant[0]
+
+fn next_row[above, prev]
+    out = for j in range[len[prev]]
+        cross = difference[product[prev[0], item[above, j + 1]], product[above[0], item[prev, j + 1]]]
+        quotient[cross, prev[0]]
+    out
+
+--- the derivative of the auxiliary polynomial of degree m that row `above` makes
+fn derivative_row[above, m]
+    out = for j in range[len[above]]
+        multiple[above[j], max[m - 2 * j, 0]]
+    out
+
+--- that auxiliary polynomial's coefficients, its highest power first
+fn auxiliary_of[above, m]
+    out = for p in range[m + 1]
+        if p % 2 eq 0
+            item[above, p / 2]
+        else
+            constant[0]
+    out
+
+fn routh[coeffs]
+    n = len[coeffs] - 1
+    width = n / 2 + 1
+    rows = [row_of[coeffs, 0, width], row_of[coeffs, 1, width]]
+    notes = for k in range[n + 1]
+        ''
+    auxiliary = []
+    k = 2
+    while k lte n + 1
+        above = rows[k - 2]
+        prev = rows[k - 1]
+        if all[prev, is_zero]
+            m = n - (k - 2)
+            prev = derivative_row[above, m]
+            shown = polynomial_text[auxiliary_of[above, m]]
+            notes[k - 1] = 'a row of zeros: the auxiliary polynomial `shown`, differentiated'
+            auxiliary = push[auxiliary, k - 2]
+        else if is_zero[prev[0]]
+            prev[0] = epsilon[]
+            notes[k - 1] = 'a zero in the first column, replaced by ε'
+        rows[k - 1] = prev
+        if k lte n
+            rows = push[rows, next_row[above, prev]]
+        k = k + 1
+    Routh[rows, notes, auxiliary]
+
+fn first_signs[rows]
+    out = for row in rows
+        sign_of[row[0]]
+    out
+
+fn sign_changes[signs, start]
+    count = 0
+    i = start
+    while i lt len[signs] - 1
+        if signs[i] ne signs[i + 1]
+            count = count + 1
+        i = i + 1
+    count
+
+--- roots in the right half-plane, on the imaginary axis, and whether some of
+--- those on the axis are repeated
+struct Verdict [right, axis, repeated]
+
+fn verdict_of[n, r]
+    signs = first_signs[r.rows]
+    right = sign_changes[signs, 0]
+    axis = 0
+    repeated = false
+    if len[r.auxiliary] gt 0
+        first = r.auxiliary[0]
+        axis = n - first - 2 * sign_changes[signs, first]
+        if len[r.auxiliary] gt 1
+            second = r.auxiliary[1]
+            repeated = n - second - 2 * sign_changes[signs, second] gt 0
+    Verdict[right, axis, repeated]
+
+fn how_many[n, what]
+    if n eq 1
+        return '1 `what`'
+    '`n` `what`s'
+
+fn verdict_text[v]
+    right = how_many[v.right, 'root']
+    axis = how_many[v.axis, 'root']
+    if v.right gt 0
+        text = 'unstable: `right` in the right half-plane'
+        if v.axis gt 0
+            text = '`text`, `axis` on the imaginary axis'
+        return text
+    if v.axis eq 0
+        return 'stable: every root in the left half-plane'
+    if v.repeated
+        return 'unstable: `axis` on the imaginary axis, some of them repeated'
+    'marginally stable: `axis` on the imaginary axis, none in the right half-plane'
+
+--- the roots, numerically: Durand–Kerner over complex numbers
+
+struct C [re, im]
+
+fn c_minus[a, b]
+    C[a.re - b.re, a.im - b.im]
+
+fn c_times[a, b]
+    C[a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re]
+
+fn c_over[a, b]
+    d = b.re * b.re + b.im * b.im
+    C[(a.re * b.re + a.im * b.im) / d, (a.im * b.re - a.re * b.im) / d]
+
+fn c_size[a]
+    sqrt[a.re * a.re + a.im * a.im]
+
+fn value_at[cs, z]
+    v = C[0.0, 0.0]
+    for c in cs
+        v = C[v.re * z.re - v.im * z.im + c, v.re * z.im + v.im * z.re]
+    v
+
+fn roots_of[coeffs]
+    lead = float[coeffs[0]]
+    cs = for c in coeffs
+        float[c] / lead
+    n = len[cs] - 1
+    zs = []
+    z = C[1.0, 0.0]
+    while len[zs] lt n
+        zs = push[zs, z]
+        z = c_times[z, C[0.4, 0.9]]
+    rounds = 0
+    moving = true
+    while moving and rounds lt 2000
+        biggest = 0.0
+        k = 0
+        while k lt n
+            below = C[1.0, 0.0]
+            j = 0
+            while j lt n
+                if j ne k
+                    below = c_times[below, c_minus[zs[k], zs[j]]]
+                j = j + 1
+            step = c_over[value_at[cs, zs[k]], below]
+            zs[k] = c_minus[zs[k], step]
+            biggest = max[biggest, c_size[step]]
+            k = k + 1
+        moving = biggest gt 0.000000000001
+        rounds = rounds + 1
+    zs
+
+fn earlier[a, b]
+    if a.re lt b.re - 0.000001
+        return true
+    if a.re gt b.re + 0.000001
+        return false
+    a.im lt b.im
+
+fn in_order[zs]
+    out = zs
+    i = 1
+    while i lt len[out]
+        j = i
+        while j gt 0 and earlier[out[j], out[j - 1]]
+            t = out[j]
+            out[j] = out[j - 1]
+            out[j - 1] = t
+            j = j - 1
+        i = i + 1
+    out
+
+fn shown_number[x]
+    if abs[x] lt 0.00005
+        return '0.0000'
+    fmt[x, decimals = 4]
+
+fn root_text[z]
+    re = shown_number[z.re]
+    if abs[z.im] lt 0.00005
+        return re
+    im = shown_number[abs[z.im]]
+    if abs[z.re] lt 0.00005
+        if z.im lt 0
+            return '-`im`i'
+        return '`im`i'
+    if z.im lt 0
+        return '`re` - `im`i'
+    '`re` + `im`i'
+
+--- whether the roots found lie where the verdict puts them
+fn roots_agree[v, zs]
+    right = 0
+    axis = 0
+    for z in zs
+        if z.re gt 0.000001
+            right = right + 1
+        else if z.re gt -0.000001
+            axis = axis + 1
+    right eq v.right and axis eq v.axis
+
+--- the coefficients from the first that is not zero
+fn leading_dropped[coeffs]
+    i = 0
+    while i lt len[coeffs] and coeffs[i] eq 0
+        i = i + 1
+    slice[coeffs, i, len[coeffs]]
+
+fn show_table[n, r]
+    cells = for row in r.rows
+        texts = for j in range[len[row]]
+            entry_text[row[j]]
+        texts
+    sizes = for j in range[n / 2 + 1]
+        size = 1
+        for k in range[n + 1]
+            if j lt (n - k) / 2 + 1
+                size = max[size, len[cells[k][j]]]
+        size
+    signs = first_signs[r.rows]
+    lines = for k in range[n + 1]
+        last = (n - k) / 2
+        parts = for j in range[last + 1]
+            if j lt last
+                fmt[cells[k][j], width = sizes[j]]
+            else
+                cells[k][j]
+        mark = '+'
+        if signs[k] lt 0
+            mark = '-'
+        label = fmt['s^`n - k`', width = 4]
+        shown = join[parts, '   ']
+        '    `label` `mark` | `shown`'
+    longest = 0
+    for line in lines
+        longest = max[longest, len[line]]
+    for k in range[n + 1]
+        if r.notes[k] eq ''
+            log[lines[k]]
+        else
+            log['`fmt[lines[k], width = longest]`   <- `r.notes[k]`']
+
+fn show[coeffs]
+    p = leading_dropped[coeffs]
+    written = polynomial_text[constants[coeffs]]
+    log['P(s) = `written`    coefficients `coeffs`']
+    if len[p] eq 0
+        log['    every coefficient is zero: stability is undefined']
+    else if len[p] eq 1
+        log['    a constant: no roots, so stable']
+    else
+        n = len[p] - 1
+        r = routh[p]
+        show_table[n, r]
+        v = verdict_of[n, r]
+        changes = how_many[sign_changes[first_signs[r.rows], 0], 'sign change']
+        log['    `changes` in the first column; `verdict_text[v]`']
+        zs = in_order[roots_of[p]]
+        texts = for z in zs
+            root_text[z]
+        shown = join[texts, ',  ']
+        log['    roots: `shown`  (agree: `roots_agree[v, zs]`)']
+    log['']
+
+show[[1, 6, 11, 6]]
+show[[1, -6, 11, -6]]
+show[[1, -1, -7, 1, 6]]
+show[[1, 1, 1, 1]]
+show[[1, 0, 1]]
+show[[1, 2, 1, 2]]
+show[[1, 0, -1]]
+show[[1, 0, 3, 0, 2]]
+show[[1, 2, 3, 6, 5, 10]]
+show[[1, 2, 8, 12, 20, 16, 16]]
+show[[1, 1, 2, 2, 1, 1]]
+show[[1, 1, 0, 0]]
+show[[1, 2, 3, 6, 5, 3]]
+show[[1, 1, 2, 2, 3]]
+show[[0, 1, 2, 1]]
+show[[5]]
+show[[0, 0, 0]]
+
+--- the range of a gain K for which a closed loop is stable
+log['P(s) = s^3 + 3s^2 + 3s + 1 + K, for K from -2 to 9:']
+stable = []
+agreed = true
+for k in range[-2, 10]
+    p = [1, 3, 3, 1 + k]
+    v = verdict_of[3, routh[p]]
+    agreed = agreed and roots_agree[v, roots_of[p]]
+    if v.right eq 0 and v.axis eq 0
+        stable = push[stable, k]
+    log['    K = `fmt[k, width = 2]`: `verdict_text[v]`']
+log['    stable for K from `stable[0]` to `stable[-1]`; every verdict agrees with the roots: `agreed`']

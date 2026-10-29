@@ -1,0 +1,68 @@
+--- Rosetta Code: Negative base numbers
+--- https://rosettacode.org/wiki/Negative_base_numbers
+--- Encoding divides by the base and takes each remainder as a digit; a remainder
+--- below zero (`%` keeps the sign of the left side) becomes a digit by adding the
+--- base's size, and one is carried into the quotient. Decoding sums each digit times
+--- its power of the base. Digits past 9 are A-Z, then a-z, so every base down to -62
+--- has a digit for each place, and the language's name is written in base -62.
+
+fn alphabet[]
+    return '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+
+--- n written in the negative base (-62 to -2).
+fn to_negative[n, base]
+    if n eq 0
+        return '0'
+    digits = alphabet[]
+    out = []
+    while n ne 0
+        r = n % base
+        n = n / base
+        if r lt 0
+            r = r - base
+            n = n + 1
+        out = push[out, digits[r]]
+    return join[reverse[out], '']
+
+--- The number a text of digits writes in the negative base.
+fn from_negative[text, base]
+    digits = alphabet[]
+    total = 0
+    for c in split[text, '']
+        total = total * base + find_digit[digits, c]
+    return total
+
+fn find_digit[digits, c]
+    i = 0
+    while digits[i] ne c
+        i = i + 1
+    return i
+
+fn show[n, base, expected]
+    written = to_negative[n, base]
+    back = from_negative[written, base]
+    log['`fmt[n, width = 4]` in base `fmt[base, width = 3]`: `fmt[written, width = 6]` (expected `expected`), and back: `back`']
+
+show[10, -2, '11110']
+show[146, -3, '21102']
+show[15, -10, '195']
+log['']
+
+--- Extra credit: the number that base -62 writes as the language's name.
+crow = from_negative['Crow', -62]
+log['`crow` in base -62 is `to_negative[crow, -62]`']
+log['']
+
+--- Every number from -1000 to 1000, and a few past 64 bits, round trip in every
+--- base from -2 to -62.
+ok = true
+for base in range[-62, -1]
+    for n in range[-1000, 1001]
+        if from_negative[to_negative[n, base], base] ne n
+            ok = false
+big = 2 ^ 100 + 12345
+for base in [-2, -3, -10, -16, -62]
+    if from_negative[to_negative[big, base], base] ne big or from_negative[to_negative[-big, base], base] ne -big
+        ok = false
+log['-1000 to 1000 and 2^100 + 12345 round trip in every base from -2 to -62: `ok`']
+log['2^100 + 12345 in negabinary: `to_negative[big, -2]`']

@@ -1,0 +1,34 @@
+--- Rosetta Code: Summarize primes
+--- https://rosettacode.org/wiki/Summarize_primes
+--- The primes below 1000 in order, a running sum kept, and each sum tested for
+--- primality by trial division up to its square root.
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    if n % 2 eq 0
+        return n eq 2
+    d = 3
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 2
+    return true
+
+primes = for n in range[2, 1000]
+    if is_prime[n]
+        n
+
+log['Sequences of the first primes below 1000 whose sum is prime:']
+log['length  last prime     sum']
+length = 0
+total = 0
+found = 0
+for p in primes
+    length = length + 1
+    total = total + p
+    if is_prime[total]
+        found = found + 1
+        log['`fmt[length, width = 6]`  `fmt[p, width = 10]`  `fmt[total, width = 6]`']
+log['']
+log['`found` such sequences']

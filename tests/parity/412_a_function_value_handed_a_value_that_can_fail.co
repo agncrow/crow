@@ -1,0 +1,22 @@
+--- a function value called with an argument that can fail takes its
+--- payload, as any call does: its parameter had been typed as a value that
+--- can fail, and a call handing it a plain value did not build compiled
+--- (Rosetta Code, Stream merge)
+
+fn maybe[n]
+    if n lt 0
+        return error['negative', 'demo']
+    return n
+
+fn less[a, b]
+    return a lt b
+
+fn failing_less[a, b, before]
+    return before[maybe[a], b]
+
+fn values_less[a, b, before]
+    return before[a, b]
+
+log[failing_less[1, 2, less]]
+log[values_less[1, 2, less]]
+log[failing_less[-1, 2, less].reason]

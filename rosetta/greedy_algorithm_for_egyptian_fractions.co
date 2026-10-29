@@ -1,0 +1,90 @@
+--- Rosetta Code: Greedy algorithm for Egyptian fractions
+--- https://rosettacode.org/wiki/Greedy_algorithm_for_Egyptian_fractions
+--- Fibonacci's greedy step, x/y = 1/ceil(y/x) + ((-y) mod x) / (y ceil(y/x)), taken
+--- until nothing is left, the remainder brought to lowest terms each time; the
+--- numerator only falls, and the denominator grows as far as it must, since ints
+--- grow. An improper fraction's whole part comes first, in brackets. Then, over
+--- every proper fraction in lowest terms with numbers of one or two digits, and
+--- (the extra credit) of up to three, the expansions with the most terms and with
+--- the largest denominator. The three examples are checked by adding their terms
+--- back up in exact fractions.
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+fn denominators[x, y]
+    --- the greedy expansion of a proper fraction x/y: its unit fractions' denominators
+    found = []
+    while x gt 0
+        c = (y + x - 1) / x
+        found = push[found, c]
+        x, y = (x - y % x) % x, y * c
+        g = gcd[x, y]
+        x, y = x / g, y / g
+    return found
+
+fn egyptian[x, y]
+    --- x/y as text: [whole part], then its unit fractions
+    terms = []
+    if x gte y
+        terms = push[terms, '[`x / y`]']
+    for d in denominators[x % y, y]
+        terms = push[terms, '1/`d`']
+    return join[terms, ' + ']
+
+fn sums_back[x, y]
+    --- whether the expansion of x/y adds up to x/y, in exact fractions
+    total = fraction[x / y, 1]
+    for d in denominators[x % y, y]
+        total = total + fraction[1, d]
+    return total eq fraction[x, y]
+
+fn digits_shown[n]
+    --- a number of many digits as its count and its two ends
+    s = str[n]
+    if len[s] lte 40
+        return s
+    head = slice[s, 0, 20]
+    tail = slice[s, -20, len[s]]
+    return '`head`...`tail` (`len[s]` digits)'
+
+fn maxima[limit, digits]
+    --- the proper fractions a/b in lowest terms with b up to limit whose expansions
+    --- have the most terms, and the largest denominator
+    most = 0
+    most_at = []
+    largest = 0
+    largest_at = []
+    b = 2
+    while b lte limit
+        a = 1
+        while a lt b
+            if gcd[a, b] eq 1
+                ds = denominators[a, b]
+                if len[ds] gt most
+                    most = len[ds]
+                    most_at = []
+                if len[ds] eq most
+                    most_at = push[most_at, '`a`/`b`']
+                if ds[-1] gt largest
+                    largest = ds[-1]
+                    largest_at = []
+                if ds[-1] eq largest
+                    largest_at = push[largest_at, '`a`/`b`']
+            a = a + 1
+        b = b + 1
+    log['']
+    log['For proper fractions with `digits` digits:']
+    terms_at = join[most_at, ', ']
+    log['    the most terms, `most`: `terms_at`']
+    denominator_at = join[largest_at, ', ']
+    log['    the largest denominator, `digits_shown[largest]`: `denominator_at`']
+
+for f in [[43, 48], [5, 121], [2014, 59]]
+    log['`f[0]`/`f[1]` = `egyptian[f[0], f[1]]`']
+    if not sums_back[f[0], f[1]]
+        log['    (which does not add up to `f[0]`/`f[1]`)']
+maxima[99, 'one or two']
+maxima[999, 'one, two or three']

@@ -1,0 +1,19 @@
+Files of at least 100 bytes under find_duplicate_files_demo with the same contents, largest first:
+
+3,000 bytes, 4 files:
+  backup/photos/beach copy.jpg
+  backup/photos/beach.jpg
+  photos/beach copy.jpg
+  photos/beach.jpg
+2,000 bytes, 2 files:
+  backup/photos/night.jpg
+  photos/night.jpg
+2,000 bytes, 2 files:
+  backup/photos/sunset.jpg
+  photos/sunset.jpg
+1,650 bytes, 3 names for 2 files:
+  docs/report-final.txt
+  docs/report.txt, links/report.txt  (hard links: one file)
+
+Identical directory trees:
+  backup/photos = photos  (4 files each)

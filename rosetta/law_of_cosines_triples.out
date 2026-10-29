@@ -1,0 +1,9 @@
+Integer triangular triples for sides 1..13:
+   90° has 3 solutions:
+    [(3, 4, 5), (5, 12, 13), (6, 8, 10)]
+   60° has 15 solutions:
+    [(1, 1, 1), (2, 2, 2), (3, 3, 3), (3, 7, 8), (4, 4, 4), (5, 5, 5), (5, 7, 8), (6, 6, 6), (7, 7, 7), (8, 8, 8), (9, 9, 9), (10, 10, 10), (11, 11, 11), (12, 12, 12), (13, 13, 13)]
+  120° has 2 solutions:
+    [(3, 5, 7), (7, 8, 13)]
+Extra credit: 18394 60° triples with sides 1..10000, not all the same length
+(by every pair of sides up to 300: 292, by the formula: 292)

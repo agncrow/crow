@@ -1,0 +1,20 @@
+The other entries' motors and cross3:
+  m1: ((1, 2, 3, 4), (0, 0, 0, 0))
+  m2: ((5, 6, 7, 8), (0, 0, 0, 0))
+  m1 x m2 = (-4, 8, -4, 0)
+
+A quarter turn about the z axis: ((0, 0, 0.7071, 0.7071), (0, 0, 0, 0))
+  moves (1, 0, 0) to (0, 1, 0)
+A translation by (1, 2, 3): ((0, 0, 0, 1), (0.5, 1, 1.5, 0))
+  moves (1, 0, 0) to (2, 2, 3)
+The turn and then the translation, as one motor: ((0, 0, 0.7071, 0.7071), (1.0607, 0.3536, 1.0607, -1.0607))
+  moves (1, 0, 0) to (1, 3, 3) (one after the other: (1, 3, 3))
+The translation and then the turn: ((0, 0, 0.7071, 0.7071), (-0.3536, 1.0607, 1.0607, -1.0607))
+  moves (1, 0, 0) to (-2, 2, 3)
+A quarter turn about the vertical line through (1, 1, 0): ((0, 0, 0.7071, 0.7071), (0.7071, -0.7071, 0, 0))
+  moves (2, 1, 0) to (1, 2, 0)
+A screw: a half turn about the z axis with a slide of 4 along it: ((0, 0, 1, 0), (0, 0, 0, -2))
+  moves (1, 0, 0) to (-1, 0, 4), and done twice to (1, 0, 8)
+A screw about the line through (1, 0, 0) along (1, 1, 1), a quarter turn and a slide of 3:
+  ((0.4082, 0.4082, 0.4082, 0.7071), (0.6124, 0.2041, 1.0206, -1.0607))
+  moves (0.5, -2, 7) to (9.4282, -1.0981, 2.366), and its reverse brings it back to (0.5, -2, 7)

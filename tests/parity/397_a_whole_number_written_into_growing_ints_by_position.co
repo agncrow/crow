@@ -1,0 +1,20 @@
+--- a whole number written by position into a list of growing ints
+--- (`int[text]`'s answers) — the list one that can fail, or a record's
+--- field — is held as the list holds its ints: it had been written
+--- unconverted, an internal error in both modes (Rosetta Code, Solve a
+--- Numbrix puzzle)
+
+cells = push[[], int['5']]
+log[cells]
+cells[0] = 7
+log[cells]
+
+struct Board [cells]
+
+fn first_set[b]
+    cs = b.cells
+    cs[0] = 9
+    return cs
+
+b = Board[[int['1'], int['2']]]
+log[first_set[b]]

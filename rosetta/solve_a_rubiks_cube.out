@@ -1,0 +1,26 @@
+Cube:  UL DL RF UB FD BR DB UF DR UR BL FL FDR BLU DLB URB RUF FLD BRD FUL
+Phase 1 (edges flipped right): U3 F1 L1 F3 (4 moves)
+Phase 2 (corners twisted right, the middle layer's edges in it): B2 U1 B2 R2 D1 R1 U2 L3 (8 moves)
+Phase 3 (edges in their slices, corners in their tetrads, even parity): U1 F2 R2 U3 L2 U3 B2 (7 moves)
+Phase 4 (solved by half turns): F2 R2 F2 B2 U2 R2 F2 L2 U2 L2 (10 moves)
+Solution: U3 F1 L1 F3 B2 U1 B2 R2 D1 R1 U2 L3 U1 F2 R2 U3 L2 U3 B2 F2 R2 F2 B2 U2 R2 F2 L2 U2 L2  (moves 29)
+It solves the cube: true
+
+The superflip, scrambled by U R2 F B R B2 R U2 L B2 R U' D' R2 F R' L B2 U2 F2:
+Cube:  FU RU BU LU FD RD BD LD RF LF RB LB UFR URB UBL ULF DRF DFL DLB DBR
+Phase 1 (edges flipped right): F1 U1 D1 B1 R3 L3 F3 (7 moves)
+Phase 2 (corners twisted right, the middle layer's edges in it): L3 U3 L1 U1 R3 D3 R3 (7 moves)
+Phase 3 (edges in their slices, corners in their tetrads, even parity): U3 R2 U1 F2 D1 B2 U3 L2 U1 L2 U3 F2 (12 moves)
+Phase 4 (solved by half turns): L2 U2 F2 D2 B2 R2 L2 U2 R2 (9 moves)
+Solution: F1 U1 D1 B1 R3 L3 F3 L3 U3 L1 U1 R3 D3 R3 U3 R2 U1 F2 D1 B2 U3 L2 U1 L2 U3 F2 L2 U2 F2 D2 B2 R2 L2 U2 R2  (moves 35)
+It solves the cube: true
+
+Scrambled by D2 F' L2 U B' R D' L2 F U2 R' B2 D L' F2 U' R2 B L D':
+Cube:  DR LD FD BU RF DB LF UF BL UL UR RB LFU RFD BDL DFL BRD UBL BUR RUF
+Phase 1 (edges flipped right): B1 U2 L1 R3 F3 (5 moves)
+Phase 2 (corners twisted right, the middle layer's edges in it): U2 L3 F2 B2 U1 B2 R3 (7 moves)
+Phase 3 (edges in their slices, corners in their tetrads, even parity): U2 B2 U3 F2 U1 F2 U3 L2 U3 (9 moves)
+Phase 4 (solved by half turns): L2 F2 R2 U2 L2 B2 L2 B2 U2 B2 U2 F2 (12 moves)
+Solution: B1 U2 L1 R3 F3 U2 L3 F2 B2 U1 B2 R3 U2 B2 U3 F2 U1 F2 U3 L2 U3 L2 F2 R2 U2 L2 B2 L2 B2 U2 B2 U2 F2  (moves 33)
+It solves the cube: true
+

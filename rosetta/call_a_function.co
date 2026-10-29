@@ -1,0 +1,120 @@
+--- Rosetta Code: Call a function
+--- https://rosettacode.org/wiki/Call_a_function
+--- Every call is a name and its arguments in square brackets, f[a, b]; a builtin, a
+--- module's function and the program's own are called alike. A builtin's name is the
+--- language's: `fn len[x]` is refused ("'len' is a core builtin"). A function that answers
+--- nothing is a subroutine, and its call cannot be held: `x = announce['a']` is refused
+--- ("announce[] answers nothing, which 'x' cannot hold"). Arguments are values, never
+--- references. There are no closures, so no partial application: a record holding a
+--- function and its first argument stands in for one.
+
+use math
+
+fn answer[]
+    return 42
+
+fn add[a, b]
+    return a + b
+
+--- parameters with defaults are optional, and may be given by position or by name
+fn greet[name, greeting = 'Hello', mark = '!']
+    return '`greeting`, `name``mark`'
+
+--- a function that answers nothing: a subroutine, called for what it does
+fn announce[what]
+    log['-- `what` --']
+
+--- a variable number of arguments is a list
+fn total[xs]
+    sum = 0
+    for x in xs
+        sum = sum + x
+    return sum
+
+fn double[x]
+    return x * 2
+
+fn square[x]
+    return x * x
+
+fn is_even[n]
+    return n % 2 eq 0
+
+--- a function is a value: f is called like any function
+fn twice[f, x]
+    return f[f[x]]
+
+--- the function gets its own copy of what it is handed: the caller's list is unchanged
+fn zeroed[xs]
+    xs[0] = 0
+    return xs
+
+--- a function and the first argument to hand it
+struct Partial [f, first]
+
+fn call_partial[p, x]
+    f = p.f
+    return f[p.first, x]
+
+announce['no arguments']
+log[answer[]]
+
+announce['a fixed number of arguments']
+log[add[2, 3]]
+
+announce['optional arguments, by position and by name']
+log[greet['Ada']]
+log[greet['Ada', 'Hi']]
+log[greet['Ada', mark = '?']]
+log[greet['Ada', greeting = 'Goodbye', mark = '.']]
+
+announce['a variable number of arguments, as a list']
+log[total[[1, 2, 3, 4, 5]]]
+
+announce['named arguments of a builtin']
+log[fmt[pi, decimals = 3]]
+log[fmt[7, width = 4, fill = '0']]
+
+announce['calls in statement context: an answer is dropped']
+add[2, 3]
+announce['this line is a call in statement context']
+
+announce['the answer of a call, kept and used in an expression']
+x = add[2, 3]
+log[x * 10 + answer[]]
+
+announce['first-class functions']
+f = square
+log[f[7]]
+log[twice[double, 5]]
+for g in [double, square]
+    log[g[6]]
+log[any[[1, 3, 4], is_even]]
+log[find[[1, 3, 4, 6], is_even]]
+
+announce['the pipe: x then f[a] is f[x, a]']
+log[5 then add[3]]
+y = 3
+    then add[4]
+    then square
+log[y]
+
+announce['builtins, a module\'s functions and the program\'s are called alike']
+log[len['crow']]
+log[mean[[1.0, 2.0, 6.0]]]
+log[math.mean[[1.0, 2.0, 6.0]]]
+log[add[1, 1]]
+
+announce['arguments are values: the function changes only its own copy']
+data = [5, 6, 7]
+changed = zeroed[data]
+log['the caller still holds `data`; the function answered `changed`']
+
+announce['a failed argument is the call\'s answer, and the function does not run']
+r = add[int['seven'], 1]
+log[r.ok]
+log[r.reason]
+
+announce['partial application, stood in for by a record']
+add5 = Partial[add, 5]
+log[call_partial[add5, 10]]

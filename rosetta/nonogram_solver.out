@@ -1,0 +1,143 @@
+Rows:    C BA CB BB F AE F A B
+Columns: AB CA AE GA E C D C
+Line logic alone settles every cell.
+. # # # . . . .
+# # . # . . . .
+. # # # . . # #
+. . # # . . # #
+. . # # # # # #
+# . # # # # # .
+# # # # # # . .
+. . . . # . . .
+. . . # # . . .
+The only solution.
+
+Rows:    F CAC ACAC CN AAA AABB EBB EAA ECCC HCCC
+Columns: D D AE CD AE A DA BBB CC AAB BAA AAB DA AAB AAA BAB AAA CD BBA DA
+Line logic alone settles every cell.
+. . . . . . . . . . # # # # # # . . . .
+. . . . . . . . # # # . # . . # # # . .
+. . . # . . # # # . . . # . . . . # # #
+. . # # # . # # # # # # # # # # # # # #
+. . . # . . # . . . . . . . . . . . . #
+. . # . # . # # . . . . . . . . . . # #
+# # # # # . . # # . . . . . . . . # # .
+# # # # # . . . # . . . . . . . . # . .
+# # # # # . . # # # . # # # . # # # . .
+# # # # # # # # . # # # . # # # . # # #
+The only solution.
+
+Rows:    CA BDA ACC BD CCAC CBBAC BBBBB BAABAA ABAD AABB BBH BBBD ABBAAA CCEA AACAAB BCACC ACBH DCH ADBE ADBB DBE ECE DAA DB CC
+Columns: BC CAC CBAB BDD CDBDE BEBDF ADCDFA DCCFB DBCFC ABDBA BBF AAF BADB DBF AAAAD BDG CEF CBDB BBB FC
+Line logic alone settles every cell.
+. . . . # # # . # . . . . . . . . . . .
+. . . . # # . # # # # . # . . . . . . .
+. . . . # . # # # . # # # . . . . . . .
+. . # # . # # # # . . . . . . . . . . .
+. # # # . # # # . # . . . . # # # . . .
+# # # . . # # . # # . . . # . # # # . .
+# # . . # # . # # . . . . # # . # # . .
+. . . . # # . # . # . . # # . # . # . .
+. . . . # . # # . # . . . # # # # . . .
+. . . . # . # . # # . . . . . # # . . .
+. . . . . # # . # # . . # # # # # # # #
+. . . . # # . # # . . . # # . . # # # #
+. . . . # . # # . # # . # . . . # . . #
+# # # . . # # # . # # # # # . . . . . #
+# . # . # # # . # . . . . # . . . . # #
+# # . . # # # . # . . . . # # # . # # #
+. # . # # # . # # . # # # # # # # # . .
+. # # # # . # # # . # # # # # # # # . .
+. . . # . # # # # . # # . # # # # # . .
+. . . # . # # # # . # # . . . # # . . .
+. . . . # # # # . . # # . . . # # # # #
+. . . # # # # # . # # # . . . # # # # #
+. . . # # # # . # . . . . . . . . . . #
+. . # # # # . # # . . . . . . . . . . .
+. . # # # . # # # . . . . . . . . . . .
+The only solution.
+
+Rows:    E BCB BEA BH BEK AABAF ABAC BAA BFB OD JH BADCF Q Q R AN AAN EI H G
+Columns: E CB BAB AAA AAA AC BB ACC ACCA AGB AIA AJ AJ ACE AH BAF CAG DAG FAH FJ GJ ADK ABK BL CM
+Line logic alone settles every cell.
+. . . . . . . . . . . . . . . . . . . . # # # # #
+. . # # . . . . . . . . . . . . . . # # # . . # #
+. # # . . . . . . . . . . . . . . # # # # # . . #
+# # . . . . . . . . . . . . . # # # # # # # # . .
+# # . . . . # # # # # . # # # # # # # # # # # . .
+# . # . . # # . . . . # . . . . # # # # # # . . .
+# . . # # . . . . . # . . . . . . . # # # . . . .
+# # . . . . . . . . # . . . . . . . . . . . . . #
+. # # . . . . . # # # # # # . . . . . . . . . # #
+. . # # # # # # # # # # # # # # # . . . . # # # #
+. . . . . # # # # # # # # # # . . # # # # # # # #
+. . . . # # . # . # # # # . # # # . . # # # # # #
+. . . . . . . . # # # # # # # # # # # # # # # # #
+. . . . . . . . # # # # # # # # # # # # # # # # #
+. . . . . . . # # # # # # # # # # # # # # # # # #
+. . . . . . . # . . . # # # # # # # # # # # # # #
+. . . . . . . # . # . # # # # # # # # # # # # # #
+. . . . . . . . # # # # # . . . # # # # # # # # #
+. . . . . . . . . . . . . . . . . # # # # # # # #
+. . . . . . . . . . . . . . . . . . # # # # # # #
+The only solution.
+
+Two more, as the Python entry has: one line logic cannot finish, one with no solution.
+
+Rows:    B B A A
+Columns: B B A A
+Line logic leaves 16 of 16 cells open: guessing them.
+# # . .
+# # . .
+. . # .
+. . . #
+A solution, and not the only one.
+
+Rows:    B A A
+Columns: A A A
+Line logic leaves 6 of 9 cells open: guessing them.
+No solution.
+
+5 rows by 5 columns, with one solution (found at draw 1):
+Rows:    AC AA B A B
+Columns: A - BA AC C
+Line logic alone settles every cell.
+# . # # #
+. . # . #
+. . . # #
+. . . # .
+. . # # .
+The only solution.
+
+8 rows by 12 columns, with one solution (found at draw 1):
+Rows:    ABC ADAA BDA BAAA CAAA AAF BBA AC
+Columns: BAA C AB AA BA BB CA BD AB BCA AAAA BBB
+Line logic alone settles every cell.
+# . . # # . . . . # # #
+# . . . # # # # . # . #
+. # # . . # # # # . # .
+# # . . . . # . . # . #
+. # # # . . . # . # . #
+# . # . . # # # # # # .
+. . . . # # . # # . . #
+. . . . . . . # . # # #
+The only solution.
+
+12 rows by 10 columns, with one solution (found at draw 1):
+Rows:    CA EA AAB ACBA BAA ABD AFA BBB AAB BD E AA
+Columns: AG BAA DBA AAE AABA ACC ABB DD CAD BB
+Line logic alone settles every cell.
+# # # . . . . . # .
+. # # # # # . . # .
+# . # . . . . . # #
+# . # # # . # # . #
+# # . . . # . # . .
+# . # # . # # # # .
+# . # # # # # # . #
+# # . # # . . . # #
+# . . # . . . # # .
+. . # # . # # # # .
+. . . . # # # # # .
+. . . . . # . # . .
+The only solution.
+

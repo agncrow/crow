@@ -1,0 +1,87 @@
+--- Rosetta Code: Bernstein basis polynomials
+--- https://rosettacode.org/wiki/Bernstein_basis_polynomials
+--- The task's five subprograms, written as its Algol 60 gives them, on lists of
+--- float coefficients (lowest degree first); the monomial forms are evaluated by
+--- Horner's rule beside de Casteljau's answers.
+
+fn to_bernstein2[a]
+    --- Subprogram (1): monomial coefficients a0, a1, a2 to degree-2 Bernstein ones
+    return [a[0], a[0] + (1.0 / 2.0) * a[1], a[0] + a[1] + a[2]]
+
+fn eval_bernstein2[b, t]
+    --- Subprogram (2): de Casteljau's algorithm for degree 2
+    s = 1.0 - t
+    b01 = s * b[0] + t * b[1]
+    b12 = s * b[1] + t * b[2]
+    return s * b01 + t * b12
+
+fn to_bernstein3[a]
+    --- Subprogram (3): monomial coefficients a0 … a3 to degree-3 Bernstein ones
+    b1 = a[0] + (1.0 / 3.0) * a[1]
+    b2 = a[0] + (2.0 / 3.0) * a[1] + (1.0 / 3.0) * a[2]
+    return [a[0], b1, b2, a[0] + a[1] + a[2] + a[3]]
+
+fn eval_bernstein3[b, t]
+    --- Subprogram (4): de Casteljau's algorithm for degree 3
+    s = 1.0 - t
+    b01 = s * b[0] + t * b[1]
+    b12 = s * b[1] + t * b[2]
+    b23 = s * b[2] + t * b[3]
+    b012 = s * b01 + t * b12
+    b123 = s * b12 + t * b23
+    return s * b012 + t * b123
+
+fn bernstein2_to_3[q]
+    --- Subprogram (5): degree-2 Bernstein coefficients to degree-3 ones
+    c1 = (1.0 / 3.0) * q[0] + (2.0 / 3.0) * q[1]
+    c2 = (2.0 / 3.0) * q[1] + (1.0 / 3.0) * q[2]
+    return [q[0], c1, c2, q[2]]
+
+fn horner[a, t]
+    --- the monomial form a0 + a1 t + a2 t^2 + …, from the highest coefficient down
+    value = 0.0
+    for k in range[len[a] - 1, -1, -1]
+        value = a[k] + t * value
+    return value
+
+fn show_value[name, t, by_bernstein, by_monomial]
+    log['  `name`(`t`) = `by_bernstein`   (monomial basis: `by_monomial`)']
+
+p2 = [1.0, 0.0, 0.0]
+q2 = [1.0, 2.0, 3.0]
+p3 = [1.0, 0.0, 0.0, 0.0]
+q3 = [1.0, 2.0, 3.0, 0.0]
+r3 = [1.0, 2.0, 3.0, 4.0]
+points = [0.25, 7.5]
+
+log['Subprogram (1): monomial to degree-2 Bernstein coefficients']
+pb2 = to_bernstein2[p2]
+qb2 = to_bernstein2[q2]
+log['  p: `p2` --> `pb2`']
+log['  q: `q2` --> `qb2`']
+
+log['Subprogram (2): degree-2 evaluation by de Casteljau']
+for t in points
+    show_value['p', t, eval_bernstein2[pb2, t], horner[p2, t]]
+for t in points
+    show_value['q', t, eval_bernstein2[qb2, t], horner[q2, t]]
+
+log['Subprogram (3): monomial to degree-3 Bernstein coefficients']
+pb3 = to_bernstein3[p3]
+qb3 = to_bernstein3[q3]
+rb3 = to_bernstein3[r3]
+log['  p: `p3` --> `pb3`']
+log['  q: `q3` --> `qb3`']
+log['  r: `r3` --> `rb3`']
+
+log['Subprogram (4): degree-3 evaluation by de Casteljau']
+for t in points
+    show_value['p', t, eval_bernstein3[pb3, t], horner[p3, t]]
+for t in points
+    show_value['q', t, eval_bernstein3[qb3, t], horner[q3, t]]
+for t in points
+    show_value['r', t, eval_bernstein3[rb3, t], horner[r3, t]]
+
+log['Subprogram (5): degree-2 to degree-3 Bernstein coefficients']
+log['  p: `pb2` --> `bernstein2_to_3[pb2]`']
+log['  q: `qb2` --> `bernstein2_to_3[qb2]`']

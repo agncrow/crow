@@ -1,0 +1,134 @@
+--- Rosetta Code: Worthwhile task shaving
+--- https://rosettacode.org/wiki/Worthwhile_task_shaving
+--- xkcd 1205, "Is It Worth the Time?": a shaving saves its time at every run, so over
+--- five years it saves the shaving times the runs in five years. Each time is shown in
+--- the largest unit it fills, counted down as the comic counts (5.3 days is 5 days),
+--- days until two weeks, weeks until two months, then months, then years; a cell is
+--- n/a where the task would take all the time there is (half an hour fifty times a
+--- day). What a day, a week, a month and a year are is a model's: calendar time
+--- (24-hour days, 7-day weeks, a year of 365.25 days and a month a twelfth of it)
+--- gives 48 of the comic's 54 cells, and the six it does not are listed with what
+--- they come to; working time (8-hour days, 5-day weeks, 4-week months and 12-month
+--- years, as the Phix entry counts them) is the second table.
+
+struct Unit [name, length, from]
+
+fn units_of[day, week, year]
+    units = [
+        Unit['second', 1, 0], Unit['minute', 60, 1], Unit['hour', 3600, 1], Unit['day', day, 1],
+        Unit['week', week, 2], Unit['month', year / 12, 2], Unit['year', year, 1]
+    ]
+    return units
+
+--- the unit a time is told in: the largest whose 'from' of it the time reaches
+fn unit_for[seconds, units]
+    chosen = units[0]
+    i = 1
+    while i lt len[units]
+        if seconds gte units[i].from * units[i].length
+            chosen = units[i]
+        i = i + 1
+    return chosen
+
+fn told[seconds, u]
+    n = floor[seconds / u.length]
+    if n eq 1
+        return '1 `u.name`'
+    return '`n` `u.name`s'
+
+--- the seconds saved over five years by shaving a task run `per` times each `slot`
+fn saved_by[shave, per, slot, year]
+    return float[shave * per * 5 * year] / slot
+
+fn cell[shave, per, slot, year, units]
+    if shave * per gte slot
+        return 'n/a'
+    saved = saved_by[shave, per, slot, year]
+    return told[saved, unit_for[saved, units]]
+
+fn shaves_of[day]
+    return [1, 5, 30, 60, 300, 1800, 3600, 6 * 3600, day]
+
+fn slots_of[day, week, year]
+    return [[50, day], [5, day], [1, day], [1, week], [1, year / 12], [1, year]]
+
+fn table[day, week, year]
+    units = units_of[day, week, year]
+    rows = []
+    for shave in shaves_of[day]
+        row = []
+        for s in slots_of[day, week, year]
+            row = push[row, cell[shave, s[0], s[1], year, units]]
+        rows = push[rows, row]
+    return rows
+
+fn show[title, rows, names, often]
+    log[title]
+    log['']
+    log[' Shave off |                     How often you do the task']
+    heads = for o in often
+        fmt[o, width = 12, align = 'right']
+    heading = join[heads, '']
+    log[' task time |`heading`']
+    rule = repeat['-', 72]
+    log['-----------+`rule`']
+    for i in range[len[rows]]
+        cells = for c in rows[i]
+            fmt[c, width = 12, align = 'right']
+        shown = join[cells, '']
+        name = fmt[names[i], width = 10, align = 'right']
+        log['`name` |`shown`']
+    log['']
+
+names = [
+    '1 second', '5 seconds', '30 seconds', '1 minute', '5 minutes', '30 minutes', '1 hour',
+    '6 hours', '1 day'
+]
+often = ['50/day', '5/day', 'daily', 'weekly', 'monthly', 'yearly']
+--- the comic, as the task's talk page transcribes it (n/a where the comic is blank)
+comic = [
+    ['1 day', '2 hours', '30 minutes', '4 minutes', '1 minute', '5 seconds'],
+    ['5 days', '12 hours', '2 hours', '21 minutes', '5 minutes', '25 seconds'],
+    ['4 weeks', '3 days', '12 hours', '2 hours', '30 minutes', '2 minutes'],
+    ['8 weeks', '6 days', '1 day', '4 hours', '1 hour', '5 minutes'],
+    ['9 months', '4 weeks', '6 days', '21 hours', '5 hours', '25 minutes'],
+    ['n/a', '6 months', '5 weeks', '5 days', '1 day', '2 hours'],
+    ['n/a', '10 months', '2 months', '10 days', '2 days', '5 hours'],
+    ['n/a', 'n/a', 'n/a', '2 months', '2 weeks', '1 day'],
+    ['n/a', 'n/a', 'n/a', 'n/a', '8 weeks', '5 days']
+]
+
+log['How long can you work on making a routine task more efficient before you']
+log['spend more time than you save? (across five years; xkcd 1205)']
+log['']
+
+day = 86400
+week = 7 * day
+year = 365 * day + day / 4
+calendar = table[day, week, year]
+show['Calendar time: 24-hour days, 7-day weeks, 365.25-day years, a month a twelfth of a year', calendar, names, often]
+
+units = units_of[day, week, year]
+shaves = shaves_of[day]
+slots = slots_of[day, week, year]
+log['Where the comic says otherwise:']
+same = 0
+for i in range[len[names]]
+    for j in range[len[often]]
+        if calendar[i][j] eq comic[i][j]
+            same = same + 1
+        else
+            saved = saved_by[shaves[i], slots[j][0], slots[j][1], year]
+            u = unit_for[saved, units]
+            exact = fmt[saved / u.length, decimals = 2]
+            said = 'says `comic[i][j]`'
+            if comic[i][j] eq 'n/a'
+                said = 'leaves it blank'
+            log['  `names[i]` `often[j]`: `calendar[i][j]` (`exact` `u.name`s); the comic `said`']
+log['The other `same` cells are the comic\'s.']
+log['']
+
+day = 8 * 3600
+week = 5 * day
+year = 48 * week
+show['Working time: 8-hour days, 5-day weeks, 4-week months, 12-month years', table[day, week, year], names, often]

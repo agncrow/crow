@@ -1,0 +1,7 @@
+--- a record's name read as a value (a slip: `Point` for `Point[…]`): it
+--- is defined for the calls that make one, and read bare the lowered
+--- program had read a name nothing bound — an internal error in both modes
+struct Point [x, y]
+
+p = Point
+log[p]

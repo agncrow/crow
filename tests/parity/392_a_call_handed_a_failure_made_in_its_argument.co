@@ -1,0 +1,13 @@
+--- a call handed a failure made in its argument (`encode[error['why']]`)
+--- answers that failure, as any call handed a failed value does: compiled,
+--- the failure's value of no kind had been handed on where the row takes a
+--- value, and the program did not build (Rosetta Code, JSON pointer)
+
+fn shout[t]
+    return upper[t]
+
+log[encode[error['why']]]
+log[str[error['why']]]
+log[shout[error['loud']].reason]
+x = len[error['n']]
+log[x.ok]

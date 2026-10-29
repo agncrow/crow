@@ -1,0 +1,12 @@
+What https://api.macvendors.com answered (recorded 2026-10-28):
+88:53:2E:67:07:BE    Intel Corporate
+FC:FB:FB:01:FA:21    Cisco Systems, Inc
+D4:F4:6F:C9:EF:8D    Apple, Inc.
+00-00-5E-00-53-AF    ICANN, IANA Department
+0050.5600.0001       VMware, Inc.
+23:45:67             N/A
+02:00:00:00:00:01    N/A
+not-a-mac            N/A
+
+With the service out of reach (a lookup sent where nothing listens):
+88:53:2E:67:07:BE    null (network error)

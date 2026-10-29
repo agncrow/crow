@@ -1,0 +1,18 @@
+The first twenty terms of the sequence:
+1, 1, 1, 2, 2, 3, 4, 5, 7, 9, 12, 16, 21, 28, 37, 49, 65, 86, 114, 151
+
+The recurrence and floor based functions agree for the first 64 terms.
+
+The first 10 L-system strings and their lengths:
+   1  A
+   1  B
+   1  C
+   2  AB
+   2  BC
+   3  CAB
+   4  ABBC
+   5  BCCAB
+   7  CABABBC
+   9  ABBCBCCAB
+
+The lengths of the first 32 L-system strings and the sequence agree.

@@ -1,0 +1,191 @@
+--- Rosetta Code: Compiler/lexical analyzer
+--- https://rosettacode.org/wiki/Compiler/lexical_analyzer
+--- A hand-written scanner: the source is read from standard input, each line ended
+--- by a newline, and walked a character at a time; every token is written as the C
+--- reference writes it (line, column, name, and the value of an integer, an
+--- identifier or a string). A lexical error ends the list, saying where and why.
+use bits
+
+--- a token: where it starts, its name, and its value (empty text where it has none)
+struct Token [line, col, name, value]
+
+--- the name and value of the token a scan found, and where the scan stopped
+struct Scanned [name, value, next]
+
+--- the line and column of each character, and of the end of the input after them
+struct Places [lines, cols]
+
+fn is_digit[c]
+    return c gte '0' and c lte '9'
+
+fn is_alpha[c]
+    return (c gte 'a' and c lte 'z') or (c gte 'A' and c lte 'Z') or c eq '_'
+
+fn is_alnum[c]
+    return is_alpha[c] or is_digit[c]
+
+fn is_space[c]
+    return c eq ' ' or c eq '\n' or c eq '\t' or c eq '\r'
+
+--- the character at i, or empty text past the end
+fn char_at[chars, i]
+    if i lt len[chars]
+        return chars[i]
+    return ''
+
+--- the source, a line at a time to the end of the input
+fn source_chars[]
+    lines = []
+    line = input[]
+    while line.ok
+        lines = push[lines, '`line`\n']
+        line = input[]
+    return split[join[lines, ''], '']
+
+--- the place of every character, and of the end after them
+fn places_of[chars]
+    lines = []
+    cols = []
+    line = 1
+    col = 1
+    for c in chars
+        lines = push[lines, line]
+        cols = push[cols, col]
+        if c eq '\n'
+            line = line + 1
+            col = 1
+        else
+            col = col + 1
+    return Places[push[lines, line], push[cols, col]]
+
+--- the operators and symbols, one or two characters long
+fn symbol_names[]
+    return map['*' = 'Op_multiply', '/' = 'Op_divide', '%' = 'Op_mod', '+' = 'Op_add', '-' = 'Op_subtract', '<' = 'Op_less', '<=' = 'Op_lessequal', '>' = 'Op_greater', '>=' = 'Op_greaterequal', '==' = 'Op_equal', '!=' = 'Op_notequal', '!' = 'Op_not', '=' = 'Op_assign', '&&' = 'Op_and', '||' = 'Op_or', '(' = 'LeftParen', ')' = 'RightParen', '{' = 'LeftBrace', '}' = 'RightBrace', ';' = 'Semicolon', ',' = 'Comma']
+
+fn keyword_names[]
+    return map['if' = 'Keyword_if', 'else' = 'Keyword_else', 'while' = 'Keyword_while', 'print' = 'Keyword_print', 'putc' = 'Keyword_putc']
+
+--- where a comment that opened before i ends, or -1 if the input ends first
+fn comment_end[chars, i]
+    while i + 1 lt len[chars]
+        if chars[i] eq '*' and chars[i + 1] eq '/'
+            return i + 2
+        i = i + 1
+    return -1
+
+--- a backslash before anything but n or another backslash
+fn unknown_escape[c]
+    slash = '\\'
+    return error['unknown escape sequence `slash``c`', 'lex']
+
+--- "text": the value is the text as written, quotes and escapes kept
+fn string_at[chars, start]
+    i = start + 1
+    while true
+        c = char_at[chars, i]
+        if c eq ''
+            return error['end of input in a string', 'lex']
+        if c eq '\n'
+            return error['end of line in a string', 'lex']
+        if c eq '"'
+            return Scanned['String', join[slice[chars, start, i + 1], ''], i + 1]
+        if c eq '\\'
+            escaped = char_at[chars, i + 1]
+            if escaped ne 'n' and escaped ne '\\'
+                return unknown_escape[escaped]
+            i = i + 1
+        i = i + 1
+
+--- 'c': an integer, the character's code
+fn char_literal_at[chars, start]
+    c = char_at[chars, start + 1]
+    if c eq '\''
+        return error['empty character constant', 'lex']
+    if c eq '' or c eq '\n'
+        return error['end of line in a character constant', 'lex']
+    value = code[c]
+    close = start + 2
+    if c eq '\\'
+        escaped = char_at[chars, start + 2]
+        if escaped eq 'n'
+            value = 10
+        else if escaped eq '\\'
+            value = 92
+        else
+            return unknown_escape[escaped]
+        close = start + 3
+    if char_at[chars, close] ne '\''
+        return error['multi-character constant', 'lex']
+    return Scanned['Integer', str[value], close + 1]
+
+--- an identifier, a keyword or an integer: letters, digits and underscores
+fn word_at[chars, start, keywords]
+    i = start
+    while is_alnum[char_at[chars, i]]
+        i = i + 1
+    word = join[slice[chars, start, i], '']
+    if is_digit[chars[start]]
+        if not matches[word, '^[0-9]+$']
+            return error['invalid number: `word`', 'lex']
+        return Scanned['Integer', str[int[word]], i]
+    if word in keywords
+        return Scanned[keywords[word], '', i]
+    return Scanned['Identifier', word, i]
+
+--- the token that starts at i
+fn token_at[chars, i, symbols, keywords]
+    c = chars[i]
+    if c eq '"'
+        return string_at[chars, i]
+    if c eq '\''
+        return char_literal_at[chars, i]
+    if is_alnum[c]
+        return word_at[chars, i, keywords]
+    next = char_at[chars, i + 1]
+    two = '`c``next`'
+    if two in symbols
+        return Scanned[symbols[two], '', i + 2]
+    if c in symbols
+        return Scanned[symbols[c], '', i + 1]
+    return error['unrecognized character \'`c`\'', 'lex']
+
+--- every token of the source; a lexical error is the last, named Error
+fn tokens_of[chars]
+    places = places_of[chars]
+    symbols = symbol_names[]
+    keywords = keyword_names[]
+    tokens = []
+    i = 0
+    while i lt len[chars]
+        if is_space[chars[i]]
+            i = i + 1
+            continue
+        line = places.lines[i]
+        col = places.cols[i]
+        if chars[i] eq '/' and char_at[chars, i + 1] eq '*'
+            i = comment_end[chars, i + 2]
+            if i lt 0
+                return push[tokens, Token[line, col, 'Error', 'end of input in a comment']]
+            continue
+        scanned = token_at[chars, i, symbols, keywords]
+        if not scanned.ok
+            return push[tokens, Token[line, col, 'Error', scanned.reason]]
+        tokens = push[tokens, Token[line, col, scanned.name, scanned.value]]
+        i = scanned.next
+    return push[tokens, Token[places.lines[i], places.cols[i], 'End_of_input', '']]
+
+--- a token's line: its place, its name and its value, as the C reference writes them
+fn shown[t]
+    if t.name eq 'Error'
+        return '(`t.line`, `t.col`) error: `t.value`'
+    place = '`fmt[t.line, width = 5]`  `fmt[t.col, width = 5]`'
+    if t.value eq ''
+        return '`place` `t.name`'
+    name = fmt[t.name, width = 15]
+    if t.name eq 'Integer'
+        number = fmt[t.value, width = 4, align = 'right']
+        return '`place` `name`  `number`'
+    return '`place` `name` `t.value`'
+
+for t in tokens_of[source_chars[]]
+    log[shown[t]]

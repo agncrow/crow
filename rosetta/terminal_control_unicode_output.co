@@ -1,0 +1,40 @@
+--- Rosetta Code: Terminal control/Unicode output
+--- https://rosettacode.org/wiki/Terminal_control/Unicode_output
+--- A terminal takes Unicode when the locale it runs under names UTF-8 as its
+--- character set. The system's own answer is `locale charmap` (LC_ALL, then
+--- LC_CTYPE, then LANG decide it); where that command is missing, the first of
+--- those variables that is set is read instead. Under a UTF-8 locale the program
+--- prints the delta U+25B3; under any other it stops with an error naming the
+--- character set (as `LANG=C crow run …` shows). Recorded under C.UTF-8.
+
+--- the character set a locale's name gives (language_territory.codeset@modifier)
+fn codeset[locale]
+    if locale eq 'C' or locale eq 'POSIX'
+        return 'US-ASCII'
+    pieces = split[split[locale, '@'][0], '.']
+    return pieces[-1]
+
+--- the first of the locale's variables that is set, or C
+fn locale_from_environment[]
+    for name in ['LC_ALL', 'LC_CTYPE', 'LANG']
+        value = env[name]
+        if value.ok and value ne ''
+            return value
+    return 'C'
+
+--- the character set of the program's locale, as the system names it
+fn charset[]
+    asked = shell['locale charmap 2>/dev/null']
+    if asked.ok
+        named = trim[asked.stdout]
+        if asked.status eq 0 and named ne ''
+            return named
+    return codeset[locale_from_environment[]]
+
+fn names_utf8[name]
+    return 'UTF8' in replace[upper[name], '-', '']
+
+chosen = charset[]
+if not names_utf8[chosen]
+    halt['this terminal does not take Unicode: its character set is `chosen`']
+log['This terminal takes Unicode (its character set is `chosen`): △']

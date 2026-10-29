@@ -1,0 +1,48 @@
+--- Rosetta Code: Palindrome dates
+--- https://rosettacode.org/wiki/Palindrome_dates
+--- A year has at most one palindromic yyyy-mm-dd date: its four digits reversed are
+--- the month and the day, a date only where moment[] takes them. The search starts
+--- from the task's day, 2020-02-02 (fixed, not the clock), and walks the years after.
+
+fn palindrome_of[year]
+    --- the year's palindromic date, or an error value where the reversed digits
+    --- name no day
+    digits = reverse[fmt[year, width = 4, fill = '0']]
+    return moment[year, int[slice[digits, 0, 2]], int[slice[digits, 2, 4]]]
+
+fn shown[date]
+    return fmt[date, style = 'date']
+
+fn palindromic_dates[after, last_year]
+    --- every palindromic date after the moment `after`, to the end of last_year
+    found = []
+    year = after.year
+    while year lte last_year
+        date = palindrome_of[year]
+        if date.ok
+            if date gt after
+                found = push[found, shown[date]]
+        year = year + 1
+    return found
+
+fn palindrome_both_ways[date]
+    --- whether a yyyy-mm-dd date is a palindrome written dd-mm-yyyy too
+    parts = split[date, '-']
+    text = '`parts[2]``parts[1]``parts[0]`'
+    return text eq reverse[text]
+
+today = moment[2020, 2, 2]
+dates = palindromic_dates[today, 9999]
+
+log['The next 15 palindromic dates after `shown[today]`:']
+for date in slice[dates, 0, 15]
+    log[date]
+log['']
+log['The years 2021 to 9999 hold `len[dates]`; the last 15:']
+for date in slice[dates, -15, len[dates]]
+    log[date]
+log['']
+log['Of them, palindromes in the dd-mm-yyyy format as well:']
+for date in dates
+    if palindrome_both_ways[date]
+        log[date]

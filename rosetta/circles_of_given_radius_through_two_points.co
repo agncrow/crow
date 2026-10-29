@@ -1,0 +1,49 @@
+--- Rosetta Code: Circles of given radius through two points
+--- https://rosettacode.org/wiki/Circles_of_given_radius_through_two_points
+--- The centres lie on the perpendicular bisector of the two points, at
+--- sqrt(r^2 - (q/2)^2) either side of their midpoint (q the points' distance).
+--- Where no two circles can be drawn the answer is one circle or an error value
+--- whose reason says why.
+
+struct Point [x, y]
+struct Circle [x, y, r]
+
+fn circles[p, q, r]
+    dx = q.x - p.x
+    dy = q.y - p.y
+    apart = sqrt[dx * dx + dy * dy]
+    if apart eq 0.0
+        if r eq 0.0
+            return [Circle[p.x, p.y, 0.0]]
+        return error['the points coincide: infinitely many circles of this radius pass through them', 'geometry']
+    if r eq 0.0
+        return error['no circle: a radius of zero draws none through two points', 'geometry']
+    if apart gt 2.0 * r
+        return error['no circle: the points are farther apart than a diameter', 'geometry']
+    mx = (p.x + q.x) / 2.0
+    my = (p.y + q.y) / 2.0
+    if apart eq 2.0 * r
+        return [Circle[mx, my, r]]
+    d = sqrt[r * r - (apart / 2.0) ^ 2]
+    return [Circle[mx - d * dy / apart, my + d * dx / apart, r], Circle[mx + d * dy / apart, my - d * dx / apart, r]]
+
+fn place[x, y]
+    return '(`fmt[x, decimals = 4]`, `fmt[y, decimals = 4]`)'
+
+fn report[p, q, r]
+    log['Points `place[p.x, p.y]` and `place[q.x, q.y]`, radius `fmt[r, decimals = 1]`:']
+    found = circles[p, q, r]
+    if not found.ok
+        log['    `found.reason`']
+    else if len[found] eq 2
+        log['    two circles, centred at `place[found[0].x, found[0].y]` and `place[found[1].x, found[1].y]`']
+    else if found[0].r eq 0.0
+        log['    one circle of radius 0, the point `place[found[0].x, found[0].y]` itself']
+    else
+        log['    one circle, the points a diameter of it, centred at `place[found[0].x, found[0].y]`']
+
+report[Point[0.1234, 0.9876], Point[0.8765, 0.2345], 2.0]
+report[Point[0.0, 2.0], Point[0.0, 0.0], 1.0]
+report[Point[0.1234, 0.9876], Point[0.1234, 0.9876], 2.0]
+report[Point[0.1234, 0.9876], Point[0.8765, 0.2345], 0.5]
+report[Point[0.1234, 0.9876], Point[0.1234, 0.9876], 0.0]

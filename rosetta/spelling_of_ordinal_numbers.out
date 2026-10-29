@@ -1,0 +1,24 @@
+                   1  first
+                   2  second
+                   3  third
+                   4  fourth
+                   5  fifth
+                  11  eleventh
+                  65  sixty-fifth
+                 100  one hundredth
+                 101  one hundred first
+                 272  two hundred seventy-second
+               23456  twenty-three thousand four hundred fifty-sixth
+    8007006005004003  eight quadrillion seven trillion six billion five million four thousand third
+                 123  one hundred twenty-third
+             00123.0  one hundred twenty-third
+              1.23e2  one hundred twenty-third
+                  12  twelfth
+                  20  twentieth
+                  99  ninety-ninth
+          1000000000  one billionth
+18446744073709551616  eighteen quintillion four hundred forty-six quadrillion seven hundred forty-four trillion seventy-three billion seven hundred nine million five hundred fifty-one thousand six hundred sixteenth
+                1e36  (too large to name: 1000000000000000000000000000000000000)
+                 1.5  (not a positive whole number)
+                  -3  (not a positive whole number)
+                   x  (not a number)

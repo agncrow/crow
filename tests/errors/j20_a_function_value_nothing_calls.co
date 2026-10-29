@@ -1,3 +1,4 @@
 fn double[x]
     return x * 2
-log[double eq double]
+f = double
+log[1]

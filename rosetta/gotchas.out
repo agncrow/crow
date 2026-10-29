@@ -1,0 +1,78 @@
+Twelve gotchas of Crow: each line is code, then what it answers
+
+1. ^ is the power, not exclusive or, and it binds tighter than a minus
+    2 ^ 3                                              8
+    2 ^ 3 ^ 2                                          512
+    -3 ^ 2                                             -9
+    bitxor[2, 3]                                       1
+    --- the bit operations are named functions of use bits
+
+2. / between ints cuts toward zero, and % keeps the sign of the left
+    7 / 2                                              3
+    -7 / 2                                             -3
+    -7 % 2                                             -1
+    7 / 2.0                                            3.5
+    floor[-7 / 2.0]                                    -4
+    --- write a float where a fraction is wanted; floor for Python's //
+
+3. a variable given a float anywhere is a float on every line
+    x = 7, then half = x / 2, then x = 2.5             3.5
+    --- give the float a name of its own
+
+4. a list of numbers is a tensor to the operators
+    [1, 2] + [3, 4]                                    [4, 6]
+    [1, 2] * 2                                         [2, 4]
+    [[1, 2], [3, 4]] * [[1, 2], [3, 4]]                [[7, 10], [15, 22]]
+    [[1, 2], [3, 4]] .* [[1, 2], [3, 4]]               [[1, 4], [9, 16]]
+    concat[[1, 2], [3, 4]]                             [1, 2, 3, 4]
+    --- concat joins lists; * of two matrices is their product, .* item by item
+
+5. a whole float shows as an int
+    2.0                                                2
+    [1.0, 2.5]                                         [1, 2.5]
+    type[2.0]                                          float
+    fmt[2.0, decimals = 1]                             2.0
+    --- type says what a number is; fmt shows its decimals
+
+6. a float is binary, and round takes a half away from zero
+    0.1 + 0.2                                          0.30000000000000004
+    0.1 + 0.2 eq 0.3                                   false
+    decimal['0.1'] + decimal['0.2'] eq decimal['0.3']  true
+    round[2.5], round[-2.5]                            3, -3
+    int[-3.7], floor[-3.7]                             -3, -4
+    --- decimal or fraction for exact numbers; round is not Python's round
+
+7. int of text reads an int as written, and its failure is a value
+    int['3.7'].ok                                      false
+    int['3.7'].reason                                  cannot convert '3.7' to int
+    int[' 42'].ok                                      false
+    int[float['3.7']]                                  3
+    --- ask .ok where the text comes from outside; trim it first
+
+8. a key in a map literal is a name, not a variable, and keys come in order
+    k = 'x', then keys[map[k = 1]]                     ['k']
+    keys[set[map[], k, 1]]                             ['x']
+    keys[map[b = 1, a = 2]]                            ['a', 'b']
+    --- set[m, k, v] keys by a value; keep a list where order matters
+
+9. text compares and sorts by character code
+    '10' lt '9'                                        true
+    sort[['b', 'B', 'a']]                              ['B', 'a', 'b']
+    sort[['10', '9', '100']]                           ['10', '100', '9']
+    --- compare numbers as numbers (int[t]) and words after lower[t]
+
+10. str of a list is the list as code shows it
+    str[['a', 'b']]                                    ['a', 'b']
+    join[['a', 'b'], ' ']                              a b
+    --- join the items, or interpolate each one
+
+11. a collecting for whose body ends in an if with no else filters
+    for i in range[6] / if i % 2 eq 0 / i              [0, 2, 4]
+    --- an else gives every round an item
+
+12. an index past the end and a missing key stop the program
+    xs[5]                                              stops: index 5 is out of range for an array of 3 items
+    m['b']                                             stops: map has no key 'b'
+    at lt len[xs] and xs[at] gt 0                      false
+    'b' in m                                           false
+    --- and decides from the left, so a guard before it keeps the read safe

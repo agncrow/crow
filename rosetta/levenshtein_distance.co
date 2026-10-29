@@ -1,0 +1,43 @@
+--- Rosetta Code: Levenshtein distance
+--- https://rosettacode.org/wiki/Levenshtein_distance
+--- The dynamic-programming table, kept one row at a time: the row for a's first i
+--- characters holds the distance from them to each prefix of b. Text is compared by
+--- characters (Unicode code points), as split[text, ''] gives them.
+
+--- The fewest insertions, deletions and substitutions that turn a into b.
+fn levenshtein[a, b]
+    xs = split[a, '']
+    ys = split[b, '']
+    above = range[len[ys] + 1]
+    i = 0
+    while i lt len[xs]
+        row = [i + 1]
+        j = 0
+        while j lt len[ys]
+            substitution = above[j]
+            if xs[i] ne ys[j]
+                substitution = substitution + 1
+            row = push[row, min[min[above[j + 1] + 1, row[j] + 1], substitution]]
+            j = j + 1
+        above = row
+        i = i + 1
+    return above[-1]
+
+fn show[a, b]
+    log['"`a`" -> "`b`": `levenshtein[a, b]`']
+
+show['kitten', 'sitting']
+show['rosettacode', 'raisethysword']
+log['']
+log['The same distances with both strings reversed:']
+show[reverse['kitten'], reverse['sitting']]
+show[reverse['rosettacode'], reverse['raisethysword']]
+log['']
+log['More pairs:']
+show['saturday', 'sunday']
+show['sleep', 'fleeting']
+show['', 'abc']
+show['abc', 'abc']
+show['abc', 'cba']
+show['héllo', 'hello']
+show['crow', 'корова']

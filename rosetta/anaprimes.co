@@ -1,0 +1,77 @@
+--- Rosetta Code: Anaprimes
+--- https://rosettacode.org/wiki/Anaprimes
+--- A segmented sieve hands over the primes a million at a time; they are grouped by
+--- their digits in order, each group keeping its size and its first and last prime.
+--- Up to seven digits (the first stretch goal), to keep the run to a few seconds.
+
+fn primes_below[limit]
+    prime = for i in range[limit]
+        i gte 2
+    p = 2
+    while p * p lt limit
+        if prime[p]
+            m = p * p
+            while m lt limit
+                prime[m] = false
+                m = m + p
+        p = p + 1
+    found = for i in range[limit]
+        if prime[i]
+            i
+    return found
+
+--- the primes from lo up to hi, crossed out by the primes in base (all those up to the square root of hi)
+fn primes_between[lo, hi, base]
+    prime = for i in range[lo, hi]
+        i gte 2
+    for p in base
+        m = max[p * p, (lo + p - 1) / p * p]
+        while m lt hi
+            prime[m - lo] = false
+            m = m + p
+    found = for i in range[lo, hi]
+        if prime[i - lo]
+            i
+    return found
+
+--- a number's digits in order: the same for all its anagrams
+fn digit_key[n]
+    return join[sort[split[str[n], '']], '']
+
+fn show_largest[count, first, last, limit]
+    most = 0
+    for k in keys[count]
+        most = max[most, count[k]]
+    largest = for k in keys[count]
+        if count[k] eq most
+            k
+    firsts = for k in largest
+        first[k]
+    lasts = for k in largest
+        last[k]
+    last_of = map[firsts, lasts]
+    log['Largest groups of anaprimes before `fmt[limit, commas = true]`: `fmt[most, commas = true]` members']
+    for f in keys[last_of]
+        log['    first `fmt[f, commas = true]`, last `fmt[last_of[f], commas = true]`']
+
+fn report[limits]
+    base = primes_below[int[sqrt[limits[-1]]] + 1]
+    count = map[]
+    first = map[]
+    last = map[]
+    lo = 0
+    for limit in limits
+        while lo lt limit
+            hi = min[lo + 1000000, limit]
+            for p in primes_between[lo, hi, base]
+                k = digit_key[p]
+                if k in count
+                    count = set[count, k, count[k] + 1]
+                else
+                    count = set[count, k, 1]
+                    first = set[first, k, p]
+                last = set[last, k, p]
+            lo = hi
+        show_largest[count, first, last, limit]
+
+report[[1000, 10000, 100000, 1000000, 10000000]]

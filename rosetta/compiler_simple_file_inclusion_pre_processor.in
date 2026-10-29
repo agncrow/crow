@@ -1,0 +1,7 @@
+--- shapes.co: the areas of three shapes, put together by the pre-processor
+--- include 'pp_lib/shapes.co'
+
+shapes = [Shape['square', 2.0], Shape['circle', 1.5], Shape['triangle', 3.0]]
+for s in shapes
+    --- include 'pp_lib/report.co'
+log['three shapes reported']

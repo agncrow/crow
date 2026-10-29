@@ -343,6 +343,20 @@ impl CrowFrame {
             None
         };
         let ints = matches!(column, Column::Int(_)) && matches!(agg, AggFn::Sum | AggFn::Min | AggFn::Max);
+        // an int column's sum, minimum or maximum computed on its ints
+        if let (true, Column::Int(vs)) = (ints, column) {
+            let parts: Vec<Result<Vec<(usize, i64)>, String>> = crate::cores::map_range(members.len(), vs.len(), |g| {
+                let (rows, st) = (&members[g], &starts[g]);
+                if agg == AggFn::Sum { int_totals(vs, rows, st) } else { Ok(extremes(agg, vs, rows, st)) }
+            });
+            let mut out = vec![0i64; nrows];
+            for part in parts {
+                for (row, value) in part? {
+                    out[row] = value;
+                }
+            }
+            return Ok(CrowColumn { data: Arc::new(Column::Int(out)), valid: Arc::new(in_partition.clone()) });
+        }
         match agg {
             AggFn::Sum | AggFn::Mean | AggFn::Min | AggFn::Max | AggFn::Median | AggFn::Std | AggFn::Var | AggFn::Percentile(_) => {
                 let xs = numbers.as_deref().unwrap_or(&[]);
@@ -475,10 +489,10 @@ fn totals(agg: AggFn, xs: &[f64], rows: &[usize], st: &[usize]) -> Vec<(usize, f
 /// cell could still be the answer, kept in a queue in the cell's order (a
 /// window had been scanned, and a span of a day over a year of ticks took
 /// its square).
-fn extremes(agg: AggFn, xs: &[f64], rows: &[usize], st: &[usize]) -> Vec<(usize, f64)> {
+fn extremes<T: Copy + PartialOrd>(agg: AggFn, xs: &[T], rows: &[usize], st: &[usize]) -> Vec<(usize, T)> {
     let mut acc = Vec::with_capacity(rows.len());
     let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
-    let beaten = |held: f64, x: f64| if agg == AggFn::Min { held >= x } else { held <= x };
+    let beaten = |held: T, x: T| if agg == AggFn::Min { held >= x } else { held <= x };
     for (k, &row) in rows.iter().enumerate() {
         let x = xs[row];
         while queue.front().is_some_and(|&p| p < st[k]) {
@@ -491,6 +505,26 @@ fn extremes(agg: AggFn, xs: &[f64], rows: &[usize], st: &[usize]) -> Vec<(usize,
         acc.push((row, queue.front().map_or(x, |&p| xs[rows[p]])));
     }
     acc
+}
+
+/// A partition's sums of ints over its windows, exactly: a window's sum is
+/// the difference of two running sums kept past 64 bits, and a sum the
+/// column cannot hold is refused (summed through floats, a cell past 2^53
+/// had lost its last digits; Rosetta Code, CSV data manipulation).
+fn int_totals(xs: &[i64], rows: &[usize], st: &[usize]) -> Result<Vec<(usize, i64)>, String> {
+    let mut running = Vec::with_capacity(rows.len() + 1);
+    running.push(0i128);
+    for &row in rows {
+        let last = running[running.len() - 1];
+        running.push(last + i128::from(xs[row]));
+    }
+    rows.iter()
+        .enumerate()
+        .map(|(k, &row)| {
+            let sum = running[k + 1] - running[st[k]];
+            i64::try_from(sum).map(|s| (row, s)).map_err(|_| format!("window: a sum past 64 bits ({}), which a column of ints does not hold", sum))
+        })
+        .collect()
 }
 
 /// Counts over the ranks of a partition's cells: how many of the window's

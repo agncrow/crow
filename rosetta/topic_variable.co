@@ -1,0 +1,62 @@
+--- Rosetta Code: Topic variable
+--- https://rosettacode.org/wiki/Topic_variable
+--- Crow has no topic variable: no $_, it or ans stands for "the current
+--- value", in a program or in the REPL (crow with no file shows each line's
+--- value, and gives the last one no name). The spec weighed one, `it` for the
+--- value flowing through a chain, and chose names instead (Design Note: a
+--- chain's steps name the variable). The nearest idioms are shown below, each
+--- with how it nests: `then`, which hands a value on unnamed as the next
+--- call's first argument; a chain written as lines, where the variable being
+--- assigned names the value so far; and a loop's variable, the current item.
+
+fn square[x]
+    x * x
+
+log['Crow has no topic variable. The nearest idioms:']
+log['']
+
+--- `then`: the value goes into the next call as its first argument, unnamed
+log['then hands a value on unnamed, as the next call\'s first argument:']
+log['  3 then square = `3 then square`']
+log['  3 then sqrt = `3 then sqrt`']
+log['  3 then square then sqrt = `3 then square then sqrt`']
+log['']
+
+--- a chain as lines: at each step the variable being assigned is the value
+--- so far, so the name changes what it holds from line to line
+t = 3
+    then t * t
+    then t + sqrt[t]
+log['A chain written as lines names the value so far by the variable it assigns:']
+log['  t = 3, then t * t (t is 3 there), then t + sqrt[t] (t is 9 there): t = `t`']
+--- a `then` nested inside a step hands that step's value on in its turn
+u = 3
+    then u + (u then sqrt)
+log['  u = 3, then u + (u then sqrt): u = `u`']
+log['']
+
+--- a loop's variable: the current item, named
+log['A loop\'s variable is the current item:']
+for x in [3, 4]
+    log['  x = `x`: its square `x * x`, its square root `sqrt[x]`']
+roots = for x in [1, 4, 9]
+    sqrt[x]
+log['  a collecting loop, the item named once: roots of 1, 4, 9 = `roots`']
+log['']
+
+--- nesting: a loop's variable hides one of the same name in the loop around
+--- it, for the inner loop's body only
+log['Nested loops: the inner x hides the outer x, which is back after the inner loop:']
+for x in [1, 2]
+    before = x
+    inner = for x in [10, 20]
+        x
+    log['  outer x = `before`; the inner loop\'s x took `inner`; after it, x = `x`']
+log['']
+
+--- scope: nothing is ambient. A function sees only its parameters, so the
+--- current item reaches it only when it is handed over
+log['A function sees only its parameters: the current item reaches it as an argument,']
+squares = for x in [1, 2, 3]
+    square[x]
+log['  as in square[x] for x in 1, 2, 3 = `squares`']

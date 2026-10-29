@@ -1,0 +1,160 @@
+--- Rosetta Code: Four is the number of letters in the ...
+--- https://rosettacode.org/wiki/Four_is_the_number_of_letters_in_the_...
+--- The sentence opens 'Four is the number of letters in the first word of this sentence,'
+--- and phrase i (from 2) is '<letters of word i> in the <i-th>,'. Each phrase is made
+--- only when a word is wanted past the end of the sentence so far; a word's letters are
+--- its characters less hyphens and commas. The letter counts are kept only as far as
+--- a later phrase can ask for them (a phrase holds four words or more).
+
+--- a word found: its place, the word, its letters, and the characters of the sentence
+--- through the word and through the end of its phrase
+struct Found [n, word, letters, through_word, through_phrase]
+
+--- what a walk answers: the first letter counts asked for, and the words found
+struct Walk [counts, found]
+
+fn small_name[n]
+    names = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+    return names[n]
+
+fn tens_name[n]
+    names = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+    return names[n]
+
+fn scale_name[i]
+    names = ['', ' thousand', ' million', ' billion', ' trillion']
+    return names[i]
+
+--- the name of a number from 1 to 999
+fn name_below_thousand[n]
+    if n lt 20
+        return small_name[n]
+    if n lt 100
+        if n % 10 eq 0
+            return tens_name[n / 10]
+        return '`tens_name[n / 10]`-`small_name[n % 10]`'
+    hundreds = '`small_name[n / 100]` hundred'
+    if n % 100 eq 0
+        return hundreds
+    return '`hundreds` `name_below_thousand[n % 100]`'
+
+--- the cardinal name of a positive number below 10^15
+fn cardinal[n]
+    groups = []
+    left = n
+    i = 0
+    while left gt 0
+        group = left % 1000
+        if group gt 0
+            groups = push[groups, '`name_below_thousand[group]``scale_name[i]`']
+        left = left / 1000
+        i = i + 1
+    return join[reverse[groups], ' ']
+
+--- one word of a cardinal made ordinal: 'one' first, 'twenty' twentieth, 'six' sixth
+fn ordinal_word[word]
+    if '-' in word
+        parts = split[word, '-']
+        return '`parts[0]`-`ordinal_word[parts[1]]`'
+    if word eq 'one'
+        return 'first'
+    if word eq 'two'
+        return 'second'
+    if word eq 'three'
+        return 'third'
+    if word eq 'five'
+        return 'fifth'
+    if word eq 'eight'
+        return 'eighth'
+    if word eq 'nine'
+        return 'ninth'
+    if word eq 'twelve'
+        return 'twelfth'
+    if ends[word, 'y']
+        return '`slice[word, 0, -1]`ieth'
+    return '`word`th'
+
+--- the ordinal name: the cardinal with its last word made ordinal
+fn ordinal[n]
+    words = split[cardinal[n], ' ']
+    last = len[words] - 1
+    words[last] = ordinal_word[words[last]]
+    return join[words, ' ']
+
+fn letters[word]
+    return len[word] - occurs[word, '-'] - occurs[word, ',']
+
+--- walk the sentence phrase by phrase to the largest target, answering what each
+--- target word is, and the letter counts of the first `shown` words; a phrase is taken
+--- word by word only where it holds a target or its counts are still kept
+fn walk[targets, shown]
+    --- phrase p asks for the letters of word p, and the phrase holding the last target
+    --- comes before phrase last / 4 + 4
+    keep = max[shown, targets[-1] / 4 + 4]
+    --- the names below a thousand, made once: a phrase's ordinal is the cardinal of its
+    --- thousands, kept while they last, and the ordinal of the rest
+    cardinals = for k in range[1, 1000]
+        name_below_thousand[k]
+    ordinals = for k in range[1, 1000]
+        ordinal[k]
+    thousands = 0
+    thousands_name = ''
+    counts = []
+    found = []
+    t = 0
+    words_so_far = 0
+    chars = -1
+    p = 1
+    text = 'Four is the number of letters in the first word of this sentence,'
+    while t lt len[targets]
+        size = occurs[text, ' '] + 1
+        if len[counts] lt keep or words_so_far + size gte targets[t]
+            here = []
+            for word in split[text, ' ']
+                words_so_far = words_so_far + 1
+                chars = chars + 1 + len[word]
+                if len[counts] lt keep
+                    counts = push[counts, letters[word]]
+                if t lt len[targets] and words_so_far eq targets[t]
+                    here = push[here, Found[words_so_far, word, letters[word], chars, 0]]
+                    t = t + 1
+            ended = for f in here
+                Found[f.n, f.word, f.letters, f.through_word, chars]
+            found = concat[found, ended]
+        else
+            words_so_far = words_so_far + size
+            chars = chars + 1 + len[text]
+        p = p + 1
+        if t lt len[targets]
+            rest = p % 1000
+            nth = ''
+            if p lt 1000
+                nth = ordinals[p - 1]
+            else if rest eq 0
+                nth = ordinal[p]
+            else
+                if p - rest ne thousands
+                    thousands = p - rest
+                    thousands_name = cardinal[thousands]
+                nth = '`thousands_name` `ordinals[rest - 1]`'
+            text = '`cardinals[counts[p - 1] - 1]` in the `nth`,'
+    return Walk[slice[counts, 0, shown], found]
+
+result = walk[[201, 1000, 10000, 100000, 1000000, 10000000], 201]
+log['The number of letters in the first 201 words:']
+counts = result.counts
+row = 0
+while row * 25 lt len[counts]
+    cells = for c in slice[counts, row * 25, row * 25 + 25]
+        fmt[c, width = 3]
+    line = join[cells, '']
+    log['`fmt[row * 25 + 1, width = 3]`:`line`']
+    row = row + 1
+for f in result.found
+    if f.n eq 201
+        log['Characters in the sentence through word 201: `fmt[f.through_word, commas = true]`']
+log['']
+for f in result.found
+    if f.n gt 201
+        log['Word `fmt[f.n, commas = true]` is "`f.word`", with `f.letters` letters.']
+        log['    characters of the sentence up to and including it: `fmt[f.through_word, commas = true]`; to the end of its phrase: `fmt[f.through_phrase, commas = true]`']

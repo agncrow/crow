@@ -1,0 +1,131 @@
+--- Rosetta Code: Radical of an integer
+--- https://rosettacode.org/wiki/Radical_of_an_integer
+--- One sieve to a million: a prime, met where nothing has divided it yet,
+--- multiplies into the radical of each of its multiples and adds one to their
+--- count of distinct prime factors. The bonus counts the primes again with a
+--- sieve of Eratosthenes over the odd numbers, and the powers of primes by
+--- multiplying primes found by trial division.
+
+struct Table [radical, distinct]
+
+--- the radical and the number of distinct prime factors of each of 0 to n
+fn sieve[n]
+    radical = for i in range[n + 1]
+        1
+    distinct = for i in range[n + 1]
+        0
+    p = 2
+    while p lte n
+        if distinct[p] eq 0
+            m = p
+            while m lte n
+                radical[m] = radical[m] * p
+                distinct[m] = distinct[m] + 1
+                m = m + p
+        p = p + 1
+    return Table[radical, distinct]
+
+--- n as a product of powers of primes, as 2^3 x 3^2 x 7, by trial division
+fn factored[n]
+    parts = []
+    rest = n
+    d = 2
+    while d * d lte rest
+        if rest % d eq 0
+            e = 0
+            while rest % d eq 0
+                rest = rest / d
+                e = e + 1
+            if e eq 1
+                parts = push[parts, str[d]]
+            else
+                parts = push[parts, '`d`^`e`']
+        d = d + 1
+    if rest gt 1
+        parts = push[parts, str[rest]]
+    return join[parts, ' x ']
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    d = 2
+    while d * d lte n
+        if n % d eq 0
+            return false
+        d = d + 1
+    return true
+
+--- the primes up to n, counted by a sieve of the odd numbers: odd[i] is 2i + 1
+fn prime_count[n]
+    odd_composite = for i in range[n / 2 + 1]
+        false
+    count = 1
+    i = 1
+    while 2 * i + 1 lte n
+        if not odd_composite[i]
+            count = count + 1
+            p = 2 * i + 1
+            j = (p * p - 1) / 2
+            while 2 * j + 1 lte n
+                odd_composite[j] = true
+                j = j + p
+        i = i + 1
+    return count
+
+--- the powers of primes up to n with an exponent of 2 or more
+fn prime_power_count[n]
+    count = 0
+    p = 2
+    while p * p lte n
+        if is_prime[p]
+            q = p * p
+            while q lte n
+                count = count + 1
+                q = q * p
+        p = p + 1
+    return count
+
+fn commas[n, width]
+    return fmt[n, width = width, commas = true]
+
+limit = 1000000
+table = sieve[limit]
+
+log['The radicals of the first 50 positive integers:']
+for row in range[5]
+    cells = for n in range[10 * row + 1, 10 * row + 11]
+        fmt[table.radical[n], width = 4]
+    log[join[cells, '']]
+log['']
+log['       n  its prime factors         radical']
+for n in [504, 99999, 499999, 999999]
+    factors = fmt[factored[n], width = 24]
+    log['`commas[n, 8]`  `factors``commas[table.radical[n], 8]`']
+log['']
+
+counts = for k in range[8]
+    0
+for n in range[1, limit + 1]
+    counts[table.distinct[n]] = counts[table.distinct[n]] + 1
+log['The integers 1 to 1,000,000 by their number of distinct prime factors:']
+most = 0
+for c in counts
+    most = max[most, c]
+for k in range[8]
+    bar = repeat['■', max[1, round[50.0 * counts[k] / most]]]
+    log['  `k`: `commas[counts[k], 9]`  `bar`']
+total = 0
+for c in counts
+    total = total + c
+log['     ---------']
+log['     `commas[total, 9]`']
+log['(1 has no prime factor, and so none distinct)']
+log['']
+
+primes = prime_count[limit]
+powers = prime_power_count[limit]
+log['Counted again, by other means:']
+log['  primes up to 1,000,000:          `commas[primes, 7]`']
+log['  their powers (squares and up):   `commas[powers, 7]`']
+log['  together:                        `commas[primes + powers, 7]`']
+log['the same as the count with one distinct prime factor: `primes + powers eq counts[1]`']

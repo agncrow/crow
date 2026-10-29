@@ -40,6 +40,13 @@ pub(crate) fn settle(existing: &Ty, value: Ty, in_body: bool) -> Ty {
     if is_ints(existing) && matches!(&value, Ty::List(item) if matches!(item.as_ref(), Ty::Int)) {
         return Ty::List(Box::new(Ty::Int));
     }
+    // (and rows of whole numbers written down, given a list of lists of
+    // ints, hold a list of lists of ints: `decks = [[2, 4, 1, 3]]` then a
+    // range pushed had been refused as a reassignment; Rosetta Code,
+    // Topswops)
+    if is_int_rows(existing) && is_int_lists(&value) {
+        return Ty::List(Box::new(Ty::List(Box::new(Ty::Int))));
+    }
     let joined = existing.unify(&value);
     match (existing, joined) {
         (Ty::Tensor(_, dims), Ty::List(item)) => {
@@ -62,6 +69,16 @@ pub(crate) fn settle(existing: &Ty, value: Ty, in_body: bool) -> Ty {
     }
 }
 
+/// A tensor of whole numbers, two axes (rows of ints written down).
+pub(crate) fn is_int_rows(t: &Ty) -> bool {
+    matches!(t, Ty::Tensor(e, Some(d)) if matches!(e.as_ref(), Ty::Int) && d.len() == 2)
+}
+
+/// A list of lists of ints.
+pub(crate) fn is_int_lists(t: &Ty) -> bool {
+    matches!(t, Ty::List(item) if matches!(item.as_ref(), Ty::List(i) if matches!(i.as_ref(), Ty::Int)))
+}
+
 /// A tensor of whole numbers, one axis (a literal list of ints).
 pub(crate) fn is_ints(t: &Ty) -> bool {
     matches!(t, Ty::Tensor(e, dims) if matches!(e.as_ref(), Ty::Int) && dims.as_ref().is_none_or(|d| d.len() <= 1))
@@ -78,5 +95,11 @@ pub(crate) fn refuses_failed(held: &Ty, payload: &Ty) -> bool {
     // and the lowered program disagreed with itself; found writing
     // Magpie's read verbs in Crow)
     let open_collection = matches!(held, Ty::List(_) | Ty::Map(..));
-    !matches!(held, Ty::Result(_)) && (!held.has_unknown() || open_collection) && held.compatible(payload)
+    // (nor is a tensor whose numbers are known and whose length is not:
+    // `ys = push[ys, float[s]]` in a loop, where `ys` was written down as
+    // `[1.5, 2.5]`, had assigned the push's failure to the tensor — the
+    // lowered program disagreed with itself; Rosetta Code, colorful
+    // numbers)
+    let open_shape = matches!(held, Ty::Tensor(e, _) if !e.has_unknown());
+    !matches!(held, Ty::Result(_)) && (!held.has_unknown() || open_collection || open_shape) && held.compatible(payload)
 }

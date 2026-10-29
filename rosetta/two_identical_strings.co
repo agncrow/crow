@@ -1,0 +1,33 @@
+--- Rosetta Code: Two identical strings
+--- https://rosettacode.org/wiki/Two_identical_strings
+--- Every n below 1000 whose binary digits split into two equal halves; then the
+--- same numbers made the other way, each k's digits written twice
+--- (k * 2^digits + k), as a check.
+
+fn binary[n]
+    if n eq 0
+        return '0'
+    digits = []
+    while n gt 0
+        digits = push[digits, str[n % 2]]
+        n = n / 2
+    return join[reverse[digits], '']
+
+fn is_doubled[n]
+    s = binary[n]
+    half = len[s] / 2
+    return len[s] % 2 eq 0 and slice[s, 0, half] eq slice[s, half, len[s]]
+
+found = for n in range[1, 1000]
+    if is_doubled[n]
+        n
+for n in found
+    log['`fmt[n, width = 3]`: `binary[n]`']
+
+made = []
+k = 1
+while k * 2 ^ len[binary[k]] + k lt 1000
+    made = push[made, k * 2 ^ len[binary[k]] + k]
+    k = k + 1
+log['']
+log['`len[found]` numbers; k written twice for k = 1 to `k - 1` makes the same ones: `made eq found`']

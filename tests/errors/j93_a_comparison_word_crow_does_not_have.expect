@@ -1,0 +1,3 @@
+j93_a_comparison_word_crow_does_not_have.co:4:10: 'ge' is no comparison in Crow — it is written gte: `x gte y`
+  4 │     if k ge 0
+    │          ^^

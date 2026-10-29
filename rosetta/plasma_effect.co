@@ -1,0 +1,82 @@
+--- Rosetta Code: Plasma effect
+--- https://rosettacode.org/wiki/Plasma_effect
+--- The classic plasma: at each pixel a sum of four sines (of x, of y, of x + y and of
+--- the distance from the top left corner) picks a hue, and the hue a fully saturated,
+--- fully bright colour (HSV to RGB, as Python's colorsys has it). Crow opens no
+--- window, so the picture is an image file: plasma.ppm, a plain PPM (P3) of 400 by 400
+--- pixels written to the current directory and removed at the end unless the program
+--- is given the argument keep. The same plasma is drawn on the console in characters,
+--- one for each band of hue.
+
+use math
+
+--- the plasma at a pixel, from 0 to 8
+fn plasma[x, y]
+    distance = sqrt[x * x + y * y]
+    return 4.0 + sin[x / 19.0] + sin[y / 9.0] + sin[(x + y) / 25.0] + sin[distance / 8.0]
+
+--- a hue from 0 to 1 around the colour wheel, saturation and value 1, as red,
+--- green and blue from 0 to 255
+fn rgb[hue]
+    h = hue * 6.0
+    whole = floor[h]
+    f = h - whole
+    rising = round[255.0 * f]
+    falling = round[255.0 * (1.0 - f)]
+    sector = whole % 6
+    if sector eq 0
+        return [255, rising, 0]
+    if sector eq 1
+        return [falling, 255, 0]
+    if sector eq 2
+        return [0, 255, rising]
+    if sector eq 3
+        return [0, falling, 255]
+    if sector eq 4
+        return [rising, 0, 255]
+    return [255, 0, falling]
+
+fn colour[x, y]
+    return rgb[plasma[x, y] / 8.0]
+
+--- a plain PPM: the header, then a pixel a line, row by row from the top
+fn ppm[width, height]
+    rows = for y in range[height]
+        pixels = for x in range[width]
+            c = colour[x, y]
+            '`c[0]` `c[1]` `c[2]`'
+        join[pixels, '\n']
+    body = join[rows, '\n']
+    return 'P3\n`width` `height`\n255\n`body`\n'
+
+--- the plasma in characters, each a band of the hue: a character covers twice as
+--- many pixels down as across, as a character is about twice as tall as wide
+fn sketch[width, height, columns]
+    ramp = ' .:-=+*#%@'
+    across = width / columns
+    down = 2 * across
+    lines = for row in range[height / down]
+        cells = for column in range[columns]
+            level = plasma[column * across, row * down] / 8.0
+            ramp[min[floor[level * 10.0], 9]]
+        join[cells, '']
+    return lines
+
+width = 400
+height = 400
+saved = write['plasma.ppm', ppm[width, height]]
+if not saved.ok
+    halt['plasma.ppm could not be written: `saved.reason`']
+log['plasma.ppm: `width` x `height` pixels. Some of them, as red, green and blue:']
+for corner in [[0, 0], [399, 0], [0, 399], [399, 399], [200, 200]]
+    c = colour[corner[0], corner[1]]
+    log['    (`corner[0]`, `corner[1]`): `c[0]` `c[1]` `c[2]`']
+log['']
+log['The plasma in characters, a character for each tenth of its range, from low ( ) to high (@):']
+for line in sketch[width, height, 80]
+    log[line]
+given = args[]
+if 'keep' not in given
+    removed = rm['plasma.ppm']
+    if not removed.ok
+        halt['plasma.ppm could not be removed: `removed.reason`']

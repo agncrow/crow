@@ -1,0 +1,259 @@
+--- Rosetta Code: Kirkpatrick–Seidel algorithm
+--- https://rosettacode.org/wiki/Kirkpatrick–Seidel_algorithm
+--- The upper hull "marries before it conquers": a vertical line at the median x
+--- splits the points, the hull's edge across that line (the bridge) is found by
+--- prune and search, and only the points beyond each end of the bridge are
+--- recursed into. The lower hull is the upper hull of the points turned half a
+--- turn. Coordinates are decimals and slopes fractions, so every comparison is
+--- exact: collinear points and ties are decided without a tolerance. A seeded
+--- cloud of random points is checked against gift wrapping.
+
+use math
+
+struct Point [x, y]
+
+fn pt[x, y]
+    return Point[decimal[x], decimal[y]]
+
+fn shown[points]
+    parts = for p in points
+        '(`p.x`, `p.y`)'
+    return join[parts, ' ']
+
+--- each point once (two decimals of one value, 0.5 and 0.50, are one number)
+fn distinct[points]
+    seen = map[]
+    kept = []
+    for p in points
+        key = '`fraction[p.x]` `fraction[p.y]`'
+        if key not in seen
+            seen = set[seen, key, true]
+            kept = push[kept, p]
+    return kept
+
+--- the k-th smallest of xs, counting from 0, by quickselect (random pivots:
+--- linear time expected)
+fn kth[xs, k]
+    items = xs
+    want = k
+    pivot = items[0]
+    found = false
+    while not found
+        pivot = items[rand[len[items]]]
+        less = for v in items
+            if v lt pivot
+                v
+        more = for v in items
+            if v gt pivot
+                v
+        same = len[items] - len[less] - len[more]
+        if want lt len[less]
+            items = less
+        else if want gte len[less] + same
+            want = want - len[less] - same
+            items = more
+        else
+            found = true
+    return pivot
+
+--- the edge of the upper hull across the line x = a: [left, right], left at or
+--- before a and right past it. Each round pairs the points and takes the median
+--- k of the pairs' slopes. The line of slope k resting on the points from above
+--- either is the bridge, or shows which side of k the bridge's slope lies; then
+--- every pair on the wrong side of k loses a point no bridge can end at.
+fn bridge[points, a]
+    pts = points
+    while len[pts] gt 2
+        kept = []
+        lefts = []
+        rights = []
+        slopes = []
+        i = 0
+        while i + 1 lt len[pts]
+            p = pts[i]
+            q = pts[i + 1]
+            if q.x lt p.x
+                p, q = q, p
+            if p.x eq q.x
+                --- one above the other: only the upper can be on the upper hull
+                if p.y gt q.y
+                    kept = push[kept, p]
+                else
+                    kept = push[kept, q]
+            else
+                lefts = push[lefts, p]
+                rights = push[rights, q]
+                slopes = push[slopes, fraction[q.y - p.y] / fraction[q.x - p.x]]
+            i = i + 2
+        if i lt len[pts]
+            kept = push[kept, pts[i]]
+        if len[slopes] gt 0
+            k = kth[slopes, (len[slopes] - 1) / 2]
+            heights = for p in pts
+                p.y - k * p.x
+            top = heights[0]
+            for h in heights
+                if h gt top
+                    top = h
+            touching = for t in range[len[pts]]
+                if heights[t] eq top
+                    pts[t]
+            low = touching[0]
+            high = touching[0]
+            for p in touching
+                if p.x lt low.x
+                    low = p
+                if p.x gt high.x
+                    high = p
+            if low.x lte a and high.x gt a
+                return [low, high]
+            for t in range[len[slopes]]
+                if high.x lte a
+                    --- the bridge is less steep than k: a pair as steep or steeper loses its left point
+                    kept = push[kept, rights[t]]
+                    if slopes[t] lt k
+                        kept = push[kept, lefts[t]]
+                else
+                    --- the bridge is steeper than k: a pair as gentle or gentler loses its right point
+                    kept = push[kept, lefts[t]]
+                    if slopes[t] gt k
+                        kept = push[kept, rights[t]]
+        pts = kept
+    if pts[0].x lt pts[1].x
+        return pts
+    return [pts[1], pts[0]]
+
+--- the upper hull from k to m, over points (k the only one at the least x, m
+--- the only one at the greatest): the paper's CONNECT
+fn join_hull[k, m, points]
+    xs = for p in points
+        p.x
+    a = kth[xs, (len[xs] - 1) / 2]
+    edge = bridge[points, a]
+    left = edge[0]
+    right = edge[1]
+    --- k and m are the only points at their x, so an x tells them apart
+    hull = [k]
+    if left.x gt k.x
+        before = for p in points
+            if p.x lt left.x
+                p
+        hull = join_hull[k, left, push[before, left]]
+    if right.x eq m.x
+        hull = push[hull, m]
+    else
+        after = for p in points
+            if p.x gt right.x
+                p
+        hull = concat[hull, join_hull[right, m, concat[[right], after]]]
+    return hull
+
+--- the upper hull, left to right, from the highest of the leftmost points to the
+--- highest of the rightmost
+fn upper_hull[points]
+    first = points[0]
+    last = points[0]
+    for p in points
+        if p.x lt first.x or (p.x eq first.x and p.y gt first.y)
+            first = p
+        if p.x gt last.x or (p.x eq last.x and p.y gt last.y)
+            last = p
+    if first eq last
+        return [first]
+    between = for p in points
+        if p.x gt first.x and p.x lt last.x
+            p
+    return join_hull[first, last, concat[[first, last], between]]
+
+fn turned[points]
+    back = for p in points
+        Point[-p.x, -p.y]
+    return back
+
+--- the convex hull, clockwise from the highest of the leftmost points
+fn convex_hull[points]
+    top = upper_hull[points]
+    bottom = turned[upper_hull[turned[points]]]
+    --- the two chains share their ends: each is kept once
+    if bottom[0] eq top[-1]
+        bottom = slice[bottom, 1, len[bottom]]
+    if len[bottom] gt 0 and bottom[-1] eq top[0]
+        bottom = slice[bottom, 0, -1]
+    return concat[top, bottom]
+
+--- (a - o) x (b - o): more than 0 where o, a, b turn left
+fn cross[o, a, b]
+    return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+
+fn farther[o, a, b]
+    da = (a.x - o.x) ^ 2 + (a.y - o.y) ^ 2
+    db = (b.x - o.x) ^ 2 + (b.y - o.y) ^ 2
+    return da gt db
+
+--- the hull by gift wrapping (Jarvis's march), clockwise from the same point,
+--- to check against (two distinct points or more)
+fn wrapped[points]
+    start = points[0]
+    for p in points
+        if p.x lt start.x or (p.x eq start.x and p.y gt start.y)
+            start = p
+    hull = [start]
+    here = start
+    going = true
+    while going
+        ahead = points[0]
+        if ahead eq here
+            ahead = points[1]
+        for p in points
+            turn = cross[here, ahead, p]
+            if turn gt 0 or (turn eq 0 and farther[here, p, ahead])
+                ahead = p
+        if ahead eq start
+            going = false
+        else
+            hull = push[hull, ahead]
+            here = ahead
+    return hull
+
+--- n random points with whole coordinates in the disc of radius r
+fn cloud[n, r]
+    points = []
+    while len[points] lt n
+        x = rand[0 - r, r]
+        y = rand[0 - r, r]
+        if x * x + y * y lte r * r
+            points = push[points, pt[x, y]]
+    return points
+
+seed[2026]
+
+task = [pt[0, 0], pt[1, 0], pt[0, 1], pt[0.5, 0.5]]
+log['Input points:']
+for p in task
+    log['(`p.x`, `p.y`)']
+log['']
+log['Convex hull points:']
+for p in convex_hull[distinct[task]]
+    log['(`p.x`, `p.y`)']
+
+log['']
+log['More sets (each hull clockwise from its highest leftmost point):']
+square = [pt[0, 0], pt[2, 0], pt[2, 2], pt[0, 2], pt[1, 0], pt[2, 1], pt[1, 2], pt[0, 1], pt[1, 1]]
+diagonal = [pt[3, 3], pt[1, 1], pt[0, 0], pt[2, 2]]
+upright = [pt[1, 0], pt[1, 3], pt[1, 1]]
+alone = [pt[2, 2], pt[2.0, 2.0], pt[2, 2]]
+names = ['a square, its sides\' midpoints and its centre', 'points on one line', 'points one above another', 'one point given three times']
+sets = [square, diagonal, upright, alone]
+for s in range[len[sets]]
+    hull = convex_hull[distinct[sets[s]]]
+    log['  `names[s]`: `shown[hull]`']
+
+points = distinct[cloud[1000, 1000]]
+hull = convex_hull[points]
+log['']
+log['`len[points]` random points in the disc of radius 1000: `len[hull]` on the hull']
+i = 0
+while i lt len[hull]
+    log[shown[slice[hull, i, i + 8]]]
+    i = i + 8
+log['Gift wrapping finds the same hull: `hull eq wrapped[points]`']

@@ -1,0 +1,166 @@
+--- Rosetta Code: Vogel's approximation method
+--- https://rosettacode.org/wiki/Vogel's_approximation_method
+--- Each round finds every open row's and column's penalty (its two lowest open costs
+--- apart, or its one open cost), takes the line with the largest penalty (on a tie,
+--- the one with the lowest cost, then the first), and gives its cheapest open cell all
+--- the supply or demand it can; a row or column met is closed. No sorting: a line's
+--- two lowest costs are found in one pass. The rounds are shown as the task shows
+--- them, then the allocation and its cost: £3100 for the task's data, as the task
+--- works it, and 68804 for the Ruby entry's second example, as Ruby finds it (the C
+--- and Go entries, which give a line with one open cell a penalty past any other,
+--- find 60748 there).
+
+--- a line's penalty, its lowest open cost and the place of that cost
+struct Penalty [size, lowest, at]
+
+fn penalty[costs, open]
+    lowest = 0
+    second = 0
+    at = -1
+    found = 0
+    for i in range[len[costs]]
+        if open[i]
+            if found eq 0 or costs[i] lt lowest
+                second = lowest
+                lowest = costs[i]
+                at = i
+            else if found eq 1 or costs[i] lt second
+                second = costs[i]
+            found = found + 1
+    if found eq 1
+        return Penalty[lowest, lowest, at]
+    return Penalty[second - lowest, lowest, at]
+
+fn column_of[costs, j]
+    column = for row in costs
+        row[j]
+    return column
+
+--- a line chosen this round: whether it is a row, which one, and its penalty
+struct Choice [is_row, index, p]
+
+fn better[p, best]
+    return p.size gt best.p.size or (p.size eq best.p.size and p.lowest lt best.p.lowest)
+
+fn padded[text]
+    return fmt[text, width = 8, align = 'left']
+
+fn vogel[row_names, column_names, costs, supply, demand]
+    rows = len[supply]
+    columns = len[demand]
+    given = for r in range[rows]
+        row = for c in range[columns]
+            0
+        row
+    total = 0
+    header = for name in concat[column_names, row_names]
+        padded[name]
+    joined = trim_end[join[header, '']]
+    log['        `joined`']
+    round_number = 1
+    while sum_of[supply] gt 0
+        rows_open = for s in supply
+            s gt 0
+        columns_open = for d in demand
+            d gt 0
+        shown = []
+        best = Choice[false, -1, Penalty[-1, 0, -1]]
+        last_cell = count_true[rows_open] * count_true[columns_open] eq 1
+        for j in range[columns]
+            if columns_open[j]
+                p = penalty[column_of[costs, j], rows_open]
+                shown = push[shown, '`p.size`']
+                if better[p, best]
+                    best = Choice[false, j, p]
+            else
+                shown = push[shown, '-']
+        for i in range[rows]
+            if rows_open[i]
+                p = penalty[costs[i], columns_open]
+                shown = push[shown, '`p.size`']
+                if better[p, best]
+                    best = Choice[true, i, p]
+            else
+                shown = push[shown, '-']
+        r = best.p.at
+        c = best.index
+        if best.is_row
+            r = best.index
+            c = best.p.at
+        amount = min[supply[r], demand[c]]
+        supply[r] = supply[r] - amount
+        demand[c] = demand[c] - amount
+        given[r][c] = amount
+        total = total + amount * costs[r][c]
+        if last_cell
+            shown = for s in shown
+                '-'
+        cells = for s in shown
+            padded[s]
+        joined = trim_end[join[cells, '']]
+        number = '`round_number`'
+        if last_cell
+            number = ''
+        log['`padded[number]``joined`   `column_names[c]`-`row_names[r]`(`amount`)']
+        round_number = round_number + 1
+    log['']
+    show_allocation[row_names, column_names, given]
+    log['']
+    log['Total cost: `total`']
+
+--- the allocation as the task shows it: a column for each demand, blank where
+--- nothing is given
+fn show_allocation[row_names, column_names, given]
+    margin = 0
+    for name in row_names
+        margin = max[margin, len[name]]
+    widest = 0
+    for name in column_names
+        widest = max[widest, len[name]]
+    for row in given
+        for amount in row
+            widest = max[widest, len['`amount`']]
+    names = for name in column_names
+        fmt[name, width = widest + 1, align = 'right']
+    heading = trim_end[join[names, '']]
+    indent = repeat[' ', margin]
+    log['`indent``heading`']
+    for i in range[len[row_names]]
+        cells = for amount in given[i]
+            if amount eq 0
+                repeat[' ', widest + 1]
+            else
+                fmt[amount, width = widest + 1]
+        line = join[cells, '']
+        name = fmt[row_names[i], width = margin, align = 'left']
+        log[trim_end['`name``line`']]
+
+fn sum_of[xs]
+    total = 0
+    for x in xs
+        total = total + x
+    return total
+
+fn count_true[flags]
+    count = 0
+    for f in flags
+        if f
+            count = count + 1
+    return count
+
+fn trim_end[text]
+    letters = split[text, '']
+    last = len[letters] - 1
+    while last gte 0 and letters[last] eq ' '
+        last = last - 1
+    return join[slice[letters, 0, last + 1], '']
+
+log['The task: tasks A to E, contractors W to Z']
+log['']
+costs = [[16, 16, 13, 22, 17], [14, 14, 13, 19, 15], [19, 19, 20, 23, 50], [50, 12, 50, 15, 11]]
+vogel[['W', 'X', 'Y', 'Z'], ['A', 'B', 'C', 'D', 'E'], costs, [50, 60, 50, 50], [30, 20, 70, 30, 60]]
+log['']
+log['The Ruby entry\'s reference example: supplies S1 to S5, demands D1 to D5']
+log['']
+costs = [[46, 74, 9, 28, 99], [12, 75, 6, 36, 48], [35, 199, 4, 5, 71], [61, 81, 44, 88, 9], [85, 60, 14, 25, 79]]
+vogel[['S1', 'S2', 'S3', 'S4', 'S5'], ['D1', 'D2', 'D3', 'D4', 'D5'], costs, [461, 277, 356, 488, 393], [278, 60, 461, 116, 1060]]

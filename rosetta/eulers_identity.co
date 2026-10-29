@@ -1,0 +1,54 @@
+--- Rosetta Code: Euler's identity
+--- https://rosettacode.org/wiki/Euler%27s_identity
+--- A complex number is the pair [re, im], as math's complex[] makes one, and e
+--- to a complex power is e^re (cos im + i sin im). With floats, e^(i pi) + 1
+--- leaves the float error of pi in its imaginary part. With decimals of n digits
+--- (the language's big float) the same functions leave an error near 10^-n,
+--- which shrinks as n grows. Crow has no symbolic algebra, so exactly zero is
+--- not shown.
+
+use math
+
+fn plus[a, b]
+    return [a[0] + b[0], a[1] + b[1]]
+
+fn times[a, b]
+    return [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]]
+
+--- e raised to the complex power z
+fn e_to[z]
+    r = exp[z[0]]
+    return [r * cos[z[1]], r * sin[z[1]]]
+
+fn size[z]
+    return sqrt[z[0] * z[0] + z[1] * z[1]]
+
+--- a decimal below 1 as m.mmmmmmmmmme-k, ten places in its mantissa
+fn sci[d]
+    if d eq 0
+        return '0'
+    sign = ''
+    if d lt 0
+        sign = '-'
+        d = -d
+    k = 0
+    while d lt 1
+        d = d * 10
+        k = k + 1
+    return '`sign``round[d, 10]`e-`k`'
+
+i = [0.0, 1.0]
+one = [1.0, 0.0]
+result = plus[e_to[times[i, [pi, 0.0]]], one]
+log['With floats:']
+log['  e ^ (i pi) + 1 = `result[0]` + `result[1]`i']
+log['  error: `size[result]`']
+
+for digits in [20, 50, 100]
+    zero_d = decimal[0, digits = digits]
+    one_d = decimal[1, digits = digits]
+    pi_d = 4 * atan[one_d]
+    result_d = plus[e_to[times[[zero_d, one_d], [pi_d, zero_d]]], [one_d, zero_d]]
+    log['With decimals of `digits` digits:']
+    log['  e ^ (i pi) + 1 = `sci[result_d[0]]` + (`sci[result_d[1]]`)i']
+    log['  error: `sci[size[result_d]]`']

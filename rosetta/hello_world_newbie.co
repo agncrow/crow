@@ -1,0 +1,51 @@
+--- Rosetta Code: Hello world/Newbie
+--- https://rosettacode.org/wiki/Hello_world/Newbie
+--- A guide for a programmer new to Crow: install it, write the Hello world/Text
+--- program in any text editor, run it both ways, and find its output in the terminal.
+---
+--- 1. Install. On a Mac (Apple silicon) or a Linux machine (x86_64), and on Windows
+---    inside WSL, one line fetches the prebuilt binary into ~/.crow/bin and checks
+---    it against its published hash:
+---
+---        curl -fsSL https://raw.githubusercontent.com/agncrow/crow/main/install.sh | bash
+---
+---    It ends by printing the line that puts ~/.crow/bin on your PATH: add that line
+---    to your shell profile, open a new terminal, and check with
+---
+---        crow -v
+---
+---    which prints the version. On a machine the release has no binary for, build
+---    Crow from its source (the script installs a C toolchain and Rust if missing):
+---
+---        git clone https://github.com/agncrow/crow.git
+---        cd crow
+---        ./install.sh --source
+---
+--- 2. Write the program. A Crow program is a plain text file ending in .co, so any
+---    text editor will do: save this file as hello.co. VS Code, Cursor and VSCodium
+---    have the extension "Crow" by crow-lang, which runs Crow's own language server
+---    (crow lsp) to show errors as you type; Neovim, Helix and Zed reach the same
+---    server (docs/crow-lsp.md in the repository has the setup).
+---
+--- 3. Run it, from the directory that holds hello.co. There are two ways, and they
+---    print the same:
+---
+---        crow run -i hello.co      interpreted: starts at once
+---        crow run hello.co         compiled: translated to Rust, built, run natively
+---
+---    Compiling needs a Rust toolchain: `crow setup` fetches a pinned one into
+---    ~/.crow once (about 175 MB), and so does the first compiled run. Until it is
+---    there, `crow run` says so and interprets instead.
+---
+--- 4. Read the output. It is printed in the same terminal, on a line of its own:
+---
+---        Hello world!
+---
+--- Further reading: the Crow Book, https://agncrow.github.io/crow/, starts with these
+--- steps and goes on through the language; the repository's README.md has the same
+--- install line, and `crow help` lists every command.
+---
+--- The program itself is one line. log[...] prints a value on its own line: a call
+--- takes square brackets, and text is written in single quotes.
+
+log['Hello world!']

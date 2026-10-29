@@ -1,0 +1,38 @@
+--- Rosetta Code: Identity matrix
+--- https://rosettacode.org/wiki/Identity_matrix
+--- The sizes are read from standard input at run time, one a line. A matrix is
+--- a list of rows, 1 where the row and the column are the same place and 0
+--- elsewhere; math's eye[n] makes the same matrix as a tensor of floats, and
+--- the two are compared.
+
+use math
+
+fn identity[n]
+    rows = for i in range[n]
+        row = for j in range[n]
+            if i eq j
+                1
+            else
+                0
+        row
+    return rows
+
+fn show[matrix]
+    for row in matrix
+        cells = for x in row
+            str[x]
+        log[join[cells, ' ']]
+
+line = input[]
+while line.ok
+    n = int[trim[line]]
+    if n.ok and n gte 1
+        log['The identity matrix of size `n`:']
+        matrix = identity[n]
+        show[matrix]
+        log['The same as math\'s eye[`n`]: `matrix eq eye[n]`']
+        log['']
+    else
+        log['\'`trim[line]`\' is no size: a size is a whole number, 1 or more.']
+        log['']
+    line = input[]

@@ -1,0 +1,6 @@
+--- a collecting loop's last line is its item: one that answers nothing
+--- is no item — the modes had disagreed, [] interpreted and
+--- [done, done, done] compiled
+ys = for i in range[3]
+    log[i]
+log[ys]

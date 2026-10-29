@@ -1,0 +1,14 @@
+--- -2^63 divided by -1, and its absolute value, are 2^63: the division had
+--- stopped compiled, `integer overflow`, where the interpreter grew, and
+--- `abs` had stopped in both modes; a remainder by -1 is 0
+log[(-9223372036854775807 - 1) / -1]
+log[abs[-9223372036854775807 - 1]]
+log[(-9223372036854775807 - 1) % -1]
+m = -9223372036854775807 - 1
+log[m / 2]
+log[abs[-5]]
+
+fn half[x]
+    return x / 2
+
+log[half[-9]]

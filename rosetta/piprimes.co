@@ -1,0 +1,52 @@
+--- Rosetta Code: Piprimes
+--- https://rosettacode.org/wiki/Piprimes
+--- pi(n), the count of primes up to n, as a running count over a sieve of Eratosthenes,
+--- for n = 1, 2, ... while it stays below 22. The sieve doubles until it holds 22 primes
+--- (the 22nd is 79), so the bound can be any number.
+
+fn sieve[limit]
+    flags = for i in range[limit + 1]
+        i gte 2
+    p = 2
+    while p * p lte limit
+        if flags[p]
+            m = p * p
+            while m lte limit
+                flags[m] = false
+                m = m + p
+        p = p + 1
+    flags
+
+--- pi(1), pi(2), ... for as long as pi(n) is below the bound.
+fn pi_below[bound]
+    limit = 16
+    flags = sieve[limit]
+    while primes_in[flags] lt bound
+        limit = limit * 2
+        flags = sieve[limit]
+    counts = []
+    count = 0
+    n = 1
+    while count lt bound
+        if flags[n]
+            count = count + 1
+        if count lt bound
+            counts = push[counts, count]
+        n = n + 1
+    counts
+
+fn primes_in[flags]
+    count = 0
+    for f in flags
+        if f
+            count = count + 1
+    count
+
+counts = pi_below[22]
+log['pi(n), the number of primes up to n, for n = 1, 2, ... while it is below 22:']
+for start in range[0, len[counts], 10]
+    row = for c in slice[counts, start, start + 10]
+        fmt[c, width = 3]
+    log[join[row, '']]
+log['']
+log['The highest n in this range is `len[counts]`.']

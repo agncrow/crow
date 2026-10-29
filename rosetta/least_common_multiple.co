@@ -1,0 +1,90 @@
+--- Rosetta Code: Least common multiple
+--- https://rosettacode.org/wiki/Least_common_multiple
+--- Three ways, which agree: |m n| / gcd(m, n) with Euclid's gcd written
+--- recursively; the multiples of m tried until one is a multiple of n; and the
+--- prime decompositions merged, each prime to the larger of its two powers.
+--- The lcm of 0 with anything is 0, and signs are dropped.
+
+fn gcd[a, b]
+    if b eq 0
+        return abs[a]
+    return gcd[b, a % b]
+
+fn lcm[m, n]
+    if m eq 0 or n eq 0
+        return 0
+    return abs[m * n] / gcd[m, n]
+
+fn lcm_by_multiples[m, n]
+    if m eq 0 or n eq 0
+        return 0
+    multiple = abs[m]
+    while multiple % n ne 0
+        multiple = multiple + abs[m]
+    return multiple
+
+struct Decomposition [primes, powers]
+
+fn prime_powers[n]
+    --- the primes of |n| in order, each with its power
+    primes = []
+    powers = []
+    rest = abs[n]
+    p = 2
+    while p * p lte rest
+        if rest % p eq 0
+            power = 0
+            while rest % p eq 0
+                rest = rest / p
+                power = power + 1
+            primes = push[primes, p]
+            powers = push[powers, power]
+        p = p + 1
+    if rest gt 1
+        primes = push[primes, rest]
+        powers = push[powers, 1]
+    return Decomposition[primes, powers]
+
+fn lcm_by_primes[m, n]
+    --- the two decompositions merged as two sorted lists are, a prime in both
+    --- taken to the larger of its powers
+    if m eq 0 or n eq 0
+        return 0
+    a = prime_powers[m]
+    b = prime_powers[n]
+    result = 1
+    i = 0
+    j = 0
+    while i lt len[a.primes] or j lt len[b.primes]
+        if j eq len[b.primes] or (i lt len[a.primes] and a.primes[i] lt b.primes[j])
+            result = result * a.primes[i] ^ a.powers[i]
+            i = i + 1
+        else if i eq len[a.primes] or b.primes[j] lt a.primes[i]
+            result = result * b.primes[j] ^ b.powers[j]
+            j = j + 1
+        else
+            result = result * a.primes[i] ^ max[a.powers[i], b.powers[j]]
+            i = i + 1
+            j = j + 1
+    return result
+
+log['     m      n   lcm  by multiples  by primes']
+pairs = [[12, 18], [-6, 14], [35, 0], [0, 0], [1, 1], [21, 6], [-4, -10], [1001, 77], [97, 89]]
+for pair in pairs
+    m = pair[0]
+    n = pair[1]
+    by_gcd = fmt[lcm[m, n], width = 5]
+    by_multiples = fmt[lcm_by_multiples[m, n], width = 14]
+    by_primes = fmt[lcm_by_primes[m, n], width = 10]
+    log['`fmt[m, width = 6]` `fmt[n, width = 6]` `by_gcd` `by_multiples` `by_primes`']
+log['']
+
+--- ints grow: the lcm of 1 to 20, and of 1 to 100, by folding lcm over the list
+for top in [20, 100]
+    folded = 1
+    for k in range[1, top + 1]
+        folded = lcm[folded, k]
+    log['lcm of 1 to `top` = `folded`']
+big = 2 ^ 70 * 3 ^ 5
+other = 2 ^ 40 * 3 ^ 9 * 7
+log['lcm[2^70 * 3^5, 2^40 * 3^9 * 7] = `lcm[big, other]` (by primes: `lcm_by_primes[big, other] eq lcm[big, other]`)']

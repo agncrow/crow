@@ -1,0 +1,4 @@
+an inner record of value 20 inside an outer record of value 22
+total_value: 42
+OuterInner[outer = Outer[value = 22], value = 20]
+totals: 30 and 120

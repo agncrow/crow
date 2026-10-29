@@ -1,0 +1,50 @@
+With 17 carbon atoms there are 24,894 paraffins.
+
+The number of paraffins with n carbon atoms:
+  1:                  1    2:                  1    3:                  1    4:                  2
+  5:                  3    6:                  5    7:                  9    8:                 18
+  9:                 35   10:                 75   11:                159   12:                355
+ 13:                802   14:              1,858   15:              4,347   16:             10,359
+ 17:             24,894   18:             60,523   19:            148,284   20:            366,319
+ 21:            910,726   22:          2,278,658   23:          5,731,580   24:         14,490,245
+ 25:         36,797,588   26:         93,839,412   27:        240,215,803   28:        617,105,614
+ 29:      1,590,507,121   30:      4,111,846,763   31:     10,660,307,791   32:     27,711,253,769
+ 33:     72,214,088,660   34:    188,626,236,139   35:    493,782,952,902   36:  1,295,297,588,128
+ 37:  3,404,490,780,161   38:  8,964,747,474,595   39: 23,647,478,933,969   40: 62,481,801,147,341
+
+n = 100: 5921072038125809849884993369103538010139
+n = 500: 69888806977968318652007568872323509883145559195919337637376568556764896550639165374194198834566064897188044072953504164443147167221896769574954040005634802439024034052447587053721967608928388404735140565376686372508743
+
+The paraffins of up to 7 carbons:
+n = 1:
+    CCP H H H H
+n = 2:
+    BCP (C H H H) (C H H H)
+n = 3:
+    CCP H H (C H H H) (C H H H)
+n = 4:
+    BCP (C H H (C H H H)) (C H H (C H H H))
+    CCP H (C H H H) (C H H H) (C H H H)
+n = 5:
+    CCP H H (C H H (C H H H)) (C H H (C H H H))
+    CCP H (C H H H) (C H H H) (C H H (C H H H))
+    CCP (C H H H) (C H H H) (C H H H) (C H H H)
+n = 6:
+    BCP (C H H (C H H (C H H H))) (C H H (C H H (C H H H)))
+    BCP (C H H (C H H (C H H H))) (C H (C H H H) (C H H H))
+    BCP (C H (C H H H) (C H H H)) (C H (C H H H) (C H H H))
+    CCP H (C H H H) (C H H (C H H H)) (C H H (C H H H))
+    CCP (C H H H) (C H H H) (C H H H) (C H H (C H H H))
+n = 7:
+    CCP H H (C H H (C H H (C H H H))) (C H H (C H H (C H H H)))
+    CCP H H (C H H (C H H (C H H H))) (C H (C H H H) (C H H H))
+    CCP H H (C H (C H H H) (C H H H)) (C H (C H H H) (C H H H))
+    CCP H (C H H H) (C H H (C H H H)) (C H H (C H H (C H H H)))
+    CCP H (C H H H) (C H H (C H H H)) (C H (C H H H) (C H H H))
+    CCP H (C H H (C H H H)) (C H H (C H H H)) (C H H (C H H H))
+    CCP (C H H H) (C H H H) (C H H H) (C H H (C H H (C H H H)))
+    CCP (C H H H) (C H H H) (C H H H) (C H (C H H H) (C H H H))
+    CCP (C H H H) (C H H H) (C H H (C H H H)) (C H H (C H H H))
+
+Listed for 1 to 14 carbons: [1, 1, 1, 2, 3, 5, 9, 18, 35, 75, 159, 355, 802, 1858]
+Counted:                    [1, 1, 1, 2, 3, 5, 9, 18, 35, 75, 159, 355, 802, 1858]

@@ -1,0 +1,36 @@
+--- Rosetta Code: Show the epoch
+--- https://rosettacode.org/wiki/Show_the_epoch
+--- Crow has one kind for a time, the moment, wherever a time comes from: now[],
+--- moment[...], a frame's moment column, a database's. It counts seconds from the
+--- epoch, and float[t] and moment[seconds] are the bridges between a moment and
+--- that count, so the moment of 0 seconds is the epoch itself. The program shows no
+--- reading of the clock (now[] differs on every run): every moment here is fixed.
+
+epoch = moment[0]
+in_full = fmt[epoch, style = 'datetime']
+log['moment[0] is `epoch` (ISO 8601 writes midnight UTC as the bare date): `in_full` UTC']
+log['its fields: year `epoch.year`, month `epoch.month`, day `epoch.day`, hour `epoch.hour`, minute `epoch.minute`, second `epoch.second`, offset `epoch.offset` minutes, weekday `epoch.weekday` (a Thursday)']
+log['']
+
+log['The other way: a moment read back as seconds since the epoch']
+start = moment['1970-01-01T00:00:00Z']
+log['    1970-01-01T00:00:00Z: `float[start]`']
+tokyo_text = moment['1970-01-01T09:00:00+09:00']
+log['    1970-01-01T09:00:00+09:00: `float[tokyo_text]` (the same instant)']
+y2k = moment[2000, 1, 1]
+log['    2000-01-01: `int[y2k]`']
+log['']
+
+log['The epoch written in other zones:']
+for zone in ['America/New_York', 'Europe/London', 'Asia/Tokyo', '+05:30']
+    shown = moment[epoch, tz = zone]
+    log['    `fmt[zone, width = 16]` `shown`']
+log['(Britain kept summer time all year from 1968 to 1971)']
+log['']
+
+log['Around it:']
+for seconds in [-1.0, -0.5, 0.001, 1.0, 86400.0]
+    log['    `fmt[seconds, width = 7]` s: `moment[seconds]`']
+log['2^31 seconds on, where a signed 32-bit count of seconds runs out: `moment[2 ^ 31]`']
+log['The moments a moment holds lie 100,000,000 days either side of the epoch:']
+log['    from `moment[-8640000000000]` to `moment[8640000000000]`']

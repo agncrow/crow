@@ -1,0 +1,40 @@
+--- Rosetta Code: The Name Game
+--- https://rosettacode.org/wiki/The_Name_Game
+--- Names are read from standard input, one a line, and each gets its verse. The
+--- rhyme is the name without its first letter, or the whole name where it begins
+--- with a vowel; a name beginning with B, F or M drops that letter from its own
+--- line of the verse (bo-illy for Billy, fo-elix for Felix, mo-ary for Mary).
+
+fn title_case[name]
+    first = upper[slice[name, 0, 1]]
+    rest = lower[slice[name, 1, len[name]]]
+    return '`first``rest`'
+
+--- the line's sound: b, f or m before the rhyme, unless the name begins with it
+fn sung[letter, initial, rhyme]
+    if letter eq initial
+        return rhyme
+    return '`letter``rhyme`'
+
+fn verse[name]
+    x = title_case[name]
+    initial = lower[x[0]]
+    rhyme = lower[slice[x, 1, len[x]]]
+    if initial in ['a', 'e', 'i', 'o', 'u']
+        rhyme = lower[x]
+    b = sung['b', initial, rhyme]
+    f = sung['f', initial, rhyme]
+    m = sung['m', initial, rhyme]
+    return ['`x`, `x`, bo-`b`', 'Banana-fana fo-`f`', 'Fee-fi-mo-`m`', '`x`!']
+
+line = input[]
+count = 0
+while line.ok
+    name = trim[line]
+    if name ne ''
+        if count gt 0
+            log['']
+        count = count + 1
+        for sung_line in verse[name]
+            log[sung_line]
+    line = input[]

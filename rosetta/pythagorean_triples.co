@@ -1,0 +1,39 @@
+--- Rosetta Code: Pythagorean triples
+--- https://rosettacode.org/wiki/Pythagorean_triples
+--- Every primitive triple is reached once from (3, 4, 5) by Berggren's three matrices, and
+--- each child's perimeter is larger than its parent's, so the tree is cut where the
+--- perimeter passes the limit. A primitive triple of perimeter p stands for limit / p
+--- triples (its multiples). The tree is walked with a stack held in a list, three
+--- numbers a triple, since a branch runs thousands of levels deep. Every limit up to the
+--- extra credit's 100,000,000 (7 million primitive triples): ~5 s interpreted.
+
+struct Count [primitive, total]
+
+fn triples[limit]
+    stack = [3, 4, 5]
+    primitive = 0
+    total = 0
+    while len[stack] gt 0
+        c = stack[-1]
+        b = stack[-2]
+        a = stack[-3]
+        stack = pop[pop[pop[stack]]]
+        primitive = primitive + 1
+        total = total + limit / (a + b + c)
+        --- the three children, whose perimeters are 5a - 5b + 7c, 5a + 5b + 7c and
+        --- -5a + 5b + 7c
+        if 5 * a - 5 * b + 7 * c lte limit
+            stack = push[push[push[stack, a - 2 * b + 2 * c], 2 * a - b + 2 * c], 2 * a - 2 * b + 3 * c]
+        if 5 * a + 5 * b + 7 * c lte limit
+            stack = push[push[push[stack, a + 2 * b + 2 * c], 2 * a + b + 2 * c], 2 * a + 2 * b + 3 * c]
+        if 5 * b + 7 * c - 5 * a lte limit
+            stack = push[push[push[stack, 2 * b + 2 * c - a], b + 2 * c - 2 * a], 2 * b + 3 * c - 2 * a]
+    return Count[primitive, total]
+
+limit = 100
+while limit lte 100000000
+    n = triples[limit]
+    total = fmt[n.total, commas = true]
+    primitive = fmt[n.primitive, commas = true]
+    log['Up to a perimeter of `fmt[limit, commas = true]`: `total` triples, `primitive` primitive']
+    limit = limit * 10

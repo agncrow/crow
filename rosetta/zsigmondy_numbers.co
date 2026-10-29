@@ -1,0 +1,77 @@
+--- Rosetta Code: Zsigmondy numbers
+--- https://rosettacode.org/wiki/Zsigmondy_numbers
+--- Zs(n, a, b) is a^n - b^n with every prime it shares with some a^m - b^m (m < n)
+--- divided out: for each m, divide by what the two have in common until they have
+--- nothing — no divisors listed and nothing factored. Ints grow, so a^n - b^n is exact
+--- however large n is: the table goes on past 64 bits. The task's own definition, the
+--- largest coprime divisor found among all the divisors, checks the first terms.
+
+--- the greatest common divisor, by Euclid's remainders
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+--- the greatest divisor of a^n - b^n that is coprime to a^m - b^m for every m below n
+fn zsigmondy[n, a, b]
+    rest = a ^ n - b ^ n
+    for m in range[1, n]
+        earlier = a ^ m - b ^ m
+        common = gcd[rest, earlier]
+        while common gt 1
+            rest = rest / common
+            common = gcd[rest, earlier]
+    return rest
+
+--- whether c is coprime to every number of the list
+fn coprime_to_all[c, ks]
+    for k in ks
+        if gcd[c, k] ne 1
+            return false
+    return true
+
+--- Zs(n, a, b) as the task words it: the largest divisor of a^n - b^n coprime to each
+--- a^m - b^m, m < n, the divisors found in pairs by trial division up to the root
+fn zsigmondy_by_divisors[n, a, b]
+    total = a ^ n - b ^ n
+    earlier = for m in range[1, n]
+        a ^ m - b ^ m
+    best = 1
+    d = 1
+    while d * d lte total
+        if total % d eq 0
+            for c in [d, total / d]
+                if c gt best and coprime_to_all[c, earlier]
+                    best = c
+        d = d + 1
+    return best
+
+--- Zs(n, a, b) for n from `first` to `last`, as text
+fn terms[a, b, first, last]
+    shown = for n in range[first, last + 1]
+        str[zsigmondy[n, a, b]]
+    return join[shown, ', ']
+
+pairs = [[2, 1], [3, 1], [4, 1], [5, 1], [6, 1], [7, 1], [3, 2], [5, 3], [7, 3], [7, 5]]
+
+log['The first 20 Zsigmondy numbers of each pair:']
+for p in pairs
+    log['Zsigmondy(n, `p[0]`, `p[1]`): `terms[p[0], p[1], 1, 20]`']
+
+log['']
+log['n from 21 to 30 (a^n - b^n passes 64 bits from n = 23 for a = 7, 25 for a = 6, 29 for a = 5):']
+for p in pairs
+    log['Zsigmondy(n, `p[0]`, `p[1]`): `terms[p[0], p[1], 21, 30]`']
+
+log['']
+log['The 100th of each pair:']
+for p in pairs
+    whole = p[0] ^ 100 - p[1] ^ 100
+    log['Zsigmondy(100, `p[0]`, `p[1]`) = `zsigmondy[100, p[0], p[1]]`  (of a^100 - b^100, `len[str[whole]]` digits)']
+
+agree = for p in pairs
+    same = for n in range[1, 11]
+        zsigmondy[n, p[0], p[1]] eq zsigmondy_by_divisors[n, p[0], p[1]]
+    false not in same
+log['']
+log['The same as the largest coprime divisor, every divisor tried, for n up to 10: `false not in agree`']

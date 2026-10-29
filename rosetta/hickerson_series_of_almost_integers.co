@@ -1,0 +1,47 @@
+--- Rosetta Code: Hickerson series of almost integers
+--- https://rosettacode.org/wiki/Hickerson_series_of_almost_integers
+--- h(n) = n! / (2 (ln 2)^(n+1)) with n! an exact int and ln 2 a decimal of 50
+--- significant digits (ln of a decimal keeps its digits, and so does every result
+--- it takes part in). An almost integer has 0 or 9 as its first digit after the point.
+use math
+
+fn exact_factorial[n]
+    product = 1
+    for k in range[2, n + 1]
+        product = product * k
+    return product
+
+fn hickerson[n]
+    ln2 = ln[decimal[2, digits = 50]]
+    return exact_factorial[n] / (2 * ln2 ^ (n + 1))
+
+fn first_decimal[x]
+    return floor[x * 10] % 10
+
+fn almost_integer[x]
+    d = first_decimal[x]
+    return d eq 0 or d eq 9
+
+--- The value to 12 places, its whole part right-aligned so the points line up.
+fn shown[x]
+    parts = split[str[round[x, 12]], '.']
+    return '`fmt[parts[0], width = 18, align = \'right\']`.`parts[1]`'
+
+log[' n                            h(n)  first decimal  almost an integer']
+almost = []
+others = []
+for n in range[1, 18]
+    h = hickerson[n]
+    verdict = 'no'
+    if almost_integer[h]
+        verdict = 'yes'
+        almost = push[almost, n]
+    else
+        others = push[others, n]
+    log['`fmt[n, width = 2]`  `shown[h]``fmt[first_decimal[h], width = 15]`  `verdict`']
+
+yes_list = join[almost, ', ']
+no_list = join[others, ', ']
+log['']
+log['Almost integers for n = `yes_list` (`len[almost]` of 17); not for n = `no_list`.']
+log['With the same digits, h(18) = `shown[hickerson[18]]`..., as the task gives it.']

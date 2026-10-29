@@ -1,0 +1,12 @@
+--- The end of standard input is no line: `input[]` there is an error value,
+--- so a loop reading every line ends. It had answered empty text that did
+--- not fail, again and again (Rosetta Code, ABC correlation). The parity
+--- harness gives a program no input.
+line = input[]
+log[line.ok]
+log[line.reason]
+n = 0
+while line.ok
+    n = n + 1
+    line = input[]
+log['read `n` lines']

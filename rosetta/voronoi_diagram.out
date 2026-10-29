@@ -1,0 +1,43 @@
+Sites, each with the corners and the area of its cell:
+  A at (18.2, 122.8): 6 corners, area 18038.8
+  B at (570.7, 70.2): 5 corners, area 24535.4
+  C at (383.3, 8.3): 5 corners, area 9927.3
+  D at (529.1, 355.7): 6 corners, area 40334.3
+  E at (248.1, 151.3): 6 corners, area 13996.1
+  F at (161.1, 363.5): 5 corners, area 24726.3
+  G at (248.8, 185.0): 5 corners, area 23906.0
+  H at (8.3, 270.8): 5 corners, area 12842.8
+  I at (128.2, 266.8): 5 corners, area 18485.0
+  J at (382.2, 114.5): 6 corners, area 24984.0
+  K at (155.8, 22.9): 5 corners, area 18599.7
+  L at (357.8, 90.5): 4 corners, area 9624.2
+The cells cover 240000.0 of the field's 240000.0.
+
+voronoi_diagram.svg: the twelve cells, each in its site's colour
+
+aaaaakkkkkkkkkkkkkkkkkkkkkkkkkkkkkkccccccccccccccCcccccccccccccbbbbbbbbbbbbbbb
+aaaaaaakkkkkkkkkkkkkKkkkkkkkkkkkkkkllccccccccccccccccccccccccccbbbbbbbbbbbbbbb
+aaaaaaaakkkkkkkkkkkkkkkkkkkkkkkkkkllllllllllccccccccccccccccccbbbbbbbbbbbbbbbb
+aaaaaaaaaakkkkkkkkkkkkkkkkkkkkkkeeelllllllllllllllcccccccccccbbbbbbbbbbbbbbbbb
+aaaaaaaaaaakkkkkkkkkkkkkkkkkkeeeeeeelllllllllllllllljjjjjjjjjbbbbbbbbbbbbbBbbb
+aaaaaaaaaaaakkkkkkkkkkkkkkkeeeeeeeeeelllllllllLllljjjjjjjjjjjjbbbbbbbbbbbbbbbb
+aaaaaaaaaaaaaakkkkkkkkkkeeeeeeeeeeeeeelllllllllljjjjjjjjjjjjjjbbbbbbbbbbbbbbbb
+aaAaaaaaaaaaaaakkkkkkeeeeeeeeeeeeeeeeeellllllljjjJjjjjjjjjjjjjjbbbbbbbbbbbbbbb
+aaaaaaaaaaaaaaaaakeeeeeeeeeeeeeeeeeeeeeelllljjjjjjjjjjjjjjjjjjjbbbbbbbbbbbbbbb
+aaaaaaaaaaaaaaaaaeeeeeeeeeeeeeeeEeeeeeeeelljjjjjjjjjjjjjjjjjjjjjbbbbbbbbbbbbbb
+aaaaaaaaaaaaaaaiiiieeeeeeeeeeeeeeeeeeeeeeejjjjjjjjjjjjjjjjjjjjjjbbbbbbbbbbbbbb
+aaaaaaaaaaaaaiiiiiiigggggggggggggggggggggggjjjjjjjjjjjjjjjjjjjjjjbbbbbbbbbbbbb
+aaaaaaaaaaiiiiiiiiiiiiggggggggggGgggggggggggjjjjjjjjjjjjjjjjjjjjjbbbbbbbbbbbbb
+hhhhhhhhhiiiiiiiiiiiiiiggggggggggggggggggggggjjjjjjjjjjjjjjjjjjjjddbbbbbbbbbbb
+hhhhhhhhhiiiiiiiiiiiiiiiggggggggggggggggggggggjjjjjjjjjjjjjjjjdddddddddddddddd
+hhhhhhhhhiiiiiiiiiiiiiiiiigggggggggggggggggggggjjjjjjjjjjjjddddddddddddddddddd
+hhhhhhhhhiiiiiiiiiiiiiiiiiigggggggggggggggggggggjjjjjjjddddddddddddddddddddddd
+hHhhhhhhhiiiiiiiIiiiiiiiiiiigggggggggggggggggggggjjjdddddddddddddddddddddddddd
+hhhhhhhhhiiiiiiiiiiiiiiiiiiiiigggggggggggggggggggddddddddddddddddddddddddddddd
+hhhhhhhhhiiiiiiiiiiiiiiiiffffffffgggggggggggggggdddddddddddddddddddddddddddddd
+hhhhhhhhhiiiiiiiiiifffffffffffffffffffgggggggggddddddddddddddddddddddddddddddd
+hhhhhhhhhiiiifffffffffffffffffffffffffffffggggdddddddddddddddddddddddddddddddd
+hhhhhhhhhffffffffffffffffffffffffffffffffffffddddddddddddddddddddddddddddddddd
+hhhhhhhhffffffffffffFffffffffffffffffffffffffdddddddddddddddddddddddDddddddddd
+hhhhhhfffffffffffffffffffffffffffffffffffffffddddddddddddddddddddddddddddddddd
+hhhhhffffffffffffffffffffffffffffffffffffffffddddddddddddddddddddddddddddddddd

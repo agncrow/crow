@@ -1,0 +1,54 @@
+--- Rosetta Code: Elementary cellular automaton
+--- https://rosettacode.org/wiki/Elementary_cellular_automaton
+--- A generation is a list of 0s and 1s whose ends wrap round. A cell's next
+--- state is the bit of the rule numbered by its neighbourhood read as three bits
+--- (left, itself, right). Shown as text pictures, # for 1 and . for 0.
+
+use bits
+
+fn next_generation[cells, rule]
+    n = len[cells]
+    next = for i in range[n]
+        left = cells[(i + n - 1) % n]
+        right = cells[(i + 1) % n]
+        bitand[shift[rule, -(4 * left + 2 * cells[i] + right)], 1]
+    next
+
+--- The first count generations of the rule, from the given cells.
+fn evolve[cells, rule, count]
+    generations = [cells]
+    while len[generations] lt count
+        generations = push[generations, next_generation[generations[-1], rule]]
+    return generations
+
+fn cells_of[text]
+    cells = for c in split[text, '']
+        if c eq '1'
+            1
+        else
+            0
+    cells
+
+fn picture[cells]
+    marks = for c in cells
+        if c eq 1
+            '#'
+        else
+            '.'
+    join[marks, '']
+
+start = cells_of['0000000001000000000']
+rules = [90, 30, 122]
+lines = 50
+runs = for rule in rules
+    evolve[start, rule, lines]
+
+rule_names = for r in rules
+    str[r]
+shown_rules = join[rule_names, ', ']
+log['   Rules: (`shown_rules`)']
+for i in range[lines]
+    pictures = for run in runs
+        picture[run[i]]
+    row = join[pictures, '    ']
+    log['`fmt[i, width = 2]`: `row`']

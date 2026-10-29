@@ -1,0 +1,31 @@
+--- Rosetta Code: Magic 8-ball
+--- https://rosettacode.org/wiki/Magic_8-ball
+--- Each question read from standard input is answered by one of the ball's twenty
+--- answers (ten yes, five non-committal, five no), drawn at random; an empty line
+--- or the end of the input puts the ball down. The draws are seeded, so a run with
+--- the same questions gets the same answers.
+
+use math
+
+fn answers[]
+    [
+        'It is certain.', 'It is decidedly so.', 'Without a doubt.', 'Yes definitely.',
+        'You may rely on it.', 'As I see it, yes.', 'Most likely.', 'Outlook good.', 'Yes.',
+        'Signs point to yes.', 'Reply hazy, try again.', 'Ask again later.',
+        'Better not tell you now.', 'Cannot predict now.', 'Concentrate and ask again.',
+        'Don\'t count on it.', 'My reply is no.', 'My sources say no.',
+        'Outlook not so good.', 'Very doubtful.'
+    ]
+
+fn shake[]
+    sayings = answers[]
+    sayings[rand[len[sayings]]]
+
+seed[8]
+log['Ask the Magic 8-Ball a yes or no question; an empty line puts it down.']
+question = input['Your question: ']
+while question.ok and trim[question] ne ''
+    log[shake[]]
+    question = input['Your question: ']
+log['']
+log['The ball goes back on the shelf.']

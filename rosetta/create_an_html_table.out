@@ -1,0 +1,12 @@
+<table>
+  <thead>
+    <tr><th></th><th>X</th><th>Y</th><th>Z</th></tr>
+  </thead>
+  <tbody>
+    <tr><td style="text-align: right">1</td><td style="text-align: right">3944</td><td style="text-align: right">1033</td><td style="text-align: right">6877</td></tr>
+    <tr><td style="text-align: right">2</td><td style="text-align: right">6405</td><td style="text-align: right">6381</td><td style="text-align: right">4355</td></tr>
+    <tr><td style="text-align: right">3</td><td style="text-align: right">485</td><td style="text-align: right">4474</td><td style="text-align: right">6081</td></tr>
+    <tr><td style="text-align: right">4</td><td style="text-align: right">6484</td><td style="text-align: right">9721</td><td style="text-align: right">8770</td></tr>
+    <tr><td style="text-align: right">5</td><td style="text-align: right">4119</td><td style="text-align: right">4471</td><td style="text-align: right">7531</td></tr>
+  </tbody>
+</table>

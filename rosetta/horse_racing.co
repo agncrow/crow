@@ -1,0 +1,114 @@
+--- Rosetta Code: Horse racing
+--- https://rosettacode.org/wiki/Horse_racing
+--- Each horse is rated in pounds against horse A's run in race 1 (100): a pound
+--- more carried is a pound better, a length behind the winner two pounds worse,
+--- and a winning time a tenth of a second slower a pound worse (a second is five
+--- lengths). The ratings, adjusted as the task supposes and for the weight each
+--- horse carries in race 4, order the field: two pounds between horses is a
+--- length, and the winner's time follows from its rating as A's 1:36.0 from 100.
+--- Lengths are counted in halves and times in tenths of a second, so it is exact.
+
+struct Runner [horse, weight, behind, sex]
+struct Race [minutes, seconds, runners]
+struct Rated [horse, sex, rating]
+
+fn pounds[weight]
+    --- stones.pounds, as racing writes a weight: 9.04 is 9 stone 4, 130 pounds
+    parts = split[weight, '.']
+    return int[parts[0]] * 14 + int[parts[1]]
+
+fn tenths[minutes, seconds]
+    return minutes * 600 + round[seconds * 10]
+
+fn halves[behind]
+    return round[behind * 2]
+
+fn rating[weight, halves_behind, race_tenths]
+    --- A carried 9.00 (126 pounds), won, and the race took 1:36.0 (960 tenths)
+    return 100 + pounds[weight] - 126 - halves_behind - (race_tenths - 960)
+
+fn rate[races, lost]
+    --- every runner of the past races, rated; lost holds the lengths a horse
+    --- lost through no fault of its running
+    rated = []
+    for race in races
+        time = tenths[race.minutes, race.seconds]
+        behind = 0
+        for runner in race.runners
+            behind = behind + halves[runner.behind]
+            excused = 0
+            if runner.horse in lost
+                excused = halves[lost[runner.horse]]
+            r = rating[runner.weight, behind - excused, time]
+            rated = push[rated, Rated[runner.horse, runner.sex, r]]
+    return rated
+
+fn carried[sex]
+    --- the weights for race 4
+    if sex eq 'Colt'
+        return '9.00'
+    return '8.11'
+
+fn better[a, b]
+    --- a finishes ahead of b: rated higher, or as high and first by name
+    return a.rating gt b.rating or (a.rating eq b.rating and a.horse lt b.horse)
+
+fn ordered[field]
+    result = []
+    for r in field
+        i = 0
+        while i lt len[result] and better[result[i], r]
+            i = i + 1
+        result = concat[concat[slice[result, 0, i], [r]], slice[result, i, len[result]]]
+    return result
+
+fn lengths[difference]
+    --- a difference of ratings in lengths: two pounds are a length
+    return fmt[difference / 2.0, decimals = 1]
+
+fn time_of[t]
+    seconds = t % 600 / 10
+    return '`t / 600` minute `seconds`.`t % 10` seconds'
+
+races = [
+    Race[1, 36.0, [Runner['A', '9.00', 0.0, 'Colt'], Runner['B', '8.06', 2.0, 'Filly'], Runner['C', '9.04', 1.5, 'Colt']]],
+    Race[1, 36.4, [Runner['D', '8.10', 0.0, 'Filly'], Runner['E', '9.03', 1.0, 'Colt'], Runner['F', '9.07', 3.0, 'Colt']]],
+    Race[1, 35.8, [Runner['G', '8.04', 0.0, 'Colt'], Runner['H', '8.10', 1.5, 'Colt'], Runner['I', '9.05', 0.5, 'Filly']]]
+]
+--- F was slowly away, and lost 2 lengths by it
+rated = rate[races, map[F = 2.0]]
+--- J has run 1:35.8 on the galops carrying 8.11
+rated = push[rated, Rated['J', 'Filly', rating['8.11', 0, tenths[1, 35.8]]]]
+
+shown = for r in rated
+    '`r.horse` `r.rating`'
+past = join[shown, ', ']
+log['Ratings from past form, in pounds (A in race 1 = 100): `past`']
+
+--- what the trainers and the jockey expect, in pounds
+expected = map[B = 4, C = -4, H = 3]
+field = for r in rated
+    change = 0
+    if r.horse in expected
+        change = expected[r.horse]
+    --- a horse carrying less than 9.00 runs that much better
+    Rated[r.horse, r.sex, r.rating + change + 126 - pounds[carried[r.sex]]]
+result = ordered[field]
+
+log['']
+log['Race 4, the expected result:']
+log['']
+log['Pos  Horse  Weight  Dist  Sex']
+for i in range[len[result]]
+    r = result[i]
+    behind = 0
+    position = '`i + 1`'
+    if i gt 0
+        behind = result[i - 1].rating - r.rating
+        if behind eq 0
+            --- a dead heat with the horse in front: its position, and =
+            position = '`i`='
+    log['`fmt[position, width = 3]`  `fmt[r.horse, width = 5]`  `carried[r.sex]`    `lengths[behind]`   `r.sex`']
+log['']
+--- the winner runs a tenth of a second faster for each pound it is better than A
+log['Time `time_of[960 - (result[0].rating - 100)]`']

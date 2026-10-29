@@ -1,0 +1,99 @@
+--- Rosetta Code: Prime reciprocal sum
+--- https://rosettacode.org/wiki/Prime_reciprocal_sum
+--- What the sum leaves below 1 is kept as an exact fraction r; the next term is the least
+--- prime above 1 / r, so the least prime at or above floor(1 / r) + 1. The candidates
+--- from there are sieved a window at a time by the primes below 2,000, and a survivor
+--- is prime outright below 2,000 squared and otherwise tested by Miller-Rabin to the
+--- first twelve primes as bases. That test is deterministic below 3.3 x 10^24, so the
+--- first eight terms are proven primes; from the ninth on the terms are strong probable
+--- primes, as the task asks to say: the test is probabilistic there. Ten terms and four
+--- of the stretch's five: the fifteenth, of about 2,360 digits, takes minutes.
+
+fn primes_below[limit]
+    composite = for i in range[limit]
+        false
+    found = []
+    for p in range[2, limit]
+        if not composite[p]
+            found = push[found, p]
+            m = p * p
+            while m lt limit
+                composite[m] = true
+                m = m + p
+    return found
+
+fn power_mod[base, exponent, modulus]
+    result = 1
+    b = base % modulus
+    e = exponent
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % modulus
+        b = b * b % modulus
+        e = e / 2
+    return result
+
+--- Miller-Rabin: whether the odd n passes the strong test to every base
+fn strong_probable_prime[n, bases]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    i = 0
+    while i lt len[bases]
+        x = power_mod[bases[i], d, n]
+        if x ne 1 and x ne n - 1
+            r = 1
+            while r lt s and x ne n - 1
+                x = x * x % n
+                r = r + 1
+            if x ne n - 1
+                return false
+        i = i + 1
+    return true
+
+--- the least prime at or above m: each window of candidates is sieved by the small
+--- primes (a small prime itself is not struck out), and the survivors tested in turn
+fn prime_from[m, small, bases]
+    width = 2000
+    bound = small[len[small] - 1] ^ 2
+    answer = m
+    found = false
+    start = m
+    while not found
+        divisible = for k in range[width]
+            false
+        for p in small
+            k = (p - start % p) % p
+            while k lt width
+                if start + k ne p
+                    divisible[k] = true
+                k = k + p
+        k = 0
+        while k lt width and not found
+            candidate = start + k
+            if candidate gt 1 and not divisible[k]
+                if candidate lt bound or strong_probable_prime[candidate, bases]
+                    answer = candidate
+                    found = true
+            k = k + 1
+        start = start + width
+    return answer
+
+--- a number of more than 40 digits as its first and last 20 and its length
+fn shown[n]
+    digits = str[n]
+    if len[digits] lte 40
+        return digits
+    first = slice[digits, 0, 20]
+    last = slice[digits, len[digits] - 20, len[digits]]
+    return '`first`..`last` (`len[digits]` digits)'
+
+small = primes_below[2000]
+bases = slice[small, 0, 12]
+remaining = fraction[1, 1]
+for i in range[1, 15]
+    p = prime_from[floor[1 / remaining] + 1, small, bases]
+    remaining = remaining - fraction[1, p]
+    log['`fmt[i, width = 2]`: `shown[p]`']

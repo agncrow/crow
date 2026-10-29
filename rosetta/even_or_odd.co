@@ -1,0 +1,47 @@
+--- Rosetta Code: Even or odd
+--- https://rosettacode.org/wiki/Even_or_odd
+--- Crow has no even or odd predicate, so the task's four ways are written out:
+--- the remainder by 2 (0, or 1 or -1, since % keeps the sign of the left side),
+--- the lowest bit (bitand with 1 reads an int as two's complement of any width),
+--- the last decimal digit, and halving then doubling back (/ cuts toward zero).
+--- Ints grow, so numbers past 64 bits are tested as well.
+use bits
+
+fn by_remainder[n]
+    return n % 2 eq 0
+
+fn by_bit[n]
+    return bitand[n, 1] eq 0
+
+fn by_digit[n]
+    digits = str[n]
+    return digits[-1] in '02468'
+
+fn by_halving[n]
+    return n / 2 * 2 eq n
+
+fn word[even]
+    if even
+        return 'even'
+    return 'odd'
+
+numbers = [0, 1, 2, 7, -3, -4, 42, 9223372036854775807]
+numbers = push[numbers, 2 ^ 100]
+numbers = push[numbers, 2 ^ 100 + 1]
+numbers = push[numbers, -(3 ^ 70)]
+
+fn columns[n, remainder, cells]
+    --- a number, its remainder by 2, then the four verdicts, in columns
+    padded = for cell in cells
+        fmt[cell, width = 10]
+    shown = join[padded, '']
+    left = fmt[n, width = 36]
+    right = fmt[remainder, width = 6, align = 'right']
+    return trim['`left``right`   `shown`']
+
+log[columns['n', 'n % 2', ['remainder', 'bit', 'digit', 'halving']]]
+for n in numbers
+    tests = [by_remainder[n], by_bit[n], by_digit[n], by_halving[n]]
+    verdicts = for even in tests
+        word[even]
+    log[columns[str[n], str[n % 2], verdicts]]

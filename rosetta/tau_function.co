@@ -1,0 +1,25 @@
+--- Rosetta Code: Tau function
+--- https://rosettacode.org/wiki/Tau_function
+--- The number of divisors of n is the product, over the primes dividing it, of one
+--- more than each prime's exponent; the exponents come from trial division.
+
+fn tau[n]
+    count = 1
+    m = n
+    p = 2
+    while p * p lte m
+        k = 0
+        while m % p eq 0
+            m = m / p
+            k = k + 1
+        count = count * (k + 1)
+        p = p + 1
+    if m gt 1
+        count = count * 2
+    return count
+
+log['The tau function for the first 100 positive integers:']
+for row in range[5]
+    cells = for i in range[1, 21]
+        fmt[tau[row * 20 + i], width = 3]
+    log[join[cells, ' ']]

@@ -1,0 +1,10 @@
+100000000000000.02 is approximately equal to 100000000000000.02
+100.01 is NOT approximately equal to 100.011
+1000000000.0000002 is approximately equal to 1000000000.0000001
+0.001 is NOT approximately equal to 0.0010000001
+0.000000000000000000000101 is NOT approximately equal to 0
+2.0000000000000004 is approximately equal to 2
+-2.0000000000000004 is approximately equal to -2
+3.141592653589793 is approximately equal to 3.141592653589793
+
+With a looser tolerance, close[100.01, 100.011, rel_tol = 0.0001] is true

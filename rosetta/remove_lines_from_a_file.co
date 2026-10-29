@@ -1,0 +1,76 @@
+--- Rosetta Code: Remove lines from a file
+--- https://rosettacode.org/wiki/Remove_lines_from_a_file
+--- remove_lines[path, start, count] reads the file, takes out lines start to
+--- start + count - 1 (the first line is 1; an empty line is a line), each with
+--- its line break, and writes the rest back as they were: \r\n line ends too,
+--- and a last line with or without its break. A removal reaching past the end
+--- of the file is refused with a message, and the file is left as it was.
+--- The file is made here, in the current directory, and removed at the end.
+
+--- a text's lines, each with its own line break (the last may have none)
+fn lines_of[text]
+    pieces = split[text, '\n']
+    found = []
+    for i in range[len[pieces]]
+        if i lt len[pieces] - 1
+            found = push[found, '`pieces[i]`\n']
+        else
+            if pieces[i] ne ''
+                found = push[found, pieces[i]]
+    return found
+
+fn remove_lines[path, start, count]
+    text = read[path]
+    if not text.ok
+        return error[text.reason, 'io']
+    if start lt 1 or count lt 1
+        return error['lines are counted from 1, and one or more is removed', 'lines']
+    file = lines_of[text]
+    total = len[file]
+    last = start + count - 1
+    if last gt total
+        asked = 'line `start` is'
+        if count gt 1
+            asked = 'lines `start` to `last` reach'
+        return error['`path` has `total` lines, so `asked` past its end: nothing removed', 'lines']
+    kept = concat[slice[file, 0, start - 1], slice[file, last, total]]
+    return write[path, join[kept, '']]
+
+--- the file, line by line with its numbers, and its text as JSON writes it
+fn show[path]
+    text = read[path]
+    file = lines_of[text]
+    for i in range[len[file]]
+        shown = replace[replace[file[i], '\n', ''], '\r', '']
+        log['    `fmt[i + 1, width = 2]` |`shown`']
+    log['    as written: `encode[text]`']
+
+fn removing[path, start, count]
+    log['remove_lines[\'`path`\', `start`, `count`]:']
+    done = remove_lines[path, start, count]
+    if done.ok
+        show[path]
+    else
+        log['    refused: `done.reason`']
+
+_made = write['foobar.txt', 'one\ntwo\nthree\n\nfive\nsix\n\neight\n']
+log['foobar.txt as made:']
+show['foobar.txt']
+removing['foobar.txt', 1, 2]
+removing['foobar.txt', 2, 1]
+removing['foobar.txt', 4, 3]
+removing['foobar.txt', 6, 1]
+removing['foobar.txt', 0, 1]
+removing['foobar.txt', 4, 2]
+removing['foobar.txt', 1, 3]
+removing['nosuch.txt', 1, 1]
+
+_made = write['crlf.txt', 'a\r\nb\r\nc']
+log['']
+log['crlf.txt as made:']
+show['crlf.txt']
+removing['crlf.txt', 3, 1]
+removing['crlf.txt', 1, 1]
+
+_gone = rm['foobar.txt']
+_gone = rm['crlf.txt']

@@ -1,0 +1,59 @@
+--- Rosetta Code: Ormiston pairs
+--- https://rosettacode.org/wiki/Ormiston_pairs
+--- The primes below ten million from a sieve of the odd numbers, held as a
+--- tensor of zeros (one number a place). Consecutive primes can be anagrams
+--- only where their difference is a multiple of 18 (the same digits make the
+--- same remainder by 9, and both are odd), so only those pairs have their
+--- digits sorted and compared.
+
+use math
+
+--- the odd primes below n: place i of the sieve stands for 2i + 1
+fn odd_primes_below[n]
+    size = n / 2
+    composite = zeros[size]
+    found = []
+    i = 1
+    while i lt size
+        if composite[i] eq 0.0
+            p = 2 * i + 1
+            found = push[found, p]
+            j = (p * p - 1) / 2
+            while j lt size
+                composite[j] = 1.0
+                j = j + p
+        i = i + 1
+    found
+
+--- a number's digits in order, as text
+fn sorted_digits[n]
+    return join[sort[split[str[n], '']], '']
+
+fn anagrams[a, b]
+    return (b - a) % 18 eq 0 and sorted_digits[a] eq sorted_digits[b]
+
+primes = odd_primes_below[10000000]
+pairs = []
+below_million = 0
+total = 0
+i = 1
+while i lt len[primes]
+    a = primes[i - 1]
+    b = primes[i]
+    if anagrams[a, b]
+        total = total + 1
+        if b lt 1000000
+            below_million = below_million + 1
+        if len[pairs] lt 30
+            pairs = push[pairs, '(`fmt[a, width = 5]`, `fmt[b, width = 5]`)']
+    i = i + 1
+
+log['The first 30 Ormiston pairs:']
+row = 0
+while row lt 30
+    line = join[slice[pairs, row, row + 5], '  ']
+    log[line]
+    row = row + 5
+log['']
+log['`below_million` Ormiston pairs below 1,000,000']
+log['`fmt[total, commas = true]` Ormiston pairs below 10,000,000']

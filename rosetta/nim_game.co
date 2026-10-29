@@ -1,0 +1,63 @@
+--- Rosetta Code: Nim game
+--- https://rosettacode.org/wiki/Nim_game
+--- Twelve tokens, the player first; each takes 1, 2 or 3 in turn, and whoever takes
+--- the last token wins. The computer answers each take of n with 4 - n, so every round
+--- leaves a multiple of four and the computer takes the last one. A take that breaks
+--- the rules is refused and asked again; q, an empty line or the end of the input
+--- quits. The moves are read from standard input (nim_game.in).
+
+fn tokens_word[n]
+    if n eq 1
+        return '1 token'
+    '`n` tokens'
+
+--- The player's take: 1, 2 or 3 and no more than are left, or 0 when the player quits.
+fn players_take[left]
+    while true
+        line = input['How many tokens will you take (1, 2 or 3; q quits)? ']
+        if not line.ok
+            return 0
+        text = lower[trim[line]]
+        if text eq '' or text eq 'q'
+            return 0
+        n = int[text]
+        if not n.ok
+            log['\'`text`\' is not a number of tokens.']
+            continue
+        if n lt 1 or n gt 3
+            log['You may take 1, 2 or 3 tokens, not `n`.']
+            continue
+        if n gt left
+            log['Only `tokens_word[left]` left: take no more.']
+            continue
+        return n
+
+--- One game: true when it was played to its end, false when the player quit.
+fn play[]
+    left = 12
+    log['`tokens_word[left]` on the table.']
+    while left gt 0
+        n = players_take[left]
+        if n eq 0
+            log['You leave the game with `tokens_word[left]` on the table.']
+            return false
+        left = left - n
+        log['You take `tokens_word[n]`: `tokens_word[left]` left.']
+        mine = 4 - n
+        left = left - mine
+        log['The computer takes `tokens_word[mine]`: `tokens_word[left]` left.']
+    log['The computer took the last token: the computer wins.']
+    true
+
+fn wants_another[]
+    line = input['Another game? (y/n) ']
+    if not line.ok
+        return false
+    lower[trim[line]] eq 'y'
+
+log['Nim: take 1, 2 or 3 tokens in turn; whoever takes the last token wins. You go first.']
+playing = true
+while playing
+    log['']
+    playing = play[] and wants_another[]
+log['Goodbye.']

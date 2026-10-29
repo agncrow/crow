@@ -1,0 +1,166 @@
+--- Rosetta Code: Poker hand analyser
+--- https://rosettacode.org/wiki/Poker_hand_analyser
+--- A card is a face (a, 2 ... 10, j, q, k, in either case) and a suit (h, d, c, s or
+--- ♥ ♦ ♣ ♠); a playing card character of Unicode 6.0 (U+1F0A1 to U+1F0DE, the knights
+--- excepted); or a joker (the word, or Unicode's red, black or white joker). Five real
+--- cards are ranked from how often each face comes, whether they share a suit and
+--- whether the faces run (the ace high or low). Both extra credits: a joker becomes
+--- whichever card makes the best hand, a joker free to repeat a card, and five of a
+--- kind is the best hand of all. A joker's suit matters only to a flush, which only
+--- the suit the real cards share can make, so a joker takes the first real card's
+--- suit and each of the 13 faces is tried: two jokers, 169 hands.
+
+use bits
+
+struct Card [face, suit]
+
+struct Hand [cards, jokers]
+
+--- the hands from the best down
+fn ranking[]
+    return ['five-of-a-kind', 'straight-flush', 'four-of-a-kind', 'full-house', 'flush', 'straight', 'three-of-a-kind', 'two-pair', 'one-pair', 'high-card']
+
+--- a face from 2 to 14, the ace 14
+fn face_of[text]
+    named = map[a = 14, j = 11, q = 12, k = 13]
+    t = lower[text]
+    if t in named
+        return named[t]
+    number = int[t]
+    if number.ok and str[number] eq t and number gte 2 and number lte 10
+        return number
+    return error['no face `text`']
+
+fn suit_of[text]
+    suits = map[h = '♥', d = '♦', c = '♣', s = '♠', '♥' = '♥', '♦' = '♦', '♣' = '♣', '♠' = '♠']
+    t = lower[text]
+    if t in suits
+        return suits[t]
+    return error['no suit `text`']
+
+--- a playing card character: U+1F0A0 (127136) begins four blocks of sixteen, for
+--- spades, hearts, diamonds and clubs; in each the ace is 1, the jack 11, the knight
+--- 12, the queen 13 and the king 14, and 15 is a joker past the first block
+fn unicode_card[c]
+    offset = c - 127136
+    if offset lt 0 or offset gte 64
+        return error['no card']
+    block = offset / 16
+    place = offset % 16
+    if place eq 15 and block gt 0
+        return Card[0, 'joker']
+    if place eq 0 or place eq 12 or place eq 15
+        return error['no card in this game']
+    suits = ['♠', '♥', '♦', '♣']
+    faces = [0, 14, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, 12, 13]
+    return Card[faces[place], suits[block]]
+
+--- a card read from its text, the face 0 for a joker
+fn card_of[text]
+    if lower[text] eq 'joker'
+        return Card[0, 'joker']
+    cs = split[text, '']
+    if len[cs] eq 1
+        return unicode_card[code[cs[0]]]
+    face = face_of[join[slice[cs, 0, len[cs] - 1], '']]
+    suit = suit_of[cs[len[cs] - 1]]
+    if not face.ok
+        return error[face.reason]
+    if not suit.ok
+        return error[suit.reason]
+    return Card[face, suit]
+
+--- the real cards and the count of jokers, or what makes the hand invalid
+fn hand_of[text]
+    pieces = for p in split[text, ' ']
+        if p ne ''
+            p
+    if len[pieces] ne 5
+        return error['`len[pieces]` cards']
+    cards = []
+    seen = []
+    jokers = 0
+    for p in pieces
+        card = card_of[p]
+        if not card.ok
+            return error['`p`: `card.reason`']
+        key = '`card.face``card.suit`'
+        if card.face eq 0
+            jokers = jokers + 1
+        else if key in seen
+            return error['`p` twice']
+        else
+            seen = push[seen, key]
+            cards = push[cards, card]
+    if jokers gt 2
+        return error['`jokers` jokers']
+    return Hand[cards, jokers]
+
+--- five cards ranked: the place of their hand in the ranking
+fn rank_of[cards]
+    faces = for c in cards
+        c.face
+    faces = sort[faces]
+    tally = map[]
+    flush = true
+    for c in cards
+        tally = set[tally, c.face, get_count[tally, c.face] + 1]
+        if c.suit ne cards[0].suit
+            flush = false
+    counts = reverse[sort[values[tally]]]
+    run = len[counts] eq 5 and faces[4] - faces[0] eq 4
+    wheel = len[counts] eq 5 and faces[3] eq 5 and faces[4] eq 14
+    straight = run or wheel
+    if counts[0] eq 5
+        return 0
+    if straight and flush
+        return 1
+    if counts[0] eq 4
+        return 2
+    if counts[0] eq 3 and counts[1] eq 2
+        return 3
+    if flush
+        return 4
+    if straight
+        return 5
+    if counts[0] eq 3
+        return 6
+    if counts[0] eq 2 and counts[1] eq 2
+        return 7
+    if counts[0] eq 2
+        return 8
+    return 9
+
+fn get_count[tally, face]
+    if face in tally
+        return tally[face]
+    return 0
+
+--- the best rank the real cards make with the jokers placed every way
+fn best[cards, jokers]
+    if jokers eq 0
+        return rank_of[cards]
+    top = 9
+    for face in range[2, 15]
+        top = min[top, best[push[cards, Card[face, cards[0].suit]], jokers - 1]]
+    return top
+
+fn analyse[text]
+    hand = hand_of[text]
+    if not hand.ok
+        return 'invalid (`hand.reason`)'
+    return ranking[][best[hand.cards, hand.jokers]]
+
+fn show[hands]
+    for text in hands
+        shown = fmt['`text`:', width = 24]
+        log['    `shown` `analyse[text]`']
+
+log['The task:']
+show[['2♥ 2♦ 2♣ k♣ q♦', '2♥ 5♥ 7♦ 8♣ 9♠', 'a♥ 2♦ 3♣ 4♣ 5♦', '2♥ 3♥ 2♦ 3♣ 3♦', '2♥ 7♥ 2♦ 3♣ 3♦', '2♥ 7♥ 7♦ 7♣ 7♠', '10♥ j♥ q♥ k♥ a♥', '4♥ 4♠ k♠ 5♦ 10♠', 'q♣ 10♣ 7♣ 6♣ q♣']]
+log['With jokers:']
+show[['joker  2♦  2♠  k♠  q♦', 'joker  5♥  7♦  8♠  9♦', 'joker  2♦  3♠  4♠  5♠', 'joker  3♥  2♦  3♠  3♦', 'joker  7♥  2♦  3♠  3♦', 'joker  7♥  7♦  7♠  7♣', 'joker  j♥  q♥  k♥  A♥', 'joker  4♣  k♣  5♦ 10♠', 'joker  k♣  7♣  6♣  4♣', 'joker  2♦  joker  4♠  5♠', 'joker  Q♦  joker  A♠ 10♠', 'joker  Q♦  joker  A♦ 10♦', 'joker  2♦  2♠  joker  q♦']]
+log['In the playing card characters of Unicode:']
+show[['🂡 🂮 🂭 🂫 🂪', '🂱 🃁 🃑 🂡 🂿', '🂲 🃃 🂴 🃕 🂶', '🃎 🃞 🂾 🂫 🃋', '🃙 🂩 🃄 🃔 🂷', '🃟 🃏 🃒 🃓 🃕', '🂼 🃒 🃓 🃔 🃕']]
+log['And some that are not hands:']
+show[['2h 3d 4c 5s', '2h 3d 4c 5s 6h 7d', 'joker joker joker 2s 3s', '1h 2d 3c 4s 5h', '2h 3d 4c 5s 6x', 'a♠ 🂡 3c 4s 5h']]

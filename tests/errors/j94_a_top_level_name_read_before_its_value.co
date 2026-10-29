@@ -1,0 +1,9 @@
+--- a top-level variable read before the line that gives it its first
+--- value holds none yet: refused before the program runs, in both modes —
+--- the interpreter had stopped at the read, "undefined variable", and the
+--- compiled program had not built (Rosetta Code, Idiomatically determine
+--- all the characters that can be used for symbols)
+
+log[n]
+n = 7
+log[n + 1]

@@ -1,0 +1,94 @@
+--- Rosetta Code: Check Machin-like formulas
+--- https://rosettacode.org/wiki/Check_Machin-like_formulas
+--- Each formula is parsed from its text into terms, a whole multiplier and an
+--- exact fraction; tan of the right-hand side is then computed with fractions by
+--- tan(a + b) = (tan a + tan b) / (1 - tan a tan b), halving sums and multipliers.
+--- A tan of 1 makes the right-hand side pi/4 only within one period of tan, so its
+--- value as a float is checked to lie between -3pi/4 and 5pi/4 as well.
+
+use math
+
+struct Term [times, ratio]
+
+fn term_of[text]
+    --- '-10*arctan(1/11018)' is Term[-10, 1/11018].
+    m = find[text, '^([+-]?)(?:([0-9]+)\*)?arctan\(([0-9]+)/([0-9]+)\)$']
+    times = 1
+    if m.groups[2] ne ''
+        times = int[m.groups[2]]
+    if m.groups[1] eq '-'
+        times = -times
+    return Term[times, fraction[int[m.groups[3]], int[m.groups[4]]]]
+
+fn terms_of[formula]
+    --- The terms of the right-hand side: each sign starts a new one.
+    right = replace[split[formula, '='][1], ' ', '']
+    spaced = replace[replace[right, '+', ' +'], '-', ' -']
+    terms = for piece in split[spaced, ' ']
+        if piece ne ''
+            term_of[piece]
+    return terms
+
+fn tan_sum[a, b]
+    return (a + b) / (1 - a * b)
+
+fn tan_times[k, t]
+    --- tan(k x) from t = tan x
+    if k lt 0
+        return -tan_times[-k, t]
+    if k eq 1
+        return t
+    half = k / 2
+    return tan_sum[tan_times[half, t], tan_times[k - half, t]]
+
+fn tan_of[terms]
+    --- tan of the sum of the terms' arctangents
+    if len[terms] eq 1
+        return tan_times[terms[0].times, terms[0].ratio]
+    mid = len[terms] / 2
+    return tan_sum[tan_of[slice[terms, 0, mid]], tan_of[slice[terms, mid, len[terms]]]]
+
+fn angle_of[terms]
+    --- the right-hand side as a float, near enough to place it in a period of tan
+    total = 0.0
+    for term in terms
+        total = total + term.times * atan[float[term.ratio]]
+    return total
+
+fn shown[t]
+    --- a long fraction by its first digits, its length and its size
+    parts = split[str[t], '/']
+    if len[parts] eq 1 or len[parts[0]] lt 30
+        return str[t]
+    top = slice[parts[0], 0, 10]
+    bottom = slice[parts[1], 0, 10]
+    return '`top`…/`bottom`… (`len[parts[0]]` digits over `len[parts[1]]`), about `float[t]`'
+
+formulas = 'pi/4 = arctan(1/2) + arctan(1/3)
+pi/4 = 2*arctan(1/3) + arctan(1/7)
+pi/4 = 4*arctan(1/5) - arctan(1/239)
+pi/4 = 5*arctan(1/7) + 2*arctan(3/79)
+pi/4 = 5*arctan(29/278) + 7*arctan(3/79)
+pi/4 = arctan(1/2) + arctan(1/5) + arctan(1/8)
+pi/4 = 4*arctan(1/5) - arctan(1/70) + arctan(1/99)
+pi/4 = 5*arctan(1/7) + 4*arctan(1/53) + 2*arctan(1/4443)
+pi/4 = 6*arctan(1/8) + 2*arctan(1/57) + arctan(1/239)
+pi/4 = 8*arctan(1/10) - arctan(1/239) - 4*arctan(1/515)
+pi/4 = 12*arctan(1/18) + 8*arctan(1/57) - 5*arctan(1/239)
+pi/4 = 16*arctan(1/21) + 3*arctan(1/239) + 4*arctan(3/1042)
+pi/4 = 22*arctan(1/28) + 2*arctan(1/443) - 5*arctan(1/1393) - 10*arctan(1/11018)
+pi/4 = 22*arctan(1/38) + 17*arctan(7/601) + 10*arctan(7/8149)
+pi/4 = 44*arctan(1/57) + 7*arctan(1/239) - 12*arctan(1/682) + 24*arctan(1/12943)
+pi/4 = 88*arctan(1/172) + 51*arctan(1/239) + 32*arctan(1/682) + 44*arctan(1/5357) + 68*arctan(1/12943)
+pi/4 = 88*arctan(1/172) + 51*arctan(1/239) + 32*arctan(1/682) + 44*arctan(1/5357) + 68*arctan(1/12944)'
+
+for formula in split[formulas, '\n']
+    terms = terms_of[formula]
+    t = tan_of[terms]
+    angle = angle_of[terms]
+    in_period = angle gt -3.0 * pi / 4.0 and angle lt 5.0 * pi / 4.0
+    if t eq 1 and in_period
+        log['OK     `formula`']
+    else
+        log['ERROR  `formula`']
+        log['       tan of the right-hand side is `shown[t]`']

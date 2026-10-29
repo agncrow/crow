@@ -1,0 +1,86 @@
+--- Rosetta Code: Set right-adjacent bits
+--- https://rosettacode.org/wiki/Set_right-adjacent_bits
+--- The e bits are one int, the leftmost bit the highest (an int grows, so any width
+--- fits). Setting the n bits to the right of every set bit is b or (b >> 1) or ...
+--- or (b >> n), made by doubling: when r holds each set bit followed by k more,
+--- r or (r >> m) holds it followed by k + m (m up to k + 1), so about log2(n) shifts
+--- do it at any width. A shift right never reaches past the left end and what falls
+--- off the right is gone, so the width e is kept.
+
+use bits
+use math
+
+fn from_text[written]
+    b = 0
+    for c in split[written, '']
+        b = shift[b, 1]
+        if c eq '1'
+            b = bitor[b, 1]
+    return b
+
+fn to_text[b, width]
+    digits = for i in range[width]
+        str[bitand[shift[b, i + 1 - width], 1]]
+    return join[digits, '']
+
+fn set_right_adjacent[b, n]
+    r = b
+    k = 0
+    while k lt n
+        m = min[k + 1, n - k]
+        r = bitor[r, shift[r, -m]]
+        k = k + m
+    return r
+
+--- the same by reading the bits as characters, left to right: a bit is set when
+--- a set bit lies at most n places to its left
+fn by_characters[written, n]
+    last = -n - 1
+    out = []
+    i = 0
+    for c in split[written, '']
+        if c eq '1'
+            last = i
+        if i - last lte n
+            out = push[out, '1']
+        else
+            out = push[out, '0']
+        i = i + 1
+    return join[out, '']
+
+fn report[written, n]
+    e = len[written]
+    result = set_right_adjacent[from_text[written], n]
+    log['     Input b: `written`']
+    log['      Result: `to_text[result, e]`']
+    log['']
+
+log['n = 2; Width e = 4:']
+log['']
+for written in ['1000', '0100', '0010', '0000']
+    report[written, 2]
+
+runs = for k in range[10, 0, -1]
+    repeat['0', k]
+gaps = join[runs, '1']
+wide = '01`gaps`'
+for n in range[4]
+    log['n = `n`; Width e = `len[wide]`:']
+    log['']
+    report[wide, n]
+
+--- the widest the task allows: 10,000 random bits, about one in twenty set
+seed[2024]
+picked = for i in range[10000]
+    if rand[20] eq 0
+        '1'
+    else
+        '0'
+long = join[picked, '']
+set_bits = occurs[long, '1']
+log['Width e = 10000, `set_bits` bits set at random:']
+for n in [0, 1, 5, 19, 100, 9999]
+    shown = to_text[set_right_adjacent[from_text[long], n], len[long]]
+    same = shown eq by_characters[long, n]
+    set_now = fmt[occurs[shown, '1'], width = 5]
+    log['    n = `fmt[n, width = 4]`: `set_now` bits set, the first 66 `slice[shown, 0, 66]`, as bit by bit: `same`']

@@ -1,0 +1,34 @@
+--- a float written at a nested position of a holder of ints — a grid's
+--- number, a map's list's number — makes every row a row of floats: the
+--- rows pushed or collected before are converted where they meet the grid
+--- (the compiled program had pushed a list of ints into a list of lists of
+--- floats and not built), and whole numbers written down for a row are
+--- that row's floats
+row = []
+row = push[row, 0]
+row = push[row, 0]
+g = []
+g = push[g, row]
+g = push[g, row]
+g[0][0] = 2.5
+log[g]
+
+h = for r in range[2]
+    line = for c in range[2]
+        r + c
+    line
+h[1][1] = 0.5
+log[h]
+
+m = map[]
+m = set[m, 'a', [1, 2]]
+m['b'] = [3]
+m['a'][0] = 1.5
+log[m]
+
+k = []
+k = push[k, row]
+k[0] = [2, 3]
+k[1 - 1][1] = 4.25
+log[k]
+log[[2, 4.25] in k]

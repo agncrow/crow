@@ -1,0 +1,78 @@
+--- Rosetta Code: Find if a point is within a triangle
+--- https://rosettacode.org/wiki/Find_if_a_point_is_within_a_triangle
+--- Each edge of the triangle, walked A to B to C and back to A, is a line that cuts
+--- the plane in two, and the cross product (B - A) x (P - A) says which half P lies
+--- in: above 0 to the left of the edge, below 0 to its right, 0 on its line.
+--- Why it works: a triangle is convex, so it is exactly the points that lie on the
+--- triangle's own side of all three edges. Walked in one direction, the three edges
+--- all have the triangle on the same hand (the left when the corners run
+--- anticlockwise, the right when clockwise), so P is inside when the three products
+--- have one sign, and outside when two of them differ. A product of 0, the others
+--- not differing, puts P on an edge itself, not on its line beyond a corner (there
+--- another product would differ). The coordinates are exact fractions, so a point
+--- on an edge is found on it; in floats rounding decides such a point either way,
+--- as the last two triangles show.
+
+struct Point [x, y]
+
+--- a point in floats (a field holds one kind, so a record of its own)
+struct Rounded [x, y]
+
+--- the cross product (b - a) x (p - a): twice the signed area of a, b, p
+fn side[a, b, p]
+    return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)
+
+fn locate[p, a, b, c]
+    if side[a, b, c] eq 0
+        return 'not placed: the corners lie on one line'
+    s1 = side[a, b, p]
+    s2 = side[b, c, p]
+    s3 = side[c, a, p]
+    if (s1 lt 0 or s2 lt 0 or s3 lt 0) and (s1 gt 0 or s2 gt 0 or s3 gt 0)
+        return 'outside'
+    if s1 eq 0 or s2 eq 0 or s3 eq 0
+        return 'on an edge'
+    return 'inside'
+
+--- the point with its coordinates given as text, each kept exactly
+fn point[x, y]
+    return Point[fraction[decimal[x]], fraction[decimal[y]]]
+
+fn floats[p]
+    return Rounded[float[p.x], float[p.y]]
+
+fn shown[p]
+    return '(`p.x`, `p.y`)'
+
+fn show_triangle[a, b, c]
+    log['Triangle `shown[a]`, `shown[b]`, `shown[c]`']
+
+fn report[p, a, b, c]
+    log['  `shown[p]` is `locate[p, a, b, c]`']
+
+--- the point three sevenths of the way from a to b, exactly and computed in floats,
+--- located in the triangle
+fn along_edge[a, b, c]
+    p = Point[a.x + fraction[3, 7] * (b.x - a.x), a.y + fraction[3, 7] * (b.y - a.y)]
+    fa = floats[a]
+    fb = floats[b]
+    rounded = Rounded[fa.x + 3.0 / 7.0 * (fb.x - fa.x), fa.y + 3.0 / 7.0 * (fb.y - fa.y)]
+    show_triangle[a, b, c]
+    report[p, a, b, c]
+    log['  in floats `shown[rounded]` is `locate[rounded, fa, fb, floats[c]]`']
+
+a = point['1.5', '2.4']
+b = point['5.1', '-3.1']
+c = point['-3.8', '0.5']
+show_triangle[a, b, c]
+for p in [point['0', '0'], point['0', '1'], point['3', '1'], point['5.1', '-3.1'], point['-1.15', '1.45'], point['-1.15', '1.46']]
+    report[p, a, b, c]
+show_triangle[point['0', '0'], point['1', '1'], point['2', '2']]
+report[point['1', '1'], point['0', '0'], point['1', '1'], point['2', '2']]
+log['']
+
+--- two triangles sharing the edge a b, and a point on it
+a = Point[fraction[1, 10], fraction[1, 9]]
+b = Point[fraction[100, 8], fraction[100, 3]]
+along_edge[a, b, Point[fraction[100, 4], fraction[100, 9]]]
+along_edge[a, b, Point[fraction[-100, 8], fraction[100, 6]]]

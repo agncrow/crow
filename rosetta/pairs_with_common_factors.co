@@ -1,0 +1,72 @@
+--- Rosetta Code: Pairs with common factors
+--- https://rosettacode.org/wiki/Pairs_with_common_factors
+--- Of the n(n - 1)/2 pairs 1 <= x < y <= n, phi(y) have x prime to y (x = 1 among
+--- them, which shares no factor anyway), so a(n) = n(n - 1)/2 - (phi(2) + ... + phi(n)),
+--- the task's formula as phi(1) = 1; the totients come from one sieve to a million.
+
+fn totients[limit]
+    --- phi(i) for every i up to limit: each prime p takes phi / p from its multiples
+    phi = range[limit + 1]
+    p = 2
+    while p lte limit
+        if phi[p] eq p
+            m = p
+            while m lte limit
+                phi[m] = phi[m] - phi[m] / p
+                m = m + p
+        p = p + 1
+    return phi
+
+fn common_factor_pairs[limit]
+    --- a(1) .. a(limit): item n - 1 is a(n)
+    phi = totients[limit]
+    phi_sum = 0
+    terms = []
+    for n in range[1, limit + 1]
+        phi_sum = phi_sum + phi[n]
+        terms = push[terms, n * (n - 1) / 2 + 1 - phi_sum]
+    return terms
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+fn counted_pairs[limit]
+    --- the same terms the slow way, testing every pair 1 < x < y <= n by its gcd
+    terms = []
+    count = 0
+    for y in range[1, limit + 1]
+        for x in range[2, y]
+            if gcd[x, y] gt 1
+                count = count + 1
+        terms = push[terms, count]
+    return terms
+
+fn ordinal[n]
+    --- n with its English suffix: 1st, 2nd, 3rd, 4th, 11th, 21st ...
+    suffix = 'th'
+    if n % 100 lt 11 or n % 100 gt 13
+        last = n % 10
+        if last eq 1
+            suffix = 'st'
+        else if last eq 2
+            suffix = 'nd'
+        else if last eq 3
+            suffix = 'rd'
+    return '`fmt[n, commas = true]``suffix`'
+
+terms = common_factor_pairs[1000000]
+log['Number of pairs with common factors - the first one hundred terms:']
+for row in range[0, 100, 10]
+    cells = for a in slice[terms, row, row + 10]
+        fmt[a, commas = true, width = 7]
+    log[join[cells, '']]
+log['']
+if counted_pairs[100] eq slice[terms, 0, 100]
+    log['Testing every pair by its gcd gives the same hundred terms.']
+else
+    log['Testing every pair by its gcd gives other terms!']
+log['']
+for n in [1, 10, 100, 1000, 10000, 100000, 1000000]
+    log['The `ordinal[n]` term: `fmt[terms[n - 1], commas = true]`']

@@ -1,0 +1,56 @@
+--- Rosetta Code: Duffinian numbers
+--- https://rosettacode.org/wiki/Duffinian_numbers
+--- The divisor sums σ(n) for every n up to a limit come from a sieve (each d is
+--- added to all its multiples); n is Duffinian when it is composite (σ(n) is not
+--- n + 1, and n is not 1) and gcd(n, σ(n)) is 1.
+
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+--- σ(n) for n from 0 to limit, σ(0) left 0
+fn divisor_sums[limit]
+    sums = for n in range[limit + 1]
+        0
+    for d in range[1, limit + 1]
+        for m in range[d, limit + 1, d]
+            sums[m] = sums[m] + d
+    return sums
+
+fn duffinian[n, sums]
+    return n gt 1 and sums[n] ne n + 1 and gcd[n, sums[n]] eq 1
+
+--- items in rows of `per`, each padded to `width` (a number aligned right, text
+--- left)
+fn table[items, per, width]
+    rows = []
+    for start in range[0, len[items], per]
+        cells = for x in slice[items, start, start + per]
+            fmt[x, width = width]
+        rows = push[rows, join[cells, ' ']]
+    return rows
+
+limit = 200000
+sums = divisor_sums[limit]
+is_duff = for n in range[limit + 1]
+    duffinian[n, sums]
+
+first = []
+n = 1
+while len[first] lt 50
+    if is_duff[n]
+        first = push[first, n]
+    n = n + 1
+log['The first 50 Duffinian numbers:']
+for line in table[first, 10, 3]
+    log[line]
+
+triplets = []
+for n in range[1, limit - 2]
+    if is_duff[n] and is_duff[n + 1] and is_duff[n + 2]
+        triplets = push[triplets, '(`n`, `n + 1`, `n + 2`)']
+log['']
+log['The `len[triplets]` Duffinian triplets below `limit`:']
+for line in table[triplets, 3, 24]
+    log[trim[line]]

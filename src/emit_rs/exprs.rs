@@ -178,19 +178,16 @@ impl Emitter {
                         return inner;
                     }
                     // (a map keeps its keys' kind: one keyed by ints had been
-                    // collected keyed by text — crow check --self)
-                    let map = match Self::inner(&self.tt(expr)) {
-                        Ty::Map(crate::ir::Key::Int, v) if matches!(v.as_ref(), Ty::Big) => "into_iter().map(|(k, v)| (k, v.to_f64())).collect::<std::collections::BTreeMap<i64, f64>>()",
-                        Ty::Map(crate::ir::Key::Int, _) => "into_iter().map(|(k, v)| (k, v as f64)).collect::<std::collections::BTreeMap<i64, f64>>()",
-                        Ty::Map(_, v) if matches!(v.as_ref(), Ty::Big) => "into_iter().map(|(k, v)| (k, v.to_f64())).collect::<std::collections::BTreeMap<String, f64>>()",
-                        Ty::Map(..) => "into_iter().map(|(k, v)| (k, v as f64)).collect::<std::collections::BTreeMap<String, f64>>()",
-                        Ty::List(i) if matches!(i.as_ref(), Ty::Big) => "into_iter().map(|v| v.to_f64()).collect::<Vec<f64>>()",
-                        _ => "into_iter().map(|v| v as f64).collect::<Vec<f64>>()",
+                    // collected keyed by text — crow check --self; and the
+                    // holder's depth: a grid's rows of ints are rows of floats)
+                    let from = match Self::inner(&self.tt(expr)) {
+                        Ty::Unknown => Ty::List(Box::new(Ty::Int)),
+                        t => t,
                     };
                     if matches!(ty, Ty::Result(_)) {
-                        format!("{{ let _r = {}; CrowResult {{ ok: _r.ok, value: _r.value.{}, reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}", inner, map)
+                        format!("{{ let _r = {}; CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}", inner, floated(&from, "_r.value"))
                     } else {
-                        format!("({}).{}", inner, map)
+                        floated(&from, &inner)
                     }
                 }
                 Convert::Unwrap => {
@@ -272,9 +269,13 @@ impl Emitter {
                         // missing cell's, or the item's reason)
                         Ty::List(item) if matches!(item.as_ref(), Ty::Result(_)) => {
                             self.needs_crow_runtime = true;
+                            // (a growing int's float is its own: `int[text]`
+                            // answers one, and `as f64` had not built, E0605;
+                            // Rosetta Code, 24 game)
+                            let number = if matches!(item.payload(), Ty::Big) { "_x.value.to_f64()" } else { "_x.value as f64" };
                             format!(
-                                "{{ let _xs = &({}); let mut _v: Vec<f64> = Vec::with_capacity(_xs.len()); for (_i, _x) in _xs.iter().enumerate() {{ if !_x.ok {{ crow_stop({}, if _x.kind == \"missing\" {{ crow_runtime::stops::missing_cell(_i) }} else {{ format!(\"item {{}} of the list failed: {{}}\", _i, _x.reason) }}) }} _v.push(_x.value as f64); }} let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}",
-                                inner, self.line_now()
+                                "{{ let _xs = &({}); let mut _v: Vec<f64> = Vec::with_capacity(_xs.len()); for (_i, _x) in _xs.iter().enumerate() {{ if !_x.ok {{ crow_stop({}, if _x.kind == \"missing\" {{ crow_runtime::stops::missing_cell(_i) }} else {{ format!(\"item {{}} of the list failed: {{}}\", _i, _x.reason) }}) }} _v.push({}); }} let _n = _v.len(); crow_runtime::tensor::CrowTensor::from_vec(_v, vec![_n]) }}",
+                                inner, self.line_now(), number
                             )
                         }
                         // a list of rows is a matrix: rows of one shape, or the
@@ -483,6 +484,10 @@ impl Emitter {
                     | Ty::Big
                     | Ty::Decimal
                     | Ty::Fraction
+                    // (a moment too: a loop over moments borrows each, and
+                    // one handed to a function taking it had been handed as
+                    // the borrow, E0308; Rosetta Code, Palindrome dates)
+                    | Ty::Moment
             );
             if non_copy {
                 return format!("{}.clone()", s);
@@ -500,7 +505,7 @@ impl Emitter {
                 return s;
             }
             let t = self.local_ty(name).unwrap_or_else(|| as_inferred(ty));
-            if matches!(t.text(), Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(..) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Handle(_) | Ty::Result(_) | Ty::Big | Ty::Decimal | Ty::Fraction) {
+            if matches!(t.text(), Ty::Str | Ty::List(_) | Ty::Tensor(..) | Ty::Map(..) | Ty::Record(_) | Ty::Frame(_) | Ty::Json | Ty::Bytes | Ty::Handle(_) | Ty::Result(_) | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Moment) {
                 return format!("{}.clone()", s);
             }
         }
@@ -578,7 +583,10 @@ impl Emitter {
     fn holds_numbers(t: &Ty) -> bool {
         match t {
             Ty::Tensor(..) => true,
-            Ty::List(inner) => matches!(inner.as_ref(), Ty::Int | Ty::Float) || (matches!(inner.as_ref(), Ty::List(_) | Ty::Tensor(..)) && Self::holds_numbers(inner)),
+            // (growing ints too: a list grown past 64 bits compared with a
+            // literal's tensor had been compared by Rust's `==` and did not
+            // build; Rosetta Code, Bernoulli's triangle)
+            Ty::List(inner) => matches!(inner.as_ref(), Ty::Int | Ty::Float | Ty::Big) || (matches!(inner.as_ref(), Ty::List(_) | Ty::Tensor(..)) && Self::holds_numbers(inner)),
             _ => false,
         }
     }
@@ -619,10 +627,27 @@ impl Emitter {
                 return if op == "ne" { format!("(!{})", s) } else { s };
             }
         }
-        let l = self.operand(left);
-        let r = self.operand(right);
+        let mut l = self.operand(left);
+        let mut r = self.operand(right);
         let lt = self.tt(left);
         let rt = self.tt(right);
+        // (a record compared is the record: one a function is lent, or a
+        // loop's item it borrows, is read where it lies — `left != k` had
+        // compared a record with a borrow of one, E0308; Rosetta Code,
+        // Kirkpatrick–Seidel)
+        // (and so is a list or a map: `xs eq ['a', 'b']` of a loop's item
+        // had compared a borrow with a list, E0277; Rosetta Code, Tree from
+        // nesting levels)
+        let held = |t: &Ty| matches!(t, Ty::Record(_) | Ty::List(_) | Ty::Map(..));
+        if matches!(op, "eq" | "ne") && held(&Self::inner(&lt)) && held(&Self::inner(&rt)) {
+            let lent = |me: &Self, e: &Expr| matches!(Emitter::raw(e), Expr::Local(n, _) | Expr::Move(n, _) if me.ref_params.contains(n) || me.borrowed(n));
+            if lent(self, left) && !l.starts_with("(*") {
+                l = format!("(*{})", l);
+            }
+            if lent(self, right) && !r.starts_with("(*") {
+                r = format!("(*{})", r);
+            }
+        }
         let l_res = matches!(lt, Ty::Result(_));
         let r_res = matches!(rt, Ty::Result(_));
         let lti = Self::inner(&lt);
@@ -1302,10 +1327,29 @@ impl Emitter {
             let suffix = if Self::is_copy_type(el) { "" } else { ".clone()" };
             return format!("{{ let _i = {}; let _v = {}; _v[{}]{} }}", idx, place, self.index_at("_i", "_v.len()"), suffix);
         }
-        let raw_base = self.expr(base);
+        // (the payload of a local that can fail, indexed, is read where it
+        // lies: printed as an unwrap it was copied out whole at every read —
+        // `words[i]` over a list a function may have failed to make ran
+        // 300 times slower compiled; Rosetta Code, Aho–Corasick)
+        let raw_base = match base {
+            Expr::Convert { how: Convert::Unwrap | Convert::Known, expr: held, .. }
+                if !is_result
+                    && matches!(self.tt(held), Ty::Result(_))
+                    && matches!(held.as_ref(), Expr::Local(..) | Expr::Move(..))
+                    && matches!(inner, Ty::List(_) | Ty::Tensor(..) | Ty::Str | Ty::Markup | Ty::Map(..))
+                    && !self.unwrap_as.contains_key(&(base as *const Expr as usize)) =>
+            {
+                format!("({}).value", self.expr(held))
+            }
+            _ => self.expr(base),
+        };
         let b = if is_result { format!("{}.value", raw_base) } else { raw_base };
         // a function value applied is a call, whose arguments are not indexes
+        // (one a record's field holds is called as the field's value, not
+        // as a method — `(b.f)(x)`: `b.f(x)` had not built; Rosetta Code,
+        // Currying)
         if let Ty::Fn(ps, ret) = &inner {
+            let b = if matches!(Emitter::raw(base), Expr::Field { .. }) { format!("({})", b) } else { b };
             return self.apply_fn_value(&b, ps, ret, indices, whole);
         }
         // an index that failed halts with its reason, as in the interpreter;
@@ -1392,6 +1436,12 @@ impl Emitter {
                     b, ie
                 )
             }
+            // an item of no known kind is an item of a list nothing was put
+            // into: reading the item stops the program (the index is past its
+            // end), as the interpreter stops, before this read is reached —
+            // printed as a call, `g[0][0]` of `g = []` had not built
+            // (Rosetta Code, Abelian sandpile model)
+            Ty::Unknown => format!("{{ let _ = &({}); crow_stop({}, \"an item of no known kind is read by position\".to_string()) }}", b, self.line_now()),
             _ => format!("{}({})", b, idx_strs.join(", ")),
         }
     }
@@ -1844,6 +1894,30 @@ impl Emitter {
                 } else {
                     inits.push(format!("{}: Some(crow_runtime::link::new({}))", Self::rust_field(fname), owned));
                 }
+            } else if let Ty::Result(link) = fty
+                && matches!(link.as_ref(), Ty::OptRecord(_))
+            {
+                // (a record or none that can also hold a failure — `left`
+                // given a record a call that can fail made: 0 is none as a
+                // success, a record is linked, a failure stays one; the 0 had
+                // been a success holding the int, and the program did not
+                // build; Rosetta Code, Rational calculator)
+                let ok = |v: String| format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", v);
+                let given = self.tt(e);
+                let init = if matches!(Emitter::raw(e), Expr::Const(Const::Int(0), _)) {
+                    ok("None".to_string())
+                } else {
+                    match &given {
+                        Ty::Result(g) if matches!(g.as_ref(), Ty::Record(_)) => format!(
+                            "{{ let _r = {}; CrowResult {{ ok: _r.ok, value: if _r.ok {{ Some(crow_runtime::link::new(_r.value)) }} else {{ None }}, reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}",
+                            owned
+                        ),
+                        Ty::Result(_) => owned,
+                        Ty::Record(_) => ok(format!("Some(crow_runtime::link::new({}))", owned)),
+                        _ => ok(owned),
+                    }
+                };
+                inits.push(format!("{}: {}", Self::rust_field(fname), init));
             } else {
                 // a field that can hold a failed value takes a plain one as
                 // ok (`Last[false, …]` where another literal gave it a
@@ -2017,6 +2091,17 @@ impl Emitter {
             if self.makes_node(e) {
                 s = format!("({}).to_html()", s);
                 last_type = Ty::Str;
+            }
+            // (a round's plain value where the loop's items can fail is the
+            // success it is: a plain list joined with one whose items can
+            // fail is walked so — Rosetta Code, Facial detection)
+            if let Ty::List(item) = whole.ty()
+                && item.is_result()
+                && !last_type.is_result()
+                && !matches!(last_type, Ty::Unknown)
+            {
+                s = format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", s);
+                last_type = *item;
             }
             let pad = "    ".repeat(self.indent);
             self.out.push_str(&format!("{}{}\n", pad, s));
@@ -2247,7 +2332,22 @@ impl Emitter {
             // interpreter stops reading a field of 0; where it takes a
             // record or none, a record is wrapped, 0 is none, and one of
             // its own kind passes as it is
-            let takes = param_tys.get(i).map(|t| t.payload().clone());
+            // (a row's item, where the collection holds records: a link
+            // pushed onto a list of records — `push[s, t.left]` — is the
+            // record it holds, as a function taking a record gets it;
+            // Rosetta Code, Same fringe)
+            let item_of_records = || -> Option<Ty> {
+                let Target::Row(row) = &target else { return None };
+                let kinds = crate::table::kinds_of(row.params, raw_args.len())?;
+                if !matches!(kinds.get(i), Some(crate::table::Kind::Item | crate::table::Kind::ItemRef)) {
+                    return None;
+                }
+                match self.tt(raw_args.first()?).payload() {
+                    Ty::List(item) if matches!(item.payload(), Ty::Record(_)) => Some(item.payload().clone()),
+                    _ => None,
+                }
+            };
+            let takes = param_tys.get(i).map(|t| t.payload().clone()).or_else(item_of_records);
             let given = self.tt(a);
             let none_literal = matches!(a, Expr::Const(Const::Int(0), _));
             let stop = format!("crow_stop({}, \"a record is needed here, and this value is 0 (none)\".to_string())", self.line_now());
@@ -2351,6 +2451,10 @@ impl Emitter {
                             | Ty::Json
                             | Ty::Column(_)
                             | Ty::Sparse
+                            // (a moment a statement loop borrows: handed as
+                            // the borrow, `year_of[t] gt 2000` had not built;
+                            // Rosetta Code, Palindrome dates)
+                            | Ty::Moment
                     );
                 let s = self.expr(a);
                 let moved = self.moved_local(a);
@@ -2413,9 +2517,24 @@ impl Emitter {
                     }
                 }
                 let mut unwrapped = arg_strs.clone();
+                // (a record a call that can fail answered, handed where the
+                // callee takes a record or none: its payload is the link, as
+                // a plain record is wrapped — passed bare, it had not built,
+                // E0308; Rosetta Code, Arithmetic evaluation)
+                let link_params: Vec<bool> = (0..raw_args.len())
+                    .map(|i| {
+                        matches!(&target, Target::User(f) if self.fns.get(f).and_then(|f| f.params.get(i)).is_some_and(|(_, t)| matches!(t.payload(), Ty::OptRecord(_))))
+                            && matches!(Self::inner(&self.tt(&raw_args[i])), Ty::Record(_))
+                    })
+                    .collect();
                 for &i in &result_idx {
                     // a value that has none (an `error[…]`) never reaches the call
-                    unwrapped[i] = if let Some((node, _)) = &through[i] {
+                    unwrapped[i] = if link_params[i] && through[i].is_none() {
+                        // (a copy in a form the payload's last-read pass below
+                        // leaves as it is: the link holds its own record)
+                        let link = format!("Some(crow_runtime::link::new(Clone::clone(&_prop_{}.value)))", i);
+                        if ref_flags.get(i).copied().unwrap_or(false) { format!("&{}", link) } else { link }
+                    } else if let Some((node, _)) = &through[i] {
                         // (a conversion of the payload is a value of its own:
                         // lent to a parameter the callee borrows — a failed
                         // tensor's numbers as the list a copy of `ask` takes
@@ -2490,9 +2609,15 @@ impl Emitter {
                 // values that can fail answers `Vec<CrowResult<…>>`, and its
                 // failure's placeholder had been a list of plain values — a
                 // function collecting a loaded column's cells did not build)
-                let inner_type = match Self::inner(&full) {
-                    Ty::Map(k, v) => Ty::Map(k, Box::new(Self::inner(&v))),
-                    o => o,
+                // (a function of the program's answers its map as it is
+                // typed: `map[keys, values]` of values that can fail is a map
+                // of them, and its failure's placeholder had been a map of
+                // plain values — the call site did not build; Rosetta Code,
+                // Associative array/Merging)
+                let inner_type = match (Self::inner(&full), &target) {
+                    (t, Target::User(_)) => t,
+                    (Ty::Map(k, v), _) => Ty::Map(k, Box::new(Self::inner(&v))),
+                    (o, _) => o,
                 };
                 let already = self.base_is_result(&name, &target, &raw_args);
                 let stop_as = (self.reactive_epilogue.is_some() && crate::table::held(&name)).then(|| self.shown_fn_name());
@@ -3200,6 +3325,20 @@ fn grown(t: &Ty, v: &str) -> String {
         // one above reads it — parity 316)
         Ty::List(i) => format!("({}).into_iter().map(|_x: {}| {}).collect::<Vec<_>>()", v, widened_item(i), grown(i, "_x")),
         Ty::Map(key, i) => format!("({}).into_iter().map(|(_k, _x): ({}, {})| (_k, {})).collect::<std::collections::BTreeMap<_, _>>()", v, key.rust(), widened_item(i), grown(i, "_x")),
+        _ => v.to_string(),
+    }
+}
+
+/// A holder of ints of type `t` as the holder of floats it becomes
+/// (`Convert::IntsToFloats`), at any depth: a list's items, a map's values,
+/// a list of lists' lists (floats, and numbers a tensor holds, are as they
+/// are).
+fn floated(t: &Ty, v: &str) -> String {
+    match t {
+        Ty::Int | Ty::Unknown => format!("(({}) as f64)", v),
+        Ty::Big => format!("({}).to_f64()", v),
+        Ty::List(i) => format!("({}).into_iter().map(|_x: {}| {}).collect::<Vec<_>>()", v, widened_item(i), floated(i, "_x")),
+        Ty::Map(key, i) => format!("({}).into_iter().map(|(_k, _x): ({}, {})| (_k, {})).collect::<std::collections::BTreeMap<_, _>>()", v, key.rust(), widened_item(i), floated(i, "_x")),
         _ => v.to_string(),
     }
 }

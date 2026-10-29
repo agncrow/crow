@@ -1,0 +1,123 @@
+--- Rosetta Code: Gaussian elimination
+--- https://rosettacode.org/wiki/Gaussian_elimination
+--- A x = b by forward elimination with scaled partial pivoting (the pivot is the row
+--- whose entry, against the largest entry of its row, is largest), then back substitution.
+--- b may hold several columns; the same functions run on floats and on exact fractions.
+
+--- the magnitude of a float or a fraction
+fn size[x]
+    if x lt 0
+        return -x
+    return x
+
+--- row i's entry in column k against the largest entry of its row from column k to n - 1
+fn scaled[m, i, k, n]
+    s = size[m[i][k]]
+    for j in range[k + 1, n]
+        if size[m[i][j]] gt s
+            s = size[m[i][j]]
+    if s eq 0
+        return s
+    return size[m[i][k]] / s
+
+--- the row from k down to pivot column k on
+fn pivot_row[m, k, n]
+    best = k
+    best_ratio = scaled[m, k, k, n]
+    for i in range[k + 1, n]
+        ratio = scaled[m, i, k, n]
+        if ratio gt best_ratio
+            best = i
+            best_ratio = ratio
+    return best
+
+--- [a | b] made upper triangular, or an error value when a is singular. A swap negates
+--- the row it moves down: the system keeps its solution, and a's determinant stays the
+--- product of the diagonal.
+fn eliminate[a, b]
+    n = len[a]
+    m = for i in range[n]
+        concat[a[i], b[i]]
+    width = len[m[0]]
+    for k in range[n]
+        best = pivot_row[m, k, n]
+        if m[best][k] eq 0
+            return error['the matrix is singular', 'math']
+        if best ne k
+            row = m[best]
+            m[best] = m[k]
+            m[k] = row
+            for j in range[width]
+                m[best][j] = -m[best][j]
+        for i in range[k + 1, n]
+            f = m[i][k] / m[k][k]
+            for j in range[k + 1, width]
+                m[i][j] = m[i][j] - m[k][j] * f
+    return m
+
+--- x from the triangular [a | b], last row first
+fn back_substitute[m]
+    n = len[m]
+    p = len[m[0]] - n
+    x = for i in range[n]
+        slice[m[i], n, n + p]
+    i = n - 1
+    while i gte 0
+        for c in range[p]
+            v = m[i][n + c]
+            for j in range[i + 1, n]
+                v = v - m[i][j] * x[j][c]
+            x[i][c] = v / m[i][i]
+        i = i - 1
+    return x
+
+--- the product of the diagonal of the triangular [a | b]: a's determinant
+fn determinant[m]
+    det = m[0][0]
+    for i in range[1, len[m]]
+        det = det * m[i][i]
+    return det
+
+--- each number of a matrix as an exact fraction
+fn exact[rows]
+    out = for row in rows
+        items = for v in row
+            fraction[int[v], 1]
+        items
+    return out
+
+fn show[rows]
+    for row in rows
+        cells = for v in row
+            str[v]
+        line = join[cells, '  ']
+        log['    `line`']
+
+a = [[1.00, 0.00, 0.00, 0.00, 0.00, 0.00], [1.00, 0.63, 0.39, 0.25, 0.16, 0.10], [1.00, 1.26, 1.58, 1.98, 2.49, 3.13], [1.00, 1.88, 3.55, 6.70, 12.62, 23.80], [1.00, 2.51, 6.32, 15.88, 39.90, 100.28], [1.00, 3.14, 9.87, 31.01, 97.41, 306.02]]
+b = [[-0.01], [0.61], [0.91], [0.99], [0.60], [0.02]]
+--- the answer computed with exact fractions, then rounded to floats (from the Go entry)
+known = [-0.01, 1.602790394502114, -1.6132030599055613, 1.2454941213714368, -0.4909897195846576, 0.065760696175232]
+x = back_substitute[eliminate[a, b]]
+log['The six equations of the other entries; x:']
+show[x]
+worst = 0.0
+for i in range[6]
+    worst = max[worst, abs[x[i][0] - known[i]]]
+log['largest difference from the exact answer: `worst`']
+log['']
+
+magic = [[2, 9, 4], [7, 5, 3], [6, 1, 8]]
+identity = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+in_floats = eliminate[magic, identity]
+log['The 3 by 3 magic square, b the identity, so x is its inverse; in floats:']
+show[back_substitute[in_floats]]
+log['determinant `determinant[in_floats]`']
+log['']
+in_fractions = eliminate[exact[magic], exact[identity]]
+log['The same in exact fractions:']
+show[back_substitute[in_fractions]]
+log['determinant `determinant[in_fractions]`']
+log['']
+log['A singular matrix:']
+singular = eliminate[[[1, 2, 3], [4, 5, 6], [7, 8, 9]], identity]
+log[singular.reason]

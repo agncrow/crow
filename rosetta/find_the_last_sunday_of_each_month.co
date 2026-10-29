@@ -1,0 +1,27 @@
+--- Rosetta Code: Find the last Sunday of each month
+--- https://rosettacode.org/wiki/Find_the_last_Sunday_of_each_month
+--- The last day of a month is the day before the first of the next; from it, step
+--- back to a Sunday (weekday 7) by its weekday's distance. The year is the first
+--- command-line argument, 2013 (the task's example) when none is given.
+
+fn last_day[year, month]
+    if month eq 12
+        return moment[year + 1, 1, 1] - 86400
+    return moment[year, month + 1, 1] - 86400
+
+fn last_sunday[year, month]
+    last = last_day[year, month]
+    return last - 86400 * (last.weekday % 7)
+
+fn year_given[]
+    given = args[]
+    if len[given] eq 0
+        return 2013
+    return int[given[0]]
+
+year = year_given[]
+if year.ok
+    for month in range[1, 13]
+        log[fmt[last_sunday[year, month], style = 'date']]
+else
+    log['No year: `year.reason`']

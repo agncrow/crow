@@ -1,0 +1,109 @@
+--- Rosetta Code: Write float arrays to a text file
+--- https://rosettacode.org/wiki/Write_float_arrays_to_a_text_file
+--- A precision here is a count of significant digits, as C's %g reads it, where Crow's
+--- fmt counts places after the point; so %g is written out. fmt with enough places
+--- gives a float's exact decimal expansion (a float is a sum of powers of two, so its
+--- expansion ends), whose digits are rounded to the precision, a tie to the even
+--- digit as printf rounds. The exponent of the first digit then chooses the notation,
+--- scientific below 10^-4 or from 10^precision, and trailing zeros go, with the point
+--- when nothing follows it. The file is written with a tab between the columns, read
+--- back and checked, shown, and removed.
+
+fn without_trailing_zeros[digits]
+    return sub[digits, '0+$', '']
+
+--- x with p significant digits, as C's printf writes it with %.pg
+fn general[x, p]
+    if x eq 0.0
+        return '0'
+    places = max[p, 1]
+    sign = ''
+    if x lt 0.0
+        sign = '-'
+    expansion = fmt[abs[x], decimals = 1100]
+    before_point = len[split[expansion, '.'][0]]
+    chars = split[replace[expansion, '.', ''], '']
+    first = 0
+    while chars[first] eq '0'
+        first = first + 1
+    exponent = before_point - 1 - first
+    --- the first p digits as a whole number, and what follows them
+    kept = int[join[slice[chars, first, first + places], '']]
+    rest = slice[chars, first + places, len[chars]]
+    beyond = join[slice[rest, 1, len[rest]], '']
+    tie = rest[0] eq '5' and not matches[beyond, '[1-9]']
+    if rest[0] gt '5' or (rest[0] eq '5' and not tie) or (tie and kept % 2 eq 1)
+        kept = kept + 1
+    digits = str[kept]
+    if len[digits] gt places
+        digits = slice[digits, 0, places]
+        exponent = exponent + 1
+    if exponent lt -4 or exponent gte places
+        mantissa = slice[digits, 0, 1]
+        after = without_trailing_zeros[slice[digits, 1, places]]
+        if after ne ''
+            mantissa = '`mantissa`.`after`'
+        power = fmt[abs[exponent], width = 2, fill = '0']
+        if exponent lt 0
+            return '`sign``mantissa`e-`power`'
+        return '`sign``mantissa`e+`power`'
+    if exponent gte 0
+        whole = slice[digits, 0, exponent + 1]
+        after = without_trailing_zeros[slice[digits, exponent + 1, places]]
+        if after eq ''
+            return '`sign``whole`'
+        return '`sign``whole`.`after`'
+    zeros = repeat['0', -exponent - 1]
+    after = without_trailing_zeros['`zeros``digits`']
+    return '`sign`0.`after`'
+
+fn write_columns[filename, x, y, xprecision, yprecision]
+    lines = for i in range[len[x]]
+        a = general[x[i], xprecision]
+        b = general[y[i], yprecision]
+        '`a`\t`b`\n'
+    return write[filename, join[lines, '']]
+
+--- whether the text read back holds each number to within half a unit in its last
+--- digit kept: it is the number rounded, so it rounds again to the same text
+fn holds[text, number, precision]
+    back = float[text]
+    return general[back, precision] eq text and abs[back - number] lte abs[number] * 5.0 * 10.0 ^ -precision
+
+x = [1.0, 2.0, 3.0, 10.0 ^ 11]
+y = for v in x
+    sqrt[v]
+xprecision = 3
+yprecision = 5
+filename = 'filename'
+written = write_columns[filename, x, y, xprecision, yprecision]
+if not written.ok
+    halt[written.reason]
+
+text = read[filename]
+rows = split[trim[text], '\n']
+log['The file `filename` (a tab between the columns):']
+for row in rows
+    log[row]
+good = len[rows] eq len[x]
+for i in range[len[rows]]
+    cells = split[rows[i], '\t']
+    if not holds[cells[0], x[i], xprecision] or not holds[cells[1], y[i], yprecision]
+        good = false
+if good
+    log['Read back: each number is its array\'s, to its precision.']
+else
+    log['Read back: the file does not hold the arrays.']
+_removed = rm[filename]
+
+log['']
+log['The formatting at work (C writes these the same with %.*g):']
+--- the last two are the least float above 0 and the greatest
+tests = [
+    0.0001234, 0.00001234, 123456.0, 999.96, 2.5, 3.5, -0.15, 1.0 / 3.0, 2.0 ^ -1074,
+    (2.0 - 2.0 ^ -52) * 2.0 ^ 1023
+]
+precisions = [3, 3, 3, 4, 1, 1, 1, 17, 5, 17]
+for i in range[len[tests]]
+    label = fmt['%.`precisions[i]`g', width = 6]
+    log['  `label` `general[tests[i], precisions[i]]`']

@@ -1,0 +1,48 @@
+--- Rosetta Code: Doomsday rule
+--- https://rosettacode.org/wiki/Doomsday_rule
+--- Conway's rule: the year's doomsday is (2 + 5(y mod 4) + 4(y mod 100) + 6(y mod 400))
+--- mod 7, Sunday 0; a date's weekday is as many days past the doomsday as the date is past
+--- its month's first doomsday date. The rule is then checked against Crow's own calendar
+--- (a moment's weekday) on every day from 1800 to 2101.
+
+fn leap[year]
+    return year % 4 eq 0 and (year % 100 ne 0 or year % 400 eq 0)
+
+fn doomsday[year]
+    return (2 + 5 * (year % 4) + 4 * (year % 100) + 6 * (year % 400)) % 7
+
+--- the first date in each month that falls on the year's doomsday
+fn anchor[year, month]
+    if leap[year]
+        return [4, 1, 7, 4, 2, 6, 4, 1, 5, 3, 7, 5][month - 1]
+    return [3, 7, 7, 4, 2, 6, 4, 1, 5, 3, 7, 5][month - 1]
+
+--- 0 for Sunday up to 6 for Saturday
+fn weekday[year, month, day]
+    return (doomsday[year] + day - anchor[year, month] + 7) % 7
+
+fn day_name[n]
+    return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][n]
+
+fn month_name[m]
+    return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][m - 1]
+
+--- the days from the first moment to the last, a day apart, and how many of them the rule
+--- names another weekday than the calendar does (a moment counts Monday 1 to Sunday 7)
+fn disagreements[first, last]
+    t = first
+    days = 0
+    wrong = 0
+    while t lte last
+        if weekday[t.year, t.month, t.day] ne t.weekday % 7
+            wrong = wrong + 1
+        days = days + 1
+        t = t + 86400
+    return [days, wrong]
+
+for date in [[1800, 1, 6], [1875, 3, 29], [1915, 12, 7], [1970, 12, 23], [2043, 5, 14], [2077, 2, 12], [2101, 4, 2]]
+    shown = fmt['`month_name[date[1]]` `date[2]`, `date[0]`:', width = 20]
+    log['`shown``day_name[weekday[date[0], date[1], date[2]]]`']
+log['']
+check = disagreements[moment[1800, 1, 1], moment[2101, 12, 31]]
+log['Checked against the calendar on the `check[0]` days from January 1, 1800 to December 31, 2101: `check[1]` disagree.']

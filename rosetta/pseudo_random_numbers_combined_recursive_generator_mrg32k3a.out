@@ -1,0 +1,10 @@
+Seed 1234567, the first five integers:
+1459213977
+2827710106
+4245671317
+3877608661
+2595287583
+
+Seed 987654321, floor(next_float * 5) over 100,000 draws:
+0: 20002, 1: 20060, 2: 19948, 3: 20059, 4: 19931
+A seed of 0: the seed must be above 0 and below d

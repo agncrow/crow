@@ -1,0 +1,14 @@
+1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62i    valid
+1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62j    invalid: a checksum that does not match
+1Q1pE5vPGEEMqRcVRMbtBK842Y6Pzo6nK9    valid
+17NdbrSGoUotzeGCcMMCqnFkEvLymoou9j    valid
+1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62X    invalid: a checksum that does not match
+1ANNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62i    invalid: a checksum that does not match
+1A Na15ZQXAZUgFiqJ2i7Z2DPU2J6hW62i    invalid: a character outside base 58
+BZbvjr                                invalid: not the encoding of its bytes
+i55j                                  invalid: not the encoding of its bytes
+1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62!    invalid: a character outside base 58
+1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62iz   invalid: a version other than 0
+1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62izz  invalid: more than 25 bytes
+1Q1pE5vPGEEMqRcVRMbtBK842Y6Pzo6nJ9    invalid: a checksum that does not match
+1AGNa15ZQXAZUgFiqJ2i7Z2DPU2J6hW62I    invalid: a character outside base 58

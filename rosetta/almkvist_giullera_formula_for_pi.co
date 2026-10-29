@@ -1,0 +1,31 @@
+--- Rosetta Code: Almkvist-Giullera formula for pi
+--- https://rosettacode.org/wiki/Almkvist-Giullera_formula_for_pi
+--- Each term's integer part is an exact int; the series is summed as decimals of
+--- 80 digits until a term falls below them, and pi is 1 / sqrt of the sum.
+
+fn factorial_of[n]
+    f = 1
+    for i in range[2, n + 1]
+        f = f * i
+    return f
+
+fn integer_term[n]
+    return 32 * factorial_of[6 * n] * (532 * n * n + 126 * n + 9) / (3 * factorial_of[n] ^ 6)
+
+--- 1 / pi^2 to `digits` significant digits
+fn inverse_pi_squared[digits]
+    total = decimal[0, digits = digits]
+    n = 0
+    while integer_term[n] * 10 ^ digits gte 10 ^ (6 * n + 3)
+        total = total + decimal[integer_term[n], digits = digits] / decimal[10 ^ (6 * n + 3)]
+        n = n + 1
+    return total
+
+for n in range[10]
+    log['Term `n`: `fmt[integer_term[n], width = 45]`']
+
+places = 70
+pi = decimal[1, digits = places + 10] / sqrt[inverse_pi_squared[places + 10]]
+log['']
+log['pi to `places` decimal places:']
+log[round[pi, places]]

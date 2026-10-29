@@ -1,0 +1,111 @@
+--- Rosetta Code: Wagstaff primes
+--- https://rosettacode.org/wiki/Wagstaff_primes
+--- N = (2^p + 1) / 3 for each odd prime p, in ints that grow. Below p = 80, N is
+--- tested by Miller-Rabin with the first thirteen primes as bases, which no composite
+--- below 3.3 x 10^24 passes. Past it, N is first tried against its possible small
+--- factors, which are all 2kp + 1 (2 has order 2p modulo a factor): q divides N when
+--- 2^p is -1 modulo q. A survivor takes the Vrba-Reix probable-prime test: N prime
+--- gives 3^(N - 1) = 1 and so 3^(2^p) = 9 (mod N), p squarings, each reduced modulo
+--- 2^p + 1 = 3N with a mask and a shift instead of a division. The stretch goes as
+--- far as fits in about ten seconds a run: every odd prime below 8,000, which holds
+--- the first 24 (the 25th exponent, 10501, is past it: a search that far takes about
+--- 16 seconds of CPU a run).
+
+use bits
+
+fn power_mod[b, e, m]
+    result = 1
+    b = b % m
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+--- whether n passes the strong probable-prime test to base a, n - 1 being d * 2^s
+fn strong[a, d, s, n]
+    x = power_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return true
+    r = 1
+    while r lt s
+        x = x * x % n
+        if x eq n - 1
+            return true
+        r = r + 1
+    return false
+
+fn is_prime[n]
+    if n lt 2
+        return false
+    bases = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41]
+    i = 0
+    while i lt len[bases]
+        if n % bases[i] eq 0
+            return n eq bases[i]
+        i = i + 1
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    i = 0
+    while i lt len[bases]
+        if not strong[bases[i], d, s, n]
+            return false
+        i = i + 1
+    return true
+
+--- whether (2^p + 1) / 3 has a factor 2kp + 1 with k at most tries
+fn small_factor[p, tries]
+    q = 2 * p + 1
+    k = 1
+    while k lte tries
+        if power_mod[2, p, q] eq q - 1
+            return true
+        q = q + 2 * p
+        k = k + 1
+    return false
+
+--- the Vrba-Reix test: 3^(2^p) is 9 modulo (2^p + 1) / 3, the squares taken modulo
+--- 2^p + 1, where a number's bits past the p-th, taken off the rest, leave the same
+--- remainder (2^p is -1 there)
+fn probable[p]
+    whole = shift[1, p] + 1
+    low = shift[1, p] - 1
+    x = 3
+    k = 0
+    while k lt p
+        y = x * x
+        x = bitand[y, low] - shift[y, 0 - p]
+        while x lt 0
+            x = x + whole
+        k = k + 1
+    return x % (whole / 3) eq 9
+
+fn is_wagstaff[p]
+    if p lt 80
+        return is_prime[(2 ^ p + 1) / 3]
+    if small_factor[p, 300]
+        return false
+    return probable[p]
+
+bound = 8000
+exponents = []
+p = 3
+while p lt bound
+    if is_prime[p] and is_wagstaff[p]
+        exponents = push[exponents, p]
+    p = p + 2
+
+log['The first 10 Wagstaff primes, (2^p + 1) / 3 for an odd prime p:']
+for p in slice[exponents, 0, 10]
+    log['  p = `fmt[p, width = 2]`: `(2 ^ p + 1) / 3`']
+log['']
+log['The exponents of the next `len[exponents] - 10`, with each prime\'s digits (past p = 79, probable primes):']
+for p in slice[exponents, 10, len[exponents]]
+    digits = len[str[(2 ^ p + 1) / 3]]
+    log['  p = `fmt[p, width = 4]`: `digits` digits']
+log['']
+log['Every odd prime p below `fmt[bound, commas = true]` was tried: these `len[exponents]` are all there are.']

@@ -1,0 +1,23 @@
+--- Rosetta Code: Closures/Value capture
+--- https://rosettacode.org/wiki/Closures/Value_capture
+--- Crow has no closures or anonymous functions, by design: a function sees only
+--- its parameters. What a closure would keep is kept in the open instead, as a
+--- compiler keeps it: each of the ten is a record holding its own copy of i, and
+--- `run` is the body they share. The copy is taken when the record is made, so
+--- the counter moving on afterwards changes none of them.
+
+struct Square [i]
+
+--- the shared body: the square of the i this one captured
+fn run[f]
+    return f.i * f.i
+
+functions = []
+i = 0
+while i lt 10
+    functions = push[functions, Square[i]]
+    i = i + 1
+
+for k in range[9]
+    log['function `k` answers `run[functions[k]]`']
+log['(the counter i is now `i`)']

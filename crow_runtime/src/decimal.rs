@@ -189,8 +189,21 @@ impl Dec {
     }
 
     /// `d ^ n` of an int: exact for n of none or more (repeated `*`), the
-    /// quotient's digits for a negative one.
+    /// quotient's digits for a negative one. 0, 1 and -1 written with no
+    /// places are exact to any power, as an int's are (past 32 bits they
+    /// had stopped as a number no memory holds).
     pub fn pow(&self, e: &Int) -> Result<Dec, String> {
+        if self.scale == 0
+            && let Some(b) = [0i64, 1, -1].into_iter().find(|b| self.digits == IBig::from(*b))
+        {
+            if b == 0 && e.is_negative() {
+                return Err("division by zero".to_string());
+            }
+            let Int::Small(answer) = Int::Small(b).pow(&e.abs())? else {
+                return Err(format!("{} ^ {}: no such power", self, e));
+            };
+            return Ok(Dec { digits: IBig::from(answer), scale: 0, prec: self.prec });
+        }
         let Some(n) = e.to_i64() else {
             return Err(format!("{} ^ {}: an exponent past 64 bits makes a number no memory holds", self, e));
         };
@@ -452,10 +465,23 @@ impl std::fmt::Display for Dec {
         if s == 0 {
             return write!(f, "{}{}", sign, digits);
         }
-        let padded = format!("{:0>width$}", digits, width = s + 1);
+        let padded = zero_padded(digits, s + 1);
         let (int, frac) = padded.split_at(padded.len() - s);
         write!(f, "{}{}.{}", sign, int, frac)
     }
+}
+
+/// `digits` with zeros before them to `width` characters, by hand: Rust's
+/// formatter takes a width of at most 65,535, and a decimal of 65,535
+/// places or more had stopped every program that showed it ("Formatting
+/// argument out of range").
+fn zero_padded(digits: &str, width: usize) -> String {
+    let mut out = String::with_capacity(width.max(digits.len()));
+    for _ in digits.len()..width {
+        out.push('0');
+    }
+    out.push_str(digits);
+    out
 }
 
 impl crate::display::CrowDisplay for Dec {
@@ -542,5 +568,28 @@ mod tests {
         assert_eq!(d("123456").with_digits(2).unwrap().to_string(), "120000");
         assert!(d("-1").math("sqrt").is_err() && d("0").math("ln").is_err());
         assert_eq!(d("0.1").to_f64(), 0.1);
+    }
+
+    /// 0, 1 and -1 written with no places are exact to any power
+    #[test]
+    fn small_bases_to_any_power() {
+        let huge = Int::Small(2).pow(&Int::Small(70)).unwrap();
+        assert_eq!(d("1").pow(&huge).unwrap().to_string(), "1");
+        assert_eq!(d("0").pow(&huge).unwrap().to_string(), "0");
+        assert_eq!(d("-1").pow(&huge.add(&Int::Small(1))).unwrap().to_string(), "-1");
+        assert_eq!(d("0").pow(&Int::Small(-2)).unwrap_err(), "division by zero");
+        assert!(d("1.0").pow(&huge).unwrap_err().contains("no memory holds"));
+    }
+
+    /// A decimal of more places than Rust's formatter pads shows every
+    /// one (a width past 65,535 had stopped the program)
+    #[test]
+    fn a_decimal_of_many_places_shows() {
+        let tiny = d("1e-70000").to_string();
+        assert_eq!(tiny.len(), 70_002);
+        assert!(tiny.starts_with("0.0000") && tiny.ends_with("01"));
+        let third = d("1").with_digits(70_000).unwrap().div(&d("3").with_digits(70_000).unwrap()).unwrap().to_string();
+        assert_eq!(third.len(), 70_002);
+        assert!(third.starts_with("0.3333") && third.ends_with("33"));
     }
 }

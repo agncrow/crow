@@ -1,0 +1,18 @@
+--- A function answering nothing whose last line calls itself: the call
+--- answers what the function answers and says nothing of it — beside a
+--- bare `return`, the answer had stayed unknown, and compiled `return;`
+--- did not build (Rosetta Code, AVL tree).
+fn countdown[n]
+    if n eq 0
+        return
+    log[n]
+    countdown[n - 1]
+
+countdown[3]
+
+fn last_digit[n]
+    if n lt 10
+        return n
+    return last_digit[n / 10]
+
+log[last_digit[98765]]

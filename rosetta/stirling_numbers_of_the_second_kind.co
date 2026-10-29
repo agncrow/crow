@@ -1,0 +1,63 @@
+--- Rosetta Code: Stirling numbers of the second kind
+--- https://rosettacode.org/wiki/Stirling_numbers_of_the_second_kind
+--- A row at a time by the recurrence S2(n, k) = k * S2(n - 1, k) + S2(n - 1, k - 1),
+--- with S2(0, 0) = 1 and S2(n, 0) = 0 for n > 0. The ints grow past 64 bits on their
+--- own, so row 100 is exact: its greatest value is found by a walk. Each row's sum is
+--- a Bell number, the partitions of an n-set into any number of parts.
+
+--- S2(n, k), read from row n - 1 (which holds k = 0 .. n - 1)
+fn from_above[above, n, k]
+    if k eq 0
+        return 0
+    if k eq n
+        return above[k - 1]
+    return k * above[k] + above[k - 1]
+
+--- the rows 0 .. last: rows[n] holds S2(n, k) for k = 0 .. n
+fn stirling2_rows[last]
+    rows = [[1]]
+    for n in range[1, last + 1]
+        above = rows[n - 1]
+        row = for k in range[n + 1]
+            from_above[above, n, k]
+        rows = push[rows, row]
+    return rows
+
+fn show_table[rows, width]
+    heading = for k in range[len[rows]]
+        fmt[k, width = width]
+    header = join[heading, '']
+    log['n/k`header`']
+    for n in range[len[rows]]
+        cells = for v in rows[n]
+            fmt[v, width = width]
+        line = join[cells, '']
+        log['`fmt[n, width = 3]``line`']
+
+--- the greatest value of a row and the k it is at
+struct Greatest [value, k]
+
+fn greatest[row]
+    best = Greatest[row[0], 0]
+    for k in range[1, len[row]]
+        if row[k] gt best.value
+            best = Greatest[row[k], k]
+    return best
+
+fn row_sum[row]
+    total = 0
+    for v in row
+        total = total + v
+    return total
+
+rows = stirling2_rows[100]
+log['Stirling numbers of the second kind, S2(n, k):']
+show_table[slice[rows, 0, 13], 10]
+bells = for row in slice[rows, 0, 13]
+    row_sum[row]
+bell_text = join[bells, ' ']
+log['The rows\' sums, the Bell numbers: `bell_text`']
+log['']
+top = greatest[rows[100]]
+log['The greatest S2(100, k) is at k = `top.k`, `len[str[top.value]]` digits:']
+log[top.value]

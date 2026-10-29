@@ -1,0 +1,21 @@
+--- a function's answer is its body's once every item is known: a map of
+--- vectors (`[x]` of an int, pushed onto) had kept the map of lists an
+--- earlier round guessed while `x` was not known — the items handed in
+--- came from another function's answers — and the lowered program
+--- disagreed with itself (Rosetta Code, Disarium numbers)
+
+fn table_of[xs]
+    table = map[]
+    for x in xs
+        if 1 not in table
+            table[1] = [x]
+        else
+            table[1] = push[table[1], x]
+    return table
+
+fn big[i]
+    return 10 ^ i
+
+xs = for i in [1, 2, 1]
+    big[i]
+log[table_of[xs]]

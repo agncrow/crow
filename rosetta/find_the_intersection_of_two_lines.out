@@ -1,0 +1,12 @@
+the line through (4, 0) and (6, 10), and the line through (0, 3) and (10, 7):
+    meet at (5, 5), between both pairs of points
+the line through (4, 0) and (6, 4), and the line through (0, 3) and (10, 7):
+    meet at (55/8, 23/4), between the second pair of points only
+the line through (0, 0) and (1, 1), and the line through (0, 1) and (1, 2):
+    they are parallel and never meet
+the line through (0, 0) and (1, 1), and the line through (2, 2) and (5, 5):
+    they are one line
+the line through (0, 0) and (1, 2), and the line through (5, 0) and (4, 1):
+    meet at (5/3, 10/3), between neither pair of points
+the line through (-3, 1) and (2, 4), and the line through (0, 7) and (7, -2):
+    meet at (49/22, 91/22), between the second pair of points only

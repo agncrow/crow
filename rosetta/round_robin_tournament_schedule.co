@@ -1,0 +1,75 @@
+--- Rosetta Code: Round-robin tournament schedule
+--- https://rosettacode.org/wiki/Round-robin_tournament_schedule
+--- The circle method: player 1 stays put while the others turn one place a
+--- round, and the players facing each other across the circle meet. With an
+--- odd number of players a stand-in 0 joins the circle, and whoever faces it
+--- has the round's bye. Each schedule is checked: every pair meets once, and
+--- nobody plays twice in a round.
+
+--- the circle turned one place: its last player comes first
+fn turned[circle]
+    concat[[circle[-1]], slice[circle, 0, len[circle] - 1]]
+
+--- the rounds for n players, each a list of pairs facing each other (0 is the bye)
+fn schedule[n]
+    circle = range[1, n + 1]
+    if n % 2 eq 1
+        circle = push[circle, 0]
+    size = len[circle]
+    rounds = []
+    while len[rounds] lt size - 1
+        pairs = for i in range[size / 2]
+            [circle[i], circle[size - 1 - i]]
+        rounds = push[rounds, pairs]
+        circle = concat[[1], turned[slice[circle, 1, size]]]
+    rounds
+
+fn game[pair]
+    a = fmt[pair[0], width = 2]
+    b = fmt[pair[1], width = 2, align = 'left']
+    '(`a` vs `b`)'
+
+fn round_line[number, pairs]
+    games = for p in pairs
+        if p[0] ne 0 and p[1] ne 0
+            game[p]
+    shown = join[games, ' ']
+    line = 'Round `fmt[number, width = 2]`  `shown`'
+    resting = for p in pairs
+        if p[0] eq 0 or p[1] eq 0
+            p[0] + p[1]
+    if len[resting] gt 0
+        line = '`line`   bye: `resting[0]`'
+    line
+
+--- every pair meets exactly once, and nobody plays twice in a round
+fn is_fair[n, rounds]
+    met = map[]
+    games = 0
+    clashes = 0
+    for pairs in rounds
+        playing = map[]
+        for p in pairs
+            playing = set[set[playing, str[p[0]], 1], str[p[1]], 1]
+            if p[0] ne 0 and p[1] ne 0
+                met = set[met, '`min[p[0], p[1]]` vs `max[p[0], p[1]]`', 1]
+                games = games + 1
+        if len[playing] ne 2 * len[pairs]
+            clashes = clashes + 1
+    clashes eq 0 and games eq n * (n - 1) / 2 and len[met] eq games
+
+fn show[n]
+    rounds = schedule[n]
+    log['Round robin for `n` players: `len[rounds]` rounds']
+    log['']
+    number = 1
+    for pairs in rounds
+        log[round_line[number, pairs]]
+        number = number + 1
+    log['']
+    log['every pair meets once, nobody twice in a round: `is_fair[n, rounds]`']
+
+show[12]
+log['']
+log['']
+show[5]

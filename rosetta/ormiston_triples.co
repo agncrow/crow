@@ -1,0 +1,109 @@
+--- Rosetta Code: Ormiston triples
+--- https://rosettacode.org/wiki/Ormiston_triples
+--- A sieve of the odd numbers in segments of 2^18 (a tensor of zeros each,
+--- struck out by the primes up to the limit's square root) walks the primes in
+--- order, keeping the last two. Consecutive primes can be anagrams only where
+--- their difference is a multiple of 18 (the same digits make the same
+--- remainder by 9, and both are odd), so only those have their digits sorted.
+--- The count runs to 10^8 here, a few seconds a mode. Given a limit, as in
+--- `crow run ormiston_triples.co 1000000000`, it counts below that: 368 below
+--- one billion as the task asks (about a minute in either mode, seven seconds
+--- built by `crow build`), and the stretch, 4,925 below ten billion (72
+--- seconds built).
+
+use math
+
+struct Found [firsts, count]
+
+--- the odd primes below n, by a plain sieve: place i stands for 2i + 1
+fn odd_primes_below[n]
+    size = n / 2
+    composite = zeros[size]
+    found = []
+    i = 1
+    while i lt size
+        if composite[i] eq 0.0
+            p = 2 * i + 1
+            found = push[found, p]
+            j = (p * p - 1) / 2
+            while j lt size
+                composite[j] = 1.0
+                j = j + p
+        i = i + 1
+    found
+
+--- the largest whole number whose square is at most n
+fn isqrt[n]
+    r = int[sqrt[n]]
+    while r * r gt n
+        r = r - 1
+    while (r + 1) * (r + 1) lte n
+        r = r + 1
+    r
+
+--- a number's digits in order, as text
+fn sorted_digits[n]
+    return join[sort[split[str[n], '']], '']
+
+--- whether three consecutive primes are anagrams of each other
+fn ormiston[a, b, c]
+    if (b - a) % 18 ne 0 or (c - b) % 18 ne 0
+        return false
+    key = sorted_digits[b]
+    sorted_digits[a] eq key and sorted_digits[c] eq key
+
+--- the smallest members of the first `wanted` Ormiston triples and how many
+--- triples lie below the limit
+fn ormiston_triples[limit, wanted]
+    base = odd_primes_below[isqrt[limit] + 2]
+    size = 262144
+    firsts = []
+    count = 0
+    older = 2
+    last = 3
+    low = 5
+    while low lt limit
+        --- place i of the segment stands for low + 2i
+        composite = zeros[size]
+        high = low + 2 * size
+        k = 0
+        while k lt len[base] and base[k] * base[k] lt high
+            p = base[k]
+            start = p * p
+            if start lt low
+                start = low + (p - low % p) % p
+                if start % 2 eq 0
+                    start = start + p
+            j = (start - low) / 2
+            while j lt size
+                composite[j] = 1.0
+                j = j + p
+            k = k + 1
+        i = 0
+        while i lt size
+            if composite[i] eq 0.0
+                q = low + 2 * i
+                if q gte limit
+                    return Found[firsts, count]
+                if ormiston[older, last, q]
+                    count = count + 1
+                    if len[firsts] lt wanted
+                        firsts = push[firsts, older]
+                older = last
+                last = q
+            i = i + 1
+        low = high
+    Found[firsts, count]
+
+given = args[]
+limit = 100000000
+if len[given] eq 1
+    limit = int[given[0]]
+found = ormiston_triples[limit, 25]
+log['The smallest members of the first 25 Ormiston triples:']
+for at in range[0, 25, 5]
+    row = for n in slice[found.firsts, at, at + 5]
+        fmt[n, width = 10, commas = true]
+    log[join[row, ' ']]
+log['']
+log['`fmt[found.count, commas = true]` Ormiston triples below `fmt[limit, commas = true]`']

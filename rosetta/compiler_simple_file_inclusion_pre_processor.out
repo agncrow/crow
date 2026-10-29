@@ -1,0 +1,24 @@
+--- shapes.co: the areas of three shapes, put together by the pre-processor
+--- shapes and their areas
+--- two numbers, to the digits a float holds
+fn half_turn[]
+    return 3.141592653589793
+
+fn root_three[]
+    return 1.7320508075688772
+
+struct Shape [name, size]
+
+fn area[s]
+    if s.name eq 'square'
+        return s.size * s.size
+    if s.name eq 'circle'
+        return half_turn[] * s.size * s.size
+    return root_three[] / 4.0 * s.size * s.size
+
+shapes = [Shape['square', 2.0], Shape['circle', 1.5], Shape['triangle', 3.0]]
+for s in shapes
+    --- one shape's line of the report
+    shown = fmt[area[s], decimals = 3]
+    log['`s.name` of size `s.size` has area `shown`']
+log['three shapes reported']

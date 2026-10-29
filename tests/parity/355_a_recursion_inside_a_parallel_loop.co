@@ -1,0 +1,26 @@
+--- a recursion inside a parallel loop reaches the depth the program's own
+--- thread does: the loop's threads had rayon's two megabytes of stack, and
+--- the process aborted — 643 calls deep interpreted, and from 170 compiled
+--- for a function holding many texts
+fn down[n]
+    if n eq 0
+        return 0
+    return 1 + down[n - 1]
+
+fn spelled[n, acc]
+    if n eq 0
+        return acc
+    a = 'a`n`'
+    b = 'b`n`'
+    c = 'c`n`'
+    d = 'd`n`'
+    e = 'e`n`'
+    f = 'f`n`'
+    return spelled[n - 1, acc + len[a] + len[b] + len[c] + len[d] + len[e] + len[f]]
+
+xs = for k in [3000, 4000]
+    down[k]
+log[xs]
+ys = for k in [600, 700]
+    spelled[k, 0]
+log[ys]

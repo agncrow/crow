@@ -1,0 +1,55 @@
+--- Rosetta Code: Arithmetic numbers
+--- https://rosettacode.org/wiki/Arithmetic_numbers
+--- A sieve adds every d to the divisor count and sum of each of its multiples; n is
+--- arithmetic when its divisor count divides its divisor sum, and composite when it
+--- has more than two divisors. The sieve runs to 1.25 times the count asked for,
+--- and over a range twice as long while that holds too few.
+
+struct Divisors [counts, sums]
+
+--- the arithmetic numbers in order, and beside each how many of them up to it
+--- are composite
+struct Arithmetic [numbers, composites]
+
+fn divisors_upto[limit]
+    counts = for n in range[limit + 1]
+        0
+    sums = for n in range[limit + 1]
+        0
+    for d in range[1, limit + 1]
+        for m in range[d, limit + 1, d]
+            counts[m] = counts[m] + 1
+            sums[m] = sums[m] + d
+    return Divisors[counts, sums]
+
+--- the first `wanted` arithmetic numbers
+fn arithmetic_numbers[wanted]
+    limit = wanted + wanted / 4
+    numbers = []
+    composites = []
+    while len[numbers] lt wanted
+        numbers = []
+        composites = []
+        composite = 0
+        table = divisors_upto[limit]
+        n = 1
+        while n lte limit and len[numbers] lt wanted
+            if table.sums[n] % table.counts[n] eq 0
+                if table.counts[n] gt 2
+                    composite = composite + 1
+                numbers = push[numbers, n]
+                composites = push[composites, composite]
+            n = n + 1
+        limit = limit * 2
+    return Arithmetic[numbers, composites]
+
+found = arithmetic_numbers[1000000]
+log['The first 100 arithmetic numbers:']
+for row in range[10]
+    cells = for n in slice[found.numbers, row * 10, row * 10 + 10]
+        fmt[n, width = 4]
+    log[join[cells, '']]
+for x in [1000, 10000, 100000, 1000000]
+    log['']
+    log['The `fmt[x, commas = true]`th arithmetic number is `fmt[found.numbers[x - 1], commas = true]`.']
+    log['Of the first `fmt[x, commas = true]`, `fmt[found.composites[x - 1], commas = true]` are composite.']

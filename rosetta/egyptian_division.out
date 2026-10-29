@@ -1,0 +1,17 @@
+The table for 580 / 34:
+powers_of_2  doublings
+          1         34
+          2         68
+          4        136
+          8        272
+         16        544
+
+Its rows, bottom-up:
+         16        544  taken: answer 16, accumulator 544
+          8        272  passed over
+          4        136  passed over
+          2         68  passed over
+          1         34  taken: answer 17, accumulator 578
+
+580 divided by 34 using the Egyptian method is 17 remainder 2
+Agrees with / and % for every dividend 0 to 100 and divisor 1 to 20: true

@@ -1,0 +1,22 @@
+The number of letters in the first 201 words:
+  1:  4  2  3  6  2  7  2  3  5  4  2  4  8  3  2  3  6  5  2  3  5  3  2  3  6
+ 26:  3  2  3  5  5  2  3  5  3  2  3  7  5  2  3  6  4  2  3  5  4  2  3  5  3
+ 51:  2  3  8  4  2  3  7  5  2  3 10  5  2  3 10  3  2  3  9  5  2  3  9  3  2
+ 76:  3 11  4  2  3 10  3  2  3 10  5  2  3  9  4  2  3 11  5  2  3 12  3  2  3
+101: 11  5  2  3 12  3  2  3 11  5  2  3 11  3  2  3 13  5  2  3 12  4  2  3 11
+126:  4  2  3  9  3  2  3 11  5  2  3 12  4  2  3 11  5  2  3 12  3  2  3 11  5
+151:  2  3 11  5  2  3 13  4  2  3 12  3  2  3 11  5  2  3  8  3  2  3 10  4  2
+176:  3 11  3  2  3 10  5  2  3 11  4  2  3 10  4  2  3 10  3  2  3 12  5  2  3
+201: 11
+Characters in the sentence through word 201: 1,203
+
+Word 1,000 is "in", with 2 letters.
+    characters of the sentence up to and including it: 6,249; to the end of its phrase: 6,279
+Word 10,000 is "in", with 2 letters.
+    characters of the sentence up to and including it: 64,097; to the end of its phrase: 64,140
+Word 100,000 is "one", with 3 letters.
+    characters of the sentence up to and including it: 659,455; to the end of its phrase: 659,474
+Word 1,000,000 is "the", with 3 letters.
+    characters of the sentence up to and including it: 7,113,560; to the end of its phrase: 7,113,621
+Word 10,000,000 is "thousand", with 8 letters.
+    characters of the sentence up to and including it: 70,995,729; to the end of its phrase: 70,995,756

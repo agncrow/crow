@@ -1,0 +1,84 @@
+--- Rosetta Code: Numbers k such that the last letter of k is the same as the first letter of k+1
+--- https://rosettacode.org/wiki/Numbers_k_such_that_the_last_letter_of_k_is_the_same_as_the_first_letter_of_k+1
+--- The names of 0 to 999 are spelled out once. A larger number's name begins as
+--- its leading group of three digits does, and ends as its last group does, or
+--- with "thousand" (d) or "million" (n) where the last group is zero. Every k is
+--- tried in turn, through the stretch's millionth qualifying number.
+
+use math
+
+fn name_below_1000[n]
+    --- the English name of 0 <= n < 1000 (no "and": it changes no first or last letter)
+    ones = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+    tens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+    if n lt 20
+        return ones[n]
+    if n lt 100
+        if n % 10 eq 0
+            return tens[n / 10]
+        return '`tens[n / 10]`-`ones[n % 10]`'
+    hundreds = '`ones[n / 100]` hundred'
+    if n % 100 eq 0
+        return hundreds
+    '`hundreds` `name_below_1000[n % 100]`'
+
+fn last_letter[k, lasts]
+    --- the last letter of k's name
+    if k eq 0
+        return 'o'
+    if k % 1000 gt 0
+        return lasts[k % 1000]
+    if k % 1000000 eq 0
+        return 'n'
+    'd'
+
+fn first_letter[k, firsts]
+    --- the first letter of k's name: its leading group's
+    lead = k
+    while lead gte 1000
+        lead = lead / 1000
+    firsts[lead]
+
+fn ordinal[n]
+    '`fmt[n, commas = true]`th'
+
+fn breakdown[counts]
+    --- the count of each final digit, and a bar 50 wide at the largest
+    widest = max[counts]
+    for d in range[10]
+        bar = repeat['█', round[50 * counts[d] / widest]]
+        log['    `d`: `fmt[counts[d], width = 7]` `bar`']
+
+names = for n in range[1000]
+    name_below_1000[n]
+firsts = for s in names
+    s[0]
+lasts = for s in names
+    s[-1]
+
+milestones = [1000, 10000, 100000, 1000000]
+goal = milestones[-1]
+reached = 0
+counts = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+first_50 = []
+found = 0
+k = 0
+while found lt goal
+    if last_letter[k, lasts] eq first_letter[k + 1, firsts]
+        found = found + 1
+        counts[k % 10] = counts[k % 10] + 1
+        if found lte 50
+            first_50 = push[first_50, k]
+        if found eq 50
+            log['The first 50 qualifying numbers:']
+            for start in range[0, 50, 10]
+                row = for x in slice[first_50, start, start + 10]
+                    fmt[x, width = 4]
+                log[join[row, ' ']]
+        if found eq milestones[reached]
+            reached = reached + 1
+            log['']
+            log['The `ordinal[found]` qualifying number is `fmt[k, commas = true]`.']
+            log['The first `fmt[found, commas = true]` by their final digit:']
+            breakdown[counts]
+    k = k + 1

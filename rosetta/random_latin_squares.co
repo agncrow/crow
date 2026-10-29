@@ -1,0 +1,86 @@
+--- Rosetta Code: Random Latin squares
+--- https://rosettacode.org/wiki/Random_Latin_squares
+--- The square is filled cell by cell, row by row, each cell drawn from the
+--- symbols its row and its column still lack; at a dead end the square starts
+--- again. Every Latin square can come out, since each of its cells is always
+--- among the choices. The draws are seeded, so every run shows the same squares.
+
+use math
+
+--- whether symbol s already stands in column c of the rows so far
+fn in_column[rows, c, s]
+    i = 0
+    while i lt len[rows]
+        if rows[i][c] eq s
+            return true
+        i = i + 1
+    return false
+
+--- one try at a square of size n: its rows, or no rows at a dead end
+fn attempt[n]
+    rows = []
+    while len[rows] lt n
+        row = []
+        while len[row] lt n
+            c = len[row]
+            free = []
+            s = 0
+            while s lt n
+                if s not in row and not in_column[rows, c, s]
+                    free = push[free, s]
+                s = s + 1
+            if len[free] eq 0
+                return []
+            row = push[row, free[rand[len[free]]]]
+        rows = push[rows, row]
+    return rows
+
+fn latin_square[n]
+    rows = attempt[n]
+    while len[rows] eq 0
+        rows = attempt[n]
+    return rows
+
+--- whether every row and every column holds each of the n symbols once
+fn is_latin[rows]
+    n = len[rows]
+    for r in range[n]
+        if sort[rows[r]] ne range[n]
+            return false
+    for c in range[n]
+        column = for r in range[n]
+            rows[r][c]
+        if sort[column] ne range[n]
+            return false
+    return true
+
+fn shown[rows]
+    lines = for row in rows
+        cells = for s in row
+            str[s]
+        join[cells, ' ']
+    return join[lines, '\n']
+
+seed[2026]
+for k in range[2]
+    square = latin_square[5]
+    log[shown[square]]
+    log['Latin: `is_latin[square]`']
+    log['']
+
+--- and a larger one
+big = latin_square[10]
+cells = for row in big
+    parts = for s in row
+        fmt[s, width = 2]
+    join[parts, '']
+log[join[cells, '\n']]
+log['Latin: `is_latin[big]`']
+log['']
+
+--- every square can come out: of the 576 Latin squares of size 4, how many
+--- distinct ones 20,000 draws produce
+seen = map[]
+for k in range[20000]
+    seen = set[seen, str[latin_square[4]], true]
+log['20,000 squares of size 4 drawn: `len[seen]` distinct, of the 576 there are']

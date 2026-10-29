@@ -1,0 +1,23 @@
+--- Rosetta Code: Selectively replace multiple instances of a character within a string
+--- https://rosettacode.org/wiki/Selectively_replace_multiple_instances_of_a_character_within_a_string
+--- The rules are a map keyed by a character and which time it occurs (a4 is the fourth
+--- 'a'); one walk over the characters counts each one's occurrences so far and asks the map.
+
+fn replaced[s, rules]
+    seen = map[]
+    out = ''
+    for c in split[s, '']
+        n = 1
+        if c in seen
+            n = seen[c] + 1
+        seen = set[seen, c, n]
+        key = '`c``n`'
+        if key in rules
+            out = '`out``rules[key]`'
+        else
+            out = '`out``c`'
+    return out
+
+rules = map[a1 = 'A', a2 = 'B', a4 = 'C', a5 = 'D', b1 = 'E', r2 = 'F']
+word = 'abracadabra'
+log['`word` -> `replaced[word, rules]`']

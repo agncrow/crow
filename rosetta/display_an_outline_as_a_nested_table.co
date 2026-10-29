@@ -1,0 +1,121 @@
+--- Rosetta Code: Display an outline as a nested table
+--- https://rosettacode.org/wiki/Display_an_outline_as_a_nested_table
+--- The outline's lines are the tree's nodes in order: a node's parent is the nearest line
+--- above it that is indented less. A leaf is 1 wide and a parent as wide as its children
+--- together. Row k of the table holds, left to right, the nodes at depth k and a blank cell
+--- under each shallower leaf (the padding to even depth). Each subtree at level two takes
+--- a colour of its own. The table is written as wiki markup.
+
+struct Tree [texts, parents, depths, leaves, widths, colours]
+
+fn indent_of[line]
+    n = 0
+    while n lt len[line] and line[n] eq ' '
+        n = n + 1
+    return n
+
+fn parse[outline]
+    texts = []
+    indents = []
+    parents = []
+    depths = []
+    for line in split[outline, '\n']
+        if trim[line] ne ''
+            indent = indent_of[line]
+            parent = len[texts] - 1
+            while parent gte 0 and indents[parent] gte indent
+                parent = parents[parent]
+            depth = 0
+            if parent gte 0
+                depth = depths[parent] + 1
+            texts = push[texts, trim[line]]
+            indents = push[indents, indent]
+            parents = push[parents, parent]
+            depths = push[depths, depth]
+    count = len[texts]
+    leaves = for i in range[count]
+        i not in parents
+    --- each leaf adds 1 to its own width and to every ancestor's
+    widths = for i in range[count]
+        0
+    for i in range[count]
+        if leaves[i]
+            j = i
+            while j gte 0
+                widths[j] = widths[j] + 1
+                j = parents[j]
+    return Tree[texts, parents, depths, leaves, widths, colours[parents, depths]]
+
+--- the root takes the first colour, each node at level two the next in turn, and every
+--- node below that its level-two ancestor's
+fn colours[parents, depths]
+    palette = ['#ffffe6', '#ffebd2', '#f0fff0', '#e6ffff', '#ffeeff']
+    turn = 1
+    result = []
+    for i in range[len[depths]]
+        if depths[i] eq 0
+            result = push[result, palette[0]]
+        else if depths[i] eq 1
+            result = push[result, palette[turn]]
+            turn = turn % (len[palette] - 1) + 1
+        else
+            result = push[result, result[parents[i]]]
+    return result
+
+fn deepest[depths]
+    most = 0
+    for d in depths
+        if d gt most
+            most = d
+    return most
+
+fn cell[attributes, text]
+    return '| `attributes` | `text`'
+
+fn wiki_table[t]
+    lines = ['{| class="wikitable" style="text-align: center;"']
+    for depth in range[deepest[t.depths] + 1]
+        lines = push[lines, '|-']
+        for i in range[len[t.texts]]
+            if t.depths[i] eq depth
+                attributes = 'style="background: `t.colours[i]`; "'
+                if t.widths[i] gt 1
+                    attributes = '`attributes` colspan=`t.widths[i]`'
+                lines = push[lines, cell[attributes, t.texts[i]]]
+            else if t.depths[i] lt depth and t.leaves[i]
+                lines = push[lines, cell['', '']]
+    lines = push[lines, '|}']
+    return join[lines, '\n']
+
+outline = 'Display an outline as a nested table.
+    Parse the outline to a tree,
+        measuring the indent of each line,
+        translating the indentation to a nested structure,
+        and padding the tree to even depth.
+    count the leaves descending from each node,
+        defining the width of a leaf as 1,
+        and the width of a parent node as a sum.
+            (The sum of the widths of its children)
+    and write out a table with \'colspan\' values
+        either as a wiki table,
+        or as HTML.'
+log[wiki_table[parse[outline]]]
+log['']
+
+--- a second outline: a parent of two at the deepest level, and a leaf at level two
+--- padded down two rows
+outline = 'Display an outline as a nested table.
+    Parse the outline to a tree,
+        measuring the indent of each line,
+        translating the indentation to a nested structure,
+        and padding the tree to even depth.
+    count the leaves descending from each node,
+        defining the width of a leaf as 1,
+        and the width of a parent node as a sum.
+            (The sum of the widths of its children)
+            Propagating the sums upward as necessary.
+    and write out a table with \'colspan\' values
+        either as a wiki table,
+        or as HTML.
+    Optionally add color to the nodes.'
+log[wiki_table[parse[outline]]]

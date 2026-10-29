@@ -1,0 +1,58 @@
+--- Rosetta Code: Find the missing permutation
+--- https://rosettacode.org/wiki/Find_the_missing_permutation
+--- Three ways: every ordering of ABCD checked against the list; in each column, the
+--- letter seen an odd number of times (the codes joined by exclusive or, so the
+--- pairs cancel); and in each column, the letter whose code the column's sum lacks.
+
+use bits
+
+fn listed[]
+    return ['ABCD', 'CABD', 'ACDB', 'DACB', 'BCDA', 'ACBD', 'ADCB', 'CDAB',
+        'DABC', 'BCAD', 'CADB', 'CDBA', 'CBAD', 'ABDC', 'ADBC', 'BDCA',
+        'DCBA', 'BACD', 'BADC', 'BDAC', 'CBDA', 'DBCA', 'DCAB']
+
+--- every ordering of the letters, as text
+fn permutations[letters]
+    if len[letters] eq 1
+        return letters
+    out = []
+    for i in range[len[letters]]
+        rest = concat[slice[letters, 0, i], slice[letters, i + 1, len[letters]]]
+        for tail in permutations[rest]
+            out = push[out, '`letters[i]``tail`']
+    return out
+
+fn by_search[perms]
+    absent = for p in permutations[split[perms[0], '']]
+        if p not in perms
+            p
+    return absent[0]
+
+fn by_parity[perms]
+    letters = for column in range[len[perms[0]]]
+        x = 0
+        for p in perms
+            x = bitxor[x, code[p[column]]]
+        char[x]
+    return join[letters, '']
+
+fn by_sums[perms]
+    symbols = split[perms[0], '']
+    each = (len[perms] + 1) / len[symbols]
+    full = 0
+    for s in symbols
+        full = full + each * code[s]
+    letters = for column in range[len[symbols]]
+        total = 0
+        for p in perms
+            total = total + code[p[column]]
+        char[full - total]
+    return join[letters, '']
+
+fn show[method, answer]
+    log['`fmt[method, width = 30]``answer`']
+
+perms = listed[]
+show['Every ordering checked:', by_search[perms]]
+show['The odd count in each column:', by_parity[perms]]
+show['What each column\'s sum lacks:', by_sums[perms]]

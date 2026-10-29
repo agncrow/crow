@@ -1,0 +1,37 @@
+--- rows of whole numbers written down keep every digit: a literal row
+--- pushed onto a list of lists is a list of ints (the first row, held as a
+--- vector, had made every later row floats — 2^53 + 1 read as 2^53), a
+--- matrix written down and grown by `push` is a list of lists of ints, and
+--- a row of growing ints pushed onto `[]` makes a list of such rows
+rows = []
+rows = push[rows, [1]]
+n = 2 ^ 53 + 1
+rows = push[rows, [n]]
+log[rows[1][0]]
+
+fn grow[n]
+    grown = []
+    grown = push[grown, [1]]
+    row = for k in range[1]
+        n + k
+    grown = push[grown, row]
+    return grown
+
+log[grow[2 ^ 53 + 1][1][0]]
+log[grow[2 ^ 64][1][0]]
+
+fn tower[last]
+    built = [[1]]
+    n = 0
+    while n lt last
+        below = for k in range[1]
+            n * k
+        built = push[built, below]
+        n = n + 1
+    return built
+
+log[tower[2]]
+first = push[[], 1]
+lines = push[[], first]
+lines = push[lines, push[[], 2 ^ 64]]
+log[lines]

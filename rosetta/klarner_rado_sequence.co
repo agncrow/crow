@@ -1,0 +1,33 @@
+--- Rosetta Code: Klarner-Rado sequence
+--- https://rosettacode.org/wiki/Klarner-Rado_sequence
+--- Built in order, as the Hamming numbers are: the next element is the smaller
+--- of 2a + 1 and 3b + 1, a and b the earliest elements not yet used for each, so
+--- nothing is found in excess and nothing is sorted.
+
+--- the first n elements of the sequence
+fn klarner_rado[n]
+    k = [1]
+    i2 = 0
+    i3 = 0
+    while len[k] lt n
+        twice = 2 * k[i2] + 1
+        thrice = 3 * k[i3] + 1
+        least = min[twice, thrice]
+        k = push[k, least]
+        if twice eq least
+            i2 = i2 + 1
+        if thrice eq least
+            i3 = i3 + 1
+    return k
+
+k = klarner_rado[1000000]
+
+log['First 100 Klarner-Rado sequence numbers:']
+row = 0
+while row lt 100
+    cells = for v in slice[k, row, row + 20]
+        fmt[v, width = 4]
+    log[join[cells, '']]
+    row = row + 20
+for n in [1000, 10000, 100000, 1000000]
+    log['The `fmt[n, commas = true]`th Klarner-Rado number is `fmt[k[n - 1], commas = true]`']

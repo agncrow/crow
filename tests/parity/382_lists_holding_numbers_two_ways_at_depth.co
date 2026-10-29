@@ -1,0 +1,17 @@
+--- a list of lists of vectors and a list of lists of numbers in one list
+--- (a literal, a push): each item converted to the form the list holds, by
+--- a collecting loop — one level down the push had converted, two levels
+--- down it was an internal error in both modes (Rosetta Code, Numbers with
+--- equal rises and falls)
+
+vectors = for d in range[2]
+    [d]
+lists = for d in range[2]
+    range[3]
+both = [vectors]
+both = push[both, lists]
+log[both]
+mixed = [vectors, lists]
+log[mixed]
+log[push[[vectors], lists]]
+log[len[both[1][0]], both[1][0][2] + 1]

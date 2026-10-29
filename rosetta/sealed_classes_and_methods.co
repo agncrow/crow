@@ -1,0 +1,39 @@
+--- Rosetta Code: Sealed classes and methods
+--- https://rosettacode.org/wiki/Sealed_classes_and_methods
+--- Crow has no classes, no inheritance and no methods: a record (struct) is a fixed list
+--- of fields, and functions are free functions. So every record is sealed — nothing can
+--- extend it: a record that "is a" Parent and more is a record of its own, or one holding a
+--- Parent as a field (composition), and a record's fields are only those it declares
+--- (making one takes every field, and reading one it does not declare is refused before
+--- the program runs). Nothing can be overridden either: a core builtin's name is reserved
+--- (`fn len[x]` is refused), a standard module's names are reserved where it is imported
+--- bare, and a module of the program's own is reached only through its prefix, so a
+--- function the importer writes under the same name is another function, and the module's
+--- own calls still reach its own.
+--- What stays open is the other way round: a function reads fields, not kinds, so one
+--- written for a Parent takes any record that has the fields it reads (each kind gets its
+--- own compiled copy). To seal it to Parent, it asks the record's kind with type[], as the
+--- Wren entry does — here only conditionally, as there: a Child under 15 is turned away.
+
+struct Parent [name, age]
+
+--- not a subclass: a record of its own that happens to have the same fields
+struct Child [name, age]
+
+--- composition, the one way to build on a record: a Teacher holds a Parent record
+struct Teacher [person, school]
+
+fn watch_movie[p]
+    if type[p] ne 'Parent' and p.age lt 15
+        log['Sorry, `p.name`, you are too young to watch the movie.']
+    else
+        log['`p.name` is watching the movie...']
+
+watch_movie[Parent['Donald', 42]]
+watch_movie[Child['Lisa', 18]]
+watch_movie[Child['Fred', 10]]
+
+--- a function over parents is handed the field
+maria = Teacher[Parent['Maria', 35], 'Elm Street School']
+watch_movie[maria.person]
+log['`maria.person.name` teaches at `maria.school` (a `type[maria]` holding a `type[maria.person]`)']

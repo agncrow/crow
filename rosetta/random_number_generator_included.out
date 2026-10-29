@@ -1,0 +1,59 @@
+Crow has one random number generator behind rand[], rand[n], rand[a, b]
+and math's random tensors, shuffles and samples: ChaCha12, the ChaCha
+stream cipher of D. J. Bernstein run with 12 rounds, which is the StdRng of
+Rust's rand crate (0.10). It is a cryptographically secure generator
+(CSPRNG): a 256-bit key, a 64-bit block counter and a 64-bit stream number
+make each 64-byte block of the keystream, and the draws read it in order.
+
+- seed[n] spreads n's 64 bits into the 256-bit key with PCG32 (rand_core's
+  seed_from_u64); the counter and the stream start at 0. A seeded program
+  draws the same numbers on every run, interpreted or compiled (rand does
+  not promise StdRng's algorithm for ever, so a later Crow may differ).
+- Unseeded, each draw is made by a ChaCha12 keyed afresh from rand's thread
+  generator: ChaCha12 again, keyed by the operating system (getrandom) and
+  rekeyed after every 64 KiB it gives.
+- rand[] takes the next 64 bits and keeps the top 53: k / 2^53, in [0, 1).
+- rand[n] and rand[a, b] take the high 64 bits of the next 64 bits times
+  the range (Canon's method), and a second 64 bits where a carry from them
+  could reach the high half.
+
+ChaCha: https://en.wikipedia.org/wiki/Salsa20#ChaCha_variant
+PCG: https://en.wikipedia.org/wiki/Permuted_congruential_generator
+Others: https://en.wikipedia.org/wiki/List_of_random_number_generators
+
+Checked: seed[2026] keys ChaCha12 with these eight words, PCG32's from 2026:
+    979ec833 61d0bdca 64cf5677 1c4f5413 7b282762 58acb4a7 437697a8 d7a09b0e
+and a ChaCha12 written here in Crow, keyed so, makes what rand draws:
+
+draw                       rand                 ChaCha12 here
+rand[]                     0.39449470723839297  0.39449470723839297
+rand[]                     0.10336012982313714  0.10336012982313714
+rand[]                     0.6877581802654978   0.6877581802654978
+rand[]                     0.6405650005564867   0.6405650005564867
+rand[]                     0.6381055311880671   0.6381055311880671
+rand[]                     0.4355617807928154   0.4355617807928154
+rand[]                     0.04855667596449775  0.04855667596449775
+rand[]                     0.4474631558549017   0.4474631558549017
+rand[1, 6]                 4                    4
+rand[1, 6]                 4                    4
+rand[1, 6]                 6                    6
+rand[1, 6]                 6                    6
+rand[1, 6]                 3                    3
+rand[1, 6]                 3                    3
+rand[1, 6]                 5                    5
+rand[1, 6]                 2                    2
+rand[1, 6]                 3                    3
+rand[1, 6]                 6                    6
+rand[1000000000000]        29768653923          29768653923
+rand[1000000000000]        411144858822         411144858822
+rand[1000000000000]        162227441625         162227441625
+rand[1000000000000]        170841788455         170841788455
+rand[1000000000000]        697969253094         697969253094
+rand[9223372036854775807]  7194979897111026819  7194979897111026819 (two outputs)
+rand[9223372036854775807]  1270591025824306851  1270591025824306851 (two outputs)
+rand[9223372036854775807]  1601853668470136085  1601853668470136085 (two outputs)
+rand[9223372036854775807]  329008700803309252   329008700803309252 (two outputs)
+rand[9223372036854775807]  710300483934325393   710300483934325393 (one output)
+rand[9223372036854775807]  3497044239150524590  3497044239150524590 (one output)
+
+29 of 29 draws agree; they read the first 33 outputs, in order.

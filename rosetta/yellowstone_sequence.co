@@ -1,0 +1,122 @@
+--- Rosetta Code: Yellowstone sequence
+--- https://rosettacode.org/wiki/Yellowstone_sequence
+--- Each term is the smallest number not used yet that is coprime to the term before
+--- it and shares a factor with the one before that; the search starts at the smallest
+--- unused number. The first 100 terms are plotted in characters, and drawn as an SVG
+--- picture (yellowstone.svg in the current directory, removed at the end unless the
+--- program is given the argument keep).
+
+--- the greatest common divisor, by Euclid's remainders
+fn gcd[a, b]
+    while b ne 0
+        a, b = b, a % b
+    return a
+
+--- the first `count` terms of the Yellowstone permutation
+fn yellowstone[count]
+    terms = []
+    used = map[]
+    low = 1
+    while len[terms] lt count
+        n = len[terms]
+        pick = n + 1
+        if n gte 3
+            pick = low
+            while pick in used or gcd[pick, terms[n - 1]] ne 1 or gcd[pick, terms[n - 2]] eq 1
+                pick = pick + 1
+        terms = push[terms, pick]
+        used[pick] = true
+        while low in used
+            low = low + 1
+    return terms
+
+--- the largest of a list of ints
+fn largest[xs]
+    top = xs[0]
+    for x in xs
+        top = max[top, x]
+    return top
+
+--- one row of the plot: a mark in the column of each term that falls in the row's band
+fn plot_row[ys, row, band]
+    marks = for y in ys
+        if (y - 1) / band eq row
+            '*'
+        else
+            ' '
+    return join[marks, '']
+
+--- the terms drawn in characters: a column per term (n = 1 at the left) and a row per
+--- `band` values, the rows labelled at every fifth one, the columns at every tenth term
+fn plot[ys, band]
+    rows = (largest[ys] + band - 1) / band
+    lines = []
+    row = rows - 1
+    while row gte 0
+        label = '    '
+        if (row + 1) % 5 eq 0
+            label = fmt[(row + 1) * band, width = 4]
+        marks = plot_row[ys, row, band]
+        line = sub['`label` |`marks`', ' +$', '']
+        lines = push[lines, line]
+        row = row - 1
+    ticks = for n in range[1, len[ys] + 1]
+        if n % 10 eq 0
+            '+'
+        else
+            '-'
+    axis = join[ticks, '']
+    lines = push[lines, '   0 +`axis`']
+    numbers = for n in range[1, len[ys] / 10 + 1]
+        fmt[n * 10, width = 10]
+    shown = join[numbers, '']
+    lines = push[lines, '      `shown`']
+    return lines
+
+--- the terms as an SVG line chart: n across, a(n) up, each term a dot on the line,
+--- the axes marked at every tenth n and every 25 of a(n)
+fn svg_of[ys]
+    width = 40 + 6 * len[ys] + 20
+    height = 2 * largest[ys] + 70
+    base = height - 40
+    points = for n in range[len[ys]]
+        '`46 + 6 * n`,`base - 2 * ys[n]`'
+    path = join[points, ' ']
+    dots = for n in range[len[ys]]
+        '<circle cx="`46 + 6 * n`" cy="`base - 2 * ys[n]`" r="2" fill="#c0392b"/>'
+    across = for n in range[10, len[ys] + 1, 10]
+        '<text x="`40 + 6 * n`" y="`base + 16`" text-anchor="middle">`n`</text>'
+    up = for v in range[25, largest[ys] + 1, 25]
+        '<text x="34" y="`base - 2 * v + 4`" text-anchor="end">`v`</text>'
+    marks = concat[concat[across, up], dots]
+    shown = join[marks, '\n']
+    parts = [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="`width`" height="`height`" font-family="sans-serif" font-size="11">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        '<text x="`width / 2`" y="16" text-anchor="middle">The first `len[ys]` Yellowstone numbers</text>',
+        '<line x1="40" y1="`base`" x2="`width - 10`" y2="`base`" stroke="black"/>',
+        '<line x1="40" y1="`base`" x2="40" y2="20" stroke="black"/>',
+        '<text x="`width / 2`" y="`base + 32`" text-anchor="middle">n</text>',
+        '<text x="34" y="16" text-anchor="end">a(n)</text>',
+        '<polyline points="`path`" fill="none" stroke="#2c7fb8" stroke-width="1"/>',
+        shown,
+        '</svg>',
+        ''
+    ]
+    return join[parts, '\n']
+
+terms = yellowstone[100]
+log['The first 30 Yellowstone numbers:']
+log[slice[terms, 0, 30]]
+log['']
+log['The first 100, plotted (a column per n, a row per 5 values of a(n)):']
+for line in plot[terms, 5]
+    log[line]
+
+picture = svg_of[terms]
+path = 'yellowstone.svg'
+written = write[path, picture]
+log['']
+log['Wrote `path`: `len[terms]` points, `len[picture]` characters']
+if 'keep' not in args[]
+    removed = rm[path]

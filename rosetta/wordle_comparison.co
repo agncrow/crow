@@ -1,0 +1,42 @@
+--- Rosetta Code: Wordle comparison
+--- https://rosettacode.org/wiki/Wordle_comparison
+--- Two passes over the letters. The first marks the greens and counts the answer's
+--- letters that were not matched in place; the second, left to right, marks a guessed
+--- letter yellow while the count of that letter left over is above 0 (and takes one
+--- from it), grey otherwise. So a letter guessed more often than the answer holds it
+--- is yellow only as often as the answer has it to spare. 2 is green, 1 yellow, 0 grey;
+--- case is significant and any character from ! to ~ is a letter.
+
+fn wordle[answer, guess]
+    a = split[answer, '']
+    g = split[guess, '']
+    marks = for i in range[len[g]]
+        0
+    left = map[]
+    for i in range[len[g]]
+        if a[i] eq g[i]
+            marks[i] = 2
+        else if a[i] in left
+            left[a[i]] = left[a[i]] + 1
+        else
+            left[a[i]] = 1
+    for i in range[len[g]]
+        if marks[i] ne 2 and g[i] in left and left[g[i]] gt 0
+            marks[i] = 1
+            left[g[i]] = left[g[i]] - 1
+    return marks
+
+fn colours[marks]
+    names = ['grey', 'yellow', 'green']
+    shown = for m in marks
+        names[m]
+    return join[shown, ', ']
+
+pairs = [
+    ['ALLOW', 'LOLLY'], ['BULLY', 'LOLLY'], ['CHANT', 'LATTE'], ['ROBIN', 'ALERT'],
+    ['ROBIN', 'SONIC'], ['ROBIN', 'ROBIN'], ['SPEED', 'ABIDE'], ['SPEED', 'ERASE'],
+    ['SPEED', 'STEAL'], ['SPEED', 'CREPE'], ['Crow!', 'crow?'], ['a!b~c', '~c!ba']
+]
+for pair in pairs
+    marks = wordle[pair[0], pair[1]]
+    log['`pair[0]` v `pair[1]` => `str[marks]` => (`colours[marks]`)']

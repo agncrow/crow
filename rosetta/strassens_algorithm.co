@@ -1,0 +1,146 @@
+--- Rosetta Code: Strassen's algorithm
+--- https://rosettacode.org/wiki/Strassen's_algorithm
+--- Matrices are math's tensors. Both factors are cut into quarters, seven products of
+--- sums of quarters are made by recursion down to 1×1 (one multiplication), and the
+--- answer's four quarters are sums of those seven. Factors of any shape are padded with
+--- zeros to a square whose side is a power of two, and the product cut back out. Every
+--- product is checked against the schoolbook triple loop and against math's `*`.
+
+use math
+
+--- one quarter of a square matrix of even side: row half r, column half c (0 or 1)
+fn quarter[m, r, c]
+    h = len[m] / 2
+    rows = for i in range[r * h, r * h + h]
+        slice[m[i], c * h, c * h + h]
+    return stack[rows]
+
+--- the product of two square matrices whose side is a power of two
+fn strassen[a, b]
+    if len[a] eq 1
+        return full[1, 1, a[0][0] * b[0][0]]
+    a11 = quarter[a, 0, 0]
+    a12 = quarter[a, 0, 1]
+    a21 = quarter[a, 1, 0]
+    a22 = quarter[a, 1, 1]
+    b11 = quarter[b, 0, 0]
+    b12 = quarter[b, 0, 1]
+    b21 = quarter[b, 1, 0]
+    b22 = quarter[b, 1, 1]
+    m1 = strassen[a11 + a22, b11 + b22]
+    m2 = strassen[a21 + a22, b11]
+    m3 = strassen[a11, b12 - b22]
+    m4 = strassen[a22, b21 - b11]
+    m5 = strassen[a11 + a12, b22]
+    m6 = strassen[a21 - a11, b11 + b12]
+    m7 = strassen[a12 - a22, b21 + b22]
+    top = concat[m1 + m4 - m5 + m7, m3 + m5, 1]
+    bottom = concat[m2 + m4, m1 - m2 + m3 + m6, 1]
+    return concat[top, bottom, 0]
+
+--- m written into the top left corner of a side × side matrix of zeros
+fn padded[m, side]
+    p = zeros[side, side]
+    for i in range[m.shape[0]]
+        for j in range[m.shape[1]]
+            p[i][j] = m[i][j]
+    return p
+
+--- the top left rows × cols corner of m
+fn corner[m, rows, cols]
+    kept = for i in range[rows]
+        slice[m[i], 0, cols]
+    return stack[kept]
+
+--- the product of an n×k and a k×p matrix by Strassen's algorithm
+fn product[a, b]
+    if a.shape[1] ne b.shape[0]
+        return error['a `a.shape[0]`×`a.shape[1]` matrix cannot multiply a `b.shape[0]`×`b.shape[1]` one', 'shape']
+    side = 1
+    while side lt max[max[a.shape[0], a.shape[1]], b.shape[1]]
+        side = side * 2
+    whole = strassen[padded[a, side], padded[b, side]]
+    return corner[whole, a.shape[0], b.shape[1]]
+
+--- the product by the definition: each entry a row of a times a column of b
+fn schoolbook[a, b]
+    rows = for i in range[a.shape[0]]
+        row = for j in range[b.shape[1]]
+            total = 0.0
+            for k in range[a.shape[1]]
+                total = total + a[i][k] * b[k][j]
+            total
+        tensor[row]
+    return stack[rows]
+
+--- the largest distance between two matrices' entries
+fn distance[a, b]
+    return max[abs[flatten[a - b]]]
+
+--- a small positive number as a mantissa and a power of ten
+fn sci[x]
+    if x eq 0.0
+        return '0'
+    e = floor[log10[x]]
+    m = x / 10.0 ^ e
+    return '`fmt[m, decimals = 1]`e`e`'
+
+--- each entry rounded to a whole number (a -0 shown as 0)
+fn rounded[m]
+    return round[m] + 0.0
+
+--- a rows × cols matrix of random whole numbers from -9 to 9
+fn whole_numbers[rows, cols]
+    m = for i in range[rows]
+        row = for j in range[cols]
+            float[rand[-9, 9]]
+        tensor[row]
+    return stack[m]
+
+fn check[name, a, b]
+    s = product[a, b]
+    if not s.ok
+        log['`name`: `s.reason`']
+        log['']
+        return
+    plain = schoolbook[a, b]
+    builtin = a * b
+    log['`name` (`a.shape[0]`×`a.shape[1]` by `b.shape[0]`×`b.shape[1]`):']
+    off = distance[s, rounded[s]]
+    if off eq 0.0
+        log['  Strassen: `s`']
+    else
+        log['  Strassen, rounded: `rounded[s]` (each entry within `sci[off]` of it)']
+    log['  differs from the schoolbook product by at most `sci[distance[s, plain]]`, from math\'s * by `sci[distance[s, builtin]]`']
+    log['']
+
+a = tensor[[[1, 2], [3, 4]]]
+b = tensor[[[5, 6], [7, 8]]]
+c = tensor[[[1, 1, 1, 1], [2, 4, 8, 16], [3, 9, 27, 81], [4, 16, 64, 256]]]
+d = tensor[[[4.0, -3.0, 4.0 / 3.0, -1.0 / 4.0],
+    [-13.0 / 3.0, 19.0 / 4.0, -7.0 / 3.0, 11.0 / 24.0],
+    [3.0 / 2.0, -2.0, 7.0 / 6.0, -1.0 / 4.0],
+    [-1.0 / 6.0, 1.0 / 4.0, -1.0 / 6.0, 1.0 / 24.0]]]
+--- (e is math's constant: the task's e and f are named for what they hold)
+counting = tensor[[[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]]]
+identity = eye[4]
+
+check['a × b', a, b]
+check['c × d', c, d]
+check['e × f', counting, identity]
+
+--- shapes that are not powers of two are padded; then random matrices
+g = tensor[[[1, 2, 3], [4, 5, 6]]]
+h = tensor[[[7, 8], [9, 10], [11, 12]]]
+check['g × h', g, h]
+check['h × g', h, g]
+check['g × g', g, g]
+
+seed[2026]
+check['random whole numbers, seeded', whole_numbers[5, 5], whole_numbers[5, 5]]
+r1 = uniform[-10.0, 10.0, 16, 16]
+r2 = uniform[-10.0, 10.0, 16, 16]
+s = product[r1, r2]
+log['two random 16×16 matrices (seeded):']
+log['  the first row of the product: `round[s[0] * 1000.0] / 1000.0`']
+log['  differs from the schoolbook product by at most `sci[distance[s, schoolbook[r1, r2]]]`, from math\'s * by `sci[distance[s, r1 * r2]]`']

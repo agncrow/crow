@@ -1,0 +1,49 @@
+--- Rosetta Code: Diversity prediction theorem
+--- https://rosettacode.org/wiki/Diversity_prediction_theorem
+--- The three quantities from their definitions, computed in exact fractions: each is shown
+--- to three places and exactly, and the theorem (crowd error = average error - prediction
+--- diversity) is checked exactly, with no rounding to blur it.
+
+fn average[xs]
+    total = fraction[0]
+    for x in xs
+        total = total + x
+    return total / len[xs]
+
+--- the average squared distance from the predictions to a value
+fn mean_squared_distance[centre, predictions]
+    squares = for p in predictions
+        (p - centre) ^ 2
+    return average[squares]
+
+fn show[label, value]
+    name = fmt[label, width = 22]
+    places = fmt[fmt[value, decimals = 3], width = 7, align = 'right']
+    log['`name``places`  (exactly `value`)']
+
+fn report[truth, estimates]
+    exact = for e in estimates
+        fraction[e]
+    crowd = average[exact]
+    average_error = mean_squared_distance[fraction[truth], exact]
+    crowd_error = (crowd - truth) ^ 2
+    diversity = mean_squared_distance[crowd, exact]
+    shown = for e in estimates
+        str[e]
+    listed = join[shown, ' ']
+    log['True value:           `truth`']
+    log['Crowd estimates:      `listed`']
+    show['Average error:', average_error]
+    show['Crowd error:', crowd_error]
+    show['Prediction diversity:', diversity]
+    holds = crowd_error eq average_error - diversity
+    log['Crowd error = average error - prediction diversity: `holds`']
+
+report[49, [48, 47, 51]]
+log['']
+report[49, [48, 47, 51, 42]]
+--- two more, from the Python entry: a crowd of one mind, and a crowd far off
+log['']
+report[49, [50, 50, 50]]
+log['']
+report[49, [40, 35, 40]]

@@ -1,0 +1,59 @@
+--- Rosetta Code: Order two numerical lists
+--- https://rosettacode.org/wiki/Order_two_numerical_lists
+--- Lexicographic order: the first place where the lists differ decides, and
+--- where one list runs out while the other goes on, the shorter comes first.
+--- Then the same order sorts a few lists, by insertion.
+
+--- whether list a is ordered before list b
+fn before[a, b]
+    i = 0
+    while i lt len[a] and i lt len[b]
+        if a[i] ne b[i]
+            return a[i] lt b[i]
+        i = i + 1
+    len[a] lt len[b]
+
+--- the lists in order, each placed after every list not ordered after it
+fn sorted_lists[lists]
+    done = []
+    for xs in lists
+        at = len[done]
+        while at gt 0 and before[xs, done[at - 1]]
+            at = at - 1
+        done = concat[concat[slice[done, 0, at], [xs]], slice[done, at, len[done]]]
+    done
+
+--- the whole numbers written in text, a space between each
+fn numbers_of[text]
+    words = for w in split[text, ' ']
+        if w ne ''
+            w
+    xs = []
+    for w in words
+        xs = push[xs, int[w]]
+    xs
+
+fn show[a, b]
+    log['`fmt[str[a], width = 26]` before `fmt[str[b], width = 26]`: `before[a, b]`']
+
+show[[1, 2, 1, 3, 2], [1, 2, 0, 4, 4, 0, 0, 0]]
+show[[1, 2, 0, 4, 4, 0, 0, 0], [1, 2, 1, 3, 2]]
+show[[1, 2], [1, 2, 3]]
+show[[1, 2, 3], [1, 2]]
+show[[1, 2, 3], [1, 2, 3]]
+show[[3], [1, 2, 3]]
+show[[-1, 5], [0]]
+show[[], [0]]
+show[[0], []]
+show[[], []]
+show[[1.5, 2.0], [1.5, 2.25]]
+show[[2.5], [2.25, 9.0]]
+
+log['']
+--- lists of several lengths are made by pushing, not written as one literal
+written = ['1 2 3', '1 2', '3', '1 2 0 4', '', '1 2 3 0', '0 9', '1 1 9', '1 2 3']
+lists = for text in written
+    numbers_of[text]
+log['Sorted by that order:']
+for xs in sorted_lists[lists]
+    log['  `xs`']

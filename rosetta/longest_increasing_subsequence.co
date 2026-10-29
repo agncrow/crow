@@ -1,0 +1,94 @@
+--- Rosetta Code: Longest increasing subsequence
+--- https://rosettacode.org/wiki/Longest_increasing_subsequence
+--- Patience sorting, O(n log n): tails[k] is the position of the smallest item yet
+--- seen that ends an increasing subsequence of k + 1 items. Each item finds its pile
+--- by binary search and remembers the tail of the pile to its left, the item before
+--- it; one longest subsequence is read back from the last pile's tail. The quadratic
+--- dynamic programme checks its length on a seeded random list.
+
+use math
+
+--- One longest strictly increasing subsequence of xs.
+fn longest_increasing[xs]
+    tails = []
+    before = []
+    i = 0
+    while i lt len[xs]
+        lo = 0
+        hi = len[tails]
+        while lo lt hi
+            middle = (lo + hi) / 2
+            if xs[tails[middle]] lt xs[i]
+                lo = middle + 1
+            else
+                hi = middle
+        if lo gt 0
+            before = push[before, tails[lo - 1]]
+        else
+            before = push[before, -1]
+        if lo eq len[tails]
+            tails = push[tails, i]
+        else
+            tails[lo] = i
+        i = i + 1
+    picked = []
+    if len[tails] gt 0
+        k = tails[-1]
+        while k gte 0
+            picked = push[picked, xs[k]]
+            k = before[k]
+    return reverse[picked]
+
+--- The length of a longest increasing subsequence, by the quadratic programme: the
+--- longest ending at each item.
+fn longest_increasing_length[xs]
+    ending = []
+    best = 0
+    i = 0
+    while i lt len[xs]
+        here = 1
+        j = 0
+        while j lt i
+            if xs[j] lt xs[i] and ending[j] + 1 gt here
+                here = ending[j] + 1
+            j = j + 1
+        ending = push[ending, here]
+        best = max[best, here]
+        i = i + 1
+    return best
+
+--- Whether part is strictly increasing and a subsequence of xs.
+fn increasing_part_of[part, xs]
+    k = 0
+    i = 0
+    while i lt len[xs] and k lt len[part]
+        if xs[i] eq part[k]
+            k = k + 1
+        i = i + 1
+    rising = true
+    j = 1
+    while j lt len[part]
+        if part[j - 1] gte part[j]
+            rising = false
+        j = j + 1
+    return rising and k eq len[part]
+
+fn shown[xs]
+    items = for x in xs
+        str[x]
+    return '[`join[items, \', \']`]'
+
+fn show[xs]
+    log['A longest increasing subsequence of `shown[xs]` is `shown[longest_increasing[xs]]`']
+
+show[[3, 2, 6, 4, 5, 1]]
+show[[0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15]]
+log['']
+
+seed[2026]
+noise = for i in range[2000]
+    rand[1000000]
+part = longest_increasing[noise]
+log['Of 2000 seeded random numbers below 1,000,000: one of `len[part]`, from `part[0]` to `part[-1]`']
+log['  increasing and a subsequence of the list: `increasing_part_of[part, noise]`']
+log['  as long as the quadratic programme finds: `len[part] eq longest_increasing_length[noise]`']

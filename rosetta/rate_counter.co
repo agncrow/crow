@@ -1,0 +1,88 @@
+--- Rosetta Code: Rate counter
+--- https://rosettacode.org/wiki/Rate_counter
+--- The meters take the job as a function: here the length of a number's
+--- Collatz sequence. Two ways of counting the rate: a fixed number of jobs
+--- timed, in five rounds; and jobs run for a fixed span of seconds, the count
+--- and the rate read at each quarter of it.
+---
+--- The clock is now[]: the wall clock, held to the millisecond, and two moments
+--- subtract to the seconds between them. It is the system's clock, not a
+--- monotonic one (it moves if the system's time is set while the program runs),
+--- and a span of a few milliseconds is mostly its rounding, so every span
+--- measured here is long: a tenth of a second or more, where the rounding is
+--- under one per cent.
+---
+--- Times differ from run to run, so they are printed only when the program is
+--- given the argument time (crow run rate_counter.co time). Without it the
+--- program does the same fixed work and prints what it counted.
+
+fn collatz_length[n]
+    steps = 0
+    while n ne 1
+        if n % 2 eq 0
+            n = n / 2
+        else
+            n = 3 * n + 1
+        steps = steps + 1
+    return steps
+
+--- what a measurement counted: the jobs, their answers summed, and the
+--- seconds the clock saw pass
+struct Count [jobs, total, seconds]
+
+fn per_second[c]
+    return round[float[c.jobs] / c.seconds]
+
+--- a fixed number of runs of a job, job[n] for n = first … first + jobs - 1,
+--- timed as a whole
+fn timed[job, first, jobs]
+    start = now[]
+    total = 0
+    n = first
+    while n lt first + jobs
+        total = total + job[n]
+        n = n + 1
+    return Count[jobs, total, now[] - start]
+
+--- a job run until span seconds have passed, n going round 1 … 1000 so that
+--- the work per run stays the same on average; the count is read at each
+--- quarter of the span, as it stands then
+fn for_span[job, span]
+    start = now[]
+    readings = []
+    jobs = 0
+    total = 0
+    quarter = 1
+    while quarter lte 4
+        total = total + job[jobs % 1000 + 1]
+        jobs = jobs + 1
+        seconds = now[] - start
+        if seconds gte span * quarter / 4
+            readings = push[readings, Count[jobs, total, seconds]]
+            quarter = quarter + 1
+    return readings
+
+timing = false
+given = args[]
+if len[given] gt 0 and given[0] eq 'time'
+    timing = true
+
+log['The job: the length of a number\'s Collatz sequence.']
+log['']
+log['Five rounds of 100000 jobs (n = 1 … 100000), each round timed:']
+for r in range[5]
+    c = timed[collatz_length, 1, 100000]
+    line = 'round `r + 1`: `c.jobs` jobs, `c.total` steps in all'
+    if timing
+        line = '`line`, `fmt[c.seconds, decimals = 3]` s, `per_second[c]` jobs a second'
+    log[line]
+if not timing
+    log['(the times and rates: run with the argument time)']
+log['']
+log['Jobs run for 2 seconds, the count read at each half second:']
+if timing
+    for c in for_span[collatz_length, 2.0]
+        log['after `fmt[c.seconds, decimals = 3]` s: `c.jobs` jobs, `per_second[c]` jobs a second']
+else
+    log['(how many jobs fit in 2 seconds changes from run to run: run with the']
+    log['argument time)']

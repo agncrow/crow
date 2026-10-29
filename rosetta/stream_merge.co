@@ -1,0 +1,222 @@
+--- Rosetta Code: Stream merge
+--- https://rosettacode.org/wiki/Stream_merge
+--- Crow has no file handle a program reads a line at a time: `read` and io's `lines` take a
+--- file whole (the sys layer's reader of a file by position is the standard library's own).
+--- So each source here reads through the shell: `tail -c +N file | head -n 1000` hands it the
+--- next 1000 whole lines from byte N, and it holds no more than those. The merge of two keeps
+--- one buffered line from each source and writes the smaller; the merge of N keeps one line
+--- per source in a binary heap, writes the least and replaces it with the next line of its
+--- source. The sink is a file appended a block of lines at a time. The order is a function
+--- handed to the merge: as numbers, or as text by character code.
+
+use math
+
+--- a source read a block of lines at a time: its path, the byte its next block starts at,
+--- the block's lines and the place of the next one, the blocks read and the lines a block holds
+struct Source [path, offset, lines, at, blocks, size]
+
+--- where merged lines go: a file appended a block at a time, the lines not yet written
+struct Sink [path, held, count, blocks, size]
+
+--- an entry of the heap: a source's buffered line and which source it is
+struct Entry [line, source]
+
+--- what a merge leaves: the sink, and the sources (to count what they read)
+struct Merged [sink, sources]
+
+--- text quoted for the shell: in single quotes, each single quote closed, escaped, reopened
+fn quoted[t]
+    inner = replace[t, '\'', '\'\\\'\'']
+    return '\'`inner`\''
+
+--- how many bytes a text's UTF-8 holds: base64 writes four characters for every three bytes,
+--- padding the last four with = for each byte it lacks
+fn byte_count[t]
+    b = encode[t, 'base64']
+    return len[b] / 4 * 3 - occurs[b, '=']
+
+--- the source's next block: up to `size` whole lines from its offset, none at the file's end
+--- (the shell trims what it answers at the end, so a dot written after the block keeps it whole)
+fn refilled[s]
+    got = shell['tail -c +`s.offset + 1` `quoted[s.path]` | head -n `s.size`; echo .']
+    if not got.ok
+        halt['cannot read `s.path`: `got.reason`']
+        return s
+    block = slice[got.stdout, 0, len[got.stdout] - 1]
+    s.offset = s.offset + byte_count[block]
+    if block ne ''
+        s.blocks = s.blocks + 1
+    pieces = split[block, '\n']
+    if pieces[-1] eq ''
+        pieces = pop[pieces]
+    s.lines = pieces
+    s.at = 0
+    return s
+
+--- a source over a file, its first block read
+fn opened[path, size]
+    return refilled[Source[path, 0, [], 0, 0, size]]
+
+fn has_line[s]
+    return s.at lt len[s.lines]
+
+fn head_line[s]
+    return s.lines[s.at]
+
+--- the source moved past its current line, its next block read when this one is used up
+fn advanced[s]
+    s.at = s.at + 1
+    if s.at lt len[s.lines]
+        return s
+    return refilled[s]
+
+--- a sink writing to a file, emptied first
+fn sink_to[path, size]
+    _kept = write[path, '']
+    return Sink[path, [], 0, 0, size]
+
+--- the lines the sink holds appended to its file
+fn flushed[k]
+    if len[k.held] eq 0
+        return k
+    text = join[k.held, '\n']
+    _done = shell['printf \'%s\\n\' `quoted[text]` >> `quoted[k.path]`']
+    k.held = []
+    k.blocks = k.blocks + 1
+    return k
+
+--- a line handed to the sink, written out when it holds a block's worth
+fn written[k, line]
+    k.held = push[k.held, line]
+    k.count = k.count + 1
+    if len[k.held] eq k.size
+        return flushed[k]
+    return k
+
+--- two sorted sources merged into the sink: of the two buffered lines the one that goes
+--- first is written and its source moved on (the first source's on a tie), until both end
+fn merge_two[a, b, k, before]
+    while has_line[a] or has_line[b]
+        take_a = not has_line[b]
+        if has_line[a] and has_line[b]
+            take_a = not before[head_line[b], head_line[a]]
+        if take_a
+            k = written[k, head_line[a]]
+            a = advanced[a]
+        else
+            k = written[k, head_line[b]]
+            b = advanced[b]
+    return Merged[flushed[k], [a, b]]
+
+--- whether entry x goes before entry y: by its line, then by its source on a tie
+fn ahead[x, y, before]
+    if before[x.line, y.line]
+        return true
+    if before[y.line, x.line]
+        return false
+    return x.source lt y.source
+
+--- the heap with the entry at i moved up while it goes before its parent
+fn sifted_up[heap, i, before]
+    while i gt 0
+        parent = (i - 1) / 2
+        if not ahead[heap[i], heap[parent], before]
+            break
+        held = heap[i]
+        heap[i] = heap[parent]
+        heap[parent] = held
+        i = parent
+    return heap
+
+--- the heap with the entry at i moved down while a child goes before it
+fn sifted_down[heap, i, before]
+    n = len[heap]
+    while true
+        least = i
+        left = 2 * i + 1
+        if left lt n and ahead[heap[left], heap[least], before]
+            least = left
+        if left + 1 lt n and ahead[heap[left + 1], heap[least], before]
+            least = left + 1
+        if least eq i
+            break
+        held = heap[i]
+        heap[i] = heap[least]
+        heap[least] = held
+        i = least
+    return heap
+
+--- sorted sources merged into the sink through a heap of their buffered lines: the least is
+--- written and replaced by its source's next line, or by the heap's last entry when that
+--- source has ended
+fn merge_all[sources, k, before]
+    heap = []
+    for i in range[len[sources]]
+        if has_line[sources[i]]
+            heap = push[heap, Entry[head_line[sources[i]], i]]
+            heap = sifted_up[heap, len[heap] - 1, before]
+    while len[heap] gt 0
+        top = heap[0]
+        k = written[k, top.line]
+        s = advanced[sources[top.source]]
+        sources[top.source] = s
+        if has_line[s]
+            heap[0] = Entry[head_line[s], top.source]
+        else
+            heap[0] = heap[-1]
+            heap = pop[heap]
+        heap = sifted_down[heap, 0, before]
+    return Merged[flushed[k], sources]
+
+fn as_numbers[a, b]
+    return int[a] lt int[b]
+
+fn as_text[a, b]
+    return a lt b
+
+--- a file's lines on one line, for a small file
+fn shown[path]
+    lines = split[trim[read[path]], '\n']
+    return join[lines, ' ']
+
+--- the task's example streams, one number a line (the third is empty), merged two and four
+streams = ['3\n14\n15\n', '2\n17\n18\n', '', '2\n3\n5\n7\n']
+paths = for i in range[len[streams]]
+    'stream`i + 1`.txt'
+for i in range[len[streams]]
+    _kept = write[paths[i], streams[i]]
+two = merge_two[opened[paths[0], 2], opened[paths[1], 2], sink_to['merged2.txt', 2], as_numbers]
+log['merge of 2: `shown[\'merged2.txt\']`']
+sources = for p in paths
+    opened[p, 2]
+four = merge_all[sources, sink_to['merged4.txt', 2], as_numbers]
+log['merge of 4: `shown[\'merged4.txt\']`']
+log['']
+
+--- the dictionary dealt at random into 7 sorted files, merged back in the order of
+--- character codes: the merge must give the dictionary back
+seed[7]
+words = split[trim[read['unixdict.txt']], '\n']
+pile = for w in words
+    rand[7]
+piles = for f in range[7]
+    'pile`f + 1`.txt'
+for f in range[7]
+    dealt = for i in range[len[words]]
+        if pile[i] eq f
+            words[i]
+    _kept = write[piles[f], '`join[dealt, \'\n\']`\n']
+sources = for p in piles
+    opened[p, 1000]
+seven = merge_all[sources, sink_to['merged.txt', 1000], as_text]
+for s in seven.sources
+    log['`s.path`: `fmt[s.offset, width = 6]` bytes read in `s.blocks` blocks of at most 1000 lines']
+log['merged: `seven.sink.count` lines written in `seven.sink.blocks` blocks to merged.txt']
+again = read['merged.txt']
+if again eq read['unixdict.txt']
+    log['merged.txt is unixdict.txt again, byte for byte']
+else
+    log['merged.txt differs from unixdict.txt']
+
+for p in concat[concat[paths, piles], ['merged2.txt', 'merged4.txt', 'merged.txt']]
+    _gone = rm[p]

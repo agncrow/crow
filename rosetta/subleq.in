@@ -1,0 +1,2 @@
+Subleq reads this a character at a time,
+and writes it back in capitals: 1, 2, 3 — ça marche!

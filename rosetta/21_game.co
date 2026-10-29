@@ -1,0 +1,78 @@
+--- Rosetta Code: 21 game
+--- https://rosettacode.org/wiki/21_game
+--- The player and the computer take turns adding 1, 2 or 3 to a running total,
+--- and whoever makes it exactly 21 wins. A seeded coin toss says who goes first.
+--- The computer leaves the total one more than a multiple of four when it can
+--- (1, 5, 9, 13, 17), from where the other player cannot reach 21 first.
+--- q quits, and so do an empty line and the end of the input.
+
+use math
+
+fn computers_choice[total]
+    best = (21 - total) % 4
+    if best eq 0
+        --- no total of the winning kind is in reach: play anything
+        return rand[1, 3]
+    best
+
+fn players_choice[total]
+    --- 1, 2 or 3, or 0 when the player quits
+    while true
+        line = input['Your number (1, 2 or 3; q quits): ']
+        if not line.ok
+            return 0
+        text = lower[trim[line]]
+        if text eq '' or text eq 'q'
+            return 0
+        n = int[text]
+        if not n.ok
+            log['\'`text`\' is not a number.']
+            continue
+        if n lt 1 or n gt 3
+            log['`n` is not allowed: add 1, 2 or 3.']
+            continue
+        if total + n gt 21
+            log['That passes 21: add at most `21 - total`.']
+            continue
+        return n
+
+fn play_game[player_first]
+    --- true when the game was played to its end, false when the player quit
+    total = 0
+    players_turn = player_first
+    while total lt 21
+        if players_turn
+            n = players_choice[total]
+            if n eq 0
+                log['You quit with the total at `total`.']
+                return false
+            total = total + n
+            log['You add `n`: the total is `total`.']
+            if total eq 21
+                log['You reached 21 — you win!']
+        else
+            n = computers_choice[total]
+            total = total + n
+            log['The computer adds `n`: the total is `total`.']
+            if total eq 21
+                log['The computer reached 21 — it wins.']
+        players_turn = not players_turn
+    true
+
+fn wants_another[]
+    line = input['Another game? (y/n): ']
+    if not line.ok
+        return false
+    lower[trim[line]] eq 'y'
+
+seed[21]
+log['21: take turns adding 1, 2 or 3 to a running total; whoever makes it 21 wins.']
+playing = true
+while playing
+    player_first = rand[2] eq 0
+    if player_first
+        log['The coin says you go first.']
+    else
+        log['The coin says the computer goes first.']
+    playing = play_game[player_first] and wants_another[]
+log['Goodbye.']

@@ -1,0 +1,9 @@
+Numbers: [1, 34, 3, 98, 9, 76, 45, 4]
+  Largest integer:    998764543431
+  by keys: true, by trying every order: true
+Numbers: [54, 546, 548, 60]
+  Largest integer:      6054854654
+  by keys: true, by trying every order: true
+Numbers: [212, 21221]
+  Largest integer:        21221221
+  by keys: true, by trying every order: true

@@ -1,0 +1,36 @@
+21: take turns adding 1, 2 or 3 to a running total; whoever makes it 21 wins.
+The coin says you go first.
+Your number (1, 2 or 3; q quits): 'abc' is not a number.
+Your number (1, 2 or 3; q quits): 5 is not allowed: add 1, 2 or 3.
+Your number (1, 2 or 3; q quits): You add 1: the total is 1.
+The computer adds 1: the total is 2.
+Your number (1, 2 or 3; q quits): You add 3: the total is 5.
+The computer adds 3: the total is 8.
+Your number (1, 2 or 3; q quits): You add 1: the total is 9.
+The computer adds 2: the total is 11.
+Your number (1, 2 or 3; q quits): You add 2: the total is 13.
+The computer adds 3: the total is 16.
+Your number (1, 2 or 3; q quits): You add 1: the total is 17.
+The computer adds 2: the total is 19.
+Your number (1, 2 or 3; q quits): That passes 21: add at most 2.
+Your number (1, 2 or 3; q quits): You add 2: the total is 21.
+You reached 21 — you win!
+Another game? (y/n): The coin says the computer goes first.
+The computer adds 1: the total is 1.
+Your number (1, 2 or 3; q quits): You add 3: the total is 4.
+The computer adds 1: the total is 5.
+Your number (1, 2 or 3; q quits): You add 3: the total is 8.
+The computer adds 1: the total is 9.
+Your number (1, 2 or 3; q quits): You add 3: the total is 12.
+The computer adds 1: the total is 13.
+Your number (1, 2 or 3; q quits): You add 3: the total is 16.
+The computer adds 1: the total is 17.
+Your number (1, 2 or 3; q quits): You add 3: the total is 20.
+The computer adds 1: the total is 21.
+The computer reached 21 — it wins.
+Another game? (y/n): The coin says the computer goes first.
+The computer adds 1: the total is 1.
+Your number (1, 2 or 3; q quits): You add 2: the total is 3.
+The computer adds 2: the total is 5.
+Your number (1, 2 or 3; q quits): You quit with the total at 5.
+Goodbye.

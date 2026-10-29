@@ -1,0 +1,48 @@
+--- Rosetta Code: Zero to the zero power
+--- https://rosettacode.org/wiki/Zero_to_the_zero_power
+--- 0 ^ 0 in each of Crow's number kinds. The spec's `^` (section 4, Arithmetic) is the
+--- power operator and names no rule of its own for 0 ^ 0, so each kind answers by its
+--- general rule, and every one answers 1: an int's power is exact, so x ^ 0 is the empty
+--- product, in the 64-bit form and in the growing form a compiled program keeps for an
+--- int that may pass 64 bits (here a zero made from 2 ^ 100); a float's power is IEEE
+--- 754's pow, where x ^ 0 is 1 for every x, NaN and infinity included; a decimal's and a
+--- fraction's power is by an int and exact, as their * is.
+
+--- one line of the table: the kind, the expression as written, what it answers as `log`
+--- shows it and the kind of the answer. Both are read where the expression is written: a
+--- function called with an int and with a float takes both as floats (the spec, section 1,
+--- Reassignment), so a function handed the value itself would see every int as a float.
+fn show[kind, written, shown, answer_kind]
+    log['`fmt[kind, width = 22]` `fmt[written, width = 30]` = `shown`  (`answer_kind`)']
+
+log['The task\'s own lines:']
+x = 0
+y = 0
+z = x ^ y
+log['z= `z`']
+
+log['']
+log['In each kind of number:']
+show['int', '0 ^ 0', str[0 ^ 0], type[0 ^ 0]]
+big = 2 ^ 100
+zero = big - big
+show['growing int', '(2 ^ 100 - 2 ^ 100) ^ 0', str[zero ^ zero], type[zero ^ zero]]
+show['float', '0.0 ^ 0.0', str[0.0 ^ 0.0], type[0.0 ^ 0.0]]
+show['float', '(-0.0) ^ 0.0', str[(-0.0) ^ 0.0], type[(-0.0) ^ 0.0]]
+show['float and int', '0.0 ^ 0', str[0.0 ^ 0], type[0.0 ^ 0]]
+show['int and float', '0 ^ 0.0', str[0 ^ 0.0], type[0 ^ 0.0]]
+show['decimal', 'decimal[\'0.00\'] ^ 0', str[decimal['0.00'] ^ 0], type[decimal['0.00'] ^ 0]]
+show['decimal of 50 digits', 'decimal[0, digits = 50] ^ 0', str[decimal[0, digits = 50] ^ 0], type[decimal[0, digits = 50] ^ 0]]
+show['fraction', 'fraction[0, 1] ^ 0', str[fraction[0, 1] ^ 0], type[fraction[0, 1] ^ 0]]
+show['tensor, item by item', '[0.0, 0.0] .^ [0.0, 0.0]', str[[0.0, 0.0] .^ [0.0, 0.0]], type[[0.0, 0.0] .^ [0.0, 0.0]]]
+
+log['']
+log['A float\'s rule, IEEE 754\'s: anything to the power 0.0 is 1, even NaN and infinity:']
+nan = 0.0 / 0.0
+infinity = 1.0 / 0.0
+show['float', 'NaN ^ 0.0', str[nan ^ 0.0], type[nan ^ 0.0]]
+show['float', 'infinity ^ 0.0', str[infinity ^ 0.0], type[infinity ^ 0.0]]
+
+log['']
+log['Without the brackets a power binds tighter than the minus before it: -(0.0 ^ 0.0).']
+show['float', '-0.0 ^ 0.0', str[-0.0 ^ 0.0], type[-0.0 ^ 0.0]]

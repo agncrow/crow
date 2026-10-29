@@ -1,0 +1,6 @@
+The first ten terms: 1, 1, 2, 3, 3, 4, 5, 5, 6, 6
+As the task says: true
+The 1000th term: 502
+
+Terms less than the one before, up to the 100,000th: 49798
+Asked first for a large n, the 1,000,000th term: 512066

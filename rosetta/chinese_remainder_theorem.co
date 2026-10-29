@@ -1,0 +1,45 @@
+--- Rosetta Code: Chinese remainder theorem
+--- https://rosettacode.org/wiki/Chinese_remainder_theorem
+--- Each N/n_i is inverted modulo n_i by the extended Euclidean algorithm; moduli
+--- that are not pairwise coprime leave some N/n_i without an inverse, and the
+--- answer is then an error value saying so.
+
+fn inverse[a, m]
+    --- The x in 0 … m-1 with a * x ≡ 1 (mod m); an error value where a and m share a factor.
+    old_r, r = a, m
+    old_s, s = 1, 0
+    while r ne 0
+        q = old_r / r
+        old_r, r = r, old_r - q * r
+        old_s, s = s, old_s - q * s
+    if old_r ne 1
+        return error['`a` and `m` share the factor `old_r`', 'math']
+    return (old_s % m + m) % m
+
+fn chinese_remainder[n, a]
+    --- The s in 0 … N-1 with s ≡ a[i] (mod n[i]) for every i, N the product of the n[i].
+    product = 1
+    for ni in n
+        product = product * ni
+    total = 0
+    for i in range[len[n]]
+        p = product / n[i]
+        total = total + a[i] * inverse[p, n[i]] * p
+    return total % product
+
+fn system[n, a]
+    parts = for i in range[len[n]]
+        'x ≡ `a[i]` (mod `n[i]`)'
+    return join[parts, ', ']
+
+fn solve[n, a]
+    s = chinese_remainder[n, a]
+    if s.ok
+        log['`system[n, a]`: x = `s`']
+    else
+        log['`system[n, a]`: not solved — the moduli are not pairwise coprime (`s.reason`)']
+
+solve[[3, 5, 7], [2, 3, 2]]
+solve[[11, 12, 13], [10, 4, 12]]
+solve[[5, 7, 9, 11], [1, 2, 3, 4]]
+solve[[11, 22, 19], [10, 4, 9]]

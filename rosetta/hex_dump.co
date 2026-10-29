@@ -1,0 +1,217 @@
+--- Rosetta Code: Hex dump
+--- https://rosettacode.org/wiki/Hex_dump
+--- hexdump -C's canonical format over a file's bytes, from an optional offset and
+--- for an optional length: 16 bytes a line in hex with an extra space after the
+--- eighth, the printable ASCII between bars, a run of lines equal to the one before
+--- shown once as * (as hexdump squeezes them), and the end offset last; and the
+--- stretch's binary mode, six bytes a line in bits. A Crow program reads text, not
+--- bytes (read refuses bytes that spell no UTF-8), so a file's bytes are read as
+--- numbers through od, and the example files are written with printf's octal
+--- escapes; the encoding, the layout and the options are Crow's. Given arguments,
+--- it dumps a file:  crow run hex_dump.co [-b] [-s offset] [-n length] file
+use bits
+
+--- A number in lowercase hexadecimal, at least width digits.
+fn hex[n, width]
+    alphabet = '0123456789abcdef'
+    digits = []
+    while n gt 0 or len[digits] lt width
+        digits = push[digits, alphabet[n % 16]]
+        n = n / 16
+    return join[reverse[digits], '']
+
+--- A byte as eight binary digits.
+fn bits_of[b]
+    digits = for i in range[8]
+        str[bitand[shift[b, i - 7], 1]]
+    return join[digits, '']
+
+fn printable[b]
+    if b gte 32 and b lte 126
+        return char[b]
+    return '.'
+
+--- The bytes between bars, each printable ASCII byte as itself and any other as a dot.
+fn ascii[chunk]
+    shown = for b in chunk
+        printable[b]
+    text = join[shown, '']
+    return '|`text`|'
+
+--- The i-th cell of a line: its byte in hex or in bits, or blank past the bytes.
+fn cell[chunk, i, binary]
+    if binary
+        if i lt len[chunk]
+            return bits_of[chunk[i]]
+        return repeat[' ', 8]
+    if i lt len[chunk]
+        return hex[chunk[i], 2]
+    return '  '
+
+--- One line: the offset, the cells (in hex, an extra space after the eighth), the bytes.
+fn line_of[offset, chunk, binary]
+    if binary
+        cells = for i in range[6]
+            cell[chunk, i, true]
+        row = join[cells, ' ']
+        return '`hex[offset, 8]`  `row`  `ascii[chunk]`'
+    cells = for i in range[16]
+        cell[chunk, i, false]
+    left = join[slice[cells, 0, 8], ' ']
+    right = join[slice[cells, 8, 16], ' ']
+    return '`hex[offset, 8]`  `left`  `right`  `ascii[chunk]`'
+
+--- The dump of the bytes from skip on, at most length of them (all when length is
+--- negative), as lines: hexdump -C's, or six bytes a line in bits when binary.
+fn dump[octets, skip, length, binary]
+    start = min[skip, len[octets]]
+    stop = len[octets]
+    if length gte 0
+        stop = min[stop, start + length]
+    width = 16
+    if binary
+        width = 6
+    lines = []
+    previous = []
+    squeezed = false
+    at = start
+    while at lt stop
+        chunk = slice[octets, at, min[at + width, stop]]
+        if len[chunk] eq width and chunk eq previous
+            if not squeezed
+                lines = push[lines, '*']
+                squeezed = true
+        else
+            lines = push[lines, line_of[at, chunk, binary]]
+            squeezed = false
+        previous = chunk
+        at = at + width
+    if stop gt 0 and length ne 0
+        lines = push[lines, hex[stop, 8]]
+    return lines
+
+--- A file's bytes as numbers, read through od.
+fn file_bytes[path]
+    r = shell['od -An -v -tu1 -- \'`path`\'']
+    if r.status ne 0
+        return error['`path`: no such file, or it cannot be read', 'io']
+    words = split[replace[r.stdout, '\n', ' '], ' ']
+    octets = for w in words
+        if w ne ''
+            int[w]
+    return octets
+
+--- The dump's lines, or the reason the file could not be read.
+fn hexdump[path, skip = 0, length = -1, binary = false]
+    octets = file_bytes[path]
+    if not octets.ok
+        return ['hexdump: `octets.reason`']
+    return dump[octets, skip, length, binary]
+
+--- Bytes written to a file through printf, each as its octal escape.
+fn write_bytes[path, octets]
+    escapes = for b in octets
+        '\\`b / 64``b / 8 % 8``b % 8`'
+    codes = join[escapes, '']
+    r = shell['printf \'`codes`\' > \'`path`\'']
+    return r.status eq 0
+
+--- Text as UTF-16, little-endian: the byte order mark, then each character as one
+--- 16-bit unit, or past 0xFFFF as a surrogate pair, low byte first.
+fn utf16_le[text]
+    octets = [255, 254]
+    for c in split[text, '']
+        n = code[c]
+        units = [n]
+        if n gt 65535
+            units = [55296 + (n - 65536) / 1024, 56320 + (n - 65536) % 1024]
+        for u in units
+            octets = push[octets, u % 256]
+            octets = push[octets, u / 256]
+    return octets
+
+fn show[lines]
+    for line in lines
+        log[line]
+
+--- An offset or a length, in decimal or after 0x in hex; -1 when it is no number.
+fn number[text]
+    base = 10
+    digits = lower[text]
+    if starts[digits, '0x']
+        base = 16
+        digits = slice[digits, 2, len[digits]]
+    if digits eq ''
+        return -1
+    alphabet = '0123456789abcdef'
+    n = 0
+    i = 0
+    while i lt len[digits]
+        d = 0
+        while d lt base and alphabet[d] ne digits[i]
+            d = d + 1
+        if d eq base
+            return -1
+        n = n * base + d
+        i = i + 1
+    return n
+
+fn from_arguments[given]
+    skip = 0
+    length = -1
+    binary = false
+    path = ''
+    usable = true
+    i = 0
+    while i lt len[given]
+        if given[i] eq '-b'
+            binary = true
+        else if given[i] eq '-s' and i + 1 lt len[given]
+            skip = number[given[i + 1]]
+            usable = usable and skip gte 0
+            i = i + 1
+        else if given[i] eq '-n' and i + 1 lt len[given]
+            length = number[given[i + 1]]
+            usable = usable and length gte 0
+            i = i + 1
+        else
+            usable = usable and path eq ''
+            path = given[i]
+        i = i + 1
+    if usable and path ne ''
+        show[hexdump[path, skip = skip, length = length, binary = binary]]
+    else
+        log['usage: crow run hex_dump.co [-b] [-s offset] [-n length] file']
+
+fn demo[]
+    example = 'Rosetta Code is a programming chrestomathy site 😀.'
+    _written = write_bytes['example_utf16.txt', utf16_le[example]]
+    log['The example in UTF-16, little-endian, as hexdump -C shows it:']
+    show[hexdump['example_utf16.txt']]
+    log['']
+    log['From offset 18 for 37 bytes (hexdump -C -s 18 -n 37):']
+    show[hexdump['example_utf16.txt', skip = 18, length = 37]]
+    log['']
+    log['In binary mode, the stretch:']
+    show[hexdump['example_utf16.txt', binary = true]]
+    log['']
+    _saved = write['example_utf8.txt', example]
+    log['The same text in UTF-8, as write saves text:']
+    show[hexdump['example_utf8.txt']]
+    log['']
+    zeros = for i in range[48]
+        0
+    _zeros = write_bytes['zeros.bin', concat[zeros, [67, 114, 111, 119, 10]]]
+    log['Forty-eight zero bytes, then a line of text: equal lines are squeezed into *:']
+    show[hexdump['zeros.bin']]
+    log['']
+    log['A file that is not there:']
+    show[hexdump['missing.bin']]
+    for path in ['example_utf16.txt', 'example_utf8.txt', 'zeros.bin']
+        _removed = rm[path]
+
+given = args[]
+if len[given] gt 0
+    from_arguments[given]
+else
+    demo[]

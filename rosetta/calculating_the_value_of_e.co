@@ -1,0 +1,60 @@
+--- Rosetta Code: Calculating the value of e
+--- https://rosettacode.org/wiki/Calculating_the_value_of_e
+--- e is the sum of 1/n! for n = 0, 1, 2, ... Three ways: in floats, summed from the
+--- smallest term up; in decimals of 60 digits, rounded to 50; and in whole numbers scaled
+--- by a power of ten (ints grow without limit), for the first 1000 decimals.
+
+use math
+
+--- the terms 1/n! that still count beside 1.0, added from the smallest
+fn float_e[]
+    terms = []
+    term = 1.0
+    n = 0
+    while 1.0 + term gt 1.0
+        terms = push[terms, term]
+        n = n + 1
+        term = term / n
+    total = 0.0
+    for t in reverse[terms]
+        total = total + t
+    return total
+
+--- the terms as decimals of 60 digits, until one is below the last digit
+fn decimal_e[]
+    term = decimal[1, digits = 60]
+    total = term
+    n = 0
+    while term gt decimal['1e-60']
+        n = n + 1
+        term = term / n
+        total = total + term
+    return decimal[total, digits = 50]
+
+--- e times 10 ^ places, in whole numbers: each term is the last one divided by n,
+--- with ten guard digits to cover the rounding down of each division
+fn scaled_e[places]
+    guard = 10
+    term = 10 ^ (places + guard)
+    total = 0
+    n = 0
+    while term gt 0
+        total = total + term
+        n = n + 1
+        term = term / n
+    return total / 10 ^ guard
+
+log['in floats:          `float_e[]`']
+log['math\'s constant:    `e`']
+log['in decimals:        `decimal_e[]`']
+log['']
+log['The first 1000 decimals of e:']
+digits = str[scaled_e[1000]]
+log['2.']
+start = 1
+while start lt len[digits]
+    blocks = for i in range[5]
+        slice[digits, start + 10 * i, start + 10 * i + 10]
+    line = join[blocks, ' ']
+    log['  `line`']
+    start = start + 50

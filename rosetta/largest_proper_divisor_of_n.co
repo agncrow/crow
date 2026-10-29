@@ -1,0 +1,17 @@
+--- Rosetta Code: Largest proper divisor of n
+--- https://rosettacode.org/wiki/Largest_proper_divisor_of_n
+--- The largest proper divisor of n is n over its smallest divisor above 1, which
+--- lies at or below the square root of n unless n is 1 or a prime: then it is 1.
+
+fn largest_proper_divisor[n]
+    d = 2
+    while d * d lte n
+        if n % d eq 0
+            return n / d
+        d = d + 1
+    return 1
+
+for row in range[10]
+    cells = for n in range[row * 10 + 1, row * 10 + 11]
+        fmt[largest_proper_divisor[n], width = 3]
+    log[join[cells, '']]

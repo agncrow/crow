@@ -1,0 +1,103 @@
+--- Rosetta Code: Primes: n*2^m+1
+--- https://rosettacode.org/wiki/Primes:_n*2^m+1
+--- For each n, m counts up until n * 2 ^ m + 1 is prime (ints grow without limit). A
+--- candidate below 997 ^ 2 is decided by trial division; a larger one with no factor
+--- below 1,000 is a Proth number k * 2 ^ e + 1 (k odd, k < 2 ^ e: n is at most 400 and
+--- 2 ^ m is past 2,400), which Proth's theorem decides exactly: for an a that is no
+--- square modulo N, N is prime if and only if a ^ ((N - 1) / 2) is -1 modulo N.
+--- Every n up to 400 (term 383, m = 6393, is the stretch's hard one): 4 s a mode.
+
+--- the primes below limit, by the sieve of Eratosthenes
+fn primes_below[limit]
+    sieve = for i in range[limit]
+        true
+    primes = []
+    n = 2
+    while n lt limit
+        if sieve[n]
+            primes = push[primes, n]
+            k = n * n
+            while k lt limit
+                sieve[k] = false
+                k = k + n
+        n = n + 1
+    return primes
+
+--- base ^ exp modulo m, by repeated squaring
+fn pow_mod[base, exp, m]
+    result = 1
+    b = base % m
+    e = exp
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+--- An odd prime q, below 1,000 and not dividing N, that is no square modulo N, or 0 if
+--- none is. N is 1 modulo 4, so by quadratic reciprocity q is a square modulo N exactly
+--- when N is a square modulo q, which Euler's criterion asks.
+fn non_residue[big, small]
+    i = 1
+    while i lt len[small]
+        q = small[i]
+        if pow_mod[big % q, (q - 1) / 2, q] eq q - 1
+            return q
+        i = i + 1
+    return 0
+
+--- Whether N = n * 2 ^ m + 1 is prime.
+fn is_prime[big, small]
+    i = 0
+    while i lt len[small]
+        p = small[i]
+        if p * p gt big
+            return big gt 1
+        if big % p eq 0
+            return big eq p
+        i = i + 1
+    --- N is past 997 ^ 2 with no factor below 1,000: a Proth number. A square N has
+    --- every q as a square, but N = x ^ 2 = n * 2 ^ m + 1 needs m below 11, so x is
+    --- below 1,000 and its factors were found above.
+    a = non_residue[big, small]
+    return pow_mod[a, (big - 1) / 2, big] eq big - 1
+
+struct Term [m, prime]
+
+--- the smallest m making n * 2 ^ m + 1 prime, and that prime
+fn smallest[n, small]
+    m = 0
+    big = n + 1
+    prime = is_prime[big, small]
+    while not prime
+        m = m + 1
+        big = 2 * big - 1
+        prime = is_prime[big, small]
+    return Term[m, big]
+
+--- a number of more than 40 digits as its first and last 15, and its count
+fn shown[n]
+    digits = str[n]
+    count = len[digits]
+    if count lte 40
+        return digits
+    head = slice[digits, 0, 15]
+    tail = slice[digits, count - 15, count]
+    return '`head`...`tail` (`count` digits)'
+
+small = primes_below[1000]
+log['  n     m  smallest prime n * 2 ^ m + 1']
+most_n = 0
+most_m = -1
+n = 1
+while n lte 400
+    t = smallest[n, small]
+    log['`fmt[n, width = 3]`  `fmt[t.m, width = 4]`  `shown[t.prime]`']
+    if n eq 45 or n eq 50
+        log['--- the first `n` above']
+    if t.m gt most_m
+        most_n = n
+        most_m = t.m
+    n = n + 1
+log['--- the first 400 above; the largest m is for n = `most_n`: m = `most_m`']

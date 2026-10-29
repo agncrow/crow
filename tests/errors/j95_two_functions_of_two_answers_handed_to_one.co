@@ -1,0 +1,17 @@
+--- a function taking a function is one function for every call (spec,
+--- Specialization): two calls handing it functions that answer two kinds
+--- are refused, naming both — the parameter had been typed by one, and
+--- the call handing the other did not build compiled, while the
+--- interpreter ran both (Rosetta Code, Monads/List monad)
+
+fn applied[x, f]
+    return f[x]
+
+fn twice[x]
+    return x * 2
+
+fn shown[x]
+    return '<`x`>'
+
+log[applied[3, twice]]
+log[applied[3, shown]]

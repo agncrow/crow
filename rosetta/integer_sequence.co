@@ -1,0 +1,36 @@
+--- Rosetta Code: Integer sequence
+--- https://rosettacode.org/wiki/Integer_sequence
+--- An int in Crow is a whole number of any size, so the count has no limit but
+--- the machine's memory: it passes 2^63 and 2^64, where a fixed-size int would
+--- stop or wrap, without a pause (the compiled program keeps it in 64 bits
+--- while it fits and grows it past that). `crow run integer_sequence.co forever`
+--- counts from 1 and never stops; run without an argument, the program shows
+--- the first twenty, and the count going on across 2^63 and 2^64, so that it
+--- ends.
+
+--- every integer from `start` on, one a line, without end
+fn count_forever[start]
+    n = start
+    while true
+        log[n]
+        n = n + 1
+
+--- the integers from `start` to `last`, one a line
+fn count[start, last]
+    n = start
+    while n lte last
+        log[n]
+        n = n + 1
+
+given = args[]
+if len[given] gt 0 and given[0] eq 'forever'
+    count_forever[1]
+else
+    count[1, 20]
+    log['...']
+    log['across 2^63, where a 64-bit int would overflow:']
+    count[2 ^ 63 - 3, 2 ^ 63 + 3]
+    log['...']
+    log['across 2^64:']
+    count[2 ^ 64 - 3, 2 ^ 64 + 3]
+    log['... (run with the argument forever to count without end)']

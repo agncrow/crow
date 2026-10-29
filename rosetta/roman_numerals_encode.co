@@ -1,0 +1,50 @@
+--- Rosetta Code: Roman numerals/Encode
+--- https://rosettacode.org/wiki/Roman_numerals/Encode
+--- Greedy, from the largest of the thirteen values a numeral is written with,
+--- the six subtractive pairs among them (CM, CD, XC, XL, IX, IV): each is written
+--- as many times as it fits. A number below 1 has no numeral and answers an error
+--- value. Every number from 1 to 3999 is decoded back as a check.
+
+fn to_roman[n]
+    if n lt 1
+        return error['`n` has no Roman numeral', 'roman']
+    worth = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+    symbols = ['M', 'CM', 'D', 'CD', 'C', 'XC', 'L', 'XL', 'X', 'IX', 'V', 'IV', 'I']
+    left = n
+    pieces = []
+    i = 0
+    while left gt 0
+        while left gte worth[i]
+            pieces = push[pieces, symbols[i]]
+            left = left - worth[i]
+        i = i + 1
+    return join[pieces, '']
+
+--- The decoder of Roman numerals/Decode: a letter before a larger one is taken away.
+fn from_roman[roman]
+    worth = map[M = 1000, D = 500, C = 100, L = 50, X = 10, V = 5, I = 1]
+    letters = split[roman, '']
+    total = 0
+    i = 0
+    while i lt len[letters]
+        value = worth[letters[i]]
+        if i + 1 lt len[letters] and value lt worth[letters[i + 1]]
+            total = total - value
+        else
+            total = total + value
+        i = i + 1
+    return total
+
+fn round_trips[n]
+    numeral = to_roman[n]
+    if not numeral.ok
+        return false
+    return from_roman[numeral] eq n
+
+for n in [1990, 2008, 1666, 2026, 1954, 3999, 444, 42, 14, 4, 1, 0]
+    numeral = to_roman[n]
+    if numeral.ok
+        log['`fmt[n, width = 5]` `numeral`']
+    else
+        log['`fmt[n, width = 5]` error: `numeral.reason`']
+log['every number from 1 to 3999 decodes back to itself: `all[range[1, 4000], round_trips]`']

@@ -1,0 +1,89 @@
+--- Rosetta Code: Spelling of ordinal numbers
+--- https://rosettacode.org/wiki/Spelling_of_ordinal_numbers
+--- A number is named in groups of three digits, short scale (a billion is a
+--- thousand millions), with no "and"; its ordinal is the name with the last
+--- word changed: one, two, three, five, eight, nine and twelve have their own
+--- forms, a word ending in y ends in ieth, and any other takes th. A number may
+--- be written in any form decimal[] reads — 123, 00123.0, 1.23e2 — as long as
+--- it is a positive whole number; ints grow, so there is no limit short of the
+--- decillions' names.
+
+fn small[n]
+    --- the names below twenty
+    names = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+    return names[n]
+
+fn tens[n]
+    names = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+    return names[n]
+
+fn under_thousand[n]
+    --- the name of 1 … 999
+    words = []
+    if n gte 100
+        words = push[words, '`small[n / 100]` hundred']
+    rest = n % 100
+    if rest gte 20
+        word = tens[rest / 10]
+        if rest % 10 gt 0
+            word = '`word`-`small[rest % 10]`'
+        words = push[words, word]
+    else if rest gt 0
+        words = push[words, small[rest]]
+    return join[words, ' ']
+
+fn cardinal[n]
+    --- the name of a positive whole number, or an error past the names
+    scales = ['', 'thousand', 'million', 'billion', 'trillion', 'quadrillion', 'quintillion', 'sextillion', 'septillion', 'octillion', 'nonillion', 'decillion']
+    groups = []
+    rest = n
+    while rest gt 0
+        groups = push[groups, rest % 1000]
+        rest = rest / 1000
+    if len[groups] gt len[scales]
+        return error['too large to name: `n`', 'input']
+    words = []
+    i = len[groups] - 1
+    while i gte 0
+        if groups[i] gt 0
+            words = push[words, under_thousand[groups[i]]]
+            if i gt 0
+                words = push[words, scales[i]]
+        i = i - 1
+    return join[words, ' ']
+
+fn ordinal_word[word]
+    --- the ordinal of a number's last word
+    own = map[one = 'first', two = 'second', three = 'third', five = 'fifth', eight = 'eighth', nine = 'ninth', twelve = 'twelfth']
+    if word in own
+        return own[word]
+    if ends[word, 'y']
+        return '`slice[word, 0, len[word] - 1]`ieth'
+    return '`word`th'
+
+fn ordinal[n]
+    --- the English ordinal of a positive whole number
+    words = split[cardinal[n], ' ']
+    last = len[words] - 1
+    parts = split[words[last], '-']
+    parts[len[parts] - 1] = ordinal_word[parts[len[parts] - 1]]
+    words[last] = join[parts, '-']
+    return join[words, ' ']
+
+fn whole_of[text]
+    --- the positive whole number text writes, in any form decimal[] reads
+    d = decimal[trim[text]]
+    if not d.ok
+        return error['not a number', 'input']
+    n = int[d]
+    if decimal[n] ne d or n lt 1
+        return error['not a positive whole number', 'input']
+    return n
+
+for text in ['1', '2', '3', '4', '5', '11', '65', '100', '101', '272', '23456', '8007006005004003', '123', '00123.0', '1.23e2', '12', '20', '99', '1000000000', '18446744073709551616', '1e36', '1.5', '-3', 'x']
+    shown = fmt[text, width = 20, align = 'right']
+    name = ordinal[whole_of[text]]
+    if name.ok
+        log['`shown`  `name`']
+    else
+        log['`shown`  (`name.reason`)']

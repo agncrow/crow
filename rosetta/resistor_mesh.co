@@ -1,0 +1,130 @@
+--- Rosetta Code: Resistor mesh
+--- https://rosettacode.org/wiki/Resistor_mesh
+--- Kirchhoff's current law at each node of the 10 x 10 grid of 1 ohm resistors: the
+--- current leaving node k is its degree times its voltage less its neighbours'
+--- voltages. A (row 1, column 1) is held at 0 volts and 1 ampere enters at B (row 6,
+--- column 7), so B's voltage is the resistance. The system is solved exactly with
+--- fractions, by elimination within the band of width 10 (no pivot is needed: held
+--- at A, the system is positive definite), and again in floats by math's solve.
+--- Extra credit, xkcd 356: two nodes a knight's move apart on an infinite grid, from
+--- the lattice Green's function (Cserti, Am. J. Phys. 68, 2000):
+--- R(m, n) = (1/pi) * integral over 0..pi of (1 - e^(-n b) cos(m x)) / sinh(b) dx,
+--- where cosh(b) = 2 - cos(x), by Simpson's rule, against the closed forms.
+
+use math
+
+--- The nodes are numbered row by row: node k is row k / size, column k % size.
+fn neighbours[k, size]
+    row = k / size
+    column = k % size
+    near = []
+    if row gt 0
+        near = push[near, k - size]
+    if row lt size - 1
+        near = push[near, k + size]
+    if column gt 0
+        near = push[near, k - 1]
+    if column lt size - 1
+        near = push[near, k + 1]
+    return near
+
+--- The conductance matrix, n x n held flat (row r, column c at r * n + c), with A's
+--- row asking only that A be 0 volts.
+fn conductances[size, a]
+    n = size * size
+    g = for i in range[n * n]
+        fraction[0]
+    for k in range[n]
+        if k eq a
+            g[k * n + k] = fraction[1]
+        else
+            near = neighbours[k, size]
+            g[k * n + k] = fraction[len[near]]
+            for m in near
+                if m ne a
+                    g[k * n + m] = fraction[-1]
+    return g
+
+--- Gaussian elimination without pivots, each pivot reaching only the rows and
+--- columns within the band, then substitution back.
+fn solve_band[g, rhs, n, band]
+    a = g
+    b = rhs
+    for i in range[n]
+        last = min[i + band, n - 1]
+        for r in range[i + 1, last + 1]
+            if a[r * n + i] ne 0
+                factor = a[r * n + i] / a[i * n + i]
+                for c in range[i, last + 1]
+                    a[r * n + c] = a[r * n + c] - factor * a[i * n + c]
+                b[r] = b[r] - factor * b[i]
+    x = for i in range[n]
+        fraction[0]
+    i = n - 1
+    while i gte 0
+        last = min[i + band, n - 1]
+        total = b[i]
+        for c in range[i + 1, last + 1]
+            total = total - a[i * n + c] * x[c]
+        x[i] = total / a[i * n + i]
+        i = i - 1
+    return x
+
+--- The flat matrix as rows of floats, for math's solve.
+fn float_rows[g, n]
+    rows = for r in range[n]
+        row = for c in range[n]
+            float[g[r * n + c]]
+        row
+    return rows
+
+--- The integrand at x, with c = cosh(b) = 2 - cos(x): sinh(b) is s = sqrt(c^2 - 1)
+--- and e^(-b) is c - s. At 0 the quotient's limit is n.
+fn integrand[x, m, n]
+    if x eq 0.0
+        return float[n]
+    c = 2.0 - cos[x]
+    s = sqrt[c * c - 1.0]
+    return (1.0 - (c - s) ^ n * cos[m * x]) / s
+
+--- The resistance between a node and the node m columns and n rows away on an
+--- infinite grid, by Simpson's rule over 10,000 steps.
+fn infinite_grid[m, n]
+    steps = 10000
+    h = pi / steps
+    inner = for i in range[1, steps]
+        (2 + 2 * (i % 2)) * integrand[i * h, m, n]
+    total = integrand[0.0, m, n] + sum[inner] + integrand[pi, m, n]
+    return total * h / 3.0 / pi
+
+size = 10
+a = 1 * size + 1
+b = 6 * size + 7
+n = size * size
+g = conductances[size, a]
+current = for k in range[n]
+    if k eq b
+        fraction[1]
+    else
+        fraction[0]
+volts = solve_band[g, current, n, size]
+log['10 x 10 grid, A at row 1, column 1 and B at row 6, column 7 (counted from 0):']
+log['  R = `volts[b]` ohm (exact)']
+log['    = `float[volts[b]]` ohm']
+floats = for k in range[n]
+    float[current[k]]
+by_solve = solve[float_rows[g, n], floats]
+log['  math\'s solve in floats: `by_solve[b]` ohm']
+log['']
+log['An infinite grid, from a node to the node m columns and n rows away:']
+log['  m  n  by the integral    closed form']
+closed = [0.5, 2.0 / pi, 2.0 - 4.0 / pi, 4.0 / pi - 0.5]
+names = ['1/2', '2/pi', '2 - 4/pi', '4/pi - 1/2']
+offsets = [[1, 0], [1, 1], [2, 0], [2, 1]]
+for i in range[4]
+    across = offsets[i][0]
+    down = offsets[i][1]
+    found = fmt[infinite_grid[across, down], decimals = 15]
+    exact = fmt[closed[i], decimals = 15]
+    log['  `across`  `down`  `found`  `exact` = `names[i]`']
+log['xkcd 356, a knight\'s move apart: 4/pi - 1/2 = `4.0 / pi - 0.5` ohm']

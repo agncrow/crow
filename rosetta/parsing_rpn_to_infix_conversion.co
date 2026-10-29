@@ -1,0 +1,60 @@
+--- Rosetta Code: Parsing/RPN to infix conversion
+--- https://rosettacode.org/wiki/Parsing/RPN_to_infix_conversion
+--- A stack of infix expressions, each kept with the precedence of its outermost operator
+--- (a number's is above every operator's). An operator pops its right, then its left
+--- operand, and brackets one whose precedence is below its own, or equal on the side its
+--- associativity does not group: the left of ^ (right-associative), the right of + - * /.
+
+struct Part [text, prec]
+
+fn precedence[token]
+    if token eq '^'
+        return 4
+    if token eq '*' or token eq '/'
+        return 3
+    if token eq '+' or token eq '-'
+        return 2
+    return 9
+
+fn bracketed[part, needs]
+    if needs
+        return '( `part.text` )'
+    return part.text
+
+--- the stack after a token: an operand pushed, or an operator joining the top two
+fn step[stack, token]
+    p = precedence[token]
+    if p eq 9
+        return push[stack, Part[token, 9]]
+    right = stack[-1]
+    left = stack[-2]
+    right_assoc = token eq '^'
+    l = bracketed[left, left.prec lt p or (left.prec eq p and right_assoc)]
+    r = bracketed[right, right.prec lt p or (right.prec eq p and not right_assoc)]
+    return push[slice[stack, 0, -2], Part['`l` `token` `r`', p]]
+
+fn texts_of[stack]
+    texts = for part in stack
+        part.text
+    return texts
+
+--- the infix form, the stack shown as each token is parsed when `show` is true
+fn to_infix[rpn, show]
+    if show
+        log['Token  Stack']
+    stack = []
+    for token in split[rpn, ' ']
+        stack = step[stack, token]
+        if show
+            log['`fmt[token, width = 6]` `str[texts_of[stack]]`']
+    return stack[0].text
+
+for rpn in ['3 4 2 * 1 5 - 2 3 ^ ^ / +', '1 2 + 3 4 + ^ 5 6 + ^']
+    log['Input: `rpn`']
+    infix = to_infix[rpn, true]
+    log['Result: `infix`']
+    log['']
+
+--- associativity at work
+for rpn in ['1 2 + 3 *', '1 2 - 3 -', '1 2 3 - -', '2 3 ^ 4 ^', '2 3 4 ^ ^', '1 2 * 3 4 / /', '5 1 2 + 4 * + 3 -']
+    log['`fmt[rpn, width = 18]` -> `to_infix[rpn, false]`']

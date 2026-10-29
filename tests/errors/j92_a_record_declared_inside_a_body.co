@@ -1,0 +1,8 @@
+--- a record declared inside a body: refused where it is written, with
+--- where it goes — it had stopped the lowering with no line, in words that
+--- read as Crow's own fault
+fn f[]
+    struct P [x]
+    return 1
+
+log[f[]]

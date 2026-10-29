@@ -1,0 +1,55 @@
+--- Rosetta Code: Peripheral drift illusion
+--- https://rosettacode.org/wiki/Peripheral_drift_illusion
+--- The Codepen picture the task links, as the Wren entry draws it: 12 x 12 blue
+--- squares on olive, each with two neighbouring sides white and two black. Along
+--- a row the white corner turns a quarter every two squares, and each row is the
+--- row above moved one square to the right. Written as an SVG to
+--- peripheral_drift_illusion.svg in the current directory (the last line removes
+--- it again: leave that line out to keep the picture); the white corners are
+--- shown in characters too, as the corner of a box: ┌ ┐ ┘ └.
+
+--- the white corner of the square in column x and row y: 0 top left, 1 top
+--- right, 2 bottom right, 3 bottom left
+fn white_corner[x, y]
+    turns = [0, 0, 3, 3, 2, 2, 1, 1]
+    return turns[(x - y + 17) % 8]
+
+--- the colours of a square's top, right, bottom and left sides
+fn side_colours[corner]
+    if corner eq 0
+        return ['white', 'black', 'black', 'white']
+    if corner eq 1
+        return ['white', 'white', 'black', 'black']
+    if corner eq 2
+        return ['black', 'white', 'white', 'black']
+    return ['black', 'black', 'white', 'white']
+
+fn line[x1, y1, x2, y2, colour]
+    return '<line x1="`x1`" y1="`y1`" x2="`x2`" y2="`y2`" stroke="`colour`" stroke-width="4"/>'
+
+--- the square at (px, py), 50 pixels a side, its sides drawn 2 pixels in
+fn square[px, py, corner]
+    c = side_colours[corner]
+    far = px + 46
+    low = py + 46
+    shapes = ['<rect x="`px`" y="`py`" width="50" height="50" fill="#3250ff"/>', line[px, py, far, py, c[0]], line[far, py, far, low, c[1]], line[px, low, far, low, c[2]], line[px, low, px, py, c[3]]]
+    return join[shapes, '\n']
+
+fn svg[]
+    head = '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000">'
+    ground = '<rect width="100%" height="100%" fill="#d3d004"/>'
+    squares = for i in range[144]
+        square[90 + 70 * (i % 12), 90 + 70 * (i / 12), white_corner[i % 12, i / 12]]
+    body = join[squares, '\n']
+    return '`head`\n`ground`\n`body`\n</svg>\n'
+
+glyphs = ['┌', '┐', '┘', '└']
+log['The white corner of each square:']
+for y in range[12]
+    row = for x in range[12]
+        glyphs[white_corner[x, y]]
+    log[join[row, ' ']]
+log['']
+written = write['peripheral_drift_illusion.svg', svg[]]
+log['The picture, 1000 x 1000, written to peripheral_drift_illusion.svg: `written.ok`']
+_gone = rm['peripheral_drift_illusion.svg']

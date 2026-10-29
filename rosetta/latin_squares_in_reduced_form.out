@@ -1,0 +1,64 @@
+The four reduced latin squares of order 4 are:
+
+[1, 2, 3, 4]
+[2, 1, 4, 3]
+[3, 4, 1, 2]
+[4, 3, 2, 1]
+
+[1, 2, 3, 4]
+[2, 1, 4, 3]
+[3, 4, 2, 1]
+[4, 3, 1, 2]
+
+[1, 2, 3, 4]
+[2, 3, 4, 1]
+[3, 4, 1, 2]
+[4, 1, 2, 3]
+
+[1, 2, 3, 4]
+[2, 4, 1, 3]
+[3, 1, 4, 2]
+[4, 3, 2, 1]
+
+The size of the set of reduced latin squares for the following orders,
+the total number of latin squares of these orders, and OEIS A002860:
+
+Order 1: Size 1    x 1! x 0! => Total         1   A002860:         1 agrees
+Order 2: Size 1    x 2! x 1! => Total         2   A002860:         2 agrees
+Order 3: Size 1    x 3! x 2! => Total        12   A002860:        12 agrees
+Order 4: Size 4    x 4! x 3! => Total       576   A002860:       576 agrees
+Order 5: Size 56   x 5! x 4! => Total    161280   A002860:    161280 agrees
+Order 6: Size 9408 x 6! x 5! => Total 812851200   A002860: 812851200 agrees
+
+Square g = 42 of the 56 reduced squares of order 5:
+[1, 2, 3, 4, 5]
+[2, 5, 1, 3, 4]
+[3, 4, 2, 5, 1]
+[4, 1, 5, 2, 3]
+[5, 3, 4, 1, 2]
+
+Square g = 1 of the 9408 reduced squares of order 6:
+[1, 2, 3, 4, 5, 6]
+[2, 1, 4, 3, 6, 5]
+[3, 4, 5, 6, 1, 2]
+[4, 3, 6, 5, 2, 1]
+[5, 6, 1, 2, 3, 4]
+[6, 5, 2, 1, 4, 3]
+
+Square g = 5000 of the 9408 reduced squares of order 6:
+[1, 2, 3, 4, 5, 6]
+[2, 4, 6, 1, 3, 5]
+[3, 6, 1, 5, 4, 2]
+[4, 5, 2, 6, 1, 3]
+[5, 3, 4, 2, 6, 1]
+[6, 1, 5, 3, 2, 4]
+
+Square g = 9408 of the 9408 reduced squares of order 6:
+[1, 2, 3, 4, 5, 6]
+[2, 6, 5, 3, 4, 1]
+[3, 5, 6, 2, 1, 4]
+[4, 3, 2, 1, 6, 5]
+[5, 4, 1, 6, 3, 2]
+[6, 1, 4, 5, 2, 3]
+
+Square g = 9409 of order 6: g is 1 to 9408 here, not 9409

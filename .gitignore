@@ -56,6 +56,11 @@ _tmp_test_error_line
 !examples/rag/.crow/fixtures/*.json
 !examples/agent/.crow/fixtures/*.json
 !examples/taskboard/fixtures/*.csv
+# the Rosetta Code programs' data: third-party files under licenses of
+# their own, kept out of the repository until that is decided
+# (rosetta/data/SOURCES.md says where each comes from)
+rosetta/data/*
+!rosetta/data/SOURCES.md
 docs/book/crow-site/
 editors/vscode/node_modules/
 *.vsix

@@ -1,0 +1,13 @@
+--- a moment a statement loop borrows, handed to a function inside an
+--- operator or into a variable, is copied as it is handed: compiled, the
+--- borrow had been handed as it was, and the program did not build
+--- (Rosetta Code, Palindrome dates)
+
+fn year_of[t]
+    return t.year
+
+days = [moment[0], moment[1300000000], now[]]
+for t in days
+    log[year_of[t] gt 2000]
+    y = year_of[t]
+    log[y lt 1971]

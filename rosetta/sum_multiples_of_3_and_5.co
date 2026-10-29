@@ -1,0 +1,36 @@
+--- Rosetta Code: Sum multiples of 3 and 5
+--- https://rosettacode.org/wiki/Sum_multiples_of_3_and_5
+--- First by walking the numbers below n, then in closed form: the multiples of k below n
+--- are k, 2k, …, mk with m = (n - 1) / k, summing to k·m(m + 1)/2, and the multiples of 3
+--- or 5 are those of 3 and those of 5 less those of 15, counted twice. Ints grow, so the
+--- closed form reaches 10^20 and far past it at once.
+
+--- the sum of the multiples of 3 or 5 below n, one number at a time
+fn walked[n]
+    total = 0
+    for k in range[1, n]
+        if k % 3 eq 0 or k % 5 eq 0
+            total = total + k
+    return total
+
+--- the sum of the multiples of k below n
+fn multiples_sum[k, n]
+    m = (n - 1) / k
+    return k * m * (m + 1) / 2
+
+--- the sum of the multiples of 3 or 5 below n, in closed form
+fn closed[n]
+    return multiples_sum[3, n] + multiples_sum[5, n] - multiples_sum[15, n]
+
+log['Below 1000, walked: `walked[1000]`']
+log['Below 1000, closed form: `closed[1000]`']
+agree = true
+for n in range[1, 2001]
+    if walked[n] ne closed[n]
+        agree = false
+log['The two agree for every n up to 2000: `agree`']
+log['']
+for e in range[1, 21]
+    n = 10 ^ e
+    log['below 10^`fmt[e, width = 2, align = \'left\']` `fmt[closed[n], width = 40]`']
+log['below 10^100: `closed[10 ^ 100]`']

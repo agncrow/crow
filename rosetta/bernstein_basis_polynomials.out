@@ -1,0 +1,22 @@
+Subprogram (1): monomial to degree-2 Bernstein coefficients
+  p: [1, 0, 0] --> [1, 1, 1]
+  q: [1, 2, 3] --> [1, 2, 6]
+Subprogram (2): degree-2 evaluation by de Casteljau
+  p(0.25) = 1   (monomial basis: 1)
+  p(7.5) = 1   (monomial basis: 1)
+  q(0.25) = 1.6875   (monomial basis: 1.6875)
+  q(7.5) = 184.75   (monomial basis: 184.75)
+Subprogram (3): monomial to degree-3 Bernstein coefficients
+  p: [1, 0, 0, 0] --> [1, 1, 1, 1]
+  q: [1, 2, 3, 0] --> [1, 1.6666666666666665, 3.333333333333333, 6]
+  r: [1, 2, 3, 4] --> [1, 1.6666666666666665, 3.333333333333333, 10]
+Subprogram (4): degree-3 evaluation by de Casteljau
+  p(0.25) = 1   (monomial basis: 1)
+  p(7.5) = 1   (monomial basis: 1)
+  q(0.25) = 1.6874999999999998   (monomial basis: 1.6875)
+  q(7.5) = 184.75000000000034   (monomial basis: 184.75)
+  r(0.25) = 1.7499999999999998   (monomial basis: 1.75)
+  r(7.5) = 1872.25   (monomial basis: 1872.25)
+Subprogram (5): degree-2 to degree-3 Bernstein coefficients
+  p: [1, 1, 1] --> [1, 1, 1, 1]
+  q: [1, 2, 6] --> [1, 1.6666666666666665, 3.333333333333333, 6]

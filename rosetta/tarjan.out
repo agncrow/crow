@@ -1,0 +1,15 @@
+The eight-node graph of the zkl and Go entries:
+  [0 1 2]
+  [5 6]
+  [3 4]
+  [7]
+
+The first graph of the Python entry:
+  [6 7]
+  [1 2 3]
+  [4 5]
+  [8]
+
+The second, its nodes named:
+  [Other]
+  [A B C]

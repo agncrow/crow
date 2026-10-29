@@ -1,0 +1,88 @@
+--- Rosetta Code: Sequence: nth number with exactly n divisors
+--- https://rosettacode.org/wiki/Sequence:_nth_number_with_exactly_n_divisors
+--- A number p1^e1 * p2^e2 * ... has (e1 + 1)(e2 + 1)... divisors, so the numbers with n
+--- divisors are the products of distinct primes raised to the factors of n, less one, for
+--- each way of writing n as a product. For a prime n there is one way, and the nth such
+--- number is the nth prime to the power n - 1 (an int that grows: 509^96 for n = 97).
+--- Otherwise every number with n divisors up to a bound is made from the shapes, and the
+--- bound is quadrupled until there are n of them; a branch stops as soon as even the
+--- smallest primes it could still take would carry it past the bound. The first 100 terms.
+
+fn primes_below[limit]
+    sieve = for i in range[limit]
+        true
+    found = []
+    for n in range[2, limit]
+        if sieve[n]
+            found = push[found, n]
+            m = n * n
+            while m lt limit
+                sieve[m] = false
+                m = m + n
+    return found
+
+--- the ways to write n as a product of factors of at most largest, largest first, each
+--- as the exponents (factor - 1) of the numbers with n divisors
+fn shapes[n, largest]
+    found = []
+    f = min[n, largest]
+    while f gte 2
+        if n % f eq 0
+            if f eq n
+                found = push[found, [f - 1]]
+            else
+                for rest in shapes[n / f, f]
+                    found = push[found, concat[[f - 1], rest]]
+        f = f - 1
+    return found
+
+--- every number up to limit of the shape from position i on, times value: distinct
+--- primes, increasing along a run of equal exponents so each number is made once
+fn spread[shape, i, value, last, used, limit, primes]
+    if i eq len[shape]
+        return [value]
+    e = shape[i]
+    --- what the later positions need at least: those equal to e (the run) take primes
+    --- above this one, the others at least 2
+    run = 0
+    other = 0
+    for j in range[i + 1, len[shape]]
+        if shape[j] eq e and run eq j - i - 1
+            run = run + 1
+        else
+            other = other + shape[j]
+    found = []
+    k = 0
+    stopped = false
+    while k lt len[primes] and not stopped
+        p = primes[k]
+        if i eq 0 or shape[i] ne shape[i - 1] or p gt last
+            v = value * p ^ e
+            if v * (p + 1) ^ (e * run) * 2 ^ other gt limit
+                stopped = true
+            else if p not in used
+                found = concat[found, spread[shape, i + 1, v, p, push[used, p], limit, primes]]
+        k = k + 1
+    if not stopped
+        halt['the primes ran out below `limit`']
+    return found
+
+fn nth_with_divisors[n, primes]
+    if n eq 1
+        return 1
+    if n in primes
+        return primes[n - 1] ^ (n - 1)
+    ways = shapes[n, n]
+    limit = 16
+    while true
+        found = []
+        for shape in ways
+            found = concat[found, spread[shape, 0, 1, 0, [], limit, primes]]
+        if len[found] gte n
+            return sort[found][n - 1]
+        limit = limit * 4
+
+primes = primes_below[10000]
+log['The first 100 terms of the sequence:']
+for n in range[1, 101]
+    log['`fmt[n, width = 3]` : `nth_with_divisors[n, primes]`']

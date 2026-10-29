@@ -1,0 +1,47 @@
+--- Rosetta Code: Babbage problem
+--- https://rosettacode.org/wiki/Babbage_problem
+--- First by trial: count up until a square ends in 269,696. Then as Babbage might
+--- with pencil and paper: a square's last k digits depend only on the number's
+--- last k digits, so the endings that work are built one digit at a time.
+
+--- n % 1000000 is the remainder after dividing n by one million: its last six digits.
+fn by_trial[target]
+    n = 1
+    while n * n % 1000000 ne target
+        n = n + 1
+    return n
+
+--- Each ending of k digits whose square ends as the target's last k digits, grown by
+--- each digit 0 to 9 in front, keeping those whose square ends as k + 1 digits must.
+fn endings[target, places]
+    found = [0]
+    power = 1
+    for k in range[places]
+        wider = power * 10
+        grown = []
+        for ending in found
+            for digit in range[10]
+                candidate = digit * power + ending
+                if candidate * candidate % wider eq target % wider
+                    grown = push[grown, candidate]
+        found = grown
+        power = wider
+    return sort[found]
+
+n = by_trial[269696]
+log['By trial: the smallest positive integer whose square ends in 269,696 is `fmt[n, commas = true]`,']
+log['whose square is `fmt[n * n, commas = true]`.']
+
+last = endings[269696, 6]
+shown = for e in last
+    fmt[e, width = 6, fill = '0']
+listed = join[shown, ' ']
+log['']
+log['Digit by digit: every number whose square ends in 269,696 ends in one of']
+log[listed]
+log['so the smallest such positive number is `fmt[last[0], commas = true]`.']
+
+log['']
+guess = 99736
+log['Babbage\'s guess, 99,736, squared is `fmt[guess * guess, commas = true]`: it does end in 269,696,']
+log['but `fmt[n, commas = true]` is smaller, so Babbage\'s answer was not the smallest.']

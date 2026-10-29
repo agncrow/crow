@@ -1,0 +1,15 @@
+"kitten" -> "sitting": 3
+"rosettacode" -> "raisethysword": 8
+
+The same distances with both strings reversed:
+"nettik" -> "gnittis": 3
+"edocattesor" -> "drowsyhtesiar": 8
+
+More pairs:
+"saturday" -> "sunday": 3
+"sleep" -> "fleeting": 5
+"" -> "abc": 3
+"abc" -> "abc": 0
+"abc" -> "cba": 2
+"héllo" -> "hello": 1
+"crow" -> "корова": 6

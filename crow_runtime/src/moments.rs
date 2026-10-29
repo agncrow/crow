@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn a_moment_of_seconds_past_its_range_stops() {
         let most = 86_400.0 * 100_000_000.0;
-        assert_eq!(moment_of_seconds(most).map(|t| t.to_string()), Ok("275760-09-13".to_string()));
+        assert_eq!(moment_of_seconds(most).map(|t| t.to_string()), Ok("+275760-09-13".to_string()));
         assert!(moment_of_seconds(most + 1.0).is_err());
         assert!(moment_of_seconds(-most - 1.0).is_err());
         assert!(moment_of_seconds(f64::NAN).is_err());

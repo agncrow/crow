@@ -1,0 +1,163 @@
+--- Rosetta Code: Minkowski question-mark function
+--- https://rosettacode.org/wiki/Minkowski_question-mark_function
+--- Exact arithmetic with fractions. ?(x) takes the continued fraction
+--- [a0; a1, a2, …] of x to a0 plus the binary fraction whose runs of zeros and
+--- ones have lengths a1, a2, … (the point standing in for the first zero); of
+--- a rational's two continued fractions it takes the one whose binary expansion
+--- ends with a 1. ?⁻¹(y) reads the runs of y's binary digits back as the terms
+--- of a continued fraction. A binary expansion is cut at 256 bits, so a
+--- rational whose image is dyadic goes there and back exactly, and an
+--- irrational number (given to 100 digits, as a fraction) is right to far more
+--- than the 30 places shown.
+
+struct Expansion [terms, exact]
+
+--- the continued fraction of x, ended where it is exact or where the terms
+--- after the first add up to more than `bits` (the rest move no bit kept)
+fn continued_fraction[x, bits]
+    whole = floor[x]
+    terms = [whole]
+    rest = x - whole
+    used = 0
+    while rest ne 0 and used lte bits
+        flipped = 1 / rest
+        whole = floor[flipped]
+        terms = push[terms, whole]
+        used = used + whole
+        rest = flipped - whole
+    return Expansion[terms, rest eq 0]
+
+--- the number a continued fraction stands for
+fn evaluated[terms]
+    value = fraction[terms[-1]]
+    i = len[terms] - 2
+    while i gte 0
+        value = terms[i] + 1 / value
+        i = i - 1
+    return value
+
+--- runs of zeros and ones of lengths a1 - 1, a2, a3, …, at most `bits` digits
+fn run_digits[terms, bits]
+    digits = []
+    digit = 0
+    i = 1
+    while i lt len[terms] and len[digits] lt bits
+        count = terms[i]
+        if i eq 1
+            count = count - 1
+        k = 0
+        while k lt count and len[digits] lt bits
+            digits = push[digits, digit]
+            k = k + 1
+        digit = 1 - digit
+        i = i + 1
+    return digits
+
+fn binary_value[digits]
+    top = 0
+    for d in digits
+        top = top * 2 + d
+    return fraction[top, 2 ^ len[digits]]
+
+fn question[x, bits]
+    cf = continued_fraction[x, bits]
+    terms = cf.terms
+    --- an odd count of terms after a0 ends on a run of zeros: [… an] is
+    --- [… an - 1, 1], which ends on a run of ones
+    if cf.exact and len[terms] % 2 eq 0
+        terms = push[slice[terms, 0, -1], terms[-1] - 1]
+        terms = push[terms, 1]
+    return terms[0] + binary_value[run_digits[terms, bits]]
+
+--- the binary digits of a fraction in [0, 1), at most `bits` of them
+fn binary_digits[f, bits]
+    digits = []
+    rest = f
+    while rest ne 0 and len[digits] lt bits
+        rest = rest * 2
+        if rest gte 1
+            digits = push[digits, 1]
+            rest = rest - 1
+        else
+            digits = push[digits, 0]
+    return digits
+
+fn inverse[y, bits]
+    whole = floor[y]
+    digits = binary_digits[y - whole, bits]
+    if len[digits] eq 0
+        return fraction[whole]
+    terms = [whole]
+    digit = 0
+    count = 1
+    for d in digits
+        if d eq digit
+            count = count + 1
+        else
+            terms = push[terms, count]
+            digit = d
+            count = 1
+    terms = push[terms, count]
+    return evaluated[terms]
+
+--- a fraction to `places` decimal places, the last rounded
+fn places_of[f, places]
+    scale = 10 ^ places
+    q = round[f * scale]
+    sign = ''
+    if q lt 0
+        sign = '-'
+        q = -q
+    part = fmt[q % scale, width = places, fill = '0']
+    return '`sign``q / scale`.`part`'
+
+fn terms_text[terms]
+    rest = for t in slice[terms, 1, len[terms]]
+        str[t]
+    joined = join[rest, ', ']
+    return '[`terms[0]`; `joined`]'
+
+bits = 256
+places = 30
+root5 = sqrt[decimal[5, digits = 100]]
+phi = fraction[(decimal[1] + root5) / 2]
+root13 = sqrt[decimal[13, digits = 100]]
+root2 = fraction[sqrt[decimal[2, digits = 100]]]
+
+x = fraction[31, 7]
+image = question[x, bits]
+cf = continued_fraction[x, bits]
+shown_cf = terms_text[cf.terms]
+digits = for d in run_digits[cf.terms, bits]
+    str[d]
+binary = join[digits, '']
+log['?(31/7): 31/7 = `shown_cf`, so 4 + 0.`binary` in binary = `image`']
+log['']
+
+log['?(φ), φ the golden ratio [1; 1, 1, …], to `places` places, and 5/3:']
+log['  `places_of[question[phi, bits], places]`']
+log['  `places_of[fraction[5, 3], places]`']
+log['?⁻¹(-5/9) to `places` places, and (√13 - 7)/6:']
+log['  `places_of[inverse[fraction[-5, 9], bits], places]`']
+log['  `places_of[fraction[(root13 - 7) / 6], places]`']
+log['']
+
+log['?⁻¹(?(x)) = x:']
+back = inverse[image, bits]
+log['  x = 31/7: ?(x) = `image`, ?⁻¹ of it = `back`, exactly x: `back eq x`']
+e_less_2 = fraction[decimal['0.718281828']]
+back_e = inverse[question[e_less_2, bits], bits]
+log['  x = 0.718281828: `places_of[back_e, places]`, exactly x: `back_e eq e_less_2`']
+back_root2 = inverse[question[root2, bits], bits]
+log['  x = √2 = `places_of[root2, places]`: `places_of[back_root2, places]`']
+log['?(?⁻¹(y)) = y:']
+y = fraction[71, 16]
+there = inverse[y, bits]
+again = question[there, bits]
+log['  y = 71/16: ?⁻¹(y) = `there`, ? of it = `again`, exactly y: `again eq y`']
+y = fraction[-5, 9]
+again = question[inverse[y, bits], bits]
+log['  y = -5/9 = `places_of[y, places]`: `places_of[again, places]`']
+y = fraction[decimal['0.1213141516171819']]
+again = question[inverse[y, bits], bits]
+log['  y = 0.1213141516171819: `places_of[again, places]`']

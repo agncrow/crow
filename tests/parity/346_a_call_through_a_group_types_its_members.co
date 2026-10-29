@@ -1,0 +1,14 @@
+--- A call through a list of functions types each member as a call of it
+--- would: the spec's own `ops = [double, square]` then `ops[0][3]` had left
+--- the members typed by nothing, and was refused in both modes (Rosetta
+--- Code, Call a function).
+fn double[x]
+    return x * 2
+
+fn square[x]
+    return x * x
+
+ops = [double, square]
+log[ops[0][3]]
+for f in ops
+    log[f[4]]

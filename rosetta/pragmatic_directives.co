@@ -1,0 +1,67 @@
+--- Rosetta Code: Pragmatic directives
+--- https://rosettacode.org/wiki/Pragmatic_directives
+--- Crow has no pragmas in the sense of Perl's use strict or Ada's pragma: nothing a
+--- program writes turns a check off, or changes how the language reads its text. What
+--- it has that steers how a program runs:
+---
+---   use math, bits     brings a module's names into this file: they mean nothing
+---                      without it (min of a list is refused until use math is
+---                      written), and only in the file that writes it; use math as m
+---                      reaches them as m.max, m.sum, ...
+---   cpu[n]             runs every parallel loop that starts after it on at most n
+---                      threads, in the code after it and in the functions that code
+---                      calls, until another cpu[...]; written in a function, it holds
+---                      until the function returns, when the caller's count is back
+---   gpu[]  gpu[n]      puts tensor work on the GPU from then on (in 32-bit floats,
+---                      and on the CPU where no GPU answers); a compiled program links
+---                      the GPU only where gpu is written
+---   the crowfile       a project's defaults, for every command and both modes:
+---                      cpu = 4, gpu = 1, schema = 'verify' (what opening a database
+---                      connection does with the tables the program declares)
+---   CROW_SCHEMA=trust  the environment's word on the schema, for one run
+---
+--- A loop runs in parallel only where its body only computes, so it answers the same on
+--- one thread or on all of them: cpu[...] changes how long a loop takes, never what it
+--- answers. Below, the same loop runs on every core (the default), on one core inside a
+--- function that asks for it, on every core again once that function has returned, and
+--- on two threads after a cpu[2] at the top level; the answers agree, as they must.
+
+use math as m
+
+fn collatz_length[n]
+    steps = 1
+    while n ne 1
+        if n % 2 eq 0
+            n = n / 2
+        else
+            n = 3 * n + 1
+        steps = steps + 1
+    return steps
+
+--- a parallel loop: each length only computes
+fn lengths[upto]
+    found = for n in range[1, upto]
+        collatz_length[n]
+    return found
+
+--- cpu[1] holds until this function returns
+fn on_one_core[upto]
+    cpu[1]
+    return lengths[upto]
+
+fn summary[found]
+    longest = m.max[found]
+    return 'longest `longest`, total `m.sum[found]`'
+
+every_core = lengths[100000]
+one_core = on_one_core[100000]
+every_core_again = lengths[100000]
+cpu[2]
+two_threads = lengths[100000]
+log['Collatz lengths of 1 .. 99,999, computed four times:']
+log['    every core (the default):          `summary[every_core]`']
+log['    one core (cpu[1] in a function):   `summary[one_core]`']
+log['    every core (that function done):   `summary[every_core_again]`']
+log['    two threads (cpu[2] from here on): `summary[two_threads]`']
+same = one_core eq every_core and every_core_again eq every_core and two_threads eq every_core
+log['the four answers are the same: `same`']

@@ -1,0 +1,7 @@
+empty_directory_demo/empty is empty
+empty_directory_demo/with_a_file is not empty
+empty_directory_demo/with_a_hidden_file is not empty
+empty_directory_demo/with_an_empty_subdirectory is not empty
+empty_directory_demo/with_an_empty_subdirectory/inner is empty
+empty_directory_demo/with_a_file/note.txt: cannot tell — cannot ls 'empty_directory_demo/with_a_file/note.txt': Not a directory (os error 20)
+empty_directory_demo/missing: cannot tell — cannot ls 'empty_directory_demo/missing': No such file or directory (os error 2)

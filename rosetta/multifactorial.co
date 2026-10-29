@@ -1,0 +1,26 @@
+--- Rosetta Code: Multifactorial
+--- https://rosettacode.org/wiki/Multifactorial
+--- The multifactorial of degree d multiplies n, n - d, n - 2d, ... while the terms
+--- stay positive (MathWorld's definition). Ints grow, so a large one is exact too.
+
+fn multifactorial[n, degree]
+    product = 1
+    term = n
+    while term gt 0
+        product = product * term
+        term = term - degree
+    return product
+
+fn row[degree, count]
+    cells = for n in range[1, count + 1]
+        fmt[multifactorial[n, degree], width = 8]
+    return join[cells, '']
+
+numbers = for n in range[1, 11]
+    fmt[n, width = 8]
+header = join[numbers, '']
+log['n:       `header`']
+for degree in range[1, 6]
+    log['degree `degree`:`row[degree, 10]`']
+log['']
+log['100!!!!! (degree 5) = `multifactorial[100, 5]`']

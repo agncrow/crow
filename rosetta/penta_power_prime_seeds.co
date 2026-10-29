@@ -1,0 +1,163 @@
+--- Rosetta Code: Penta-power prime seeds
+--- https://rosettacode.org/wiki/Penta-power_prime_seeds
+--- n is a seed when n ^ k + n + 1 is prime for k = 0 to 4. Past 1000, n must keep
+--- all five values clear of every prime below 1000: n runs over the residues
+--- mod 30030 that do so for 2, 3, 5, 7, 11 and 13, then a table per prime up to
+--- 997 says which residues to drop. What is left gets the strong probable-prime
+--- test to base 2 for all five values, and only then Miller-Rabin with the first
+--- 13 primes as bases (certain below 3.3 * 10^24, beyond almost certain).
+
+--- the k-th of the five values
+fn value[n, k]
+    return n ^ k + n + 1
+
+--- base ^ exp modulo m, by repeated squaring
+fn pow_mod[base, exp, m]
+    result = 1
+    b = base % m
+    e = exp
+    while e gt 0
+        if e % 2 eq 1
+            result = result * b % m
+        b = b * b % m
+        e = e / 2
+    return result
+
+--- whether odd n > a passes the strong probable-prime test to base a
+fn strong_probable[n, a]
+    d = n - 1
+    s = 0
+    while d % 2 eq 0
+        d = d / 2
+        s = s + 1
+    x = pow_mod[a, d, n]
+    if x eq 1 or x eq n - 1
+        return true
+    i = 1
+    while i lt s
+        x = x * x % n
+        if x eq n - 1
+            return true
+        i = i + 1
+    return false
+
+fn is_prime[n]
+    bases = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41]
+    if n lt 2
+        return false
+    if n in bases
+        return true
+    i = 0
+    while i lt len[bases]
+        if n % bases[i] eq 0
+            return false
+        i = i + 1
+    i = 0
+    while i lt len[bases]
+        if not strong_probable[n, bases[i]]
+            return false
+        i = i + 1
+    return true
+
+fn is_seed[n]
+    k = 0
+    while k lt 5
+        if not strong_probable[value[n, k], 2]
+            return false
+        k = k + 1
+    k = 0
+    while k lt 5
+        if not is_prime[value[n, k]]
+            return false
+        k = k + 1
+    return true
+
+fn primes_below[limit]
+    sieve = for i in range[limit]
+        i gte 2
+    primes = []
+    for n in range[2, limit]
+        if sieve[n]
+            primes = push[primes, n]
+            m = n * n
+            while m lt limit
+                sieve[m] = false
+                m = m + n
+    return primes
+
+--- for each residue r mod p, whether one of the five values is a multiple of p there
+fn dropped[p]
+    marks = for r in range[p]
+        hit = false
+        for k in range[5]
+            if value[r, k] % p eq 0
+                hit = true
+        hit
+    return marks
+
+--- whether n keeps all five values clear of the primes the tables are for
+fn clear[n, primes, drops]
+    i = 0
+    while i lt len[primes]
+        if drops[i][n % primes[i]]
+            return false
+        i = i + 1
+    return true
+
+--- the seeds past 1000 in one turn of the wheel: q * size + r for its residues r
+fn seeds_in_turn[q, size, residues, primes, drops]
+    found = []
+    for r in residues
+        n = q * size + r
+        if n gt 1000 and clear[n, primes, drops] and is_seed[n]
+            found = push[found, n]
+    return found
+
+fn ordinal[n]
+    if n % 100 gte 11 and n % 100 lte 13
+        return '`n`th'
+    if n % 10 eq 1
+        return '`n`st'
+    if n % 10 eq 2
+        return '`n`nd'
+    if n % 10 eq 3
+        return '`n`rd'
+    return '`n`th'
+
+--- the wheel: 2 * 3 * 5 * 7 * 11 * 13, and its residues where n is odd and clear
+wheel_primes = [3, 5, 7, 11, 13]
+wheel_drops = for p in wheel_primes
+    dropped[p]
+size = 30030
+residues = for r in range[size]
+    if r % 2 eq 1 and clear[r, wheel_primes, wheel_drops]
+        r
+table_primes = slice[primes_below[1000], 6, 1000]
+drops = for p in table_primes
+    dropped[p]
+
+--- below 1000 every odd n is tried, as a value there may be one of the primes itself
+seeds = for n in range[1, 1000, 2]
+    if is_seed[n]
+        n
+--- turns of the wheel, 32 at once, until a seed passes ten million
+q = 0
+while seeds[-1] lte 10000000
+    turns = for t in range[q, q + 32]
+        seeds_in_turn[t, size, residues, table_primes, drops]
+    for found in turns
+        seeds = concat[seeds, found]
+    q = q + 32
+
+log['The first thirty penta-power prime seeds:']
+for row in range[3]
+    shown = for n in slice[seeds, 10 * row, 10 * row + 10]
+        fmt[n, width = 10, commas = true]
+    log[join[shown, '']]
+log['']
+log['The first penta-power prime seed greater than:']
+i = 0
+for m in range[1, 11]
+    while seeds[i] lte m * 1000000
+        i = i + 1
+    log['`fmt[m, width = 3]` million is the `ordinal[i + 1]`: `fmt[seeds[i], width = 10, commas = true]`']

@@ -1,0 +1,23 @@
+--- a function copied per signature, called with a matrix of ints and with
+--- a matrix of floats: one copy, of floats — the first call's ints had
+--- stayed, and the second call handed floats where ints were held (Rosetta
+--- Code, K-d tree)
+
+fn count[points]
+    if len[points] eq 0
+        return 0
+    rest = for i in range[1, len[points]]
+        points[i]
+    return 1 + count[rest]
+
+fn total[points]
+    if len[points] eq 0
+        return 0.0
+    rest = for i in range[1, len[points]]
+        points[i]
+    return points[0][0] + points[0][1] + total[rest]
+
+log[count[[[2, 3], [5, 4]]]]
+log[count[[[2.5, 3.5], [5.5, 4.5]]]]
+log[total[[[2, 3], [5, 4]]]]
+log[total[[[2.5, 3.5], [5.5, 4.5]]]]

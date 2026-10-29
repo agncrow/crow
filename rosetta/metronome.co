@@ -1,0 +1,41 @@
+--- Rosetta Code: Metronome
+--- https://rosettacode.org/wiki/Metronome
+--- A metronome in the terminal, without sound: Crow has no audio output, and it
+--- writes text files only, so not a sound file a player could play either. Each
+--- beat is a line: its time, its place in the bar and a visual indicator, a full
+--- block and TICK for a high beat, a light block and tock for a low one. The
+--- tempo and the bar's pattern of high (H) and low (L) beats are parameters. A
+--- beat's time is counted from the start (k * 60 / tempo seconds), never from
+--- the beat before, so a slow print cannot make the beats drift. Run as it is,
+--- the program prints the beats at once, so its output is the same every run;
+--- `crow run metronome.co live` waits for each beat's time, as a metronome does.
+
+fn indicator[high]
+    if high
+        return '██████  TICK'
+    return '░░░░░░  tock'
+
+fn play[tempo, pattern, bars, live]
+    beats = split[pattern, '']
+    interval = 60.0 / tempo
+    log['`tempo` beats a minute, `len[beats]` beats a bar (`pattern`), `bars` bars:']
+    start = now[]
+    k = 0
+    for bar in range[bars]
+        for i in range[len[beats]]
+            due = k * interval
+            if live
+                wait = due - (now[] - start)
+                if wait gt 0
+                    sleep[wait]
+            when = fmt[due, decimals = 3, width = 6]
+            shown = indicator[beats[i] eq 'H']
+            log['  `when` s   bar `bar + 1` beat `i + 1`   `shown`']
+            k = k + 1
+    log['']
+
+given = args[]
+live = len[given] gt 0 and given[0] eq 'live'
+play[120, 'HLLL', 2, live]
+play[90, 'HLL', 2, live]
+play[172, 'HLLHL', 2, live]

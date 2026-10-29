@@ -26,7 +26,7 @@ There is no `class`, `lambda`, `async`, `await`, `try`, `catch`,
 ## Operators
 
 ```text
-+  -  *  /  %  ^        arithmetic (/ floors between ints; ^ is power)
++  -  *  /  %  ^        arithmetic (/ cuts toward zero between ints; ^ is power)
 .*  ./  .^              element-wise on tensors
 x then f[a]             pipe: f[x, a], chains left to right
     then g[x]           a chain as lines: x = …, then one step a line;

@@ -1,0 +1,188 @@
+--- Rosetta Code: One-time pad
+--- https://rosettacode.org/wiki/One-time_pad
+--- A pad is a .1tp file of random letters, 48 to a line in groups of six: a
+--- line beginning with # is a note, one beginning with - is used, and spaces in
+--- the letters do not count. Encryption adds the pad's letters to the message's
+--- (A = 0, mod 26) and decryption takes them away, each with the next unused
+--- lines of its copy of the pad, which it then marks used. The letters come
+--- from a seeded generator so the run repeats; `crow run one_time_pad.co system`
+--- draws them from /dev/urandom instead, as a real pad must. The pads are made
+--- in the current directory and deleted at the end.
+
+use bits, math
+
+--- n random letters from the system: bytes of /dev/urandom, those below 234
+--- (9 * 26) taken mod 26, so every letter is equally likely
+fn system_letters[n]
+    out = []
+    while len[out] lt n
+        drawn = shell['od -An -N 256 -tu1 /dev/urandom']
+        words = split[replace[drawn.stdout, '\n', ' '], ' ']
+        i = 0
+        while i lt len[words] and len[out] lt n
+            if words[i] ne ''
+                b = int[words[i]]
+                if b lt 234
+                    out = push[out, char[65 + b % 26]]
+            i = i + 1
+    join[out, '']
+
+--- n random letters from the program's seeded generator
+fn seeded_letters[n]
+    out = for i in range[n]
+        char[65 + rand[26]]
+    join[out, '']
+
+--- text in groups of six letters
+fn grouped[text]
+    groups = for at in range[0, len[text], 6]
+        slice[text, at, at + 6]
+    join[groups, ' ']
+
+--- a new pad of the given lines in the file name.1tp
+fn make_pad[name, lines, source]
+    path = '`name`.1tp'
+    if exists[path]
+        return error['the pad `path` already exists', 'pad']
+    letters = ''
+    if source eq 'system'
+        letters = system_letters[48 * lines]
+    else
+        letters = seeded_letters[48 * lines]
+    rows = ['# One-time pad `name`, `lines` lines of 48 letters']
+    for at in range[0, len[letters], 48]
+        rows = push[rows, ' `grouped[slice[letters, at, at + 48]]`']
+    text = join[rows, '\n']
+    saved = write[path, '`text`\n']
+    if not saved.ok
+        return error['the pad `path` cannot be written: `saved.reason`', 'pad']
+    path
+
+--- a message's letters in capitals, every other character dropped
+fn letters_of[text]
+    kept = for c in split[upper[text], '']
+        if c gte 'A' and c lte 'Z'
+            c
+    join[kept, '']
+
+--- whether a line of a pad holds letters not yet used
+fn unused[line]
+    return not starts[line, '#'] and not starts[line, '-'] and trim[line] ne ''
+
+--- the next n letters of a pad, the whole lines they come from marked used in
+--- the file; an error, the pad unchanged, when too few are left
+fn take_key[path, n]
+    text = read[path]
+    rows = split[text, '\n']
+    pieces = []
+    taken = 0
+    i = 0
+    while i lt len[rows] and taken lt n
+        row = rows[i]
+        if unused[row]
+            piece = letters_of[row]
+            pieces = push[pieces, piece]
+            taken = taken + len[piece]
+            if starts[row, ' ']
+                rows[i] = '-`slice[row, 1, len[row]]`'
+            else
+                rows[i] = '-`row`'
+        i = i + 1
+    if taken lt n
+        return error['the pad `path` has `taken` unused letters, and `n` are needed', 'pad']
+    saved = write[path, join[rows, '\n']]
+    if not saved.ok
+        return error['the pad `path` cannot be marked used: `saved.reason`', 'pad']
+    slice[join[pieces, ''], 0, n]
+
+--- each letter of text moved by the key's letter at its place, forward
+--- (direction 1) or back (direction -1)
+fn shifted[text, key, direction]
+    out = for i in range[len[text]]
+        a = code[text[i]] - 65
+        b = code[key[i]] - 65
+        char[65 + (a + direction * b + 26) % 26]
+    join[out, '']
+
+fn encrypt[message, pad]
+    plain = letters_of[message]
+    key = take_key[pad, len[plain]]
+    if not key.ok
+        return key
+    shifted[plain, key, 1]
+
+fn decrypt[cipher, pad]
+    letters = letters_of[cipher]
+    key = take_key[pad, len[letters]]
+    if not key.ok
+        return key
+    shifted[letters, key, -1]
+
+--- the pads in the current directory
+fn pads[]
+    names = for f in ls['.']
+        if ends[f, '.1tp']
+            f
+    names
+
+--- every pad with how many of its lines are still unused
+fn list_pads[]
+    found = pads[]
+    if len[found] eq 0
+        log['  (no pads)']
+    for path in found
+        rows = split[read[path], '\n']
+        left = 0
+        total = 0
+        for row in rows
+            if not starts[row, '#'] and trim[row] ne ''
+                total = total + 1
+                if not starts[row, '-']
+                    left = left + 1
+        log['  `path`: `left` of `total` lines unused']
+
+source = 'seeded'
+if 'system' in args[]
+    source = 'system'
+seed[1]
+
+--- Alice makes a pad and gives Bob a copy
+alice = make_pad['alice', 4, source]
+if not alice.ok
+    halt[alice.reason]
+_copied = cp[alice, 'bob.1tp']
+log['Made `alice` and its copy bob.1tp:']
+log[read[alice]]
+
+message = 'Meet me at the old oak tree at midnight!'
+cipher = encrypt[message, alice]
+log['Alice encrypts: `message`']
+log['  sent:   `grouped[cipher]`']
+plain = decrypt[cipher, 'bob.1tp']
+log['Bob decrypts:   `grouped[plain]`']
+log['']
+
+second = 'Bring the map, and come alone; the whole plan rests on the two of us being there before the guards change at one.'
+cipher2 = encrypt[second, alice]
+log['Alice encrypts: `second`']
+log['  sent:   `grouped[cipher2]`']
+log['Bob decrypts:   `grouped[decrypt[cipher2, \'bob.1tp\']]`']
+log['']
+
+log['The pads now:']
+list_pads[]
+log[read['bob.1tp']]
+too_long = encrypt[repeat['secret ', 30], alice]
+log['A message of 180 letters: `too_long.reason`']
+log['']
+
+--- Wikipedia's pad, its first two lines used
+example = '# Example data - Wikipedia - 2014-11-13\n-ZDXWWW EJKAWO FECIFE WSNZIP PXPKIY URMZHI JZTLBC YLGDYJ \n-HTSVTV RRYYEG EXNCGA GGQVRF FHZCIB EWLGGR BZXQDQ DGGIAK \n YHJYEQ TDLCQT HZBSIZ IRZDYS RBYJFZ AIRCWI UCVXTW YKPQMK \n CKHVEX VXYVCS WOGAAZ OUVVON GCNEVR LMBLYB SBDCDC PCGVJX \n QXAUIP PXZQIJ JIUWYH COVWMJ UZOJHL DWHPER UBSRUJ HGAAPR \n CRWVHI FRNTQW AJVWRT ACAKRD OZKIIB VIQGBK IJCWHF GTTSSE \n EXFIPJ KICASQ IOUQTP ZSGXGH YTYCTI BAZSTN JKMFXI RERYWE \n'
+_written = write['wikipedia.1tp', example]
+log['With Wikipedia\'s pad, HELLO is `encrypt[\'HELLO\', \'wikipedia.1tp\']`, and its file is now:']
+log[read['wikipedia.1tp']]
+
+for path in pads[]
+    _gone = rm[path]
+log['After deleting them, the pads are:']
+list_pads[]

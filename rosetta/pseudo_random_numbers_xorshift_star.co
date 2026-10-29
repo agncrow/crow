@@ -1,0 +1,49 @@
+--- Rosetta Code: Pseudo-random numbers/Xorshift star
+--- https://rosettacode.org/wiki/Pseudo-random_numbers/Xorshift_star
+--- The generator's state is one 64-bit number: step answers the next state and value the
+--- number it stands for, so next_int is step, then value. Crow's ints grow, so u64 is a
+--- mask with bitand (x modulo 2 ^ 64), and >> is a shift by a negative count.
+
+use bits
+
+fn u64[x]
+    return bitand[x, 2 ^ 64 - 1]
+
+fn multiplier[]
+    return 2685821657736338717    --- hex 2545F4914F6CDD1D
+
+fn step[state]
+    x = state
+    x = bitxor[x, shift[x, -12]]
+    x = bitxor[x, u64[shift[x, 25]]]
+    x = bitxor[x, shift[x, -27]]
+    return x
+
+--- the 32-bit output of a state: the top half of the low 64 bits of its product
+fn value[state]
+    return shift[u64[state * multiplier[]], -32]
+
+fn as_float[state]
+    return float[value[state]] / float[2 ^ 32]
+
+state = 1234567
+log['Seed 1234567, the first five integers:']
+k = 0
+while k lt 5
+    state = step[state]
+    log[value[state]]
+    k = k + 1
+
+state = 987654321
+counts = [0, 0, 0, 0, 0]
+k = 0
+while k lt 100000
+    state = step[state]
+    slot = floor[as_float[state] * 5.0]
+    counts[slot] = counts[slot] + 1
+    k = k + 1
+log['']
+log['Seed 987654321, floor(next_float * 5) over 100,000 draws:']
+parts = for i in range[5]
+    '`i`: `counts[i]`'
+log[join[parts, ', ']]

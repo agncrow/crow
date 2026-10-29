@@ -1086,6 +1086,22 @@ def f_len_json(x):
 BUILTINS["moment"] = f_moment_any
 BUILTINS["bucket"] = f_bucket
 BUILTINS["math.fma"] = lambda a, b, c: f_fma(a, b, c)
+
+
+def f_atan2(y, x):
+    # libm's atan2 of two numbers, or of two tensors of one shape number by
+    # number; a mix of the two is left unanswered
+    if isinstance(y, bool) or isinstance(x, bool):
+        raise Skip()
+    if is_num(y) and is_num(x):
+        return math.atan2(float(y), float(x))
+    ty, tx = as_tensor(y), as_tensor(x)
+    if ty is None or tx is None or ty.shape != tx.shape:
+        raise Skip()
+    return T([math.atan2(a, b) for a, b in zip(ty.data, tx.data)], ty.shape)
+
+
+BUILTINS["math.atan2"] = f_atan2
 BUILTINS["math.clip"] = f_clip
 BUILTINS["math.stack"] = f_stack
 BUILTINS["math.mod"] = f_mod

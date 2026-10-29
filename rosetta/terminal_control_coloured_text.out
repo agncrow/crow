@@ -1,0 +1,47 @@
+The word in the eight colours of the palette, then in their bright forms:
+  black       [30mRosetta[0m  [90mRosetta[0m
+  red         [31mRosetta[0m  [91mRosetta[0m
+  green       [32mRosetta[0m  [92mRosetta[0m
+  yellow      [33mRosetta[0m  [93mRosetta[0m
+  blue        [34mRosetta[0m  [94mRosetta[0m
+  magenta     [35mRosetta[0m  [95mRosetta[0m
+  cyan        [36mRosetta[0m  [96mRosetta[0m
+  white       [37mRosetta[0m  [97mRosetta[0m
+
+On the eight background colours, then on their bright forms:
+  black       [97;40m Rosetta [0m  [30;100m Rosetta [0m
+  red         [97;41m Rosetta [0m  [30;101m Rosetta [0m
+  green       [30;42m Rosetta [0m  [30;102m Rosetta [0m
+  yellow      [30;43m Rosetta [0m  [30;103m Rosetta [0m
+  blue        [97;44m Rosetta [0m  [30;104m Rosetta [0m
+  magenta     [97;45m Rosetta [0m  [30;105m Rosetta [0m
+  cyan        [30;46m Rosetta [0m  [30;106m Rosetta [0m
+  white       [30;47m Rosetta [0m  [30;107m Rosetta [0m
+
+With attributes:
+  bold        [1mRosetta[0m
+  faint       [2mRosetta[0m
+  italic      [3mRosetta[0m
+  underline   [4mRosetta[0m
+  slow blink  [5mRosetta[0m
+  rapid blink [6mRosetta[0m
+  reverse     [7mRosetta[0m
+  crossed out [9mRosetta[0m
+  red, blinks [5;31mRosetta[0m
+
+In the 256-colour palette (38;5;n and 48;5;n):
+  red to blue [38;5;196mRosetta[0m [38;5;161mRosetta[0m [38;5;126mRosetta[0m [38;5;91mRosetta[0m [38;5;56mRosetta[0m [38;5;21mRosetta[0m
+  greys       [48;5;232m  [0m[48;5;233m  [0m[48;5;234m  [0m[48;5;235m  [0m[48;5;236m  [0m[48;5;237m  [0m[48;5;238m  [0m[48;5;239m  [0m[48;5;240m  [0m[48;5;241m  [0m[48;5;242m  [0m[48;5;243m  [0m[48;5;244m  [0m[48;5;245m  [0m[48;5;246m  [0m[48;5;247m  [0m[48;5;248m  [0m[48;5;249m  [0m[48;5;250m  [0m[48;5;251m  [0m[48;5;252m  [0m[48;5;253m  [0m[48;5;254m  [0m[48;5;255m  [0m
+
+In 24-bit colour (38;2;r;g;b and 48;2;r;g;b):
+  each letter [38;2;255;0;0mR[0m[38;2;255;219;0mo[0m[38;2;73;255;0ms[0m[38;2;0;255;146me[0m[38;2;0;146;255mt[0m[38;2;73;0;255mt[0m[38;2;255;0;219ma[0m
+  the wheel   [48;2;255;0;0m [0m[48;2;255;43;0m [0m[48;2;255;85;0m [0m[48;2;255;128;0m [0m[48;2;255;170;0m [0m[48;2;255;213;0m [0m[48;2;255;255;0m [0m[48;2;212;255;0m [0m[48;2;170;255;0m [0m[48;2;127;255;0m [0m[48;2;85;255;0m [0m[48;2;42;255;0m [0m[48;2;0;255;0m [0m[48;2;0;255;42m [0m[48;2;0;255;85m [0m[48;2;0;255;128m [0m[48;2;0;255;170m [0m[48;2;0;255;212m [0m[48;2;0;255;255m [0m[48;2;0;212;255m [0m[48;2;0;170;255m [0m[48;2;0;127;255m [0m[48;2;0;85;255m [0m[48;2;0;43;255m [0m[48;2;0;0;255m [0m[48;2;42;0;255m [0m[48;2;85;0;255m [0m[48;2;128;0;255m [0m[48;2;170;0;255m [0m[48;2;213;0;255m [0m[48;2;255;0;255m [0m[48;2;255;0;212m [0m[48;2;255;0;170m [0m[48;2;255;0;127m [0m[48;2;255;0;85m [0m[48;2;255;0;43m [0m
+
+How many colours a terminal shows, told by its environment:
+  24-bit colour  TERM=xterm-256color COLORTERM=truecolor
+  256 colours    TERM=xterm-256color
+  16 colours     TERM=xterm
+  16 colours     TERM=linux
+  no colour      TERM=dumb
+  no colour      TERM unset
+  no colour      TERM=xterm-256color COLORTERM=truecolor NO_COLOR=1

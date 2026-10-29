@@ -1,0 +1,130 @@
+--- Rosetta Code: Peaceful chess queen armies
+--- https://rosettacode.org/wiki/Peaceful_chess_queen_armies
+--- The board's squares are the bits of one int (past 64 bits for 9 x 9: ints grow).
+--- White queens are placed in square order; the squares no white attacks are where
+--- the blacks may stand, so a placement is given up once fewer than m of them are left.
+--- Each further white comes from the candidates, the later squares that would still
+--- leave m free; when fewer candidates are left than whites to place, none completes.
+--- Symmetry cuts the search: any solution, turned or mirrored so that the edge its
+--- queens come nearest is the top, then mirrored left to right if need be and its
+--- colours swapped so that its first queen is white, has all its queens within rows
+--- and columns t .. n-1-t, t the first queen's row, and that row's queens within
+--- columns c .. n-1-c, c the first queen's column. Every board found is checked.
+
+use bits
+
+--- for each square, the squares a queen there attacks: its row, its column, its diagonals
+fn attack_masks[n]
+    masks = for s in range[n * n]
+        m = 0
+        for q in range[n * n]
+            same_row = q / n eq s / n
+            same_col = q % n eq s % n
+            same_diag = q / n - q % n eq s / n - s % n
+            same_anti = q / n + q % n eq s / n + s % n
+            if same_row or same_col or same_diag or same_anti
+                m = m + 2 ^ q
+        m
+    return masks
+
+--- whites placed so far, and the squares still free for blacks: the whites of a solution,
+--- or [] where none completes these
+fn place[whites, cands, free, m, masks]
+    if len[whites] eq m
+        return whites
+    keep = []
+    for q in cands
+        if bitcount[free - bitand[free, masks[q]]] gte m
+            keep = push[keep, q]
+    need = m - len[whites]
+    i = 0
+    while i + need lte len[keep]
+        q = keep[i]
+        rest = slice[keep, i + 1, len[keep]]
+        found = place[push[whites, q], rest, free - bitand[free, masks[q]], m, masks]
+        if len[found] gt 0
+            return found
+        i = i + 1
+    return []
+
+--- the squares a set of queens stands on, as a mask
+fn mask_of[squares]
+    m = 0
+    for s in squares
+        m = m + 2 ^ s
+    return m
+
+--- the squares no white attacks among `squares`
+fn free_of[squares, whites, masks]
+    free = mask_of[squares]
+    for w in whites
+        free = free - bitand[free, masks[w]]
+    return free
+
+--- m white and m black queens at peace on an n x n board: [whites, blacks], or [] if none
+fn armies[m, n]
+    masks = attack_masks[n]
+    p = 0
+    while p lt n * n
+        t = p / n
+        c = p % n
+        if t lte n - 1 - t and c gte t and c lte n - 1 - c
+            --- the later squares of the frame t .. n-1-t, its first row only up to n-1-c
+            inside = for q in range[p + 1, n * n]
+                r = q / n
+                k = q % n
+                if r lte n - 1 - t and k gte t and k lte n - 1 - t and (r gt t or k lte n - 1 - c)
+                    q
+            free = free_of[inside, [p], masks]
+            if bitcount[free] gte m
+                whites = place[[p], inside, free, m, masks]
+                if len[whites] gt 0
+                    left = free_of[inside, whites, masks]
+                    blacks = for q in inside
+                        if bitand[left, 2 ^ q] ne 0
+                            q
+                    return [whites, slice[blacks, 0, m]]
+        p = p + 1
+    return []
+
+--- no white queen shares a row, a column or a diagonal with a black one
+fn at_peace[whites, blacks, masks]
+    return bitand[free_of[blacks, whites, masks], mask_of[blacks]] eq mask_of[blacks]
+
+fn drawn[n, whites, blacks]
+    lines = for r in range[n]
+        cells = for c in range[n]
+            s = r * n + c
+            if s in whites
+                'W'
+            else if s in blacks
+                'B'
+            else if (r + c) % 2 eq 0
+                '•'
+            else
+                '◦'
+        join[cells, ' ']
+    return join[lines, '\n']
+
+--- the board for m queens of each colour on n x n, or that there is none
+fn report[m, n, found]
+    if len[found] eq 0
+        log['`m` queens of each colour on `n` x `n`: no solution']
+    else
+        assert[at_peace[found[0], found[1], attack_masks[n]]]
+        log['`m` queens of each colour on `n` x `n`:']
+        log[drawn[n, found[0], found[1]]]
+    log['']
+
+report[4, 5, armies[4, 5]]
+report[9, 8, armies[9, 8]]
+log['Stretch:']
+log['']
+report[10, 8, armies[10, 8]]
+m = 9
+found = armies[m, 9]
+report[m, 9, found]
+while len[found] gt 0
+    m = m + 1
+    found = armies[m, 9]
+    report[m, 9, found]

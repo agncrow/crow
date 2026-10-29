@@ -1,0 +1,24 @@
+"place" -> "palace", distance 1:
+p-lace
+palace
+ |
+
+"rosettacode" -> "raisethysword", distance 8:
+r-oset-tacode
+raisethysword
+ ||   |||| ||
+
+"kitten" -> "sitting", distance 3:
+kitten-
+sitting
+|   | |
+
+"sunday" -> "saturday", distance 3:
+s--unday
+saturday
+ || |
+
+"abc" -> "", distance 3:
+abc
+---
+|||

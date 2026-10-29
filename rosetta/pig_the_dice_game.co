@@ -1,0 +1,71 @@
+--- Rosetta Code: Pig the dice game
+--- https://rosettacode.org/wiki/Pig_the_dice_game
+--- Two players take turns at one die. Each roll of 2 to 6 adds to the turn's points and
+--- the player chooses again; a 1 loses the turn's points and passes the die. Holding banks
+--- the turn's points, and the first to bank 100 or more wins. The program throws the die
+--- (seeded, so a game replays the same) and keeps the score; each player's choice is read
+--- from standard input: r, roll or an empty line rolls, h or hold holds, q quits. The
+--- choices of a game played to its end are in pig_the_dice_game.in.
+
+use math
+
+fn other[player]
+    if player eq 0
+        return 1
+    0
+
+--- The player's choice: 'roll', 'hold' or 'quit' (asked again until it is one of them;
+--- the end of the input quits).
+fn players_choice[player, banked, turn]
+    while true
+        line = input['Player `player + 1` (banked `banked`, this turn `turn`): roll or hold? ']
+        if not line.ok
+            return 'quit'
+        answer = lower[trim[line]]
+        if answer eq '' or answer eq 'r' or answer eq 'roll'
+            return 'roll'
+        if answer eq 'h' or answer eq 'hold'
+            return 'hold'
+        if answer eq 'q' or answer eq 'quit'
+            return 'quit'
+        log['  \'`answer`\' is not a choice: r rolls, h holds, q quits.']
+
+fn standings[banked]
+    log['Player 1 has `banked[0]` points banked, player 2 has `banked[1]`.']
+
+--- One game; the winner's number, or 0 when the game was quit.
+fn play[goal]
+    banked = [0, 0]
+    player = 0
+    turn = 0
+    while true
+        wants = players_choice[player, banked[player], turn]
+        if wants eq 'quit'
+            log['']
+            log['The game is left unfinished.']
+            standings[banked]
+            return 0
+        if wants eq 'roll'
+            die = rand[1, 6]
+            if die eq 1
+                log['  Rolled 1: player `player + 1` loses the `turn` points of this turn.']
+                turn = 0
+                player = other[player]
+            else
+                turn = turn + die
+                log['  Rolled `die`: `turn` points this turn.']
+        else
+            banked[player] = banked[player] + turn
+            log['  Player `player + 1` holds: `banked[player]` points banked.']
+            if banked[player] gte goal
+                log['']
+                log['Player `player + 1` wins with `banked[player]` points.']
+                standings[banked]
+                return player + 1
+            turn = 0
+            player = other[player]
+
+seed[1973]
+log['Pig: two players, one die, first to bank 100 points wins.']
+log['']
+_winner = play[100]

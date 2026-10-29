@@ -1,0 +1,3 @@
+j86_a_records_name_read_as_a_value.co:6:5: 'Point' is a record's name, not a value — make one with Point[…]
+  6 │ p = Point
+    │     ^^^^^

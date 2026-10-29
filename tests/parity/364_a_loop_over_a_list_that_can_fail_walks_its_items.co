@@ -1,0 +1,17 @@
+--- a loop over a list that can fail walks the list's items once the
+--- failure is refused: the item had been typed nothing known, and a
+--- comparison with a growing int that can fail read it as a float — the
+--- compiled program did not build
+wrong = for day in range[int['2']]
+    int['1'] ne day
+log[wrong]
+total = 0
+for day in range[int['4']]
+    total = total + day * 2
+log[total]
+fn days[s]
+    out = for d in range[int[s]]
+        d * d
+    return out
+log[days['3']]
+log[days['x'].ok]

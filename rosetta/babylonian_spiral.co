@@ -1,0 +1,96 @@
+--- Rosetta Code: Babylonian spiral
+--- https://rosettacode.org/wiki/Babylonian_spiral
+--- Each step is a whole-number vector just longer than the last: its squared length
+--- is the next sum of two squares. Of the vectors of that length it takes the one that
+--- turns clockwise from the last step least: on the clockwise side (a cross product of
+--- 0 or more), the largest dot product. The stretch task's plot of 10,000 points is
+--- written as an SVG picture, babylonian_spiral.svg, in the current directory.
+
+struct V [x, y]
+
+fn isqrt[n]
+    r = floor[sqrt[float[n]]]
+    while r * r gt n
+        r = r - 1
+    while (r + 1) * (r + 1) lte n
+        r = r + 1
+    return r
+
+--- Every vector of squared length s: each a <= b with a*a + b*b = s, turned and
+--- mirrored into its eight places (none when s is no sum of two squares).
+fn vectors[s]
+    found = []
+    a = 0
+    while 2 * a * a lte s
+        b = isqrt[s - a * a]
+        if a * a + b * b eq s
+            found = concat[found, [V[a, b], V[b, a], V[-a, b], V[-b, a], V[a, -b], V[b, -a], V[-a, -b], V[-b, -a]]]
+        a = a + 1
+    return found
+
+--- Of vectors of one length, the one that bends clockwise least from direction d.
+fn least_turn[candidates, d]
+    best = d
+    best_dot = 0
+    first = true
+    for v in candidates
+        cross = v.x * d.y - v.y * d.x
+        dot = v.x * d.x + v.y * d.y
+        if cross gte 0 and (first or dot gt best_dot)
+            best = v
+            best_dot = dot
+            first = false
+    return best
+
+--- The first n points, from (0, 0) and a first step of (0, 1).
+fn spiral[n]
+    p = V[0, 0]
+    points = [p]
+    d = V[0, 1]
+    s = 0
+    while len[points] lt n
+        s = s + 1
+        candidates = vectors[s]
+        if len[candidates] gt 0
+            d = least_turn[candidates, d]
+            p = V[p.x + d.x, p.y + d.y]
+            points = push[points, p]
+    return points
+
+fn shown[p]
+    return '(`p.x`, `p.y`)'
+
+--- The least and the greatest of some numbers.
+fn span[numbers]
+    ordered = sort[numbers]
+    return [ordered[0], ordered[-1]]
+
+points = spiral[10000]
+log['The first 40 Babylonian spiral points are:']
+for row in range[4]
+    cells = for p in slice[points, 10 * row, 10 * row + 10]
+        fmt[shown[p], width = 10]
+    line = join[cells, '']
+    log[trim[line]]
+log['']
+log['Point 1000 is `shown[points[999]]` and point 10000 is `shown[points[9999]]`.']
+
+--- The stretch: the 10,000 points as one line, y upward, in an SVG picture framed
+--- to fit them.
+xs = for p in points
+    p.x
+ys = for p in points
+    -p.y
+across = span[xs]
+down = span[ys]
+margin = 200
+left = across[0] - margin
+top = down[0] - margin
+wide = across[1] - across[0] + 2 * margin
+high = down[1] - down[0] + 2 * margin
+corners = for p in points
+    '`p.x`,`-p.y`'
+path = join[corners, ' ']
+svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="`left` `top` `wide` `high`" width="`wide / 20`" height="`high / 20`"><rect x="`left`" y="`top`" width="`wide`" height="`high`" fill="white"/><polyline points="`path`" fill="none" stroke="navy" stroke-width="10"/></svg>'
+_written = write['babylonian_spiral.svg', svg]
+log['The first 10000 points, from x = `across[0]` to `across[1]` and y = `-down[1]` to `-down[0]`, are plotted in babylonian_spiral.svg.']

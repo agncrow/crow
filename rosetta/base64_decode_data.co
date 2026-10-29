@@ -1,0 +1,85 @@
+--- Rosetta Code: Base64 decode data
+--- https://rosettacode.org/wiki/Base64_decode_data
+--- decode[text, 'base64'] is the builtin. Beside it, the decoding written out: each
+--- character is six bits, gathered and handed on eight at a time as bytes, and the
+--- bytes read as UTF-8. The decoded quote is written back to a file and read again.
+use bits
+
+--- A character's six bits, or -1 for the padding and for whitespace.
+fn sextet[c]
+    n = code[c]
+    if c gte 'A' and c lte 'Z'
+        return n - code['A']
+    if c gte 'a' and c lte 'z'
+        return n - code['a'] + 26
+    if c gte '0' and c lte '9'
+        return n - code['0'] + 52
+    if c eq '+'
+        return 62
+    if c eq '/'
+        return 63
+    return -1
+
+fn decoded_bytes[text]
+    octets = []
+    buffer = 0
+    held = 0
+    for c in split[text, '']
+        v = sextet[c]
+        if v gte 0
+            buffer = buffer * 64 + v
+            held = held + 6
+            if held gte 8
+                held = held - 8
+                octets = push[octets, shift[buffer, -held]]
+                buffer = bitand[buffer, shift[1, held] - 1]
+    return octets
+
+--- UTF-8: a lead byte says how many bytes follow, each adding six bits.
+fn utf8_text[octets]
+    chars = []
+    i = 0
+    while i lt len[octets]
+        b = octets[i]
+        more = 0
+        point = b
+        if b gte 240
+            more = 3
+            point = b - 240
+        else if b gte 224
+            more = 2
+            point = b - 224
+        else if b gte 192
+            more = 1
+            point = b - 192
+        k = 1
+        while k lte more
+            point = point * 64 + octets[i + k] - 128
+            k = k + 1
+        chars = push[chars, char[point]]
+        i = i + 1 + more
+    return join[chars, '']
+
+fn hex[octets]
+    digits = '0123456789abcdef'
+    pairs = for b in octets
+        '`digits[b / 16]``digits[b % 16]`'
+    return join[pairs, ' ']
+
+data = 'VG8gZXJyIGlzIGh1bWFuLCBidXQgdG8gcmVhbGx5IGZvdWwgdGhpbmdzIHVwIHlvdSBuZWVkIGEgY29tcHV0ZXIuCiAgICAtLSBQYXVsIFIuIEVocmxpY2g='
+quote = decode[data, 'base64']
+log[quote]
+log['']
+by_hand = utf8_text[decoded_bytes[data]]
+log['Decoded by hand, the same: `by_hand eq quote`']
+log['Encoded again, the same text, padding and all: `encode[quote, \'base64\'] eq data`']
+
+_written = write['ehrlich.txt', quote]
+log['Written to ehrlich.txt and read back, the same: `read[\'ehrlich.txt\'] eq quote`']
+_removed = rm['ehrlich.txt']
+
+log['']
+accents = 'w4dhIGNvw7t0ZSA1IOKCrCwgc2XDsW9yIOKAlCBvaz8g8J+mhQ=='
+log['UTF-8 of one to four bytes a character, by hand: `utf8_text[decoded_bytes[accents]]`']
+icon = 'AAABAAEAEBAAAAEAIABoBAAAFgAAAA=='
+log['Bytes that are no text, an icon file\'s header: `hex[decoded_bytes[icon]]`']

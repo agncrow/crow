@@ -1,0 +1,95 @@
+--- Rosetta Code: Juggler sequence
+--- https://rosettacode.org/wiki/Juggler_sequence
+--- An int grows as it needs, so each term is floor(a^0.5) or floor(a^1.5)
+--- taken exactly as the integer square root of a or of a^3, by the Newton
+--- steps of doubling precision that Python's math.isqrt takes (shifts from
+--- use bits, and one division a step). The statistics for 20 to 39, then the
+--- digits of the peak for the task's larger starts up to 275,485, in about
+--- seven seconds; run with the argument all for 1,267,909, 2,264,915 and
+--- 5,812,827 as well (1,952,329, 2,855,584 and 7,996,276 digits), which take
+--- about a minute more. 7,110,201, whose peak has 90 million digits, is left
+--- out.
+
+use bits
+
+--- the number of steps to 1, the greatest term, and the step it is first reached at
+struct Juggled [steps, peak, at]
+
+--- how many bits n takes
+fn bit_length[n]
+    if n eq 0
+        return 0
+    high = 1
+    while shift[n, -high] ne 0
+        high = high * 2
+    low = high / 2
+    while high - low gt 1
+        middle = (low + high) / 2
+        if shift[n, -middle] eq 0
+            high = middle
+        else
+            low = middle
+    return high
+
+--- the greatest r with r * r at most n
+fn isqrt[n]
+    if n eq 0
+        return 0
+    c = (bit_length[n] - 1) / 2
+    a = 1
+    d = 0
+    s = bit_length[c] - 1
+    while s gte 0
+        e = d
+        d = shift[c, -s]
+        a = shift[a, d - e - 1] + shift[n, e + d - 1 - 2 * c] / a
+        s = s - 1
+    if a * a gt n
+        return a - 1
+    return a
+
+--- how many decimal digits n (1 or more) has: its bit length puts the count
+--- within one of the right one, and a power of ten tells which (a peak of a
+--- million digits written out as text would take ten times as long)
+fn digit_count[n]
+    d = floor[float[bit_length[n] - 1] * 0.30102999566398120]
+    p = 10 ^ d
+    while p gt n
+        p = p / 10
+        d = d - 1
+    while p * 10 lte n
+        p = p * 10
+        d = d + 1
+    return d + 1
+
+fn juggle[n]
+    a = n
+    peak = n
+    at = 0
+    steps = 0
+    while a ne 1
+        if a % 2 eq 0
+            a = isqrt[a]
+        else
+            a = isqrt[a * a * a]
+        steps = steps + 1
+        if a gt peak
+            peak = a
+            at = steps
+    return Juggled[steps, peak, at]
+
+fn row[n, j, last]
+    return '`fmt[n, width = 9, commas = true]` `fmt[j.steps, width = 5]` `fmt[j.at, width = 5]`  `last`'
+
+log['        n  l[n]  i[n]  h[n]']
+for n in range[20, 40]
+    j = juggle[n]
+    log[row[n, j, fmt[j.peak, commas = true]]]
+log['']
+log['        n  l[n]  i[n]  d[n], the digits of h[n]']
+beginnings = [113, 173, 193, 2183, 11229, 15065, 15845, 30817, 48443, 275485]
+if 'all' in args[]
+    beginnings = concat[beginnings, [1267909, 2264915, 5812827]]
+for n in beginnings
+    j = juggle[n]
+    log[row[n, j, fmt[digit_count[j.peak], commas = true]]]

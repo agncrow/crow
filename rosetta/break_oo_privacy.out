@@ -1,0 +1,7 @@
+Ada holds an account
+balance 250, PIN 1234
+balance now 1000000
+Account: Account[_balance = 1000000, _pin = 1234, owner = 'Ada']
+  _balance = 1000000
+  _pin = 1234
+  owner = Ada

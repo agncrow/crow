@@ -300,7 +300,15 @@ impl<'p> Verifier<'p> {
                 // a handler's or a helper's value goes to nobody
                 let valueless = matches!(self.kind, Some(FnKind::Handler | FnKind::Helper));
                 if let Some(ret) = self.ret.clone() {
-                    if !valueless && !returns(&t, &ret) && !e.as_ref().is_some_and(|x| sentinel(x, &ret)) {
+                    // (a local that can fail, returned where the function
+                    // answers another that can fail, is a guard's: `if not
+                    // h.ok` then `return h` hands on a failure, whatever it
+                    // would have held)
+                    let guarded = t.is_result() && ret.is_result() && e.as_ref().is_some_and(|x| matches!(x, Expr::Local(..) | Expr::Move(..)));
+                    // (and a call after which the program does not go on
+                    // answers nothing in any function: `halt[…]` last)
+                    let ends = e.as_ref().is_some_and(crate::ir::ends_program);
+                    if !valueless && !guarded && !ends && !returns(&t, &ret) && !e.as_ref().is_some_and(|x| sentinel(x, &ret)) {
                         self.found(format!("returns {} from a body typed {}", t, ret));
                     }
                 }
@@ -676,10 +684,7 @@ impl<'p> Verifier<'p> {
             },
             // (a value that can fail converts as its payload does)
             Convert::IntToFloat => matches!(inner.payload(), Ty::Int | Ty::Big | Ty::Unknown) && matches!(ty.payload(), Ty::Float),
-            Convert::IntsToFloats => {
-                matches!(ty.payload(), Ty::List(e) | Ty::Map(_, e) | Ty::Tensor(e, _) if **e == Ty::Float)
-                    && matches!(inner.payload(), Ty::List(e) | Ty::Map(_, e) | Ty::Tensor(e, _) if **e == Ty::Int || **e == Ty::Big || **e == Ty::Unknown)
-            }
+            Convert::IntsToFloats => crate::ir::floats_of_ints(ty.payload(), inner.payload(), true),
             // numbers held as a list, a frame's column, or already a tensor
             Convert::ToTensor => matches!(ty.payload(), Ty::Tensor(..)) && matches!(inner.payload(), Ty::List(_) | Ty::Column(_) | Ty::Tensor(..) | Ty::Unknown),
             Convert::ToList => matches!(ty.payload(), Ty::List(_)),
@@ -817,7 +822,13 @@ fn returns(v: &Ty, ret: &Ty) -> bool {
     // (a function whose value is a frame's cell — JSON, which holds any
     // cell — answers text or a number as that JSON: the emitter wraps it)
     let cell = matches!(ret.payload(), Ty::Json) && matches!(v.payload(), Ty::Str | Ty::Int | Ty::Float | Ty::Bool);
-    fits(v, ret) || (v.is_result() && ret.is_result()) || cell
+    // (a value that can fail returned where the function answers another
+    // that can fail is handed on as its failure: its payload must be the
+    // answer's, or of no value — compiled, a success of another payload
+    // had been handed on as an empty value, a wrong answer; Rosetta Code,
+    // Weiler-Atherton polygon clipping)
+    let failure = v.is_result() && ret.is_result() && (matches!(v.payload(), Ty::Unit | Ty::Unknown) || fits(v.payload(), ret.payload()) || matches!((v.payload(), ret.payload()), (Ty::Frame(_), Ty::Frame(_))));
+    fits(v, ret) || failure || cell
 }
 
 /// A read's type and its binding's agree: the same, or one side not known.

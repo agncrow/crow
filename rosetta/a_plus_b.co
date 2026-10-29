@@ -1,0 +1,19 @@
+--- Rosetta Code: A+B
+--- https://rosettacode.org/wiki/A+B
+--- Reads lines of two integers separated by spaces and prints each line's sum,
+--- until the input ends or a line is empty.
+
+fn sum_of[line]
+    pieces = split[sub[trim[line], '\s+', ' '], ' ']
+    if len[pieces] ne 2
+        return error['expected two integers, found `len[pieces]` numbers', 'input']
+    int[pieces[0]] + int[pieces[1]]
+
+line = input[]
+while line.ok and trim[line] ne ''
+    total = sum_of[line]
+    if total.ok
+        log[total]
+    else
+        log['error: `total.reason`']
+    line = input[]

@@ -1,0 +1,30 @@
+--- Rosetta Code: Box the compass
+--- https://rosettacode.org/wiki/Box_the_compass
+--- The 32 points are 11.25 degrees apart, each the centre of its own sector: a
+--- heading's point is its degrees over 11.25, rounded to the nearest whole point.
+
+fn points[]
+    return ['North', 'North by east', 'North-northeast', 'Northeast by north', 'Northeast', 'Northeast by east', 'East-northeast', 'East by north', 'East', 'East by south', 'East-southeast', 'Southeast by east', 'Southeast', 'Southeast by south', 'South-southeast', 'South by east', 'South', 'South by west', 'South-southwest', 'Southwest by south', 'Southwest', 'Southwest by west', 'West-southwest', 'West by south', 'West', 'West by north', 'West-northwest', 'Northwest by west', 'Northwest', 'Northwest by north', 'North-northwest', 'North by west']
+
+fn point_index[degrees]
+    --- 0 for North, counting clockwise to 31 for North by west.
+    return floor[degrees / 11.25 + 0.5] % 32
+
+fn compass_point[degrees]
+    return points[][point_index[degrees]]
+
+fn heading[i]
+    --- The task's test headings: each point's centre, nudged to a sector's edges.
+    d = i * 11.25
+    if i % 3 eq 1
+        return d + 5.62
+    if i % 3 eq 2
+        return d - 5.62
+    return d
+
+for i in range[33]
+    d = heading[i]
+    index = fmt[point_index[d] + 1, width = 2]
+    name = fmt[compass_point[d], width = 18]
+    degrees = fmt[d, decimals = 2, width = 7]
+    log['`index` `name` `degrees`°']

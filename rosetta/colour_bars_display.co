@@ -1,0 +1,51 @@
+--- Rosetta Code: Colour bars/Display
+--- https://rosettacode.org/wiki/Colour_bars/Display
+--- Crow opens no window, so the display is an image file: colour_bars.ppm, a plain
+--- PPM (P3) of 640 by 480 pixels, written to the current directory, with the eight
+--- bars side by side across its width — black, red, green, blue, magenta, cyan,
+--- yellow and white. The bars are drawn on the console too, each by a letter.
+
+struct Colour [name, letter, red, green, blue]
+
+fn bar_colours[]
+    return [
+        Colour['black', 'K', 0, 0, 0],
+        Colour['red', 'R', 255, 0, 0],
+        Colour['green', 'G', 0, 255, 0],
+        Colour['blue', 'B', 0, 0, 255],
+        Colour['magenta', 'M', 255, 0, 255],
+        Colour['cyan', 'C', 0, 255, 255],
+        Colour['yellow', 'Y', 255, 255, 0],
+        Colour['white', 'W', 255, 255, 255]
+    ]
+
+--- the colour at column x of a picture `width` wide, the bars of equal width
+fn colour_at[colours, x, width]
+    return colours[x * len[colours] / width]
+
+--- every row of the picture is the same, so one row is made and repeated; a
+--- pixel a line keeps each line of the file short, as plain PPM asks
+fn ppm[colours, width, height]
+    pixels = for x in range[width]
+        c = colour_at[colours, x, width]
+        '`c.red` `c.green` `c.blue`'
+    row = join[pixels, '\n']
+    body = repeat['`row`\n', height]
+    return 'P3\n`width` `height`\n255\n`body`'
+
+fn sketch[colours, width, height]
+    letters = for x in range[width]
+        colour_at[colours, x, width].letter
+    line = join[letters, '']
+    for y in range[height]
+        log[line]
+
+colours = bar_colours[]
+saved = write['colour_bars.ppm', ppm[colours, 640, 480]]
+if not saved.ok
+    halt['colour_bars.ppm could not be written: `saved.reason`']
+log['colour_bars.ppm: 640 x 480 pixels, eight bars of 80']
+sketch[colours, 64, 8]
+names = for c in colours
+    '`c.letter` `c.name`'
+log[join[names, ', ']]

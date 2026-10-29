@@ -1,0 +1,93 @@
+--- Rosetta Code: 24 game/Solve
+--- https://rosettacode.org/wiki/24_game/Solve
+--- Searches every way of combining two of the numbers with + - * / until one
+--- number is left, in exact fractions, and writes the first that makes 24 with
+--- only the brackets the operators' precedence needs. The digits come from the
+--- command line (crow run 24_game_solve.co 3 3 8 8), or else from a list of
+--- examples and a few seeded random deals.
+
+use math
+
+--- An expression: its value, its text, and how loosely it binds — 1 for a sum
+--- or difference, 2 for a product or quotient, 3 for a lone digit.
+struct Term [value, text, rank]
+
+fn wrapped[t, below]
+    if t.rank lt below
+        return '(`t.text`)'
+    t.text
+
+fn combined[a, b]
+    --- every expression one operator makes of a and b, in either order
+    made = [
+        Term[a.value + b.value, '`a.text` + `b.text`', 1],
+        Term[a.value * b.value, '`wrapped[a, 2]` * `wrapped[b, 2]`', 2],
+        Term[a.value - b.value, '`a.text` - `wrapped[b, 2]`', 1],
+        Term[b.value - a.value, '`b.text` - `wrapped[a, 2]`', 1]
+    ]
+    if b.value ne 0
+        made = push[made, Term[a.value / b.value, '`wrapped[a, 2]` / `wrapped[b, 3]`', 2]]
+    if a.value ne 0
+        made = push[made, Term[b.value / a.value, '`wrapped[b, 2]` / `wrapped[a, 3]`', 2]]
+    made
+
+fn without[terms, i, j]
+    kept = for k in range[len[terms]]
+        if k ne i and k ne j
+            terms[k]
+    kept
+
+fn solution[terms]
+    --- an expression of all the terms that makes 24, or '' when there is none
+    if len[terms] eq 1
+        if terms[0].value eq 24
+            return terms[0].text
+        return ''
+    i = 0
+    while i lt len[terms]
+        j = i + 1
+        while j lt len[terms]
+            rest = without[terms, i, j]
+            for t in combined[terms[i], terms[j]]
+                found = solution[push[rest, t]]
+                if found ne ''
+                    return found
+            j = j + 1
+        i = i + 1
+    ''
+
+fn report[digits]
+    terms = for d in digits
+        Term[fraction[d], str[d], 3]
+    shown = for d in digits
+        str[d]
+    digits_text = join[shown, ' ']
+    found = solution[terms]
+    said = 'no solution'
+    if found ne ''
+        said = '`found` = 24'
+    log['`digits_text`: `said`']
+
+fn is_digit[word]
+    word in ['1', '2', '3', '4', '5', '6', '7', '8', '9']
+
+given = args[]
+if len[given] gt 0
+    if len[given] eq 4 and all[given, is_digit]
+        digits = for a in given
+            int[a]
+        report[digits]
+    else
+        log['Give four digits from 1 to 9: crow run 24_game_solve.co 3 3 8 8']
+else
+    examples = [
+        [3, 2, 4, 6], [4, 7, 8, 8], [1, 1, 2, 7], [3, 3, 8, 8], [1, 5, 5, 5],
+        [1, 3, 4, 6], [4, 4, 7, 7], [1, 1, 1, 1], [9, 9, 9, 9]
+    ]
+    for digits in examples
+        report[digits]
+    seed[24]
+    for deal in range[6]
+        digits = for k in range[4]
+            rand[1, 9]
+        report[digits]

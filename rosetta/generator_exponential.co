@@ -1,0 +1,65 @@
+--- Rosetta Code: Generator/Exponential
+--- https://rosettacode.org/wiki/Generator/Exponential
+--- Crow has no generators, coroutines or closures, so each generator here is its state
+--- held in a record, and a step function answers the generator moved on, its newest
+--- value in .value: the caller threads the state, which a yield would keep for it.
+--- Ints grow without limit, so the powers have none.
+
+--- the m-th powers of 0, 1, 2, ...: n is the next base, value the last power answered
+struct Powers [m, n, value]
+
+fn powers[m]
+    return Powers[m, 0, 0]
+
+fn next_power[g]
+    return Powers[g.m, g.n + 1, g.n ^ g.m]
+
+--- the values of one powers generator that another never answers; both are kept one
+--- value ahead, as Python's version keeps v and f
+struct Without [kept, dropped, value]
+
+fn without[kept, dropped]
+    return Without[next_power[kept], next_power[dropped], 0]
+
+fn next_without[g]
+    kept = g.kept
+    dropped = g.dropped
+    while true
+        while dropped.value lt kept.value
+            dropped = next_power[dropped]
+        v = kept.value
+        kept = next_power[kept]
+        if v lt dropped.value
+            return Without[kept, dropped, v]
+
+--- the next count values of a powers generator
+fn take_powers[g, count]
+    taken = []
+    while len[taken] lt count
+        g = next_power[g]
+        taken = push[taken, g.value]
+    return taken
+
+--- a filtering generator moved past its next count values
+fn drop_without[g, count]
+    for i in range[count]
+        g = next_without[g]
+    return g
+
+--- the next count values of a filtering generator
+fn take_without[g, count]
+    taken = []
+    while len[taken] lt count
+        g = next_without[g]
+        taken = push[taken, g.value]
+    return taken
+
+squares = powers[2]
+cubes = powers[3]
+first = join[take_powers[squares, 10], ' ']
+log['squares: `first` ...']
+first = join[take_powers[cubes, 10], ' ']
+log['cubes:   `first` ...']
+g = drop_without[without[squares, cubes], 20]
+next = join[take_without[g, 10], ' ']
+log['squares that are not cubes, after the first 20: `next`']

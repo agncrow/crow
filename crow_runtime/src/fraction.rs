@@ -53,7 +53,15 @@ impl Frac {
     }
 
     /// `f ^ n` of an int, exactly; a zero to a negative power has no value.
+    /// 0, 1 and -1 to any power are exact, as an int's are (past 32 bits
+    /// they had stopped as a number no memory holds).
     pub fn pow(&self, e: &Int) -> Result<Frac, String> {
+        if let Some(b) = self.small_base() {
+            return match b {
+                0 if e.is_negative() => Err("division by zero".to_string()),
+                _ => Ok(Frac::of_int(&Int::Small(b).pow(&e.abs())?)),
+            };
+        }
         let Some(n) = e.to_i64() else {
             return Err(format!("{} ^ {}: an exponent past 64 bits makes a number no memory holds", self, e));
         };
@@ -71,6 +79,15 @@ impl Frac {
 
     pub fn neg(&self) -> Frac {
         Frac(-&self.0)
+    }
+
+    /// The fraction as 0, 1 or -1, where it is one of them.
+    fn small_base(&self) -> Option<i64> {
+        if self.0.denominator() != &dashu_int::UBig::ONE {
+            return None;
+        }
+        let n = self.0.numerator();
+        [0i64, 1, -1].into_iter().find(|b| n == &IBig::from(*b))
     }
 
     pub fn abs(&self) -> Frac {
@@ -215,6 +232,23 @@ impl Frac {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0, 1 and -1 to a power past 32 bits are exact, as an int's are;
+    /// another base there stops in the runtime's words
+    #[test]
+    fn small_bases_to_any_power() {
+        let huge = Int::Small(2).pow(&Int::Small(70)).unwrap();
+        let odd = huge.add(&Int::Small(1));
+        let f = |n: i64| Frac::of_int(&Int::Small(n));
+        assert_eq!(f(1).pow(&huge).unwrap().to_string(), "1");
+        assert_eq!(f(0).pow(&huge).unwrap().to_string(), "0");
+        assert_eq!(f(0).pow(&Int::Small(0)).unwrap().to_string(), "1");
+        assert_eq!(f(-1).pow(&huge).unwrap().to_string(), "1");
+        assert_eq!(f(-1).pow(&odd).unwrap().to_string(), "-1");
+        assert_eq!(f(-1).pow(&odd.neg()).unwrap().to_string(), "-1");
+        assert_eq!(f(0).pow(&Int::Small(-1)).unwrap_err(), "division by zero");
+        assert!(f(2).pow(&huge).unwrap_err().contains("no memory holds"));
+    }
 
     /// A fraction is in lowest terms with its sign on top, exact under
     /// every operation, a whole one shown as its int

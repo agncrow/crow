@@ -1,0 +1,15 @@
+--- a top-level variable's first assignment is judged against nothing: an
+--- earlier round had read a mask of a function's answer as one number
+--- (before the function was typed), and the one assignment the variable
+--- has was refused as a reassignment (Rosetta Code, Statistics/Normal
+--- distribution)
+
+fn half[x]
+    return x / 2.0
+
+z = [1.0, -2.0, 3.0]
+inside = z[z lt half[1.0]]
+log[inside]
+m = z gt half[1.0]
+picked = z[m]
+log[picked]

@@ -1,0 +1,16 @@
+text "a!===b=!=c", separators "==", "!=", "="
+  parsed:  "a" (!=) "" (==) "b" (=) "" (!=) "c"
+  pieces:  "a", empty string, "b", empty string, "c"
+  matched: "!=" (separator 1) at 1, "==" (separator 0) at 3, "=" (separator 2) at 6, "!=" (separator 1) at 7
+text "a!===b=!=c", separators "=", "!=", "=="
+  parsed:  "a" (!=) "" (=) "" (=) "b" (=) "" (!=) "c"
+  pieces:  "a", empty string, empty string, "b", empty string, "c"
+  matched: "!=" (separator 1) at 1, "=" (separator 0) at 3, "=" (separator 0) at 4, "=" (separator 0) at 6, "!=" (separator 1) at 7
+text "a!===b=!=c", separators "!=", "==", "="
+  parsed:  "a" (!=) "" (==) "b" (=) "" (!=) "c"
+  pieces:  "a", empty string, "b", empty string, "c"
+  matched: "!=" (separator 0) at 1, "==" (separator 1) at 3, "=" (separator 2) at 6, "!=" (separator 0) at 7
+text "no separators here", separators "==", "!=", "="
+  parsed:  "no separators here"
+  pieces:  "no separators here"
+  matched: no separator

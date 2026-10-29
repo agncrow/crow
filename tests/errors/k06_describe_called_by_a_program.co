@@ -1,0 +1,11 @@
+--- sys's operations over functions (`describe`, `apply`) are the standard
+--- library's own (spec, sys): a program's call of one is refused before it
+--- runs — it had passed every check, then the interpreter stopped, "does
+--- not run 'describe' yet", and the compiled program did not build
+--- (Rosetta Code, Metaprogramming)
+
+fn double[x]
+    return x * 2
+
+d = describe[double]
+log[d]

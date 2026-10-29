@@ -1,0 +1,26 @@
+--- a value that can fail, written by key into a map of plain text, is
+--- decided where it is written: inside a function the error is handed back
+--- and the function answers a map that can fail, at the top level a
+--- failure halts — the map's values had been made ones that can fail, the
+--- interpreter stopped, the compiled program did not build, and the top
+--- level was refused as a reassignment (Rosetta Code, Terminal
+--- control/Coloured text)
+
+fn maybe[n]
+    if n gt 0
+        return 'yes'
+    return error['no']
+
+fn fill[n]
+    m = map[k = 'v']
+    m['k'] = maybe[n]
+    return m
+
+log[fill[1]]
+r = fill[0]
+log[r.ok]
+log[r.reason]
+
+top = map[k = 'v']
+top['k'] = maybe[1]
+log[top]

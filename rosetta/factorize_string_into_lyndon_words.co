@@ -1,0 +1,72 @@
+--- Rosetta Code: Factorize string into Lyndon words
+--- https://rosettacode.org/wiki/Factorize_string_into_Lyndon_words
+--- Duval's algorithm, one pass over the text; then each factorization is checked: every
+--- factor a Lyndon word, the factors in non-increasing order, their join the text.
+
+--- the Chen-Fox-Lyndon factorization of s
+fn lyndon_factors[s]
+    n = len[s]
+    factors = []
+    i = 0
+    while i lt n
+        j = i + 1
+        k = i
+        while j lt n and s[k] lte s[j]
+            if s[k] lt s[j]
+                k = i
+            else
+                k = k + 1
+            j = j + 1
+        while i lte k
+            factors = push[factors, slice[s, i, i + j - k]]
+            i = i + j - k
+    return factors
+
+--- whether w is strictly smaller than each of its rotations
+fn is_lyndon[w]
+    n = len[w]
+    r = 1
+    while r lt n
+        rotation = '`slice[w, r, n]``slice[w, 0, r]`'
+        if rotation lte w
+            return false
+        r = r + 1
+    return true
+
+--- every factor a Lyndon word, each no smaller than the next, and together the text
+fn is_factorization[factors, s]
+    if join[factors, ''] ne s
+        return false
+    i = 0
+    while i lt len[factors]
+        if not is_lyndon[factors[i]]
+            return false
+        if i gt 0 and factors[i - 1] lt factors[i]
+            return false
+        i = i + 1
+    return true
+
+--- the Thue-Morse word of 2 ^ steps characters: each step appends the complement
+fn thue_morse[steps]
+    m = '0'
+    i = 0
+    while i lt steps
+        flipped = translate[m, '01', '10']
+        m = '`m``flipped`'
+        i = i + 1
+    return m
+
+fn show[s]
+    factors = lyndon_factors[s]
+    log['The word to be factorized:']
+    log[s]
+    log['Its `len[factors]` Lyndon factors:']
+    for f in factors
+        log['    `f`']
+    log['Checked: `is_factorization[factors, s]`']
+    log['']
+
+show[thue_morse[7]]
+show['banana']
+show['abracadabra']
+show['0101']

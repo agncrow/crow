@@ -1,0 +1,85 @@
+--- Rosetta Code: Old Russian measure of length
+--- https://rosettacode.org/wiki/Old_Russian_measure_of_length
+--- Every unit is an exact decimal number of meters (the old units are whole
+--- multiples of the tochka, a hundredth of an English inch), so a value converts
+--- as value * from / to in exact decimals, shown to six significant digits.
+--- Run it as `crow run old_russian_measure_of_length.co 2.5 arshins`, or give it
+--- lines of a value and a unit on standard input.
+
+struct Unit [name, meters]
+
+fn units[]
+    return [
+        Unit['tochka', decimal['0.000254']],
+        Unit['liniya', decimal['0.00254']],
+        Unit['diuym', decimal['0.0254']],
+        Unit['vershok', decimal['0.04445']],
+        Unit['piad', decimal['0.1778']],
+        Unit['fut', decimal['0.3048']],
+        Unit['arshin', decimal['0.7112']],
+        Unit['sazhen', decimal['2.1336']],
+        Unit['verst', decimal['1066.8']],
+        Unit['milia', decimal['7467.6']],
+        Unit['centimeter', decimal['0.01']],
+        Unit['meter', decimal['1']],
+        Unit['kilometer', decimal['1000']]
+    ]
+
+--- the unit a word names, its name or its plural in any case
+fn unit_named[table, word]
+    w = lower[word]
+    i = 0
+    while i lt len[table]
+        name = table[i].name
+        if w eq name or w eq '`name`s'
+            return table[i]
+        i = i + 1
+    return error['no unit named \'`word`\'', 'unit']
+
+--- a decimal to six significant digits, with no zeros after its last digit
+fn shown[d]
+    text = str[decimal[d, digits = 6]]
+    if '.' not in text
+        return text
+    while ends[text, '0']
+        text = slice[text, 0, -1]
+    if ends[text, '.']
+        text = slice[text, 0, -1]
+    text
+
+--- the value in every other unit, a line each
+fn convert[table, amount, word]
+    value = decimal[amount]
+    if not value.ok
+        log['\'`amount`\' is not a number']
+        return
+    from = unit_named[table, word]
+    if not from.ok
+        names = for u in table
+            u.name
+        known = join[names, ', ']
+        log['`from.reason`; the units are `known`']
+        return
+    said = lower[word]
+    log['`value` `said` converts to:']
+    for u in table
+        if u.name ne from.name
+            label = fmt[u.name, width = 12, align = 'right']
+            log['`label`: `shown[value * from.meters / u.meters]`']
+
+table = units[]
+given = args[]
+if len[given] eq 2
+    convert[table, given[0], given[1]]
+else
+    line = input[]
+    while line.ok
+        words = for w in split[trim[line], ' ']
+            if w ne ''
+                w
+        if len[words] eq 2
+            convert[table, words[0], words[1]]
+        else
+            log['a line is a value and a unit, not \'`line`\'']
+        log['']
+        line = input[]

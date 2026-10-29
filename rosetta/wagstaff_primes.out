@@ -1,0 +1,29 @@
+The first 10 Wagstaff primes, (2^p + 1) / 3 for an odd prime p:
+  p =  3: 3
+  p =  5: 11
+  p =  7: 43
+  p = 11: 683
+  p = 13: 2731
+  p = 17: 43691
+  p = 19: 174763
+  p = 23: 2796203
+  p = 31: 715827883
+  p = 43: 2932031007403
+
+The exponents of the next 14, with each prime's digits (past p = 79, probable primes):
+  p =   61: 18 digits
+  p =   79: 24 digits
+  p =  101: 30 digits
+  p =  127: 38 digits
+  p =  167: 50 digits
+  p =  191: 58 digits
+  p =  199: 60 digits
+  p =  313: 94 digits
+  p =  347: 104 digits
+  p =  701: 211 digits
+  p = 1709: 514 digits
+  p = 2617: 788 digits
+  p = 3539: 1065 digits
+  p = 5807: 1748 digits
+
+Every odd prime p below 8,000 was tried: these 24 are all there are.

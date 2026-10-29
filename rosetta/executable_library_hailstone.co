@@ -1,0 +1,44 @@
+--- Rosetta Code: Executable library (the library, run directly)
+--- https://rosettacode.org/wiki/Executable_library
+--- The library: hailstone[n] answers the hailstone sequence from n down to 1.
+--- Every Crow file is a module, and a module's top-level statements other than
+--- its declarations (functions, records and values) are not part of a program
+--- that imports it (spec, Modules): the call main[] at the bottom runs only when
+--- the file itself is run, `crow run executable_library_hailstone.co`, and then
+--- does the rest of the Hailstone sequence task. The command-line part keeps its
+--- values inside main, since a module's top-level values are computed for every
+--- importer. The second executable is executable_library.co beside it.
+
+fn hailstone[n]
+    --- the hailstone sequence of a positive int, from n down to 1
+    seq = [n]
+    while n ne 1
+        if n % 2 eq 0
+            n = n / 2
+        else
+            n = 3 * n + 1
+        seq = push[seq, n]
+    return seq
+
+fn shown[xs]
+    parts = for x in xs
+        str[x]
+    return join[parts, ', ']
+
+fn main[]
+    --- the command-line part: the hailstone sequence task's parts 2 and 3
+    s = hailstone[27]
+    first = shown[slice[s, 0, 4]]
+    last = shown[slice[s, -4, len[s]]]
+    log['hailstone[27] has `len[s]` elements, starting with `first` and ending with `last`']
+    lengths = for n in range[1, 100000]
+        len[hailstone[n]]
+    best = 0
+    i = 1
+    while i lt len[lengths]
+        if lengths[i] gt lengths[best]
+            best = i
+        i = i + 1
+    log['Below 100,000 the longest sequence starts at `best + 1`: `lengths[best]` elements']
+
+main[]

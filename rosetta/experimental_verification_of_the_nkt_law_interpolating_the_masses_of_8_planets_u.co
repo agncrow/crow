@@ -1,0 +1,83 @@
+--- Rosetta Code: Experimental Verification of the NKT Law: Interpolating the Masses of 8 Planets Using NASA Data as of 30–31/12/2024
+--- https://rosettacode.org/wiki/Experimental_Verification_of_the_NKT_Law:_Interpolating_the_Masses_of_8_Planets_Using_NASA_Data_as_of_30–31/12/2024
+--- The task's computation over its dataset (x in km, v in km/s, as its tables
+--- have them): m = NKTg1 / (x v), p = m v and dm = |m_NASA - m|, with NASA's
+--- masses from its Table 1. Since NKTg1 is defined as x p = x m v, the formula
+--- gives back the mass NKTg1 was made from; with NKTg1 as the task tables it,
+--- to four figures, the masses agree with NASA's to within 0.1%. The second
+--- table makes NKTg1 from NASA's masses at full precision, as the other
+--- entries do, and there dm is 0 or one unit in the last place (ulp) of a
+--- float.
+--- Floats are shown in scientific notation by sci below.
+use math
+
+struct Planet [name, x, v, mass, nktg]
+
+fn planet_of[row]
+    --- name, x (km), v (km/s), NASA mass (kg), NKTg1 (NKTm)
+    cells = for w in split[row, ' ']
+        if w ne ''
+            w
+    return Planet[cells[0], float[cells[1]], float[cells[2]], float[cells[3]], float[cells[4]]]
+
+fn sci[x, places]
+    --- x as d.ddd...e±n, with places digits after the point
+    if x eq 0.0
+        return '0'
+    e = floor[log10[abs[x]]]
+    shown = fmt[x / 10.0 ^ e, decimals = places]
+    if starts[shown, '10.'] or starts[shown, '-10.']
+        e = e + 1
+        shown = fmt[x / 10.0 ^ e, decimals = places]
+    return '`shown`e`e`'
+
+fn ulps[dm, m]
+    --- dm in units of the last place of m
+    return round[dm / 2.0 ^ (floor[log2[m]] - 52)]
+
+fn cell[text, width]
+    return fmt[text, width = width]
+
+rows = [
+    'Mercury     69817930  38.86  3.301e23  8.951e32',
+    'Venus      108939000  35.02  4.867e24  1.858e34',
+    'Earth      147100000  29.29  5.972e24  2.571e34',
+    'Mars       249230000  24.07  6.417e23  3.850e33',
+    'Jupiter    816620000  13.06  1.898e27  2.024e37',
+    'Saturn    1506530000   9.69  5.683e26  8.303e36',
+    'Uranus    3001390000    6.8  8.681e25  1.772e36',
+    'Neptune   4558900000   5.43  1.024e26  2.534e36'
+]
+planets = for row in rows
+    planet_of[row]
+
+log['The task: m = NKTg1 / (x v), p = m v, dm = |m_NASA - m|, NKTg1 as tabled (30/12/2024)']
+head = ['Planet', 'x (km)', 'v (km/s)', 'NKTg1', 'm (kg)', 'p (kg km/s)', 'NASA m (kg)', 'dm (kg)', 'dm / m']
+widths = [9, 15, 10, 11, 13, 13, 13, 12, 9]
+titles = for i in range[len[head]]
+    cell[head[i], widths[i]]
+log[trim[join[titles, '']]]
+for p in planets
+    m = p.nktg / (p.x * p.v)
+    momentum = m * p.v
+    dm = abs[p.mass - m]
+    shown = [p.name, fmt[int[p.x], commas = true], str[p.v], sci[p.nktg, 3], sci[m, 5], sci[momentum, 4], sci[p.mass, 3], sci[dm, 3], fmt[dm / p.mass, percent = true, decimals = 3]]
+    cells = for i in range[len[shown]]
+        cell[shown[i], widths[i]]
+    log[trim[join[cells, '']]]
+
+log['']
+log['NKTg1 made from NASA\'s mass at full precision (x p, p = m v), then m = NKTg1 / (x v)']
+head2 = ['Planet', 'NKTg1', 'm (kg)', 'NASA m (kg)', 'dm (kg)', 'dm (ulps)']
+widths2 = [9, 15, 15, 15, 15, 10]
+titles2 = for i in range[len[head2]]
+    cell[head2[i], widths2[i]]
+log[trim[join[titles2, '']]]
+for p in planets
+    nktg = p.x * (p.mass * p.v)
+    m = nktg / (p.x * p.v)
+    dm = abs[p.mass - m]
+    shown = [p.name, sci[nktg, 6], sci[m, 6], sci[p.mass, 6], sci[dm, 6], str[ulps[dm, p.mass]]]
+    cells = for i in range[len[shown]]
+        cell[shown[i], widths2[i]]
+    log[trim[join[cells, '']]]

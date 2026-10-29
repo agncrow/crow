@@ -1,0 +1,38 @@
+--- Rosetta Code: Equilibrium index
+--- https://rosettacode.org/wiki/Equilibrium_index
+--- Two passes, linear in the length: the first sums the whole sequence, the
+--- second moves each item from the right-hand sum to the left-hand one and
+--- keeps the indices where the two sides agree.
+
+fn equilibrium_indices[xs]
+    right = 0
+    for x in xs
+        right = right + x
+    left = 0
+    found = []
+    for i in range[len[xs]]
+        right = right - xs[i]
+        if left eq right
+            found = push[found, i]
+        left = left + xs[i]
+    return found
+
+--- the sequences differ in length, so they are a list grown by push (a
+--- nested literal of numbers is a matrix)
+examples = []
+examples = push[examples, [-7, 1, 5, 2, -4, 3, 0]]
+examples = push[examples, [2, 4, 6]]
+examples = push[examples, [2, 9, 2]]
+examples = push[examples, [1, -1, 1, -1, 1, -1, 1]]
+for xs in examples
+    log['`str[xs]` -> `str[equilibrium_indices[xs]]`']
+
+--- a long sequence: a million and one items alternating 1 and -1, where every
+--- index balances, and the same with its middle item doubled, where only the
+--- middle one does
+long = for i in range[1000001]
+    1 - 2 * (i % 2)
+found = equilibrium_indices[long]
+log['1, -1, 1, … (1000001 items): `len[found]` equilibrium indices']
+long[500000] = 2 * long[500000]
+log['the same with the middle item doubled: `str[equilibrium_indices[long]]`']

@@ -1,0 +1,12 @@
+--- A function handed a list of vectors (`[i, i]`, a collect's pairs) and a
+--- list of lists (rows grown by `push`) is copied for each, as they are
+--- held two ways: one copy had taken both, and the call handing the other
+--- disagreed with itself (Rosetta Code, Cartesian product).
+fn shown[rows]
+    return len[rows]
+
+pairs = for i in range[2]
+    [i, i]
+log[shown[pairs]]
+rows = push[[], push[[], 7]]
+log[shown[rows]]

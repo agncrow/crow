@@ -1,0 +1,6 @@
+--- Rosetta Code: Array length
+--- https://rosettacode.org/wiki/Array_length
+--- len counts a list's items.
+
+fruits = ['apple', 'orange']
+log[len[fruits]]

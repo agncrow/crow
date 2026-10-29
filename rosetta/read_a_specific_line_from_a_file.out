@@ -1,0 +1,8 @@
+days.txt: line 7 is 'Sunday'
+short.txt: has only 6 lines
+gap.txt: its seventh line is empty
+wide.txt: its seventh line holds 20000 characters, too many to keep
+crlf.txt: line 7 is 'seventh, after \r\n line ends'
+unended.txt: line 7 is 'seven with no line break after it'
+missing.txt: cannot read 'missing.txt': No such file or directory (os error 2)
+unixdict.txt: line 7 is '6th'

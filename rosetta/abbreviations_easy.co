@@ -1,0 +1,53 @@
+--- Rosetta Code: Abbreviations, easy
+--- https://rosettacode.org/wiki/Abbreviations,_easy
+--- A word abbreviates a command when it is at least as long as the command's
+--- capital letters, no longer than the command, and a prefix of it in any case;
+--- the first command in the table's order that it abbreviates is the answer.
+
+command_table = 'Add ALTer  BAckup Bottom  CAppend Change SCHANGE  CInsert CLAst COMPress COpy
+COUnt COVerlay CURsor DELete CDelete Down DUPlicate Xedit EXPand EXTract Find
+NFind NFINDUp NFUp CFind FINdup FUp FOrward GET Help HEXType Input POWerinput
+Join SPlit SPLTJOIN  LOAD  Locate CLocate  LOWercase UPPercase  LPrefix MACRO
+MErge MODify MOve MSG Next Overlay PARSE PREServe PURge PUT PUTD  Query  QUIT
+READ  RECover REFRESH RENum REPeat  Replace CReplace  RESet  RESTore  RGTLEFT
+RIght LEft  SAVE  SET SHift SI  SORT  SOS  STAck STATus  TOP TRAnsfer Type Up'
+
+--- the words of a text, however many blanks or line breaks part them
+fn split_words[text]
+    pieces = split[replace[text, '\n', ' '], ' ']
+    words = for w in pieces
+        if w ne ''
+            w
+    return words
+
+--- how many capital letters a command has: its shortest abbreviation
+fn capitals[command]
+    caps = for ch in split[command, '']
+        if ch ne lower[ch]
+            ch
+    return len[caps]
+
+fn abbreviates[word, command]
+    n = len[word]
+    return n gte capitals[command] and n lte len[command] and starts[upper[command], upper[word]]
+
+--- the full command a word stands for, or *error*
+fn expand[word, commands]
+    i = 0
+    while i lt len[commands]
+        if abbreviates[word, commands[i]]
+            return upper[commands[i]]
+        i = i + 1
+    return '*error*'
+
+--- a blank input answers the null string
+fn expand_all[user, commands]
+    full = for w in split_words[user]
+        expand[w, commands]
+    return join[full, ' ']
+
+commands = split_words[command_table]
+for user in ['', 'riG   rePEAT copies  put mo   rest    types   fup.    6       poweRin']
+    full = expand_all[user, commands]
+    log['input:  "`user`"']
+    log['output: "`full`"']

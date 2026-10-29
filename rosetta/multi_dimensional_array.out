@@ -1,0 +1,13 @@
+a = zeros[5, 4, 3, 2]: shape [5, 4, 3, 2], 120 numbers, all 0
+a[4][3][2][1] = 42, then a[4][3][2][1] is 42
+a[4][3][2][1] = 7.5, then a[4][3][2][1] is 7.5
+the same item from the end, a[-1][-1][-1][-1]: 7.5
+the part a[4][3], a 3 x 2 matrix: [[0, 0], [0, 0], [0, 7.5]]
+a[1][2] written whole: [[1, 2], [3, 4], [5, 6]]
+
+row-major: a[1][2][2][0] = 5 is number ((1 * 4 + 2) * 3 + 2) * 2 + 0 = 40 of the block, flatten[a][40] = 5
+the block reshaped to [2, 3, 4, 5]: b[0][1][3] = [0, 1, 2, 3, 4], b[0][2][0][0] = 5
+a slice of the first axis, slice[a, 1, 3]: shape [2, 4, 3, 2]; transpose[a] (the last two axes): shape [5, 4, 2, 3]
+
+a 5 x 4 x 3 x 2 list of text: g[4][3][2][1] is 4321
+g[4][3][2][1] = 'changed', then g[4][3] is [['4300', '4301'], ['4310', '4311'], ['4320', 'changed']]

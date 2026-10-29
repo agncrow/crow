@@ -1,0 +1,15 @@
+pin  name  bit  line
+  1  CD      0  Carrier detect
+  2  RD      1  Received data
+  3  TD      2  Transmitted data
+  4  DTR     3  Data terminal ready
+  5  SG      4  Signal ground
+  6  DSR     5  Data set ready
+  7  RTS     6  Request to send
+  8  CTS     7  Clear to send
+  9  RI      8  Ring indicator
+
+RI, TD and CD raised: word 261 = 0x0105 = 0b100000101
+Plug[cd = true, cts = false, dsr = false, dtr = false, rd = false, ri = true, rts = false, sg = false, td = true]
+DTR raised, TD lowered: 0b100001001; DTR up: true, TD up: false
+Through the record and back: 0b100001001, the same word: true

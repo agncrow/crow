@@ -1,0 +1,15 @@
+Self-describing?
+      1210  yes
+      2020  yes
+     21200  yes
+   3211000  yes
+  42101000  yes
+      1211  no
+      2021  no
+        22  no
+         1  no
+         0  no
+
+All self-describing numbers (119 candidates checked):
+1210 2020 21200 3211000 42101000 521001000 6210001000
+Checking every number below 100,000: 1210 2020 21200

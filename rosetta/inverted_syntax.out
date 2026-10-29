@@ -1,0 +1,14 @@
+Is it raining? true.
+  if raining / need_umbrella = true      -> need an umbrella? true
+  need_umbrella = true then iif[raining] -> need an umbrella? true
+  take_umbrella then only_if[raining]
+    -> the action ran: take an umbrella
+  what_to_carry[raining]                 -> an umbrella
+
+Is it raining? false.
+  if raining / need_umbrella = true      -> need an umbrella? false
+  need_umbrella = true then iif[raining] -> need an umbrella? false
+  take_umbrella then only_if[raining]
+  what_to_carry[raining]                 -> nothing
+
+a = 6 -> a is 6

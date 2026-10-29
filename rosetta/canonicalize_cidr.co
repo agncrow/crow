@@ -1,0 +1,47 @@
+--- Rosetta Code: Canonicalize CIDR
+--- https://rosettacode.org/wiki/Canonicalize_CIDR
+--- The dotted address is read as one 32-bit number; the host part is the remainder below
+--- 2 ^ (32 - prefix), so taking that remainder away clears the host bits. A block that is
+--- not dotted-decimal/prefix, or out of range, is an error value saying why.
+
+--- the address as one number, from its four dotted parts
+fn address_of[dotted]
+    parts = split[dotted, '.']
+    if len[parts] ne 4
+        return error['\'`dotted`\' is not four dotted numbers', 'cidr']
+    n = 0
+    for part in parts
+        octet = int[part]
+        if not octet.ok or octet lt 0 or octet gt 255
+            return error['\'`part`\' is not a number from 0 to 255', 'cidr']
+        n = n * 256 + octet
+    return n
+
+fn dotted_of[n]
+    parts = for k in [3, 2, 1, 0]
+        str[n / 256 ^ k % 256]
+    return join[parts, '.']
+
+fn canonical[cidr]
+    halves = split[cidr, '/']
+    if len[halves] ne 2
+        return error['\'`cidr`\' has no /prefix', 'cidr']
+    bits = int[halves[1]]
+    if not bits.ok or bits lt 0 or bits gt 32
+        return error['\'`halves[1]`\' is not a prefix from 0 to 32', 'cidr']
+    n = address_of[halves[0]]
+    host = 2 ^ (32 - bits)
+    return '`dotted_of[n - n % host]`/`bits`'
+
+--- the task's blocks, the edges of the prefix, and blocks that are not CIDR
+blocks = [
+    '87.70.141.1/22', '36.18.154.103/12', '62.62.197.11/29', '67.137.119.181/4',
+    '161.214.74.21/24', '184.232.176.184/18', '10.20.30.40/32', '10.20.30.40/0',
+    '10.20.300.40/8', '10.20.30/8', '10.20.30.40/33', '10.20.30.40'
+]
+for b in blocks
+    c = canonical[b]
+    if c.ok
+        log['`fmt[b, width = 18]` -> `c`']
+    else
+        log['`fmt[b, width = 18]` -> error: `c.reason`']

@@ -1,0 +1,91 @@
+--- Rosetta Code: Numerical and alphabetical suffixes
+--- https://rosettacode.org/wiki/Numerical_and_alphabetical_suffixes
+--- A number's suffix is everything after its last digit. What comes before is
+--- read as an exact decimal (Crow's decimal reads a sign, a point and an exponent
+--- as written), so no digit is lost; the suffix's parts each name an int factor,
+--- read greedily, the named ones first, then the binary, then the metric. A run of
+--- k exclamation marks is the k-fold factorial instead.
+
+struct Suffix [name, least, factor]
+
+fn suffix_table[]
+    --- each suffix: its name, the letters it needs at the least, its factor
+    table = []
+    table = push[table, Suffix['greatgross', 7, 1728]]
+    table = push[table, Suffix['gross', 2, 144]]
+    table = push[table, Suffix['dozens', 3, 12]]
+    table = push[table, Suffix['pairs', 4, 2]]
+    table = push[table, Suffix['scores', 3, 20]]
+    table = push[table, Suffix['googols', 6, 10 ^ 100]]
+    letters = split['kmgtpezyxwvu', '']
+    for i in range[12]
+        table = push[table, Suffix['`letters[i]`i', 2, 2 ^ (10 * (i + 1))]]
+    for i in range[12]
+        table = push[table, Suffix[letters[i], 1, 10 ^ (3 * (i + 1))]]
+    table
+
+fn spelled[text, at, s]
+    --- how many letters of text from `at` begin s's name: 0 if fewer than it needs
+    n = 0
+    while at + n lt len[text] and n lt len[s.name] and text[at + n] eq s.name[n]
+        n = n + 1
+    if n lt s.least
+        return 0
+    n
+
+fn multiplier[suffix, table]
+    --- the product of the factors the suffix's parts name
+    product = 1
+    at = 0
+    while at lt len[suffix]
+        i = 0
+        while i lt len[table] and spelled[suffix, at, table[i]] eq 0
+            i = i + 1
+        if i eq len[table]
+            rest = slice[suffix, at, len[suffix]]
+            return error['no suffix begins \'`rest`\'', 'suffix']
+        product = product * table[i].factor
+        at = at + spelled[suffix, at, table[i]]
+    product
+
+fn multifactorial[n, step]
+    --- n (n − step) (n − 2 step) … down to the last factor above 0
+    product = 1
+    k = n
+    while k gt 0
+        product = product * k
+        k = k - step
+    product
+
+fn expand[word, table]
+    --- the number a word writes, as an exact decimal
+    text = lower[replace[word, ',', '']]
+    last = len[text] - 1
+    while last gte 0 and text[last] not in '0123456789'
+        last = last - 1
+    number = slice[text, 0, last + 1]
+    suffix = slice[text, last + 1, len[text]]
+    if starts[suffix, '!']
+        return decimal[multifactorial[int[number], len[suffix]]]
+    decimal[number] * multiplier[suffix, table]
+
+fn shown[d]
+    --- with commas, and without the zeros (or the point) the value does not need
+    text = fmt[d, commas = true]
+    if '.' in text
+        text = sub[text, '[.]?0+$', '']
+    text
+
+tests = ['2greatGRo   24Gros  288Doz  1,728pairs  172.8SCOre', '1,567      +1.567k    0.1567e-2m', '25.123kK    25.123m   2.5123e-00002G', '25.123kiKI  25.123Mi  2.5123e-00002Gi  +.25123E-7Ei', '-.25123e-34Vikki      2e-77gooGols', '9!   9!!   9!!!   9!!!!   9!!!!!   9!!!!!!   9!!!!!!!   9!!!!!!!!   9!!!!!!!!!', '123k  123K  123GKi  12.3GiGG  12.3e-7T  .78E100e']
+table = suffix_table[]
+for i in range[len[tests]]
+    results = for word in split[tests[i], ' ']
+        if word ne ''
+            shown[expand[word, table]]
+    if i gt 0
+        log['']
+    if i eq len[tests] - 1
+        log['and the stacked suffixes the task shows:']
+    shown_results = join[results, '  ']
+    log['numbers:  `tests[i]`']
+    log['results:  `shown_results`']

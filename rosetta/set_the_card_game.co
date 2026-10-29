@@ -1,0 +1,89 @@
+--- Rosetta Code: Set, the card game
+--- https://rosettacode.org/wiki/Set,_the_card_game
+--- A card is four features, each 0, 1 or 2: its number, shading, colour and symbol.
+--- Three values are all the same or all different exactly when their sum is a
+--- multiple of 3, so three cards are a set when that holds for every feature. The
+--- pack is shuffled by Fisher-Yates from a seeded generator (the same deal every
+--- run), and every three of the cards dealt are tried.
+
+use math
+
+struct Card [number, shading, colour, symbol]
+
+fn pack[]
+    cards = []
+    for number in range[3]
+        for shading in range[3]
+            for colour in range[3]
+                for symbol in range[3]
+                    cards = push[cards, Card[number, shading, colour, symbol]]
+    return cards
+
+fn shuffled[cards]
+    i = len[cards] - 1
+    while i gt 0
+        j = rand[i + 1]
+        held = cards[i]
+        cards[i] = cards[j]
+        cards[j] = held
+        i = i - 1
+    return cards
+
+fn named[c]
+    number = ['one', 'two', 'three'][c.number]
+    shading = ['solid', 'striped', 'open'][c.shading]
+    colour = ['red', 'green', 'purple'][c.colour]
+    symbol = ['diamond', 'squiggle', 'oval'][c.symbol]
+    if c.number gt 0
+        symbol = '`symbol`s'
+    return '`number` `shading` `colour` `symbol`'
+
+fn same_or_different[x, y, z]
+    return (x + y + z) % 3 eq 0
+
+fn is_set[a, b, c]
+    return same_or_different[a.number, b.number, c.number] and same_or_different[a.shading, b.shading, c.shading] and same_or_different[a.colour, b.colour, c.colour] and same_or_different[a.symbol, b.symbol, c.symbol]
+
+--- every three of the cards that make a set, each as the places of its cards
+fn sets_in[cards]
+    found = []
+    n = len[cards]
+    for i in range[n]
+        for j in range[i + 1, n]
+            for k in range[j + 1, n]
+                if is_set[cards[i], cards[j], cards[k]]
+                    found = push[found, [i, j, k]]
+    return found
+
+fn deal[n]
+    cards = slice[shuffled[pack[]], 0, n]
+    log['Cards dealt: `n`']
+    log['']
+    for c in cards
+        log[named[c]]
+    log['']
+    found = sets_in[cards]
+    log['Sets present: `len[found]`']
+    log['']
+    for places in found
+        for i in places
+            log[named[cards[i]]]
+        log['']
+    log['----']
+
+fn judge[cards]
+    for c in cards
+        log['    `named[c]`']
+    log['is a set: `is_set[cards[0], cards[1], cards[2]]`']
+
+seed[3]
+for n in [4, 8, 12]
+    deal[n]
+
+log['The whole pack of 81 holds `len[sets_in[pack[]]]` sets (every two cards complete one: 81 x 80 / 6 = 1080).']
+log['']
+log['The task\'s examples:']
+example = [Card[1, 0, 1, 2], Card[0, 2, 1, 1], Card[2, 1, 1, 0]]
+judge[example]
+example[0] = Card[1, 0, 2, 2]
+judge[example]

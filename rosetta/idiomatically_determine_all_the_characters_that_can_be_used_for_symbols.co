@@ -1,0 +1,65 @@
+--- Rosetta Code: Idiomatically determine all the characters that can be used for symbols
+--- https://rosettacode.org/wiki/Idiomatically_determine_all_the_characters_that_can_be_used_for_symbols
+--- A Crow program cannot reach its own lexer, so it asks the toolchain, as the
+--- Go and Phix solutions ask theirs: for each character it writes a small
+--- program that names a function with it, at the start of the name and inside
+--- it, and asks `crow build --ir` (which reads, types and lowers a program,
+--- running nothing) whether the program is accepted. Every character from code
+--- 0 to 127 is tried, and a sample past ASCII: the spec says names are ASCII.
+--- The environment's CROW names the compiler to ask (crow on the PATH if not).
+--- Run on macOS on arm64; the answer is the language's, the same anywhere. A
+--- name may not be a keyword or a builtin either, a rule of whole names.
+
+use bits
+
+fn accepted[compiler, defined, called]
+    --- whether the compiler accepts a program defining a function by one name
+    --- and calling it by another
+    program = 'fn `defined`[]\n    return 7\n\nlog[`called`[] + 1]\n'
+    _written = write['symbols_probe.co', program]
+    asked = shell['`compiler` build --ir symbols_probe.co']
+    return asked.status eq 0
+
+fn can_start[compiler, c]
+    --- a function named with c first is accepted, and the name without c is
+    --- another name (so c is not mere space before it)
+    name = '`c`zq'
+    return accepted[compiler, name, name] and not accepted[compiler, name, 'zq']
+
+fn can_follow[compiler, c]
+    name = 'zq`c`zq'
+    return accepted[compiler, name, name]
+
+fn shown[c]
+    --- a character as it can be read: a control character or a space by its code
+    n = code[c]
+    if n lt 33 or (n gte 127 and n lte 160)
+        return '<`n`>'
+    return c
+
+compiler = env['CROW', 'crow']
+if not accepted[compiler, 'zq', 'zq']
+    halt['`compiler` build --ir did not accept a plain name: set CROW to a Crow compiler']
+
+first = []
+inside = []
+for n in range[128]
+    c = char[n]
+    if can_start[compiler, c]
+        first = push[first, c]
+    if can_follow[compiler, c]
+        inside = push[inside, c]
+log['Of the 128 ASCII characters, a name may start with these `len[first]`:']
+log[join[first, '']]
+log['and hold these `len[inside]` after its first character:']
+log[join[inside, '']]
+
+sample = ['é', 'ß', 'π', 'Ж', 'ك', '中', 'ア', '١', '²', 'ℕ', '𝑥', '·', char[160]]
+refused = for c in sample
+    if not can_start[compiler, c] and not can_follow[compiler, c]
+        shown[c]
+characters = join[refused, ' ']
+log['']
+log['Past ASCII, `len[refused]` of these `len[sample]` letters, digits, marks and spaces are refused anywhere in a name:']
+log[characters]
+_removed = rm['symbols_probe.co']

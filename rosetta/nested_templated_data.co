@@ -1,0 +1,107 @@
+--- Rosetta Code: Nested templated data
+--- https://rosettacode.org/wiki/Nested_templated_data
+--- A Crow list holds one kind of item, so a template that mixes indices and lists at
+--- one level is a tree of records: a Template is a leaf holding an index, or a branch
+--- holding a list of templates. The template is read from its text by json, Crow's
+--- reader of nested data, and turned into that tree; filling walks it and makes a tree
+--- of the same shape whose leaves hold the payloads (an index without one is shown as
+--- ??#n). The payloads no index reaches are listed, and the indices that have none.
+
+struct Template [leaf, index, parts]
+
+struct Filled [leaf, payload, parts]
+
+--- The template tree of a parsed value: a list is a branch, a number a leaf.
+fn template_of[j]
+    if type[j] eq 'array'
+        parts = for k in j
+            template_of[k]
+        return Template[false, -1, parts]
+    return Template[true, int[j], []]
+
+--- The tree of the template's shape with each index's payload where the index was.
+fn fill[t, payloads]
+    if t.leaf
+        if t.index gte 0 and t.index lt len[payloads]
+            return Filled[true, payloads[t.index], []]
+        return Filled[true, '??#`t.index`', []]
+    parts = for k in t.parts
+        fill[k, payloads]
+    return Filled[false, '', parts]
+
+--- Every index of the template, in the order a walk meets them.
+fn indices[t]
+    if t.leaf
+        return [t.index]
+    found = []
+    for k in t.parts
+        found = concat[found, indices[k]]
+    return found
+
+--- A filled tree on one line, its payloads quoted.
+fn one_line[f]
+    if f.leaf
+        return '\'`f.payload`\''
+    parts = for k in f.parts
+        one_line[k]
+    inner = join[parts, ', ']
+    return '[`inner`]'
+
+--- A filled tree as lines no wider than width where it can be: a list that does not
+--- fit on its line has an item a line, each under the bracket that opens it. The first
+--- line starts at column (the caller places it), and tail characters follow the last.
+fn pretty[f, column, tail, width]
+    flat = one_line[f]
+    if f.leaf or column + len[flat] + tail lte width
+        return [flat]
+    pad = repeat[' ', column + 1]
+    lines = []
+    last = len[f.parts] - 1
+    i = 0
+    while i lte last
+        after = 1
+        if i eq last
+            after = tail + 1
+        piece = pretty[f.parts[i], column + 1, after, width]
+        if i eq 0
+            piece[0] = '[`piece[0]`'
+        else
+            piece[0] = '`pad``piece[0]`'
+        if i eq last
+            piece[-1] = '`piece[-1]`]'
+        else
+            piece[-1] = '`piece[-1]`,'
+        lines = concat[lines, piece]
+        i = i + 1
+    return lines
+
+fn listed[names]
+    if len[names] eq 0
+        return '-'
+    return join[names, ', ']
+
+fn show[text, payloads]
+    t = template_of[json[text]]
+    log['Template: `text`']
+    log['With its payloads:']
+    for line in pretty[fill[t, payloads], 0, 0, 50]
+        log['    `line`']
+    used = indices[t]
+    unused = for i in range[len[payloads]]
+        if i not in used
+            payloads[i]
+    missing = []
+    for i in used
+        if (i lt 0 or i gte len[payloads]) and '??#`i`' not in missing
+            missing = push[missing, '??#`i`']
+    log['Unused payloads: `listed[unused]`']
+    log['Indices without a payload: `listed[missing]`']
+    log['']
+
+payloads = for i in range[7]
+    'Payload#`i`'
+log['Payloads: `join[payloads, \', \']`']
+log['']
+show['[[[1, 2], [3, 4, 1], 5]]', payloads]
+show['[[[1, 2], [10, 4, 1], 5]]', payloads]
+show['[[[6, [0, [], [-1, 4]]], 2], 6, 10]', payloads]

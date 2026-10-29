@@ -1,0 +1,65 @@
+--- Rosetta Code: Pathological floating point problems
+--- https://rosettacode.org/wiki/Pathological_floating_point_problems
+--- Each problem is written once and run twice: with floats, which go wrong, and with
+--- fractions, Crow's exact ratios of growing ints, which do not. A literal written with
+--- a point (333.75) is the number it writes where it meets a fraction, so the formulas
+--- need no change; each function is compiled once for floats and once for fractions.
+--- The exact answers are shown to the places asked for by fmt, which rounds a fraction
+--- half away from zero.
+
+use math
+
+--- Muller's sequence from v1 and v2 up to its nth term: v(n) = 111 - 1130 / v(n-1) + 3000 / (v(n-1) v(n-2))
+fn muller[v1, v2, n]
+    vs = [v1, v2]
+    while len[vs] lt n
+        a = vs[-1]
+        b = vs[-2]
+        vs = push[vs, 111 - 1130 / a + 3000 / (a * b)]
+    return vs
+
+--- the Chaotic Bank Society: each year the balance is multiplied by the year, less $1
+fn balance_after[start, years]
+    balance = start
+    for year in range[1, years + 1]
+        balance = balance * year - 1
+    return balance
+
+--- e as the sum of 1 / k! for k below `terms`, exactly
+fn e_exactly[terms]
+    total = fraction[0]
+    term = fraction[1]
+    for k in range[terms]
+        if k gt 0
+            term = term / k
+        total = total + term
+    return total
+
+--- Siegfried Rump's example
+fn rump[a, b]
+    return 333.75 * b ^ 6 + a ^ 2 * (11 * a ^ 2 * b ^ 2 - b ^ 6 - 121 * b ^ 4 - 2) + 5.5 * b ^ 8 + a / (2 * b)
+
+log['Task 1: v(1) = 2, v(2) = -4, v(n) = 111 - 1130 / v(n-1) + 3000 / (v(n-1) v(n-2))']
+log['']
+floats = muller[2.0, -4.0, 100]
+exact = muller[fraction[2], fraction[-4], 100]
+log['     n  floats                exact, 40 places']
+for n in [3, 4, 5, 6, 7, 8, 20, 30, 50, 100]
+    f = fmt[str[floats[n - 1]], width = 20]
+    log['`fmt[n, width = 6]`  `f`  `fmt[exact[n - 1], decimals = 40]`']
+log['']
+log['v(100) to 78 places: `fmt[exact[99], decimals = 78]`']
+log['']
+
+log['Task 2: the Chaotic Bank Society, $(e - 1) for 25 years']
+log['']
+exact_e = e_exactly[60]
+log['with floats:    $`balance_after[exp[1.0] - 1.0, 25]`']
+log['with fractions: $`fmt[balance_after[exact_e - 1, 25], decimals = 16]` (e as the sum of 1/k! for k below 60)']
+log['']
+
+log['Task 3: Rump\'s example, f(77617, 33096)']
+log['']
+log['with floats:    `rump[77617.0, 33096.0]`']
+r = rump[fraction[77617], fraction[33096]]
+log['with fractions: `r` = `fmt[r, decimals = 15]`']

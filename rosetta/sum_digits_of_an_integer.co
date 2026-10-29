@@ -1,0 +1,58 @@
+--- Rosetta Code: Sum digits of an integer
+--- https://rosettacode.org/wiki/Sum_digits_of_an_integer
+--- Two ways that agree: a number's digits in a base are its remainders as it is divided
+--- by the base again and again, and digits written as text (0-9, then a-z for ten to
+--- thirty-five) are read one by one. Ints grow, so a number of any size is summed.
+
+--- the sum of the digits of n written in the base (the sign is not a digit)
+fn digit_sum[n, base = 10]
+    rest = abs[n]
+    total = 0
+    while rest gt 0
+        total = total + rest % base
+        rest = rest / base
+    return total
+
+--- n written in the base, its digits 0-9 then a-z
+fn in_base[n, base]
+    symbols = split['0123456789abcdefghijklmnopqrstuvwxyz', '']
+    if n eq 0
+        return '0'
+    rest = abs[n]
+    digits = []
+    while rest gt 0
+        digits = push[digits, symbols[rest % base]]
+        rest = rest / base
+    return join[reverse[digits], '']
+
+--- the sum of the digits written in the text, read in the base
+fn text_digit_sum[text, base = 10]
+    worth = map[split['0123456789abcdefghijklmnopqrstuvwxyz', ''], range[36]]
+    total = 0
+    for c in split[lower[text], '']
+        if c not in worth or worth[c] gte base
+            return error['\'`c`\' is no digit in base `base`', 'argument']
+        total = total + worth[c]
+    return total
+
+fn show[n, base]
+    written = in_base[n, base]
+    log['`fmt[written, width = 12]` (base `base`) sums to `digit_sum[n, base]`; read as text, `text_digit_sum[written, base]`']
+
+show[1, 10]
+show[1234, 10]
+show[254, 16]
+show[3854, 16]
+log['']
+show[12345, 10]
+show[255, 2]
+show[1295, 36]
+log['2^1000 has digits summing to `digit_sum[2 ^ 1000]`']
+factorial = 1
+for k in range[1, 101]
+    factorial = factorial * k
+log['100! has digits summing to `digit_sum[factorial]`']
+log['-123045 sums to `digit_sum[-123045]`']
+log['f0e read in base 16 sums to `text_digit_sum[\'f0e\', 16]`']
+bad = text_digit_sum['19', 8]
+log['19 read in base 8: `bad.reason`']

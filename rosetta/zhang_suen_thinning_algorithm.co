@@ -1,0 +1,170 @@
+--- Rosetta Code: Zhang-Suen thinning algorithm
+--- https://rosettacode.org/wiki/Zhang-Suen_thinning_algorithm
+--- An image is a list of rows of 0s and 1s. A round makes the task's two passes: each
+--- notes every black pixel with eight neighbours that meets its four conditions, then
+--- whitens them all at once; rounds go on until neither pass whitens a pixel. Shown as
+--- ASCII art, # for black and . for white: the task's image, then the example image of
+--- the task's description, checked against the thinned image the description shows.
+
+--- an image from its rows written as text: '1' or '#' is black, anything else white
+fn image_of[rows]
+    image = for row in rows
+        pixels = for ch in split[row, '']
+            if ch eq '1' or ch eq '#'
+                1
+            else
+                0
+        pixels
+    return image
+
+--- an image as rows of text, # for black and . for white
+fn picture_of[image]
+    lines = for row in image
+        cells = for p in row
+            if p eq 1
+                '#'
+            else
+                '.'
+        join[cells, '']
+    return lines
+
+--- P2, P3, …, P9: the neighbours of the pixel at row r, column c, from the one above
+--- it clockwise
+fn neighbours[image, r, c]
+    above = image[r - 1]
+    here = image[r]
+    below = image[r + 1]
+    return [above[c], above[c + 1], here[c + 1], below[c + 1], below[c], below[c - 1], here[c - 1], above[c - 1]]
+
+--- B(P1): how many of the neighbours are black
+fn black_count[ps]
+    count = 0
+    for p in ps
+        count = count + p
+    return count
+
+--- A(P1): the white-to-black steps in the circle P2, P3, …, P9, P2
+fn transitions[ps]
+    count = 0
+    for i in range[8]
+        if ps[i] eq 0 and ps[(i + 1) % 8] eq 1
+            count = count + 1
+    return count
+
+--- whether a pass whitens the pixel at row r, column c: (0) it is black, (1) two to six
+--- of its neighbours are black, (2) one white-to-black step around it; then (3) and (4),
+--- in the first pass P2·P4·P6 and P4·P6·P8 each hold a white pixel, in the second
+--- P2·P4·P8 and P2·P6·P8
+fn whitens[image, r, c, pass]
+    if image[r][c] ne 1
+        return false
+    ps = neighbours[image, r, c]
+    b = black_count[ps]
+    if b lt 2 or b gt 6 or transitions[ps] ne 1
+        return false
+    p2 = ps[0]
+    p4 = ps[2]
+    p6 = ps[4]
+    p8 = ps[6]
+    if pass eq 1
+        return p2 * p4 * p6 eq 0 and p4 * p6 * p8 eq 0
+    return p2 * p4 * p8 eq 0 and p2 * p6 * p8 eq 0
+
+--- the pixels with eight neighbours that a pass whitens, as [row, column] pairs
+fn noted[image, pass]
+    found = []
+    for r in range[1, len[image] - 1]
+        for c in range[1, len[image[0]] - 1]
+            if whitens[image, r, c, pass]
+                found = push[found, [r, c]]
+    return found
+
+--- the image with the noted pixels white
+fn whiten[image, pixels]
+    for at in pixels
+        image[at[0]][at[1]] = 0
+    return image
+
+--- Zhang-Suen thinning: rounds of the two passes until a round whitens nothing
+fn thin[image]
+    changed = true
+    while changed
+        first = noted[image, 1]
+        image = whiten[image, first]
+        second = noted[image, 2]
+        image = whiten[image, second]
+        changed = len[first] + len[second] gt 0
+    return image
+
+--- a title, then the image's rows
+fn show[title, image]
+    log[title]
+    for line in picture_of[image]
+        log[line]
+
+task = [
+    '00000000000000000000000000000000',
+    '01111111110000000111111110000000',
+    '01110001111000001111001111000000',
+    '01110000111000001110000111000000',
+    '01110001111000001110000000000000',
+    '01111111110000001110000000000000',
+    '01110111100000001110000111000000',
+    '01110011110011101111001111011100',
+    '01110001111011100111111110011100',
+    '00000000000000000000000000000000'
+]
+example = [
+    '...........................................................',
+    '.#################...................#############.........',
+    '.##################...............################.........',
+    '.###################............##################.........',
+    '.########.....#######..........###################.........',
+    '...######.....#######.........#######.......######.........',
+    '...######.....#######........#######.......................',
+    '...#################.........#######.......................',
+    '...################..........#######.......................',
+    '...#################.........#######.......................',
+    '...######.....#######........#######.......................',
+    '...######.....#######........#######.......................',
+    '...######.....#######.........#######.......######.........',
+    '.########.....#######..........###################.........',
+    '.########.....#######.######....##################.######..',
+    '.########.....#######.######......################.######..',
+    '.########.....#######.######.........#############.######..',
+    '...........................................................'
+]
+example_thinned = [
+    '...........................................................',
+    '...........................................................',
+    '....#.##########.......................#######.............',
+    '.....##........#...................####.......#............',
+    '.....#..........#.................##.......................',
+    '.....#..........#................#.........................',
+    '.....#..........#................#.........................',
+    '.....#..........#................#.........................',
+    '.....############...............#..........................',
+    '.....#..........#...............#..........................',
+    '.....#..........#................#.........................',
+    '.....#..........#................#.........................',
+    '.....#..........#................#.........................',
+    '.....#............................##.......................',
+    '.....#.............................############............',
+    '.......................###..........................###....',
+    '...........................................................',
+    '...........................................................'
+]
+
+image = image_of[task]
+show['The task\'s image:', image]
+log['']
+show['Thinned:', thin[image]]
+
+log['']
+pattern = image_of[example]
+show['The example of the task\'s description:', pattern]
+log['']
+thinned = thin[pattern]
+show['Thinned:', thinned]
+log['']
+log['The same as the thinned image the description shows: `thinned eq image_of[example_thinned]`']

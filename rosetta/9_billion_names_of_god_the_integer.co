@@ -1,0 +1,99 @@
+--- Rosetta Code: 9 billion names of God the integer
+--- https://rosettacode.org/wiki/9_billion_names_of_God_the_integer
+--- Entry k of row n counts the names of n that begin with k: the partitions of
+--- n - k into parts no larger than k. A row comes from the coin-change
+--- recurrence over the parts 1, 2, …, and G(n) is its sum. P(n), the partition
+--- function, comes from Euler's pentagonal number theorem; the two agree.
+--- The extra credit's plot of P(n) for n = 1 … 999 is drawn in characters, on a
+--- log scale: a row for every hundredfold.
+
+use math
+
+fn row[n]
+    --- q[m] counts the partitions of m into the parts taken so far. After part k,
+    --- q[n - k] is entry k; past half of n, q[n - k] is already P(n - k).
+    q = for m in range[n + 1]
+        0
+    q[0] = 1
+    entries = []
+    for k in range[1, n + 1]
+        if 2 * k lte n
+            for m in range[k, n - k + 1]
+                q[m] = q[m] + q[m - k]
+        entries = push[entries, q[n - k]]
+    entries
+
+fn g[n]
+    total = 0
+    for x in row[n]
+        total = total + x
+    total
+
+fn partitions_to[n]
+    --- P(0) … P(n): P(m) = Σ (-1)^(k+1) (P(m - k(3k-1)/2) + P(m - k(3k+1)/2))
+    p = for m in range[n + 1]
+        0
+    p[0] = 1
+    for m in range[1, n + 1]
+        total = 0
+        k = 1
+        first = m - 1
+        while first gte 0
+            term = p[first]
+            if first gte k
+                term = term + p[first - k]
+            if k % 2 eq 1
+                total = total + term
+            else
+                total = total - term
+            k = k + 1
+            first = m - k * (3 * k - 1) / 2
+        p[m] = total
+    p
+
+fn centred_row[entries, rows]
+    cells = for x in entries
+        fmt[x, width = 4]
+    indent = repeat[' ', 2 * (rows - len[entries])]
+    '`indent``join[cells, \'\']`'
+
+fn plot[p, last, width]
+    --- a column for every step of n, a row for every two powers of ten
+    top = 2 * ceil[log10[float[p[last]]] / 2]
+    height = top / 2 + 1
+    grid = for r in range[height]
+        blank = for c in range[width]
+            ' '
+        blank
+    for c in range[width]
+        n = 1 + c * (last - 1) / (width - 1)
+        r = round[(top - log10[float[p[n]]]) / 2]
+        grid[r][c] = '*'
+    lines = for r in range[height]
+        power = top - 2 * r
+        label = ''
+        if power % 10 eq 0
+            label = '10^`power`'
+        drawn = join[grid[r], '']
+        sub['`fmt[label, width = 6, align = \'right\']` |`drawn`', ' +$', '']
+    for line in lines
+        log[line]
+    log['       +`repeat[\'-\', width]`']
+    log['        1`fmt[str[last], width = width - 1, align = \'right\']`']
+
+rows = 25
+log['The first `rows` rows:']
+for n in range[1, rows + 1]
+    log[centred_row[row[n], rows]]
+log['']
+
+wanted = [23, 123, 1234, 12345]
+for n in wanted
+    log['G(`n`) = `g[n]`']
+log['']
+p = partitions_to[12345]
+for n in wanted
+    log['P(`n`) = `p[n]`']
+log['']
+log['P(n) for n = 1 to 999:']
+plot[p, 999, 60]

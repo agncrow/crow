@@ -1,0 +1,71 @@
+--- Rosetta Code: Equal prime and composite sums
+--- https://rosettacode.org/wiki/Equal_prime_and_composite_sums
+--- A sieve tells the primes from the composites. The sum of the first n primes
+--- and the sum of the first m composites run side by side, the smaller taking
+--- its next term, and every sum the two reach together is kept.
+
+struct Meeting [total, n, last_prime, m, last_composite]
+
+--- prime[i] says whether i is prime, for i below the limit
+fn sieve[limit]
+    prime = for i in range[limit]
+        i gte 2
+    p = 2
+    while p * p lt limit
+        if prime[p]
+            k = p * p
+            while k lt limit
+                prime[k] = false
+                k = k + p
+        p = p + 1
+    return prime
+
+fn next_prime[prime, after]
+    i = after + 1
+    while not prime[i]
+        i = i + 1
+    return i
+
+fn next_composite[prime, after]
+    i = after + 1
+    while prime[i]
+        i = i + 1
+    return i
+
+--- the first `wanted` sums shared by the two sequences; the sieve must reach
+--- past the last prime and the last composite they need
+fn meetings[wanted, limit]
+    prime = sieve[limit]
+    found = []
+    p = 2
+    c = 4
+    psum = 2
+    csum = 4
+    n = 1
+    m = 1
+    while len[found] lt wanted
+        if psum eq csum
+            found = push[found, Meeting[psum, n, p, m, c]]
+        if psum lte csum
+            p = next_prime[prime, p]
+            psum = psum + p
+            n = n + 1
+        else
+            c = next_composite[prime, c]
+            csum = csum + c
+            m = m + 1
+    return found
+
+--- cells right-aligned in columns of the given widths
+fn line[cells, widths]
+    parts = for i in range[len[cells]]
+        fmt[cells[i], width = widths[i], align = 'right']
+    return join[parts, '  ']
+
+--- eight meetings: the ninth needs the sieve to reach 17.7 million
+widths = [14, 9, 12, 12, 14]
+log[line[['sum', 'primes', 'last prime', 'composites', 'last composite'], widths]]
+for e in meetings[8, 1600000]
+    cells = for x in [e.total, e.n, e.last_prime, e.m, e.last_composite]
+        fmt[x, commas = true]
+    log[line[cells, widths]]

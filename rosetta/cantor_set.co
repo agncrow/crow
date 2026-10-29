@@ -1,0 +1,30 @@
+--- Rosetta Code: Cantor set
+--- https://rosettacode.org/wiki/Cantor_set
+--- Drawn in characters. A point of the line, its place written in base 3, is
+--- kept at level k when none of its first k digits is a 1: it lies in no
+--- middle third removed so far.
+
+fn kept[x, level, width]
+    third = width / 3
+    k = 0
+    while k lt level
+        if (x / third) % 3 eq 1
+            return false
+        third = third / 3
+        k = k + 1
+    return true
+
+fn cantor_line[level, width]
+    marks = for x in range[width]
+        if kept[x, level, width]
+            '*'
+        else
+            ' '
+    return join[marks, '']
+
+fn draw_cantor[levels]
+    width = 3 ^ (levels - 1)
+    for level in range[levels]
+        log[cantor_line[level, width]]
+
+draw_cantor[5]

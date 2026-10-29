@@ -1,0 +1,144 @@
+--- Rosetta Code: Compiler/code generator
+--- https://rosettacode.org/wiki/Compiler/code_generator
+--- Reads the syntax analyzer's flattened tree from standard input, rebuilds it as
+--- records (0 for none), and walks it to make the virtual machine's code: each
+--- variable gets a slot and each string a place in the pool at its first use, and a
+--- jump forward is emitted with a hole that is filled once its target is known.
+--- The listing is the C and Python references' format.
+
+--- a node: a leaf's value is its text; an inner node's children are nodes
+struct Node [tag, value, left, right]
+
+--- a subtree read from the listing, and the line after it
+struct Loaded [node, next]
+
+--- an instruction: its address, its name, and its operand (a jump's is its target)
+struct Instr [at, name, arg]
+
+--- the code so far and its size in bytes, the variables' slots, and the strings
+struct Gen [code, size, vars, strings, pool]
+
+--- the tree whose listing starts at line i: a node, then its left and right subtrees
+fn load[lines, i]
+    m = find[lines[i], '^\s*(\S+)\s*(.*)$']
+    tag = m.groups[1]
+    if tag eq ';'
+        return Loaded[0, i + 1]
+    value = trim[m.groups[2]]
+    if value ne ''
+        return Loaded[Node[tag, value, 0, 0], i + 1]
+    left = load[lines, i + 1]
+    right = load[lines, left.next]
+    return Loaded[Node[tag, '', left.node, right.node], right.next]
+
+fn read_tree[]
+    lines = []
+    line = input[]
+    while line.ok
+        if trim[line] ne ''
+            lines = push[lines, line]
+        line = input[]
+    if len[lines] eq 0
+        return error['no tree on the input', 'gen']
+    return load[lines, 0].node
+
+fn emit[s, name, arg]
+    size = 1
+    if name in ['fetch', 'store', 'push', 'jmp', 'jz']
+        size = 5
+    s.code = push[s.code, Instr[s.size, name, arg]]
+    s.size = s.size + size
+    return s
+
+--- the jump at position k of the code made to go to target
+fn patch[s, k, target]
+    s.code[k] = Instr[s.code[k].at, s.code[k].name, target]
+    return s
+
+--- the variable's slot, given one at its first use
+fn slot_of[s, name]
+    if name not in s.vars
+        s.vars = set[s.vars, name, len[s.vars]]
+    return s
+
+--- the string's place in the pool, given one at its first use
+fn place_of[s, text]
+    if text not in s.strings
+        s.strings = set[s.strings, text, len[s.pool]]
+        s.pool = push[s.pool, text]
+    return s
+
+--- the instruction of each operator node
+fn operators[]
+    return map[Multiply = 'mul', Divide = 'div', Mod = 'mod', Add = 'add', Subtract = 'sub', Less = 'lt', LessEqual = 'le', Greater = 'gt', GreaterEqual = 'ge', Equal = 'eq', NotEqual = 'ne', And = 'and', Or = 'or', Negate = 'neg', Not = 'not', Prtc = 'prtc', Prti = 'prti', Prts = 'prts']
+
+--- the code of a subtree, added to what is made so far
+fn gen[t, s, ops]
+    if t eq 0
+        return s
+    tag = t.tag
+    if tag eq 'Identifier'
+        s = slot_of[s, t.value]
+        return emit[s, 'fetch', s.vars[t.value]]
+    if tag eq 'Integer'
+        return emit[s, 'push', int[t.value]]
+    if tag eq 'String'
+        s = place_of[s, t.value]
+        return emit[s, 'push', s.strings[t.value]]
+    if tag eq 'Assign'
+        name = t.left.value
+        s = slot_of[s, name]
+        s = gen[t.right, s, ops]
+        return emit[s, 'store', s.vars[name]]
+    if tag eq 'If'
+        s = gen[t.left, s, ops]
+        hole = len[s.code]
+        s = emit[s, 'jz', 0]
+        s = gen[t.right.left, s, ops]
+        if t.right.right eq 0
+            return patch[s, hole, s.size]
+        skip = len[s.code]
+        s = emit[s, 'jmp', 0]
+        s = patch[s, hole, s.size]
+        s = gen[t.right.right, s, ops]
+        return patch[s, skip, s.size]
+    if tag eq 'While'
+        top = s.size
+        s = gen[t.left, s, ops]
+        hole = len[s.code]
+        s = emit[s, 'jz', 0]
+        s = gen[t.right, s, ops]
+        s = emit[s, 'jmp', top]
+        return patch[s, hole, s.size]
+    if tag eq 'Sequence'
+        s = gen[t.left, s, ops]
+        return gen[t.right, s, ops]
+    if tag not in ops
+        return error['unknown node \'`tag`\'', 'gen']
+    s = gen[t.left, s, ops]
+    s = gen[t.right, s, ops]
+    return emit[s, ops[tag], 0]
+
+--- an instruction's line of the listing
+fn listed[i]
+    at = fmt[i.at, width = 4]
+    if i.name eq 'fetch' or i.name eq 'store'
+        return '`at` `i.name` [`i.arg`]'
+    if i.name eq 'push'
+        return '`at` push  `i.arg`'
+    if i.name eq 'jmp' or i.name eq 'jz'
+        name = fmt[i.name, width = 6]
+        return '`at` `name` (`i.arg - i.at - 1`) `i.arg`'
+    return '`at` `i.name`'
+
+tree = read_tree[]
+s = gen[tree, Gen[[], 0, map[], map[], []], operators[]]
+if not s.ok
+    log['error: `s.reason`']
+else
+    s = emit[s, 'halt', 0]
+    log['Datasize: `len[s.vars]` Strings: `len[s.pool]`']
+    for text in s.pool
+        log[text]
+    for i in s.code
+        log[listed[i]]

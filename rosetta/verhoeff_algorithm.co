@@ -1,0 +1,117 @@
+--- Rosetta Code: Verhoeff algorithm
+--- https://rosettacode.org/wiki/Verhoeff_algorithm
+--- The three tables are made from their description, not written out: d is the
+--- dihedral group D5 (0-4 the rotations, 5-9 the reflections), inv[j] the k with
+--- d[j][k] = 0, and row i of p is the permutation (1 5 7 6 2 8 3 0 9 4) applied i
+--- times. Digits are read from the right, c = d[c][p[i % 8][digit]]: a number
+--- with its check digit leaves c = 0, and the check digit of a number is inv of
+--- the c its digits followed by 0 leave.
+
+struct Tables [d, inv, p]
+
+--- j * k in D5.
+fn dihedral[j, k]
+    if j lt 5 and k lt 5
+        return (j + k) % 5
+    if j lt 5
+        return 5 + (j + k) % 5
+    if k lt 5
+        return 5 + (j - k + 5) % 5
+    return (j - k + 5) % 5
+
+fn inverse[j]
+    k = 0
+    while dihedral[j, k] ne 0
+        k = k + 1
+    return k
+
+fn tables[]
+    d = for j in range[10]
+        row = for k in range[10]
+            dihedral[j, k]
+        row
+    inv = for j in range[10]
+        inverse[j]
+    once = [1, 5, 7, 6, 2, 8, 3, 0, 9, 4]
+    identity = for n in range[10]
+        n
+    p = [identity]
+    while len[p] lt 8
+        last = p[-1]
+        following = for n in range[10]
+            once[last[n]]
+        p = push[p, following]
+    return Tables[d, inv, p]
+
+--- The c that a number's digits leave, read from the right; with `verbose`,
+--- each step shown.
+fn checksum[t, digits, verbose]
+    if verbose
+        log['']
+        log[' i  nᵢ  p[i,nᵢ]  c']
+        log['------------------']
+    c = 0
+    n = len[digits]
+    for i in range[n]
+        digit = int[digits[n - 1 - i]]
+        permuted = t.p[i % 8][digit]
+        c = t.d[c][permuted]
+        if verbose
+            log['`fmt[i, width = 2]`  `digit`      `permuted`     `c`']
+    return c
+
+fn check_digit[t, number, verbose]
+    if verbose
+        log['Check digit calculations for \'`number`\':']
+    c = checksum[t, '`number`0', verbose]
+    if verbose
+        log['']
+        log['inv[`c`] = `t.inv[c]`']
+    return t.inv[c]
+
+fn is_valid[t, number, verbose]
+    if verbose
+        log['Validation calculations for \'`number`\':']
+    return checksum[t, str[number], verbose] eq 0
+
+--- How many of the numbers a single wrong digit or a swap of two adjacent
+--- different digits makes of `text` pass the check: none should.
+fn passed_mistakes[t, text]
+    n = len[text]
+    passed = 0
+    tried = 0
+    for i in range[n]
+        for d in range[10]
+            if str[d] ne text[i]
+                wrong = concat[[slice[text, 0, i], str[d], slice[text, i + 1, n]]]
+                tried = tried + 1
+                if checksum[t, wrong, false] eq 0
+                    passed = passed + 1
+    for i in range[n - 1]
+        if text[i] ne text[i + 1]
+            swapped = concat[[slice[text, 0, i], text[i + 1], text[i], slice[text, i + 2, n]]]
+            tried = tried + 1
+            if checksum[t, swapped, false] eq 0
+                passed = passed + 1
+    return [tried, passed]
+
+t = tables[]
+for number in [236, 12345, 123456789012]
+    verbose = number lt 100000
+    digit = check_digit[t, number, verbose]
+    if verbose
+        log['']
+    log['The check digit for \'`number`\' is \'`digit`\'']
+    log['']
+    for last in [digit, 9]
+        candidate = number * 10 + last
+        verdict = 'incorrect'
+        if is_valid[t, candidate, verbose]
+            verdict = 'correct'
+        if verbose
+            log['']
+        log['The validation for \'`candidate`\' is `verdict`.']
+        log['']
+
+counts = passed_mistakes[t, '1234567890120']
+log['Of the `counts[0]` single-digit errors and adjacent swaps of 1234567890120, `counts[1]` pass the check.']

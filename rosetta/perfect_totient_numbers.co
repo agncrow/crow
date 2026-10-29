@@ -1,0 +1,35 @@
+--- Rosetta Code: Perfect totient numbers
+--- https://rosettacode.org/wiki/Perfect_totient_numbers
+--- n is a perfect totient number when phi(n) + phi(phi(n)) + ... down to 1 adds
+--- up to n. Euler's totient of every number below a limit comes from a sieve:
+--- each prime p multiplies the totients of its multiples by (p - 1) / p.
+
+fn totients[limit]
+    phi = range[limit]
+    for p in range[2, limit]
+        --- no smaller prime has touched phi(p): p is prime
+        if phi[p] eq p
+            m = p
+            while m lt limit
+                phi[m] = phi[m] / p * (p - 1)
+                m = m + p
+    return phi
+
+fn is_perfect_totient[n, phi]
+    total = 0
+    t = n
+    while t gt 1
+        t = phi[t]
+        total = total + t
+    return total eq n
+
+limit = 10000
+phi = totients[limit]
+found = []
+n = 2
+while len[found] lt 20 and n lt limit
+    if is_perfect_totient[n, phi]
+        found = push[found, n]
+    n = n + 1
+log['The first 20 perfect totient numbers:']
+log[join[found, ' ']]

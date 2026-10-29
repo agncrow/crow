@@ -1,0 +1,49 @@
+--- Rosetta Code: Vector products
+--- https://rosettacode.org/wiki/Vector_products
+--- A vector is a list of its three components; each product is written from its
+--- definition, so whole numbers stay whole. The dot product is checked against
+--- math's dot, and both triple products against their identities.
+
+use math
+
+fn dot_product[a, b]
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+fn cross_product[a, b]
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+
+--- a . (b x c): the volume of the box the three span, signed.
+fn scalar_triple_product[a, b, c]
+    return dot_product[a, cross_product[b, c]]
+
+--- a x (b x c)
+fn vector_triple_product[a, b, c]
+    return cross_product[a, cross_product[b, c]]
+
+fn shown[v]
+    parts = for x in v
+        str[x]
+    listed = join[parts, ', ']
+    return '(`listed`)'
+
+a = [3, 4, 5]
+b = [4, 3, 5]
+c = [-5, -12, -13]
+
+log['a = `shown[a]`']
+log['b = `shown[b]`']
+log['c = `shown[c]`']
+log['']
+log['a . b       = `dot_product[a, b]`']
+log['a x b       = `shown[cross_product[a, b]]`']
+log['a . (b x c) = `scalar_triple_product[a, b, c]`']
+log['a x (b x c) = `shown[vector_triple_product[a, b, c]]`']
+log['']
+
+--- the checks: math's dot; a . (b x c) is also (a x b) . c; and
+--- a x (b x c) is b (a . c) - c (a . b)
+expanded = b * dot_product[a, c] - c * dot_product[a, b]
+log['Checks:']
+log['math\'s dot[a, b]    = `dot[a, b]`']
+log['(a x b) . c         = `dot_product[cross_product[a, b], c]`']
+log['b(a . c) - c(a . b) = `shown[expanded]`']

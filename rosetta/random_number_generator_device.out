@@ -1,0 +1,3 @@
+seeded generator: the bytes 71 3 33 149 (hex 47032195) make the 32-bit number 1191387541
+seeded generator: the bytes 5 79 27 107 (hex 054f1b6b) make the 32-bit number 89070443
+(run with the argument device to read /dev/urandom)

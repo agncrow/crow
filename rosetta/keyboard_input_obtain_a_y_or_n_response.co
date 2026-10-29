@@ -1,0 +1,25 @@
+--- Rosetta Code: Keyboard input/Obtain a Y or N response
+--- https://rosettacode.org/wiki/Keyboard_input/Obtain_a_Y_or_N_response
+--- Partial: Crow reads standard input a line at a time and has no terminal
+--- control, so it can neither flush the keys pressed before the question nor
+--- take a key without Enter. The answer is therefore a line: lines are read
+--- until one holds Y or N (either case, spaces around it ignored), and any
+--- other line asks again. The end of the input is no answer.
+
+--- the first line answering the question with Y or N, as 'Y' or 'N'
+fn ask[question]
+    line = input['`question` (Y/N) ']
+    while line.ok
+        key = upper[trim[line]]
+        if key eq 'Y' or key eq 'N'
+            return key
+        log['\'`line`\' is neither Y nor N.']
+        line = input['`question` (Y/N) ']
+    return error['the input ended before a Y or an N', 'input']
+
+for question in ['Continue?', 'Save the changes?', 'Quit?']
+    answer = ask[question]
+    if answer.ok
+        log['You answered `answer`.']
+    else
+        log['No answer: `answer.reason`.']

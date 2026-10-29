@@ -1,0 +1,105 @@
+--- Rosetta Code: Aho–Corasick algorithm
+--- https://rosettacode.org/wiki/Aho–Corasick_algorithm
+--- A trie of the patterns (a map of edges per node), failure links found breadth
+--- first, each node's outputs merged with its failure node's; one pass over the text.
+
+use bits, math
+
+struct Automaton [edges, fail, out]
+
+fn build[patterns]
+    edges = [map[]]
+    out = [[]]
+    for i in range[len[patterns]]
+        node = 0
+        for c in split[patterns[i], '']
+            if c in edges[node]
+                node = edges[node][c]
+            else
+                edges = push[edges, map[]]
+                out = push[out, []]
+                next = len[edges] - 1
+                edges[node] = set[edges[node], c, next]
+                node = next
+        out[node] = push[out[node], i]
+    fail = for e in edges
+        0
+    queue = values[edges[0]]
+    head = 0
+    while head lt len[queue]
+        u = queue[head]
+        head = head + 1
+        for c in keys[edges[u]]
+            v = edges[u][c]
+            f = fail[u]
+            while f gt 0 and c not in edges[f]
+                f = fail[f]
+            if u gt 0 and c in edges[f]
+                fail[v] = edges[f][c]
+            out[v] = concat[out[v], out[fail[v]]]
+            queue = push[queue, v]
+    return Automaton[edges, fail, out]
+
+--- the start of every match, per pattern
+fn search[a, patterns, text]
+    places = for p in patterns
+        []
+    state = 0
+    chars = split[text, '']
+    for j in range[len[chars]]
+        c = chars[j]
+        while state gt 0 and c not in a.edges[state]
+            state = a.fail[state]
+        if c in a.edges[state]
+            state = a.edges[state][c]
+        for i in a.out[state]
+            places[i] = push[places[i], j - len[patterns[i]] + 1]
+    return places
+
+fn random_text[n]
+    letters = for i in range[n]
+        char[97 + rand[26]]
+    return join[letters, '']
+
+fn show[patterns, found]
+    for i in range[len[patterns]]
+        shown = for s in found[i]
+            str[s]
+        p = fmt[patterns[i], width = 6]
+        if len[shown] eq 0
+            log['`p` does not occur']
+        else
+            where = join[shown, ', ']
+            log['`p` starts at `where`']
+
+--- how many matches the search found in all, and the longest words among them
+fn report[words, hits, nodes, letters]
+    total = 0
+    longest = 0
+    for i in range[len[words]]
+        total = total + len[hits[i]]
+        if len[hits[i]] gt 0
+            longest = max[longest, len[words[i]]]
+    best = for i in range[len[words]]
+        if len[hits[i]] gt 0 and len[words[i]] eq longest
+            words[i]
+    log['`len[words]` words of unixdict.txt, a trie of `nodes` nodes, searched for']
+    log['in a random text of `letters` letters: `total` matches.']
+    log['The longest words found have `longest` letters:']
+    i = 0
+    while i lt len[best]
+        log[join[slice[best, i, i + 8], ' ']]
+        i = i + 8
+
+text = 'abaaabaa'
+patterns = ['a', 'aa', 'abaa', 'abaaa', 'bb']
+log['Text: `text` (positions counted from 0)']
+show[patterns, search[build[patterns], patterns, text]]
+
+--- a large dictionary over a long text
+seed[7]
+words = split[trim[read['unixdict.txt']], '\n']
+long = random_text[100000]
+big = build[words]
+log['']
+report[words, search[big, words, long], len[big.edges], len[long]]

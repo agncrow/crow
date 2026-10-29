@@ -1,0 +1,37 @@
+With sorting:
+Sorted list: [6, 11, 14, 25, 49, 69, 81, 123, 243]
+Two smallest: 6 + 11 = 17
+Sorted list: [14, 17, 25, 49, 69, 81, 123, 243]
+Two smallest: 14 + 17 = 31
+Sorted list: [25, 31, 49, 69, 81, 123, 243]
+Two smallest: 25 + 31 = 56
+Sorted list: [49, 56, 69, 81, 123, 243]
+Two smallest: 49 + 56 = 105
+Sorted list: [69, 81, 105, 123, 243]
+Two smallest: 69 + 81 = 150
+Sorted list: [105, 123, 150, 243]
+Two smallest: 105 + 123 = 228
+Sorted list: [150, 228, 243]
+Two smallest: 150 + 228 = 378
+Sorted list: [243, 378]
+Two smallest: 243 + 378 = 621
+Last item is 621.
+
+Without sorting:
+List: [6, 81, 243, 14, 25, 49, 123, 69, 11]
+Two smallest: 6 + 11 = 17
+List: [81, 243, 14, 25, 49, 123, 69, 17]
+Two smallest: 14 + 17 = 31
+List: [81, 243, 25, 49, 123, 69, 31]
+Two smallest: 25 + 31 = 56
+List: [81, 243, 49, 123, 69, 56]
+Two smallest: 49 + 56 = 105
+List: [81, 243, 123, 69, 105]
+Two smallest: 69 + 81 = 150
+List: [243, 123, 105, 150]
+Two smallest: 105 + 123 = 228
+List: [243, 150, 228]
+Two smallest: 150 + 228 = 378
+List: [243, 378]
+Two smallest: 243 + 378 = 621
+Last item is 621.
