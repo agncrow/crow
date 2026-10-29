@@ -1228,6 +1228,26 @@ impl Emitter {
 
     // ── indexing, fields, meta ──────────────────────────────────────
 
+    /// A list's item as a reference to where it lies, when the item is
+    /// read by one int position from a list a local holds, or from such an
+    /// item in turn (`cells[k]` of `cells[k][i]`); none for any other
+    /// expression, which is printed as a value. The reference lives only
+    /// inside the expression that reads through it.
+    fn item_place(&mut self, e: &Expr) -> Option<String> {
+        let Expr::Index { base, indices, ty } = e else { return None };
+        let [at] = indices.as_slice() else { return None };
+        if matches!(ty, Ty::Result(_)) || !matches!(self.tt(base), Ty::List(_)) || !matches!(self.tt(at), Ty::Int) || self.unwrap_as.contains_key(&(e as *const Expr as usize)) {
+            return None;
+        }
+        let list = match base.as_ref() {
+            Expr::Local(..) | Expr::Move(..) if !self.unwrap_as.contains_key(&(base.as_ref() as *const Expr as usize)) => format!("&{}", self.expr(base)),
+            inner @ Expr::Index { .. } => self.item_place(inner)?,
+            _ => return None,
+        };
+        let idx = self.expr(at);
+        Some(format!("{{ let _i = {}; let _v = {}; &_v[{}] }}", idx, list, self.index_at("_i", "_v.len()")))
+    }
+
     fn index(&mut self, base: &Expr, indices: &[Expr], whole: &Expr) -> String {
         // state.get['key', default] and state.set['key', value]: a render or
         // a handler given the state reads and writes it by the value's type
@@ -1267,6 +1287,21 @@ impl Emitter {
             );
         }
         let inner = Self::inner(&bty);
+        // (an item of a list that is itself an item, `cells[k][i]`, is read
+        // through the inner item where it lies: printed as a value, the
+        // inner list was copied whole for each read — Magpie's summary
+        // copied a group's every cell once per row and column, 19 s where
+        // the kernel took 2 ms)
+        if !is_result
+            && let Ty::List(el) = &inner
+            && let [at] = indices
+            && matches!(self.tt(at), Ty::Int)
+            && let Some(place) = self.item_place(base)
+        {
+            let idx = self.expr(at);
+            let suffix = if Self::is_copy_type(el) { "" } else { ".clone()" };
+            return format!("{{ let _i = {}; let _v = {}; _v[{}]{} }}", idx, place, self.index_at("_i", "_v.len()"), suffix);
+        }
         let raw_base = self.expr(base);
         let b = if is_result { format!("{}.value", raw_base) } else { raw_base };
         // a function value applied is a call, whose arguments are not indexes
@@ -2266,6 +2301,17 @@ impl Emitter {
                     } else {
                         arg_strs.push(format!("&{}", v));
                     }
+                } else if let Expr::Convert { how: Convert::Known, expr: held, .. } = a
+                    && matches!(held.as_ref(), Expr::Local(..) | Expr::Move(..))
+                    && matches!(self.tt(held), Ty::Result(_))
+                    && !self.unwrap_as.contains_key(&(a as *const Expr as usize))
+                {
+                    // (a value a guard made known good, lent: its payload
+                    // where it lies — printed as the guard's read, a file's
+                    // reader was copied with its whole footer at every call
+                    // that read it, and a search's positions once per row)
+                    let held = self.expr(held);
+                    arg_strs.push(format!("&({}).value", held));
                 } else {
                     let s = self.expr(a);
                     arg_strs.push(format!("&{}", s));
@@ -2400,17 +2446,44 @@ impl Emitter {
                 // after it, and one printed in the call itself, so
                 // `send[failed, j]` refused the socket where the interpreter
                 // stopped on reading `j`
-                let mut hoisted: Vec<(usize, String)> = Vec::new();
+                // (a list literal whose items are of several kinds is bound
+                // item by item, the quiet ones left in place: such a list is
+                // read one item at a time by the form that takes it — a
+                // statement's parameters `['k`i`', i]` had been bound as one
+                // Rust vector of text and an int, and the program did not
+                // build)
+                let mut hoisted: Vec<(usize, String, String)> = Vec::new();
+                let mut bound: Vec<usize> = Vec::new();
                 for (j, a) in raw_args.iter().enumerate() {
-                    if !result_idx.contains(&j) && !crate::ir::quiet(a) {
-                        let name = format!("_pa_{}", j);
-                        hoisted.push((j, std::mem::replace(&mut unwrapped[j], name.clone())));
-                        self.unwrap_as.insert(a as *const Expr as usize, name);
+                    if result_idx.contains(&j) || crate::ir::quiet(a) {
+                        continue;
                     }
+                    if let Expr::ListLit(items, _) = a
+                        && items.iter().any(|i| Self::inner(&self.tt(i)) != Self::inner(&self.tt(&items[0])))
+                    {
+                        let was = self.expr(a);
+                        for (k, item) in items.iter().enumerate() {
+                            let item = Emitter::raw(item);
+                            if crate::ir::quiet(item) {
+                                continue;
+                            }
+                            let name = format!("_pa_{}_{}", j, k);
+                            hoisted.push((j, name.clone(), self.expr(item)));
+                            self.unwrap_as.insert(item as *const Expr as usize, name);
+                            bound.push(item as *const Expr as usize);
+                        }
+                        let now = self.expr(a);
+                        unwrapped[j] = unwrapped[j].replacen(&was, &now, 1);
+                        continue;
+                    }
+                    let name = format!("_pa_{}", j);
+                    hoisted.push((j, name.clone(), std::mem::replace(&mut unwrapped[j], name.clone())));
+                    self.unwrap_as.insert(a as *const Expr as usize, name);
+                    bound.push(a as *const Expr as usize);
                 }
                 let inner_expr = self.dispatch(&target, &name, &raw_args, &unwrapped, e);
-                for (j, _) in &hoisted {
-                    self.unwrap_as.remove(&(&raw_args[*j] as *const Expr as usize));
+                for node in &bound {
+                    self.unwrap_as.remove(node);
                 }
                 let full = self.tt(e);
                 // (a list's items keep their kind: a call answering a list of
@@ -2471,7 +2544,7 @@ impl Emitter {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn propagation_block(&self, idx: &[usize], orig: &[String], held: &[bool], hoisted: &[(usize, String)], inner: &str, inner_type: &Ty, already: bool, stop_as: Option<String>) -> String {
+    fn propagation_block(&self, idx: &[usize], orig: &[String], held: &[bool], hoisted: &[(usize, String, String)], inner: &str, inner_type: &Ty, already: bool, stop_as: Option<String>) -> String {
         let default_val = inner_type.default_rust_value();
         let trace = self.trace_format_expr();
         let error_result = |i: usize| -> String {
@@ -2509,7 +2582,7 @@ impl Emitter {
         };
         // every argument bound in its place, then the leftmost failure is
         // the call's value
-        let mut lets: Vec<(usize, String)> = hoisted.iter().map(|(j, s)| (*j, format!("let _pa_{} = {};", j, s))).collect();
+        let mut lets: Vec<(usize, String)> = hoisted.iter().map(|(j, name, s)| (*j, format!("let {} = {};", name, s))).collect();
         let mut checks = String::new();
         for (pos, &i) in idx.iter().enumerate() {
             let bound = if held.get(pos).copied().unwrap_or(false) { format!("&({})", orig[pos]) } else { format!("({})", orig[pos]) };

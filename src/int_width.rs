@@ -1862,11 +1862,22 @@ fn called_by_name(x: &Expr) -> Option<(&str, usize, &[Expr])> {
         Expr::Effect { name, args, .. } => (name.as_str(), args.as_slice()),
         _ => return None,
     };
-    // (the row says: a function parameter whose signature takes the rest,
-    // the parameters the row fills itself before them — a feed's put)
+    let (_, skipped, start) = handed_on(name, args)?;
+    match args.get(start - 1) {
+        Some(Expr::FnRef(f, _)) => Some((f.as_str(), skipped, &args[start..])),
+        _ => None,
+    }
+}
+
+/// The function form `name` calls by its name, how many of its first
+/// parameters the form fills itself, and where the arguments it hands on
+/// begin: the row says — a function parameter whose signature takes the
+/// rest, the parameters the row fills before them (a feed's put, the
+/// record a revision hands).
+fn handed_on(name: &str, args: &[Expr]) -> Option<(String, usize, usize)> {
     let (i, sig) = crate::table::fn_params(name, args.len()).into_iter().find(|(_, s)| s.rest)?;
     match args.get(i) {
-        Some(Expr::FnRef(f, _)) => Some((f.as_str(), sig.params.len(), &args[i + 1..])),
+        Some(Expr::FnRef(f, _)) => Some((f.clone(), sig.params.len(), i + 1)),
         _ => None,
     }
 }
@@ -1908,7 +1919,12 @@ fn pow2_above(m: i128) -> i128 {
 /// powers of two above both sides' sizes, either sign (64 bits where both
 /// fit them).
 fn bits_span(a: Iv, b: Iv) -> Iv {
-    let p = pow2_above(a.mag().max(b.mag()));
+    // (in two's complement -p fits where p - 1 does: a side of 64 bits,
+    // [-2^63, 2^63 - 1], had been read as 65, and a hash's `bitxor` of
+    // 64-bit patterns ran on growing ints — Magpie's bloom filter, FNV and
+    // murmur over every cell a merge wrote)
+    let need = |v: Iv| (-v.lo).max(v.hi.saturating_add(1)).max(1);
+    let p = pow2_above(need(a).max(need(b)) - 1);
     Iv::new(-p, p - 1)
 }
 
@@ -2609,10 +2625,27 @@ impl<'a> Retype<'a> {
                     // a form of its own: one that shows a value (`type`) takes
                     // it as it is; any other, its 64 bits
                     other => {
+                        // (a form that calls a function by its name with the
+                        // arguments after it — `revise[name, default, f, a]`
+                        // calls `f[record, a]`: each argument it hands on as
+                        // the parameter it is handed to takes it, as a call's;
+                        // narrowed as the form's own, a growing int had stopped
+                        // a revision interpreted and not built compiled —
+                        // parity 349)
+                        let mut own = args.len();
+                        if let Target::Runtime(n) = other
+                            && let Some((f, skipped, start)) = handed_on(n, args)
+                            && let Some(ps) = self.sigs.params.get(f.as_str()).cloned()
+                        {
+                            for (a, p) in args.iter_mut().skip(start).zip(ps.iter().skip(skipped)) {
+                                *a = to_type(take(a), p);
+                            }
+                            own = start;
+                        }
                         // (a form that takes any value as it is: `type`, `str`)
                         let shows = matches!(other, Target::Runtime(n) if crate::table::rows_named(n.rsplit('.').next().unwrap_or(n)).any(|r| r.params.first().is_some_and(|k| k.takes_big() == crate::table::TakesBig::AsIs)));
                         let takes = if shows { crate::table::TakesBig::AsIs } else { crate::table::TakesBig::Refused };
-                        for a in args.iter_mut() {
+                        for a in args.iter_mut().take(own) {
                             if has_big(&a.ty()) {
                                 *a = handed(take(a), takes, crate::ir::Who::Held);
                             }

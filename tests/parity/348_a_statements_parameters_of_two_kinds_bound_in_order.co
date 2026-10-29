@@ -1,0 +1,13 @@
+--- a statement's parameters of two kinds, `['k`i`', i]`, beside a
+--- connection that can fail: the call binds its arguments in order
+--- before it hands a failure on, and the list was bound whole — one
+--- Rust vector of text and an int, which did not build compiled
+use db
+
+c = db.connect[env['CROW_NO_SUCH_URL', 'sqlite://:memory:']]
+if c.ok
+    made = query[c, 'CREATE TABLE t (k text PRIMARY KEY, v bigint)']
+    for i in range[3]
+        w = query[c, 'INSERT INTO t (k, v) VALUES (?, ?)', ['k`i`', i]]
+    r = query[c, 'SELECT k, v FROM t ORDER BY v']
+    log[r]

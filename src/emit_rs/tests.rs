@@ -2634,3 +2634,38 @@ fn a_list_held_in_a_place_grows_where_it_lies() {
     assert!(rust.contains(".get_mut(&_k)"), "{}", rust);
     assert!(!rust.contains("_v[crow_runtime::stops::at(_i, _v.len(), 9)].clone()"), "{}", rust);
 }
+
+/// An item of a list that is itself an item, `cells[k][i]`, is read through
+/// the inner item where it lies: printed as a value, the inner list was
+/// copied whole for each read, and Magpie's summary copied a group's every
+/// cell once per row and column (19 s where the kernel took 2 ms)
+#[test]
+fn an_item_of_an_item_is_read_where_it_lies() {
+    let rust = transpile("fn total[cells]\n    t = 0\n    for k in range[len[cells]]\n        for i in range[len[cells[k]]]\n            t = t + len[cells[k][i]]\n    return t\n\nrows = []\nrows = push[rows, ['a', 'bc']]\nrows = push[rows, ['def']]\nlog[total[rows]]\n");
+    let start = rust.find("fn total(").expect("total is a function");
+    let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
+    assert!(body.contains("let _v = { let _i = k; let _v = &(*cells); &_v["), "the inner item is lent to the outer read:\n{}", body);
+    assert!(!body.contains(".clone() }; _v["), "the inner list is not copied:\n{}", body);
+}
+
+/// A value a guard made known good, lent to a function that only reads it,
+/// is lent where it lies: printed as the guard's read, a file's reader was
+/// copied with its whole footer at every call that read it, and a search's
+/// positions once per row it scored
+#[test]
+fn a_value_known_good_is_lent_where_it_lies() {
+    let rust = transpile("fn peek[xs]\n    return len[xs]\n\nfn twice[path]\n    t = read[path]\n    if not t.ok\n        return 0\n    return peek[t] + peek[t]\n\nlog[twice['f.txt']]\n");
+    assert!(rust.contains("peek(&(t).value)"), "{}", rust);
+    assert!(!rust.contains("peek(&(t).value.clone())"), "{}", rust);
+}
+
+/// A hash over 64-bit patterns (`bitxor` beside `wrapmul`) stays in 64
+/// bits: the width pass had read a side of [-2^63, 2^63 - 1] as 65 bits,
+/// and FNV's and murmur's loops over every cell a merge wrote ran on
+/// growing ints
+#[test]
+fn a_hash_of_64_bit_patterns_stays_in_64_bits() {
+    let rust = transpile("use sys\nuse bits\n\nfn fnv[b]\n    h = -3750763034362895579\n    for i in range[len[b]]\n        h = bitxor[h, byte[b, i]]\n        h = wrapmul[h, 1099511628211]\n    return h\n\nlog[fnv[bytes['abc']]]\n");
+    assert!(rust.contains("fn fnv(b: &crow_runtime::sys::Bytes) -> i64"), "{}", rust);
+    assert!(!rust.contains("xor_big"), "{}", rust);
+}

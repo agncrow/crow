@@ -785,7 +785,15 @@ pub fn random(n: i64) -> Result<Bytes, String> {
 
 /// `sys.hex[bytes]`: the bytes as lowercase hex, two digits each.
 pub fn hex(b: &Bytes) -> String {
-    b.0.iter().map(|x| format!("{:02x}", x)).collect()
+    // (two digits a byte from a table: a `format!` per byte had been most
+    // of a merge's time where it keyed each vector cell by its hex)
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(b.0.len() * 2);
+    for &x in &b.0 {
+        out.push(DIGITS[(x >> 4) as usize] as char);
+        out.push(DIGITS[(x & 15) as usize] as char);
+    }
+    out
 }
 
 /// `sys.text[bytes, fill]`: the text the bytes spell, each run that spells

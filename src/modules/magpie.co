@@ -73,10 +73,11 @@ fn batches[dir]
         if not got.ok
             return error[got.reason, 'magpie']
         return _catalog_of[got]
-    --- the pending rows are read before the files are segs: the flush
-    --- thread moves rows from pending to a file under its lock, so in this
-    --- order they are seen at least once — and a file covering their first
-    --- position says they were flushed in between, so they are segs once
+    --- the pending rows are read before the files are: a flush writes
+    --- rows to a file and then lets them go from pending, so in this order
+    --- they are seen at least once — and a file covering their first
+    --- positions says those were flushed in between, so the pending rows
+    --- listed begin past it, and every row is seen once
     waiting = pending_of[dir]
     if not waiting.ok
         return error[waiting.reason, 'magpie']
@@ -126,28 +127,34 @@ fn batches[dir]
         counts = push[counts, rows + 0]
         firsts = push[firsts, first + 0]
         lasts = push[lasts, last + 0]
-    if waiting[0] gt 0 and not _covered[firsts, lasts, waiting[1]]
-        pend_first = waiting[1]
-        pend_last = waiting[2]
+    pend_first = _uncovered[firsts, lasts, waiting[1], waiting[2]]
+    pend_last = waiting[2]
+    if waiting[0] gt 0 and pend_first lte pend_last
         numbers = push[numbers, -1]
         highs = push[highs, -1]
         forms = push[forms, 'pending']
         levels = push[levels, 0]
         paths = push[paths, '`dir`/.pending@`pend_first`-`pend_last`']
-        counts = push[counts, waiting[0]]
+        counts = push[counts, pend_last - pend_first + 1]
         firsts = push[firsts, pend_first]
         lasts = push[lasts, pend_last]
     if len[paths] eq 0
         return frame.new[number = [0], high = [-1], form = ['none'], level = [0], path = [''], rows = [0], first = [0], last = [-1]]
     return sort[frame.new[number = numbers, high = highs, form = forms, level = levels, path = paths, rows = counts, first = firsts, last = lasts], 'number']
 
---- whether a file segs covers the position: the pending rows were
---- flushed into it between the sequencer's answer and the listing
-fn _covered[firsts, lasts, pos]
-    for i in range[len[firsts]]
-        if firsts[i] lte pos and pos lte lasts[i]
-            return true
-    return false
+--- the first of the positions `pos`..`last` past every file listed that
+--- covers it: the pending rows a flush wrote between the sequencer's
+--- answer and the listing (`last` + 1 where they all were)
+fn _uncovered[firsts, lasts, pos, last]
+    at = pos
+    moved = true
+    while moved and at lte last
+        moved = false
+        for i in range[len[firsts]]
+            if firsts[i] lte at and at lte lasts[i]
+                at = lasts[i] + 1
+                moved = true
+    return at
 
 --- the files a reader reads: the batches no segment holds, the
 --- segments, and the pending rows
@@ -2223,6 +2230,16 @@ fn _scratch[name]
 
 --- an empty log has no positions; each append claims the next; a read
 --- from a position answers the rows at and past it in order
+--- the pending rows a listing names begin past every file covering them:
+--- a flush writes its file before it lets its rows go, so rows it wrote
+--- while the listing was made are read once, and the rows put since are
+--- still read
+test pending_rows_begin_past_the_files_that_cover_them[]
+    assert[_uncovered[[0, 5], [4, 9], 3, 12] eq 10]
+    assert[_uncovered[[0], [4], 5, 9] eq 5]
+    assert[_uncovered[[0], [9], 2, 9] eq 10]
+    assert[_uncovered[[], [], 0, 3] eq 0]
+
 test a_log_grows_by_batches[]
     dir = _scratch['magpie-test-grows']
     assert[head[dir] eq -1]

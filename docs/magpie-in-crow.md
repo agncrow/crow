@@ -441,8 +441,111 @@ itself. A form for that, or a fusion of `concat[out, slice[out, …]]` in
 the lowering, is the next optimization, after the file reader shows
 how much of a read it is.
 
+## 4.2 Measured: the port, 2026-10-28
+
+The programs of `tests/magpie/measure/` built with `crow build` (the
+port is Crow now, so the compiled program is the comparison), each run
+once at the sizes its README names, every number the program's own (the
+median of its warm runs where it takes several). Apple M4 Max, 64 GB;
+other sessions paused, macOS's media analysis running (load 4 to 5).
+The kernel column is docs/magpie-design.md's "Measured 2026-10-27",
+taken interpreted on a quiet machine while the Rust kernels did the
+work. "Before" is the port as committed (49f9ad2); "after" is with the
+fixes below.
+
+| Measure | Kernel | Before | After | After ÷ kernel |
+|---|---|---|---|---|
+| `put`, 2,000 then `sync` (per put) | 77.5 µs | 36,404 µs | 108 µs | 1.4 |
+| `latest` by key | 13.5 µs | 109.5 µs | 14.0 µs | 1.0 |
+| `batch`, durable | 12.0 ms | 69.4 ms | 13.9 ms | 1.2 |
+| summary of 2 columns by key, 200,000 rows | 2 ms | 18,958 ms | 109 ms | 55 |
+| a common word's top 10, indexed | 7 ms | 204 ms | 21 ms | 3.0 |
+| a rare and a common word, indexed | 8 ms | 208 ms | 26 ms | 3.3 |
+| a common word's top 10, scanned | 11 ms | 133 ms | 105 ms | 9.5 |
+| merge 20,000 / 100,000 vectors of 64 | 74 / 311 ms | 420 / 2,157 ms | 111 / 531 ms | 1.5 / 1.7 |
+| `nearest`, 20,000 / 100,000 | 2.0 / 9.0 ms | 15 / 54 ms | 8 / 22 ms | 4 / 2.4 |
+| 200,000 × 102 written / merged | 2.67 / 2.34 s | 10.5 / 10.9 s | 5.3 / 5.6 s | 2.0 / 2.4 |
+| graph: walk of 3 hops (1,022 nodes) | 222 ms | 1,443 ms | 1,372 ms | 6.2 |
+| graph: a node's neighbors | 3.0 ms | 12 ms | 12 ms | 4 |
+| finch's bars copied / merged | 17 / 14.5 s | 45 / 58 s | 42 / 51 s | 2.5 / 3.5 |
+| finch's NBBO copied / merged | 18.5 / 15 s | 76 / 64 s | 70 / 60 s | 3.8 / 4.0 |
+| finch's five questions, from the files | 9 / 4 / 17 / 73 / 72 ms | 17 / 15 / 43 / 172 / 72 | 16 / 14 / 42 / 174 / 70 | 1.0 to 3.5 |
+| finch's five questions, rows held | 3 / 1 / 3 / 24 / 54 ms | 1 / 1 / 2 / 22 / 18 | 1 / 1 / 2 / 23 / 18 | 0.3 to 1.0 |
+
+The answers agree with ClickHouse's in every run; the copies of the
+month met ClickHouse dropping connections and the driver reconnecting,
+which their times include.
+
+What the measures found, each fixed with its test:
+
+- **The sequencer flushed one put at a time.** A flush wrote and synced
+  its file inside `revise`, holding the tail's lock, and a put waits on
+  that lock: each put waited out the last one's fsync, then asked a
+  flush of its own row (2,000 files of one row; 61 s of system time).
+  The kernel held the lock for its write too, but flushed from a timer
+  every 10 ms, so puts gathered between flushes. Now the flush claims
+  the pending parts under the lock, writes them outside it and lets
+  them go under it (`_claimed`, `_written`, `_settled`): the puts that
+  arrive during a write join the next flush, with no timer. A listing
+  that met a flush between its two reads begins the pending rows past
+  the file that covers them (`_uncovered`), and `pending_rows` cuts at
+  both ends, so no row is read twice or missed.
+- **A revision that can fail copies the record first.** A put's and an
+  image's revisions answered errors, so every put and every `latest`
+  copied the tail with its pending parts; they answer a refusal in the
+  record now (`refused`), and `latest` is the kernel's again.
+- **An item of an item was copied whole.** `by_cells[k][i]` compiled to a
+  copy of `by_cells[k]` for each read — the summary copied a group's
+  cells once per row and column (quadratic in the group's size). The
+  emitter reads the inner item where it lies (`item_place`).
+- **A value a guard made known good was copied where it was lent.** A
+  reader handed to `entries[r, c]` carried its whole footer into a copy
+  at every call, and a search's positions were copied per row it scored.
+- **A search read a whole group for each of its k rows**, reopening the
+  file (its footer parsed again) each time, and opened the file again
+  for every group it scored. The kernel kept its readers and a map of
+  the groups it had read; the port does now.
+- **A 64-bit hash ran on growing ints.** The width pass read `bitxor` of
+  a side spanning [-2^63, 2^63 - 1] as 65 bits, so the bloom filter's
+  FNV and murmur over every cell a merge writes were big-int
+  arithmetic; and a vector column's distinct count formatted 512 bytes
+  of hex per row through `format!`.
+- **`nearest` indexed rows through a growing int**: `row * w` is past 64
+  bits to the width pass, so every number of every row was read through
+  `Int::add`. It walks the flat list a width at a time now, within the
+  list's length.
+
+What is left, and why:
+
+- **Every read parses the file's footer again**, and every `entries`
+  call its block: the kernel kept both for the process (keyed by path,
+  size and change time). In Crow the place to keep them is `use memory`,
+  but `remember` is a write, which a derivation may not make, and pages
+  read Magpie in derivations. A graph's walk is a `lookup` per node, each
+  reading the manifest, the directory and every footer: that is its
+  6.2. Open for Vijay (section 5).
+- **The encoders and decoders run on growing ints.** Positions count up
+  without a bound the width pass can see, and products of counts read
+  from bytes (`n * width`) pass 64 bits to it; a function has one
+  signature for all its callers, so one such caller makes the whole
+  chain growing — 38 of the modules' functions take a growing int
+  (packing, encode, file, merge, postings). Narrowing them at their
+  sources, as section 2.2 asks of a kernel, is the next step for the
+  writes, the merges and the reads from the files.
+- **The decompressor copies each run twice**: `slice` makes the bytes,
+  then `concat` appends them (section 4.1). A fusion of `concat[out,
+  slice[…]]` in the lowering would make it one copy.
+- **The summary is still per cell in Crow** (a record per cell, a map
+  read and written per row): 55 times the kernel at 200,000 rows, where
+  a grouping that reads the columns as vectors would not be.
+
 ## 5. Open for Vijay
 
+- Keeping what a process read of a file — a footer, a column's entries —
+  across calls, as the kernel did (4.2): `use memory` is the way, and a
+  derivation may not write memory. Either a cache form a derivation may
+  call (what it keeps answers only what the file already says), or the
+  reads keep nothing between calls and pay for it.
 - A package's parts allowed `use sys` (2.7).
 - The flush through `later`: a put under `crow run -i` is durable when
   it answers, and slower for it (2.4).

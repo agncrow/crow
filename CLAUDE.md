@@ -1432,3 +1432,23 @@ steps on every push and must be green.
   emitter chooses a row by name for such a value as text's
   (`held_kind`): `len[p]` of a part of the tail nothing filled had
   printed a list's length of a `String` (parity 327).
+- Magpie measured after the port (2026-10-28, docs/magpie-in-crow.md
+  4.2): build the measure programs with `crow build` in the scratchpad
+  (the port is Crow, so compiled is the comparison) and profile a loop
+  of the slow verb with `sample`; `CROW_WIDTH_DEBUG=1 crow build --ir`
+  shows which of a module's ints went growing (`crow_runtime::int::Int`
+  in the printed Rust: 38 of the modules' functions still take one). The
+  traps it found: `revise` copies its record for the answer and, where
+  the function can fail, for a backup — a module's revision answers a
+  refusal in the record (tail.co's `refused`), and a flush never holds a
+  revision's lock across a disk write (each put had waited out the last
+  one's fsync and flushed alone: 470 times the kernel); an index through
+  an index (`xs[k][i]`) reads the inner item where it lies through
+  `item_place` in the emitter, and a guard-narrowed value lent to a
+  read-only parameter is `&(x).value` — a new path that prints either
+  must go through them, or it copies the whole inner list or record per
+  read again; the width pass's `bits_span` is two's complement (-p fits
+  where p - 1 does: a 64-bit side had been 65 bits, and every 64-bit
+  hash ran on growing ints). `rm -rf dir pattern*` in zsh refuses the
+  whole command when the pattern matches nothing: a measure run copied
+  finch's month twice into one log and its answers disagreed.

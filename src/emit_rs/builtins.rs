@@ -50,17 +50,19 @@ impl Emitter {
 
     /// SQL parameters: each element of a literal list binds as its own
     /// value; a fallible element reports itself before the statement runs.
+    /// (Each element is read where it lies, so one the call bound before
+    /// its checks is read by that name: a copy is not found among them.)
     fn db_params(&mut self, params: &[Expr]) -> (String, Vec<String>) {
         let mut out = Vec::new();
         let mut fallible = Vec::new();
-        let elems: Vec<Expr> = params
+        let elems: Vec<&Expr> = params
             .iter()
             .flat_map(|p| match Emitter::raw(p) {
-                Expr::ListLit(items, _) => items.iter().map(|i| Emitter::raw(i).clone()).collect::<Vec<_>>(),
-                other => vec![other.clone()],
+                Expr::ListLit(items, _) => items.iter().map(Emitter::raw).collect::<Vec<_>>(),
+                other => vec![other],
             })
             .collect();
-        for e in &elems {
+        for e in elems {
             let s = self.expr(e);
             let t = self.tt(e);
             let (f, inner) = match t {

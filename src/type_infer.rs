@@ -954,6 +954,7 @@ impl TypeContext {
         let entry = self.call_signatures.entry(name.to_string()).or_default();
         match entry.iter().position(|existing| Self::same_signature(existing, &sig)) {
             Some(i) => {
+                let was = entry[i].clone();
                 let linked = |t: &Ty| matches!(t, Ty::Int | Ty::Record(_) | Ty::OptRecord(_));
                 for (held, given) in entry[i].iter_mut().zip(&sig) {
                     if linked(held) && linked(given) && !(*held == Ty::Int && *given == Ty::Int) {
@@ -964,6 +965,27 @@ impl TypeContext {
                     } else if matches!((&*held, given), (Ty::Frame(_), Ty::Frame(_))) {
                         // (a frame's columns, joined: open where the calls differ)
                         *held = held.unify(given);
+                    }
+                }
+                // (and the copy already made for it, where it moved: a
+                // signature noted while an argument was still a list of
+                // nothing known — `mids`, a list of another copy's answers
+                // before that copy answered — had made its copy with that
+                // list, and the later call that said its items refined the
+                // signature alone: the copy indexed `points` as text
+                // compiled, and the program did not build; parity 330)
+                let now = entry[i].clone();
+                if now != was
+                    && let Some(copies) = self.specializations.get_mut(name)
+                    && let Some((csig, copy)) = copies.iter_mut().find(|(csig, _)| *csig == was)
+                {
+                    *csig = now.clone();
+                    if let Some(f) = self.functions.get_mut(copy.as_str()) {
+                        for (((_, param), t), before) in f.params.iter_mut().zip(&now).zip(&was) {
+                            if t != before {
+                                *param = t.clone();
+                            }
+                        }
                     }
                 }
             }

@@ -9,6 +9,43 @@ history says the rest.
 
 ### Fixed
 
+- Magpie measured after the port to Crow (docs/magpie-in-crow.md, 4.2),
+  and what the measures found. The sequencer's flush claims the pending
+  rows under the tail's lock and writes them outside it, so a put waits
+  for no disk and the puts that arrive meanwhile join the next flush:
+  each put had waited out the last one's fsync and flushed alone, 2,000
+  puts 72.8 s compiled, now 0.22 s. A put and `latest` revise the tail
+  with a function that cannot fail, so no backup copy is made (`latest`
+  104 → 14 µs). A search opens each file once and reads each group once
+  for the rows it answers (an indexed search 200 → 21 ms). `nearest`
+  walks the flat list a width at a time (51 → 22 ms over 100,000
+  vectors). And `hex` writes its digits from a table, not a `format!` a
+  byte.
+- An item of a list that is itself an item, `cells[k][i]`, is read
+  through the inner item where it lies: compiled, the inner list was
+  copied whole for each read, and Magpie's summary copied a group's
+  every cell once per row and column (19 s where the kernel took 2 ms;
+  0.11 s now). A value a guard made known good, lent to a function that
+  only reads it, is lent where it lies rather than copied (a file's
+  reader, with its whole footer, had been copied at every call reading
+  it).
+- `bitand`, `bitor` and `bitxor` of 64-bit patterns stay in 64 bits: the
+  width pass had read a side of [-2^63, 2^63 - 1] as 65 bits, so a hash
+  over 64-bit patterns (Magpie's bloom filter: FNV and murmur over every
+  cell a merge writes) ran on growing ints — a merge of 100,000 vectors
+  2,157 → 531 ms.
+- A growing int handed on through a form that calls a function with
+  its own arguments (`revise[name, default, f, k]`) takes the
+  function's parameter as a call's argument does: it had been narrowed
+  to 64 bits as the form's own, so the revision stopped interpreted and
+  did not build compiled (parity 349). A statement's parameters of two
+  kinds (`['k`i`', i]`) beside a connection that can fail are bound item
+  by item where the call binds its arguments in order: bound whole, as
+  one Rust vector of text and an int, they did not build (parity 348).
+  And a function copied per signature, handed a list of its other
+  copy's answers, takes the list's items once a later call says them:
+  the copy made while the list was a list of nothing known had kept it
+  so, and indexed it as text compiled (parity 330).
 - A function handed to a builtin that calls it with the call's own
   arguments — `revise[name, default, f, x]` calls `f[held, x]`,
   `later[f, a]` calls `f[a]` — is lowered at the version those arguments

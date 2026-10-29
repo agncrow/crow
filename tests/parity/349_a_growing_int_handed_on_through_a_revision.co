@@ -1,0 +1,18 @@
+--- a growing int handed on through `revise` to the function it runs:
+--- narrowed to 64 bits as the form's own argument, the revision stopped
+--- interpreted ("a whole number past 64 bits") and did not build compiled,
+--- the function's parameter being a growing int
+use memory
+
+struct Count [n, at]
+
+fn moved[c, k]
+    return Count[c.n + 1, c.at + k]
+
+fn bump[name, k]
+    return revise[name, Count[0, 0], moved, k].at
+
+big = 2 ^ 70
+log[bump['a', 3]]
+log[bump['a', big]]
+log[recall['a', Count[0, 0]].at]

@@ -180,11 +180,20 @@ fn _scored[best, col, positions, uq, fi, g, k, column]
     flat = vectors_of[col, 0, n]
     present = present_of[col, 0, n]
     out = best
-    for row in range[n]
+    --- (a row's numbers found by walking the flat list a width at a time,
+    --- within its length: written `row * w`, the place read past 64 bits
+    --- to the width pass, and each number of every row was read through a
+    --- growing int — 50 ms where the kernel took 9)
+    total = len[flat]
+    at = 0
+    row = 0
+    while at lt total
         held = len[present] eq 0 or bitand[byte[present, shift[row, -3]], shift[1, bitand[row, 7]]] ne 0
         if held
-            s = _score[flat, row * w, w, uq]
+            s = _score[flat, at, w, uq]
             out = _offered[out, Hit[s, positions[row], fi, g, row], k]
+        at = at + w
+        row = row + 1
     return out
 
 --- the best k with a file's rows offered, a group at a time (a group

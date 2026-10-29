@@ -27,11 +27,14 @@ use magpie.merge
 --- under), its keys, the parts pending (each with `_pos`), the next
 --- position (-1 before the log is read), whether the image is built, the
 --- image's columns (a frame of none of its rows), why the last flush asked
---- for failed (empty for none), and what the last revision answers. The
---- index and the image are held key by key beneath the name
---- (`<dir>/#last/<key>`, `<dir>/#row/<key>`), so a revision copies only
---- what it changes
-struct Tail [dir, keys, parts, next, has_image, template, failed, answer]
+--- for failed (empty for none), what the last revision answers, how many
+--- of the parts a flush in flight claimed (0 for none), and why the last
+--- revision refused what it was asked (empty for none: a revision that
+--- cannot fail is handed the record, where one that can is handed a copy,
+--- so a put answers its refusal here). The index and the image are held
+--- key by key beneath the name (`<dir>/#last/<key>`, `<dir>/#row/<key>`),
+--- so a revision copies only what it changes
+struct Tail [dir, keys, parts, next, has_image, template, failed, answer, flushing, refused]
 
 --- a key's last position, as the index holds it
 struct Last [position]
@@ -55,7 +58,7 @@ fn _tails_name[]
 
 --- a tail not read from the disk yet
 fn _unread[name]
-    return Tail[name, slice[['x'], 0, 0], [], -1, false, frame.new[], '', -1]
+    return Tail[name, slice[['x'], 0, 0], [], -1, false, frame.new[], '', -1, 0, '']
 
 --- the batch files and segments of the log: the manifest's segments, and
 --- every batch file a segment does not cover
@@ -131,7 +134,7 @@ fn _reread[t]
     if t.has_image
         forget['`t.dir`/#last']
         forget['`t.dir`/#row']
-    return Tail[t.dir, m.keys, t.parts, head + 1, false, frame.new[], t.failed, t.answer]
+    return Tail[t.dir, m.keys, t.parts, head + 1, false, frame.new[], t.failed, t.answer, t.flushing, '']
 
 --- whether cell `i` is present, by the bitmap
 fn _present[present, i]
@@ -263,16 +266,21 @@ fn _as_image_row[row, template]
             return row
     return select[row, template.columns]
 
+--- the tail as it was, refusing what it was asked for the reason given
+fn _refused[t, why]
+    return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, t.answer, t.flushing, why]
+
 --- the tail with rows appended: the next positions given as they
 --- arrive, the index and the image kept current; `answer` the first
---- position. Refused, changing nothing: no rows, a frame already holding
---- `_pos`, other columns than the rows pending, a key column missing
+--- position. Refused, changing nothing (`refused` says why): no rows, a
+--- frame already holding `_pos`, other columns than the rows pending, a
+--- key column missing
 fn _appended[t, f]
     n = len[f]
     if n eq 0
-        return error['batch: a put holds at least one row', 'magpie']
+        return _refused[t, 'batch: a put holds at least one row']
     if '_pos' in f.columns
-        return error['batch: the frame already holds a column \'_pos\', which the log adds', 'magpie']
+        return _refused[t, 'batch: the frame already holds a column \'_pos\', which the log adds']
     held = t
     if len[t.parts] gt 0
         had = slice[['x'], 0, 0]
@@ -280,12 +288,12 @@ fn _appended[t, f]
             if c ne '_pos'
                 had = push[had, c]
         if had ne f.columns
-            return error['batch: the rows put hold other columns than the rows pending — flush first', 'magpie']
+            return _refused[t, 'batch: the rows put hold other columns than the rows pending — flush first']
     else
         --- (nothing pending: the next position is read off the disk again)
         again = _reread[t]
         if not again.ok
-            return error[again.reason, 'magpie']
+            return _refused[t, again.reason]
         held = again
     first = held.next
     positions = []
@@ -296,18 +304,18 @@ fn _appended[t, f]
     if len[held.keys] gt 0
         texts = _keys_of[numbered, held.keys]
         if not texts.ok
-            return error[texts.reason, 'magpie']
+            return _refused[t, texts.reason]
         for i in range[n]
             remember['`held.dir`/#last/`texts[i]`', Last[first + i]]
             if held.has_image
                 one = frame.head[frame.tail[numbered, n - i], 1]
                 remember['`held.dir`/#row/`texts[i]`', Newest[_as_image_row[one, held.template]]]
     parts = push[held.parts, numbered]
-    return Tail[held.dir, held.keys, parts, first + n, held.has_image, held.template, held.failed, first]
+    return Tail[held.dir, held.keys, parts, first + n, held.has_image, held.template, held.failed, first, held.flushing, '']
 
 --- the tail with its flush's failure answered
 fn _cleared[t]
-    return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, '', t.answer]
+    return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, '', t.answer, t.flushing, '']
 
 --- refused where the last flush asked for failed: its reason answered
 --- once, the failure let go
@@ -348,8 +356,8 @@ fn put_rows[dir, f]
         return error[clear.reason, 'magpie']
     noted = revise[_tails_name[], Tails[slice[['x'], 0, 0]], _noted, name]
     t = revise[name, _unread[name], _appended, f]
-    if not t.ok
-        return error[t.reason, 'magpie']
+    if len[t.refused] gt 0
+        return error[t.refused, 'magpie']
     cut = _cut_pending[]
     work = later[_flush_all]
     return t.answer
@@ -360,13 +368,23 @@ fn _noted[known, name]
         return known
     return Tails[push[known.dirs, name]]
 
---- the tail with what is pending written as one batch file, flushed to
---- the disk, the positions as given; `answer` its first position, -1 for
---- nothing pending. The number is the next the directory has; a number
---- another writer took first is tried again
-fn _flushed[t]
-    if len[t.parts] eq 0
-        return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, -1]
+--- the tail with its pending parts claimed by a flush: `answer` how many
+--- (0 for none pending), or -1 where a flush in flight claimed some
+--- already — its rows are written when it settles, and then the rest
+fn _claimed[t]
+    if t.flushing gt 0
+        return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, -1, t.flushing, '']
+    k = len[t.parts]
+    return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, k, k, '']
+
+--- the parts a flush claimed — every part the tail held when it claimed
+--- them, as `t` holds them — written as one batch file and flushed to the
+--- disk, the positions as given, outside the tail's lock: a put meanwhile
+--- waits for no disk and joins the next flush (the kernel's flusher took
+--- the lock for its write, a flush every 10 ms); answers the file's first
+--- position. The number is the next the directory has; a number another
+--- writer took first is tried again
+fn _written[t]
     whole = _pending_frame[t]
     first = t.next - len[whole]
     --- (the rows sorted by the keys, arrival order kept among equals, each
@@ -387,21 +405,50 @@ fn _flushed[t]
             if not ('was written already' in placed.reason) or tries gte 100
                 return error[placed.reason, 'magpie']
             tries = tries + 1
-    return Tail[t.dir, t.keys, [], t.next, t.has_image, t.template, t.failed, first]
+    return first
 
---- the tail flushed, a failure kept for the next put or flush to answer
---- (the work a put asked for has no caller to hand it to)
-fn _flushed_kept[t]
-    done = _flushed[t]
-    if done.ok
-        return done
-    return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, done.reason, t.answer]
+--- the tail after its flush: the `k` parts claimed let go where they were
+--- written, kept where the write failed and its reason kept for the next
+--- put or flush to answer (the work a put asked for has no caller to hand
+--- it to); as it is where it was let go meanwhile
+fn _settled[t, k, why]
+    if t.flushing eq 0
+        return t
+    parts = t.parts
+    failed = t.failed
+    if len[why] eq 0
+        parts = slice[t.parts, k, len[t.parts]]
+    else
+        failed = why
+    return Tail[t.dir, t.keys, parts, t.next, t.has_image, t.template, failed, t.answer, 0, '']
 
---- every tail's pending rows flushed: the work a put asks for
+--- a log's pending rows flushed: claimed under the tail's lock, written
+--- outside it, let go under it — a flush in flight waited for first, so
+--- what was put before this is on the disk when it answers; answers the
+--- file's first position, -1 for nothing pending
+fn _flush_one[name]
+    t = revise[name, _unread[name], _claimed]
+    while t.answer eq -1
+        sleep[1]
+        t = revise[name, _unread[name], _claimed]
+    k = t.answer
+    if k eq 0
+        return -1
+    written = _written[t]
+    why = ''
+    if not written.ok
+        why = written.reason
+    settled = revise[name, _unread[name], _settled, k, why]
+    if not written.ok
+        return error[written.reason, 'magpie']
+    return written
+
+--- every tail's pending rows flushed: the work a put asks for (a failure
+--- is kept by the tail, for its next put or flush to answer)
 fn _flush_all[]
     known = recall[_tails_name[], Tails[slice[['x'], 0, 0]]]
     for name in known.dirs
-        t = revise[name, _unread[name], _flushed_kept]
+        done = _flush_one[name]
     return len[known.dirs]
 
 --- `flush_rows[dir]`: what is pending written as one batch file and
@@ -411,10 +458,10 @@ fn flush_rows[dir]
     clear = _failed_flush[name, dir]
     if not clear.ok
         return error[clear.reason, 'magpie']
-    done = revise[name, _unread[name], _flushed]
+    done = _flush_one[name]
     if not done.ok
         return error[done.reason, 'magpie']
-    return done.answer
+    return done
 
 --- `pending_of[dir]`: how many rows are pending, and their first and last
 --- positions, as `[rows, first, last]` (`[0, -1, -1]` for none)
@@ -439,9 +486,11 @@ fn pending_rows[dir, first, last]
     n = _pending_count[t]
     if n gt 0 and t.next - n lte first and first lt t.next
         whole = _pending_frame[t]
-        if last gte t.next - 1
+        if first eq t.next - n and last gte t.next - 1
             return whole
-        return whole[whole._pos lte last]
+        --- (a listing that began past a flush's file, the rows it wrote
+        --- still pending while it settles: the rows asked alone)
+        return whole[whole._pos gte first and whole._pos lte last]
     paths = _live_paths[dir]
     if not paths.ok
         return error[paths.reason, 'magpie']
@@ -478,22 +527,23 @@ fn _table_of[t]
 --- the tail with its image built: the log's rows read (inside the
 --- tail's lock, which holds the pending rows), each key's newest row and
 --- its position held beneath the name; refused for a log with no keys
+--- (`refused` says why, the tail as it was)
 fn _imaged[t]
     held = t
     if t.next lt 0
         again = _reread[t]
         if not again.ok
-            return error[again.reason, 'magpie']
+            return _refused[t, again.reason]
         held = again
     if held.has_image
         return held
     if len[held.keys] eq 0
-        return error['batch: the log at \'`held.dir`\' has no keys, so no row is the newest of one', 'magpie']
+        return _refused[t, 'batch: the log at \'`held.dir`\' has no keys, so no row is the newest of one']
     parts = _table_of[held]
     if not parts.ok
-        return error[parts.reason, 'magpie']
+        return _refused[t, parts.reason]
     if len[parts] eq 0
-        return Tail[held.dir, held.keys, held.parts, held.next, true, frame.new[], held.failed, held.answer]
+        return Tail[held.dir, held.keys, held.parts, held.next, true, frame.new[], held.failed, held.answer, held.flushing, '']
     table = stack[parts]
     if len[table] gt 1
         table = sort[table, '_pos']
@@ -501,7 +551,7 @@ fn _imaged[t]
     if n gt 0
         texts = _keys_of[table, held.keys]
         if not texts.ok
-            return error[texts.reason, 'magpie']
+            return _refused[t, texts.reason]
         positions = ints_of[table._pos, 0, n]
         --- (the rows in position order: a key's last is its newest)
         newest = map[]
@@ -511,7 +561,7 @@ fn _imaged[t]
             i = newest[key]
             remember['`held.dir`/#last/`key`', Last[positions[i]]]
             remember['`held.dir`/#row/`key`', Newest[frame.head[frame.tail[table, n - i], 1]]]
-    return Tail[held.dir, held.keys, held.parts, held.next, true, frame.head[table, 0], held.failed, held.answer]
+    return Tail[held.dir, held.keys, held.parts, held.next, true, frame.head[table, 0], held.failed, held.answer, held.flushing, '']
 
 --- the key text of the values asked, read as the image's key columns
 fn _asked_key[t, asked]
@@ -534,8 +584,8 @@ fn _asked_key[t, asked]
 fn newest_row[dir, asked]
     name = canonical[dir]
     t = revise[name, _unread[name], _imaged]
-    if not t.ok
-        return error[t.reason, 'magpie']
+    if len[t.refused] gt 0
+        return error[t.refused, 'magpie']
     key = _asked_key[t, asked]
     if not key.ok
         return error[key.reason, 'magpie']
@@ -548,8 +598,8 @@ fn newest_row[dir, asked]
 fn last_position[dir, asked]
     name = canonical[dir]
     t = revise[name, _unread[name], _imaged]
-    if not t.ok
-        return error[t.reason, 'magpie']
+    if len[t.refused] gt 0
+        return error[t.refused, 'magpie']
     key = _asked_key[t, asked]
     if not key.ok
         return error[key.reason, 'magpie']
@@ -585,6 +635,26 @@ fn _scratch[dir]
     none = slice[['x'], 0, 0]
     declared = declare[dir, ['id'], none, none]
     return dir
+
+--- a flush claims what is pending, and a second claim waits for it; a
+--- put meanwhile joins the next flush; the claimed parts are let go once
+--- written, and kept, with the reason, where the write failed
+test a_flush_claims_writes_and_lets_go[]
+    dir = _scratch['target/crow_tail_c']
+    t = _appended[_unread[canonical[dir]], frame.new[id = [1], qty = [10]]]
+    assert[len[t.refused] eq 0]
+    claimed = _claimed[t]
+    assert[claimed.answer eq 1]
+    assert[_claimed[claimed].answer eq -1]
+    more = _appended[claimed, frame.new[id = [2], qty = [20]]]
+    assert[len[more.parts] eq 2 and more.answer eq 1]
+    done = _settled[more, 1, '']
+    assert[len[done.parts] eq 1 and done.flushing eq 0 and len[done.failed] eq 0]
+    kept = _settled[more, 1, 'the disk is full']
+    assert[len[kept.parts] eq 2 and kept.flushing eq 0 and kept.failed eq 'the disk is full']
+    refused = _appended[more, frame.new[qty = [1]]]
+    assert[len[refused.refused] gt 0 and len[refused.parts] eq 2]
+    rm[dir]
 
 --- puts are numbered as they arrive, the index and the image follow every
 --- put, a flush writes the rows as one batch file the readers read, a

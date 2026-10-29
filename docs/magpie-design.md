@@ -671,7 +671,11 @@ ours.
 
 ## Measured 2026-10-27, on small sets
 
-Every number below is interpreted (`crow run -i`; the kernels do the
+These are the Rust kernels' numbers, taken before Magpie was ported to
+Crow and the kernels deleted (docs/magpie-in-crow.md); the port's,
+compiled and beside these, are that document's section 4.2.
+
+Every number below is interpreted (`crow run -i`; the kernels did the
 work either way), warm — the median of five runs after a first — on
 one machine (Apple M4 Max, 64 GB), the same for every column, with
 nothing else running. Vijay asked for small sets, not the billion rows

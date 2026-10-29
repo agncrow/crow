@@ -1,0 +1,17 @@
+--- a function copied per signature, handed a list of its other copy's
+--- answers: the list was noted before that copy answered, a list of
+--- nothing known, and the copy made for it kept that list once a later
+--- call said its items — compiled, it indexed `points` as text and did
+--- not build
+use math
+
+fn average[points, which]
+    picked = for i in which
+        points[i]
+    return mean[picked, axis = 0]
+
+pts = [[0.0, 0.0], [2.0, 4.0]]
+pairs = [[0, 1], [1, 0]]
+mids = for e in pairs
+    average[pts, e]
+log[average[mids, [0, 1]]]

@@ -407,33 +407,34 @@ fn _positions_of[r, g]
         return error[f.reason, 'magpie']
     return ints_of[f._pos, 0, len[f]]
 
---- the positions of a part's group: the pending rows' own, or a file's
---- group's, read again by its path
-fn _part_positions[part, g]
-    if part.held
-        if '_pos' not in part.rows.columns
-            return []
-        return ints_of[part.rows._pos, 0, len[part.rows]]
-    r = opened[part.path]
-    if not r.ok
-        return error[r.reason, 'magpie']
-    return _positions_of[r, g]
+--- the positions of the pending rows a part holds
+fn _held_positions[part]
+    if '_pos' not in part.rows.columns
+        return []
+    return ints_of[part.rows._pos, 0, len[part.rows]]
 
---- one row of a part, with every column: the pending rows', or a file's
---- group's, read again by its path
-fn _row_of[part, g, row]
-    if part.held
-        return frame.head[frame.tail[part.rows, len[part.rows] - row], 1]
-    r = opened[part.path]
-    if not r.ok
-        return error[r.reason, 'magpie']
+--- the files of the parts, each opened once for the search (`fi` as text
+--- names a file's reader; the pending rows have none)
+fn _readers_of[parts]
+    out = map[]
+    for fi in range[len[parts]]
+        if not parts[fi].held
+            r = opened[parts[fi].path]
+            if not r.ok
+                return error[r.reason, 'magpie']
+            out = set[out, '`fi`', r]
+    return out
+
+--- a group of a file's part with every column, through its reader
+fn _group_rows[r, g]
     every = wanted[r, slice[['x'], 0, 0]]
     if not every.ok
         return error[every.reason, 'magpie']
-    whole_g = group_of[r, g, every]
-    if not whole_g.ok
-        return error[whole_g.reason, 'magpie']
-    return frame.head[frame.tail[whole_g, len[whole_g] - row], 1]
+    return group_of[r, g, every]
+
+--- one row of a group's rows
+fn _row_at[rows, row]
+    return frame.head[frame.tail[rows, len[rows] - row], 1]
 
 --- a row's position: its own, or its place in the group
 fn _pos_at[positions, row]
@@ -684,14 +685,20 @@ fn search_rows[paths, column, words, k, stems, snippet]
                 w = w + idf[x]
         weights = push[weights, w]
     --- pass two: the scores, the k best kept, groups and blocks whose
-    --- bound cannot reach the k-th score skipped
+    --- bound cannot reach the k-th score skipped (each file opened once,
+    --- as the kernel's parts held their readers)
+    readers = _readers_of[parts]
+    if not readers.ok
+        return error[readers.reason, 'magpie']
     kept = []
     for fi in range[len[parts]]
         part = parts[fi]
         for g in range[len[part.groups]]
             c = part.groups[g]
             if not c.indexed and len[c.rows] gt 0
-                positions = _part_positions[part, g]
+                positions = _held_positions[part]
+                if not part.held
+                    positions = _positions_of[readers['`fi`'], g]
                 if not positions.ok
                     return error[positions.reason, 'magpie']
                 for j in range[len[c.rows]]
@@ -747,7 +754,9 @@ fn search_rows[paths, column, words, k, stems, snippet]
                                     else
                                         acc = set[acc, row, 0.0 + s]
                     if len[acc] gt 0
-                        positions = _part_positions[part, g]
+                        positions = _held_positions[part]
+                        if not part.held
+                            positions = _positions_of[readers['`fi`'], g]
                         if not positions.ok
                             return error[positions.reason, 'magpie']
                         for row in keys[acc]
@@ -771,10 +780,23 @@ fn search_rows[paths, column, words, k, stems, snippet]
     scores = []
     snip_bytes = bytes[0]
     snip_ends = []
+    --- (each group read once, however many of the k best it holds, as the
+    --- kernel read them: a group read per row had decoded a group's every
+    --- column again for each of its rows)
+    fetched = map[]
     for s in ranked
-        one = _row_of[parts[s.file], s.group, s.row]
-        if not one.ok
-            return error[one.reason, 'magpie']
+        part = parts[s.file]
+        one = frame.new[]
+        if part.held
+            one = _row_at[part.rows, s.row]
+        else
+            at = '`s.file`:`s.group`'
+            if at not in fetched
+                got = _group_rows[readers['`s.file`'], s.group]
+                if not got.ok
+                    return error[got.reason, 'magpie']
+                fetched = set[fetched, at, got]
+            one = _row_at[fetched[at], s.row]
         rows = push[rows, one]
         scores = push[scores, s.score]
         if snippet gt 0
