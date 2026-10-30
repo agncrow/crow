@@ -23,6 +23,26 @@ history says the rest.
   copy at every frame its tests made (Magpie's `put_rows`), so the helper
   it hands `revise` had several copies and was refused as a value, and
   checking its files alone had been half the program's build.
+- A call is refused where no row of its name takes the arguments that
+  are known, each at its place, an argument of no known kind fitting any:
+  any unknown argument had spared the whole call, so `frame.window[f,
+  'qty', 3, 'sum']` in a function nothing calls reached the lowering,
+  which handed the int to the text parameter — "internal error: the
+  lowered program disagrees with itself" (errors k16).
+- In a part whose own file does not import ui, an element's or a
+  control's name is any name, in an app that imports ui: a list named
+  `table` or `span` is a list, and a select of a frame is frame's (each
+  file's imports are its own). Magpie's lists had been refused as
+  elements outside a view in the magpie example app.
+- A stop inside a package installed under `crow_modules` names the
+  program's line whose call reached it, as a stop inside a standard
+  module's function does: it had named a line of the package's file the
+  program never wrote (`line 1582` of Magpie's main.co, where the program
+  handed `merge` a parsed value on its line 11). A part of the program's
+  own names its own line, as before.
+- `crow test --served` serves an app with the packages it links: the
+  copy each mode serves from had held only the app's files, so an app
+  over an installed package exited before serving, "2 mistakes".
 - A program's function named as a standard module's inlined functions
   are (`_frame_of`, `_math_mean`: the module's prefix, then a word) is
   the program's own. It had been taken for the module's by its name
@@ -726,12 +746,18 @@ history says the rest.
 
 ### Breaking
 
-- Magpie is a package, not the standard library (Vijay, 2026-10-29):
-  `packages/magpie`, documented by its README (the tour), REFERENCE.md
-  (every function and part, the design notes) and PARTS.md (each part at
-  work), its `example.co` running all of them in both modes. A program
-  installs it as any dependency (`deps = map[magpie =
-  'github.com/agncrow/crow/packages/magpie@main']`, `crow install`) and
+- Magpie is a package of its own repository, not the standard library
+  (Vijay, 2026-10-29 and 30): `github.com/agncrow/magpie`, private until
+  its license is decided, holding `packages/magpie` — documented by its
+  README (the tour), REFERENCE.md (every function and part, the design
+  notes) and PARTS.md (each part at work), its `example.co` running all of
+  them in both modes — and `packages/kg` and `packages/features`, which
+  moved with it, beside the magpie example app, Magpie's parity programs,
+  its doors driven from outside (`tests/doors.py`, from the five Rust
+  tests that drove them here), its measures and its design notes. A
+  program installs it as any dependency (`deps = map[magpie =
+  'github.com/agncrow/magpie/packages/magpie@v0.1.0']`, `crow install`,
+  with the credentials git holds for github.com while it is private) and
   calls it qualified, as a package is called: `magpie.put[d, f]`,
   `magpie.latest[d]`. The doors are its parts — `use magpie.kafka`, then
   `kafka.serve[root, port]`; `use magpie.redis`, then `redis.serve[…]` —
@@ -741,10 +767,13 @@ history says the rest.
   `nearest` `knn`, `stem` `stemmer`, `records` `recordsets` (a part named
   like a function of the package or a builtin — `merge`, `search`,
   `encode` — reads as that function where both are reached). The book's
-  three Magpie pages and the sys page's stretch on the parts moved into
-  the package, and the spec's sections with them; the spec says where it
-  is. Its answers are the module's: the example prints, line for line,
-  what the book's blocks recorded.
+  three Magpie pages, the sys page's stretch on the parts and the spec's
+  sections went with it; the spec says where it is. Its answers are the
+  module's: the example prints, line for line, what the book's blocks
+  recorded. Crow's gate runs its suite (`./test.sh <crow>` in the
+  repository) before a change lands, since CI cannot reach it; the parity
+  programs that held compiler rules through Magpie — 297, 302, 303, 326,
+  328 — hold them here without it.
 
 - The Rosetta Code run's questions, decided (Vijay, 2026-10-29;
   rosetta/QUESTIONS.md). A function's local named like a name an import

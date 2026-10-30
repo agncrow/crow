@@ -1,52 +1,51 @@
---- Five shapes over a log's open frames (spec, magpie; Frames) that one
---- mode had accepted and the other refused, found by the magpie's
---- benchmark: a frame literal built from an open frame's cells (compiled,
---- `Cells` took no list of parsed values); a mask conjunction over a
---- frame that can fail (compiled, printed as `&` of two lists); the sum
---- of a `where` over a column that can fail (the verifier: the marked
---- column reached math's sum unconverted); a helper handed a frame begun
---- as `frame.new[]` and filled in a branch (a copy typed by the empty
---- literal refused the sort); and a fallible local assigned in a branch
---- under its own guard, then read again (compiled, moved out: E0382).
---- The same in both modes.
-use magpie
+--- Five shapes over open frames that can fail (spec, Frames) that one
+--- mode had accepted and the other refused: a frame literal built from an
+--- open frame's cells (compiled, `Cells` took no list of parsed values);
+--- a mask conjunction over a frame that can fail (compiled, printed as `&`
+--- of two lists); the sum of a `where` over a column that can fail (the
+--- verifier: the marked column reached math's sum unconverted); a helper
+--- handed a frame begun as `frame.new[]` and filled in a branch (a copy
+--- typed by the empty literal refused the sort); and a fallible local
+--- assigned in a branch under its own guard, then read again (compiled,
+--- moved out: E0382). The same in both modes. Found through Magpie's
+--- benchmark, whose reads answered the frames; here `frame.load` does
+--- (Magpie's parity program of this number keeps its reads).
 use frame
 use math
 
-d = 'parity-297-open'
-gone = rm[d]
+p = 'parity-297.csv'
+gone = rm[p]
 f = frame.new[sym = ['A', 'B', 'A'], close = [1.5, 2.5, 3.5], status = ['ready', 'late', 'ready'], day = ['d1', 'd1', 'd1'], when = ['2026-09-17T10:00:00Z', '2026-09-17T10:01:00Z', '2026-09-17T10:02:00Z']]
-f.ts = moment[f.when]
-first = magpie.batch[d, f, by = ['sym']]
-log[first]
+saved = frame.save[f, p]
 
 --- a frame literal from an open frame's cells, in a function whose
 --- parameter is typed by the calls
 fn answer[rows, cut]
-    mine = sort[rows[rows.ts lte cut], 'ts']
+    mine = sort[rows[moment[rows.when] lte cut], 'when']
     return frame.new[last = [mine.close[len[mine] - 1]], n = [len[mine]]]
 cut = moment['2026-09-17T10:05:00Z']
-rows = magpie.lookup[d, ['sym'], ['A']]
+every = frame.load[p]
+rows = every[every.sym eq 'A']
 log[answer[rows, cut].last]
-held = magpie.lookup[d, ['sym'], ['B']]
+held = every[every.sym eq 'B']
 log[answer[held, cut].last]
 log[answer[held, cut].n]
 
 --- a mask conjunction over a frame that can fail
 day = env['PARITY_297_DAY', 'd1']
-ds = magpie.latest[d]
+ds = frame.load[p]
 dd = ds[ds.day eq day and ds.status eq 'ready' and ds.sym eq 'A']
 log[dd.close]
 log[len[ds[ds.day eq day or ds.sym eq 'nobody']]]
 
 --- the sum of a where over a column that can fail
 near = moment['2026-09-17T10:01:30Z']
-r = rows[rows.ts lte near]
+r = rows[moment[rows.when] lte near]
 total = 0.0
 for i in range[2]
     v = float[r.close]
     pv = r.close .* v
-    in60 = r.ts gte moment[near] - 60.0
+    in60 = moment[r.when] gte moment[near] - 60.0
     pv60 = where[in60, pv, 0.0]
     total = total + sum[pv60]
 log[total]
@@ -54,15 +53,15 @@ log[total]
 --- a helper handed a frame begun empty and filled in a branch, after a
 --- call with the open frame itself
 fn ordered[frame_rows]
-    return sort[frame_rows, '_pos']
-hit = magpie.lookup[d, ['sym'], ['A']]
+    return sort[frame_rows, 'close']
+hit = every[every.sym eq 'A']
 out = frame.new[]
 if hit.ok
     out = hit
-log[ordered[hit]._pos]
-log[ordered[out]._pos]
+log[ordered[hit].close]
+log[ordered[out].close]
 
 --- a fallible local assigned in a branch under its guard, read again
 log[len[hit]]
 log[len[out]]
-gone = rm[d]
+gone = rm[p]

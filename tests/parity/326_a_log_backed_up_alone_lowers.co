@@ -1,13 +1,16 @@
---- A program calling magpie's `backup` alone lowers, in both modes: the
---- module's `_fixed`, which the program does not call, had an answer of no
---- value in an early round (its first return an error), which was joined
---- with the local it returns — its parameter `by` — and written back to
---- the parameter, so the lowered program disagreed with itself; and the
---- sequencer's `put_rows`, not called either, hands `revise` a function
---- its own untyped parameter cannot type, which had been refused as the
---- program's mistake (crow check --self: magpie.backup).
-use magpie
+--- A program whose function nobody calls lowers, in both modes: one whose
+--- first return is an error and whose last returns its parameter — an
+--- answer of no value in an early round, joined with the local it
+--- returns, had been written back to the parameter, and the lowered
+--- program disagreed with itself. The shape of Magpie's `_fixed`, found
+--- when a program called its `backup` alone (crow check --self). Its other
+--- shape — an uncalled library function handing `revise` a helper — is
+--- Magpie's parity program of this number, in its own repository: no
+--- standard module has it, and a package's function no program reaches is
+--- not built.
+fn fixed[by]
+    if len[by] eq 0
+        return error['a log is keyed by at least one column', 'parity']
+    return by
 
-r = magpie.backup['no-such-log', 'no-such-backup']
-log[r.ok]
-log[len[r.reason] gt 0]
+log['lowers']

@@ -44,13 +44,15 @@ cargo clippy --workspace --all-features
 ./target/release/crow test tests/parity/185_frames_held_to_pandas.co
 ./target/release/crow test --modules
 (cd examples/rag && ../../target/release/crow test chat/corpus.co && ../../target/release/crow test chat/retrieve.co && ../../target/release/crow test --fixtures chat/page.co && ../../target/release/crow test --fixtures --compiled chat/page.co)
+(cd ~/code/crow_projects/magpie && ./test.sh "$OLDPWD/target/release/crow")
 (cd examples/agent && ../../target/release/crow test agent/store.co && ../../target/release/crow test agent/judge.co && ../../target/release/crow test --fixtures agent/support.co && ../../target/release/crow test --fixtures agent/trace.co && ../../target/release/crow test --fixtures agent/chat.co && ../../target/release/crow test --fixtures --compiled agent/trace.co && ../../target/release/crow test --fixtures --compiled agent/chat.co)
 scripts/coverage.sh
 ```
 
 Use the release binary for the layout and site suites: the debug binary
 overflows its stack there. CI (`.github/workflows/ci.yml`) runs the same
-steps on every push and must be green.
+steps on every push and must be green — all but Magpie's suite (the
+`./test.sh` line), whose repository is private: it runs here only.
 
 ## Things that have bitten
 
@@ -1414,11 +1416,11 @@ steps on every push and must be green.
   `sys::group_signal_args` builds the form (and signals no pid of 0 or 1);
   main.rs and served_parity.rs already wrote it.
 
-- Magpie is Crow (2026-10-28), and a package since 2026-10-29:
-  `packages/magpie/{main,sequencer,merger,fileformat,manifest,
-  columnchunk,lz77,bitpack,bloom,stemmer,postings,executor,searcher,knn,
-  inflate,snappy,recordsets,kafka,redis}.co`; the Rust kernels and their
-  sys rows are deleted. The parts' tests hold the port to the kernels' answers as
+- Magpie is Crow (2026-10-28), a package since 2026-10-29 and a
+  repository of its own since 2026-10-30 (its packages/magpie/{main,
+  sequencer,merger,fileformat,manifest,columnchunk,lz77,bitpack,bloom,
+  stemmer,postings,executor,searcher,knn,inflate,snappy,recordsets,kafka,
+  redis}.co); the Rust kernels and their sys rows are deleted. The parts' tests hold the port to the kernels' answers as
   recorded digests (`_digest`: the first 16 hex digits of a SHA-256 of
   the bytes; `_image` of a frame: its columns' names and chunks) — a
   deliberate change of the format changes those literals, and says why.
@@ -1442,7 +1444,7 @@ steps on every push and must be green.
   emitter chooses a row by name for such a value as text's
   (`held_kind`): `len[p]` of a part of the tail nothing filled had
   printed a list's length of a `String` (parity 327).
-- Magpie measured after the port (2026-10-28, docs/magpie-in-crow.md
+- Magpie measured after the port (2026-10-28, its magpie-in-crow.md
   4.2): build the measure programs with `crow build` in the scratchpad
   (the port is Crow, so compiled is the comparison) and profile a loop
   of the slow verb with `sample`; `CROW_WIDTH_DEBUG=1 crow build --ir`
@@ -1569,32 +1571,43 @@ steps on every push and must be green.
   f[x]`. A path write grows a tensor where it lies as it does a list
   (`Row::grows_in_place`; the emitter takes it with `std::mem::take`, so
   `CrowTensor` has a `Default`, an empty vector).
-- Magpie is a package (2026-10-29, Vijay: step 1 of two, its own
-  repository next): `packages/magpie`, called qualified (`magpie.put`,
-  `use magpie.kafka` then `kafka.serve`), reached through committed
-  relative links (`crow_modules/magpie` under tests/parity, tests/errors,
-  tests/magpie/measure, examples/magpie, packages/kg and features) and,
-  from a Rust test, `common::link_magpie`. Its README, REFERENCE.md and
-  PARTS.md were made from the book's pages, the spec's sections and the
-  sys page's stretch (scripts in the scratchpad of that day, not kept):
-  a change to Magpie's behaviour updates them by hand, and `example.co`
-  (every block, in a function of its own, its names its own) checks the
-  code in both modes. What moving it found in the compiler: a linked
-  package's own imports resolve under the package as the importer
-  spelled it (`module_files` roots them at `package_dir`, never where
-  the link points — a second-level file had been prefixed as the
-  program's own, and a program's `deep.co` beside it "declared twice");
+- Magpie is a package of its own repository (2026-10-29 and 30, Vijay):
+  `github.com/agncrow/magpie`, PRIVATE until its license is decided —
+  never make it public, and never copy its code into this repository —
+  checked out at ~/code/crow_projects/magpie, holding packages/magpie
+  (called qualified: `magpie.put`, `use magpie.kafka` then
+  `kafka.serve`), packages/kg and packages/features (installed as
+  `github.com/agncrow/magpie/packages/<name>@v0.1.0`), examples/magpie,
+  its parity programs, tests/doors.py (the five Rust tests that drove its
+  doors here, as Python) and its design notes (magpie-design.md,
+  magpie-in-crow.md). Its `./test.sh <crow>` runs `crow test --packages`,
+  `--parity` and `--served` from its root and the doors: crow's gate runs
+  it, since CI cannot reach a private repository — a compiler change that
+  breaks Magpie shows only there. What moving it found in the compiler: a
+  linked package's own imports resolve under the package as the importer
+  spelled it (`module_files` roots them at `package_dir`, never where the
+  link points — a second-level file had been prefixed as the program's
+  own, and a program's `deep.co` beside it "declared twice");
   everything under `crow_modules/`, at every depth, is a dependency's —
   neither validated alone in each build nor typing the program by its
   tests (half the build, and copies typed at its tests' frames); an
-  imported file's functions nothing the program reaches names are
-  dropped before it is typed (`unreached_parts_dropped`, by the words
-  each statement says — a name the scan misses is lost, so a new way to
-  reach a function must say its name); a standard module's function is
-  one its source declares (`modules::is_crow_fn` reads `inlined_names`),
-  never a name that begins with its prefix (a program's `_frame_of` had
-  been read in frame's scope: parity 439); and package code is checked
-  as a program's, so a check's per-call question reads an index
-  (`table::runtime_rows`; a scan of ROWS per call and per import had
-  been a tenth of the build). A runtime stop inside a part names the
-  part's line, not its file (open).
+  imported file's functions nothing the program reaches names are dropped
+  before it is typed (`unreached_parts_dropped`, by the words each
+  statement says — a name the scan misses is lost, so a new way to reach
+  a function must say its name); a standard module's function is one its
+  source declares (`modules::is_crow_fn` reads `inlined_names`), never a
+  name that begins with its prefix (a program's `_frame_of` had been read
+  in frame's scope: parity 439); package code is checked as a program's,
+  so a check's per-call question reads an index (`table::runtime_rows`; a
+  scan of ROWS per call and per import had been a tenth of the build) and
+  shares the program's bare names (kg's `link` took Magpie's call of
+  sys's: Magpie writes `sys.link` — Vijay: fine as it is); a part's names
+  are its own file's imports' (`reads_ui_names`, `part_without_ui`: in a
+  part without `use ui`, `table` and `span` are names, in an app with
+  it); a stop inside a dependency names the program's line that called it
+  (`callers_lines` drops a dependency's lines after its refusals;
+  `caller_line` in the emitter); a call's known arguments are held to its
+  rows beside an unknown one (`takes_known`: any unknown argument had
+  spared the call, and the lowering handed an int to a text parameter);
+  and the served harness links an app's links into the copy it serves
+  (`fresh_copy`; tests/served_links.rs).

@@ -2717,21 +2717,19 @@ fn an_int_read_from_four_bytes_stays_in_64_bits() {
     assert!(rust.contains("fn scaled(b: &crow_runtime::sys::Bytes) -> i64"), "{}", rust);
 }
 
-/// Magpie's bit-packed decoders (packages/magpie/bitpack.co) are 64-bit
-/// throughout: each width has a loop of its own, and the bits held are
-/// written so the width pass bounds them (one function holding both loops
-/// had lost the bound, and a column's decode was three quarters
+/// A bit-packed decoder is 64-bit throughout where its bounds are written
+/// as the width pass reads them: one loop holding the bits, a refill
+/// written `min[have + 8, 39]` and the bits left after a value
+/// `bitand[have - width, 7]` (Magpie's decoders: one function holding two
+/// such loops had lost the bound, and a column's decode was three quarters
 /// growing-int arithmetic)
 #[test]
-fn magpies_decoders_stay_in_64_bits() {
-    let part = include_str!("../../packages/magpie/bitpack.co");
-    let rust = transpile(&format!("{}\nf = unpacked[bytes[8], 0, 4, 3]\nlog[f.ok]\n", part));
-    for name in ["_unpacked_narrow", "_unpacked_wide"] {
-        let start = rust.find(&format!("fn {}(", name)).unwrap_or_else(|| panic!("{} is compiled:\n{}", name, rust));
-        let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
-        assert!(body.contains("-> Vec<i64>"), "{} answers 64-bit ints:\n{}", name, body);
-        assert!(!body.contains("_big("), "{} computes nothing on growing ints:\n{}", name, body);
-    }
+fn a_bit_packed_decoder_stays_in_64_bits() {
+    let rust = transpile("use sys\nuse bits\n\nfn unpacked[data, n, width]\n    out = []\n    low = shift[1, width] - 1\n    held = 0\n    have = 0\n    at = 0\n    for i in range[n]\n        while have lt width\n            held = bitor[held, shift[byte[data, at], have]]\n            at = at + 1\n            have = min[have + 8, 39]\n        out = push[out, bitand[held, low]]\n        held = shift[held, -width]\n        have = bitand[have - width, 7]\n    return out\n\nlog[unpacked[bytes[8], 4, 3]]\n");
+    let start = rust.find("fn unpacked(").unwrap_or_else(|| panic!("unpacked is compiled:\n{}", rust));
+    let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
+    assert!(body.contains("-> Vec<i64>"), "unpacked answers 64-bit ints:\n{}", body);
+    assert!(!body.contains("_big("), "unpacked computes nothing on growing ints:\n{}", body);
 }
 
 /// Bytes appended from a range are one copy: `concat[a, slice[b, i, j]]`

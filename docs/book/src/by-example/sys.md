@@ -527,5 +527,5 @@ text
 
 Magpie's parts — its codec, bit packing, column chunks, filters, file,
 manifest, merge, executor, search and sequencer — are written on these,
-in Crow, and are the Magpie package's (`packages/magpie`; its PARTS.md
-shows each at work, its example runs every one in both modes).
+in Crow, and are the Magpie package's, a repository of its own (its
+PARTS.md shows each at work, its example runs every one in both modes).

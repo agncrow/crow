@@ -11,7 +11,7 @@ llm.next	its parameter 's' is typed by nothing the module's tests hand it (?), o
 llm.reply	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names
 mcp.answer	a route's request: tests/mcp.rs drives a stand-in client against a Crow program serving /mcp in both modes (discovery, the list, calls, every error the protocol names)
 mcp.listen	serves over the program's own standard streams until its input ends, over a group of tools: tests/mcp.rs and tests/llm_server.rs drive a Crow client against a Crow program serving so, in both modes
-sys.listen	binds a port the system picks; the listener is driven by accept in the runtime's test, the sys book block and tests/kafka.rs
+sys.listen	binds a port the system picks; the listener is driven by accept in the runtime's test and the sys book block (and Magpie's doors, in its own repository)
 sys.put	its parameter 'path' is typed by nothing the module's tests hand it (?), or takes what no kind names
 sys.upgrade	its parameter 'url' is typed by nothing the module's tests hand it (?), or takes what no kind names
 web.ws.close	its parameter 's' is typed by nothing the module's tests hand it (?), or takes what no kind names

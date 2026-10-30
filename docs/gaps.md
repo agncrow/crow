@@ -102,7 +102,8 @@ or a design document.
   ("not in this round").
 - **GPU:** it computes in 32-bit floats, about 7 significant digits against
   the CPU's 15 (wgpu's limit, the spec's GPU section).
-- **Magpie:** a SQL subset was set aside (docs/magpie-design.md).
+- **Magpie** (a repository of its own since 2026-10-30): a SQL subset was
+  set aside (its magpie-design.md).
 - **The server:** a cap on sessions per client ("a candidate after 1.0",
   docs/security-review.md); sign-in beyond a password and a token.
 - **The runtime's deferred items** (spec): freshness thresholds, a source's

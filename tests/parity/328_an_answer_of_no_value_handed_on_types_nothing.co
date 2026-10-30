@@ -1,12 +1,29 @@
 --- An answer of no value handed on says nothing of the parameter it
 --- reaches: an early round's answer of a function whose first return is
---- an error, narrowed by its guard, had made a copy of magpie's `place`
---- whose bytes were no value, and the flush that later handed bytes
---- reached that copy — an internal error (crow check --self, `merge` of a
---- parsed value). The program stops alike in both modes, at the text the
---- log's directory had to be.
-use magpie
+--- an error, narrowed by its guard, had made a copy of the helper the
+--- answer is handed to whose bytes were no value, and the call that later
+--- handed bytes reached that copy — an internal error (crow check --self,
+--- Magpie's `merge` of a parsed value, its `place`; Magpie's parity
+--- program of this number keeps that call). The program stops alike in
+--- both modes, at the text the directory had to be.
+use sys
 
-log['merging a parsed value']
-log[magpie.merge[json['{"a": 1}'], true]]
+fn encoded[rows]
+    if len[rows] eq 0
+        return error['no rows to write', 'parity']
+    return bytes[join[rows, '\n']]
+
+fn place[dir, name, data]
+    if starts[dir, 'http://'] or starts[dir, 'https://']
+        return error['a URL is read, not written', 'parity']
+    return len[data]
+
+fn flush[dir, rows]
+    data = encoded[rows]
+    if not data.ok
+        return error[data.reason, 'parity']
+    return place[dir, 'part', data]
+
+log['placing under a parsed value']
+log[flush[json['{"a": 1}'], ['x', 'y']]]
 log['not reached']

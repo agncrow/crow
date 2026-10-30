@@ -1,22 +1,28 @@
 --- The left side of an operator runs before the right side's own
---- statements: `put[d, f] eq 1 and latest[d].id eq ['a', 'b']` had read
---- the log before the put, because the read of a value that can fail is
---- hoisted ahead of the statement while the put stayed in the expression
---- — wherever both sides are computed (a mask's `and`, a comparison,
---- arithmetic). And a column compared with a list, a column or a tensor
---- is one truth, not a mask, so such an `and` decides from the left and
---- builds compiled.
-use magpie, frame
-d = 'parity-302'
-gone = rm[d]
-made = mkdir[d]
-p0 = magpie.put[d, frame.new[id = ['a'], v = [1]], by = ['id']]
-log[magpie.put[d, frame.new[id = ['b'], v = [2]]] eq 1 and magpie.latest[d].id eq ['a', 'b']]
-log[magpie.put[d, frame.new[id = ['c'], v = [3]]] eq 2 and magpie.latest[d].v gt 0]
-log[magpie.put[d, frame.new[id = ['d'], v = [4]]] eq 3 and magpie.latest[d].v eq magpie.latest[d].v]
-log[magpie.put[d, frame.new[id = ['e'], v = [5]]] eq len[magpie.latest[d].v] - 1]
-log[magpie.put[d, frame.new[id = ['f'], v = [6]]] eq 5 or magpie.latest[d].v gt 5]
+--- statements: `put[p, …] eq 1 and frame.load[p].id eq ['a', 'b']` must
+--- write the file before it is read, though the read of a value that can
+--- fail is hoisted ahead of the statement while the write stays in the
+--- expression — wherever both sides are computed (a mask's `and`, a
+--- comparison, arithmetic). And a column compared with a list, a column
+--- or a tensor is one truth, not a mask, so such an `and` decides from the
+--- left and builds compiled. (Found as Magpie's `put` beside its
+--- `latest`; Magpie's parity program of this number keeps that form.)
+use frame
+
+p = 'parity-302.csv'
+gone = rm[p]
+
+--- the ids so far written as the file, the last one's position answered
+fn put[path, ids]
+    saved = frame.save[frame.new[id = ids], path]
+    return len[ids] - 1
+
+log[put[p, ['a', 'b']] eq 1 and frame.load[p].id eq ['a', 'b']]
+log[put[p, ['a', 'b', 'c']] eq 2 and len[frame.load[p].id] gt 2]
+log[put[p, ['a', 'b', 'c', 'd']] eq 3 and frame.load[p].id eq frame.load[p].id]
+log[put[p, ['a', 'b', 'c', 'd', 'e']] eq len[frame.load[p].id] - 1]
+log[put[p, ['a', 'b', 'c', 'd', 'e', 'f']] eq 5 or len[frame.load[p].id] gt 5]
 log[['a', 'b'] eq ['a', 'b'] and true]
 log[true and ['x'] eq ['x']]
-log[(magpie.latest[d].v gt 2) eq (magpie.latest[d].v gt 2)]
-gone = rm[d]
+log[(len[frame.load[p].id] gt 2) eq (len[frame.load[p].id] gt 2)]
+gone = rm[p]
