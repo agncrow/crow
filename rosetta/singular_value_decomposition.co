@@ -124,10 +124,10 @@ fn jacobi[a]
             for q in range[p + 1, n]
                 alpha = dot_of[cols[p], cols[p]]
                 beta = dot_of[cols[q], cols[q]]
-                gamma = dot_of[cols[p], cols[q]]
-                if abs[gamma] gt 10.0 ^ -15 * sqrt[alpha * beta]
+                g = dot_of[cols[p], cols[q]]
+                if abs[g] gt 10.0 ^ -15 * sqrt[alpha * beta]
                     rotated = true
-                    zeta = (beta - alpha) / (2.0 * gamma)
+                    zeta = (beta - alpha) / (2.0 * g)
                     t = 1.0 / (abs[zeta] + sqrt[1.0 + zeta * zeta])
                     if zeta lt 0.0
                         t = -t

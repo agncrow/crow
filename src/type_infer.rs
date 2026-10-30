@@ -479,6 +479,10 @@ pub struct TypeContext {
     /// bodies were last read: their answers were read with the old kind,
     /// so a call answers nothing known until the body is read again.
     pub stale_answers: std::collections::BTreeSet<String>,
+    /// The lists, by function and variable, a parsed value was pushed onto
+    /// while their items were not known yet, and so read as a number: a
+    /// stop there says how to keep parsed values.
+    pub unsaid_pushes: std::collections::BTreeSet<(String, String)>,
     /// Each function's parameters' defaults as written, for `describe`
     /// (kept here, since the final pass lowers on a Lowerer of its own).
     pub fn_defaults: BTreeMap<String, Vec<Option<Expr>>>,
@@ -648,6 +652,7 @@ impl TypeContext {
             applying: Vec::new(),
             fn_fields: BTreeMap::new(),
             stale_answers: std::collections::BTreeSet::new(),
+            unsaid_pushes: std::collections::BTreeSet::new(),
             fn_defaults: BTreeMap::new(),
             first_call_line: BTreeMap::new(),
             text_items: std::collections::BTreeSet::new(),
@@ -1625,10 +1630,22 @@ impl TypeContext {
     /// taken the list of ints unconverted, an internal error in both modes
     /// (Rosetta Code, Monads/List monad).
     pub(crate) fn items_alike(x: &Ty, y: &Ty) -> bool {
-        let record = |t: &Ty| matches!(t, Ty::Record(_) | Ty::OptRecord(_));
+        // (a list of records or none joins a list of ints — its 0s are none,
+        // and a list of 0s written records holds them; Vijay, 2026-10-29)
+        Self::items_alike_by(x, y, &|t| matches!(t, Ty::Record(_)))
+    }
+
+    /// The same, with a list of records or none apart from a list of ints
+    /// too: one function taking a function serves every call, and a list
+    /// of ints beside a list of records is two kinds there (errors k14).
+    pub(crate) fn items_alike_strictly(x: &Ty, y: &Ty) -> bool {
+        Self::items_alike_by(x, y, &|t| matches!(t, Ty::Record(_) | Ty::OptRecord(_)))
+    }
+
+    fn items_alike_by(x: &Ty, y: &Ty, record: &dyn Fn(&Ty) -> bool) -> bool {
         match (x.payload(), y.payload()) {
             (Ty::List(a), Ty::List(b)) | (Ty::Map(_, a), Ty::Map(_, b)) => {
-                !(matches!(a.payload(), Ty::Int) && record(b.payload()) || record(a.payload()) && matches!(b.payload(), Ty::Int)) && Self::items_alike(a, b)
+                !(matches!(a.payload(), Ty::Int) && record(b.payload()) || record(a.payload()) && matches!(b.payload(), Ty::Int)) && Self::items_alike_by(a, b, record)
             }
             _ => true,
         }

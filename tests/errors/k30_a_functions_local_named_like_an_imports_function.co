@@ -1,0 +1,13 @@
+--- A function's local named like a function an import makes — math's
+--- `mean` — is refused where it is written, as the same name at the top
+--- level, a parameter or a loop's variable is (spec, Names Are Never
+--- Ambiguous): it had shadowed the import silently, `mean[1]` indexing the
+--- local (Rosetta Code, Pathological floating point problems; Vijay,
+--- 2026-10-29)
+use math
+
+fn middle[xs]
+    mean = [10, 20, 30]
+    return mean[1]
+
+log[middle[[1.0, 2.0]]]

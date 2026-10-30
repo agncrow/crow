@@ -15,10 +15,10 @@ fn counted[xs]
     return n
 
 fn joined[xs]
-    head = ''
+    top_line = ''
     for line in xs
-        head = '`head``line`;'
-    return head
+        top_line = '`top_line``line`;'
+    return top_line
 
 sj = join[frame.new[k = [1, 2, 3]], frame.new[k = [1, 3], n = [5, 7]], 'k', 'left']
 log[counted[sj.n]]

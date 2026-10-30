@@ -74,22 +74,22 @@ fn u16[data, i]
 fn with_table[huff, slot, counts, symbols]
     --- a Huffman table as a lookup: for every 16 bits a code can start, the code's length
     --- times 256 plus its symbol, written at the table's slot of the list of tables
-    code = 0
+    acc_code = 0
     k = 0
     length = 1
     while length lte 16
         c = 0
         while c lt counts[length - 1]
             entry = length * 256 + symbols[k]
-            p = slot * 65536 + shift[code, 16 - length]
-            stop = slot * 65536 + shift[code + 1, 16 - length]
+            p = slot * 65536 + shift[acc_code, 16 - length]
+            stop = slot * 65536 + shift[acc_code + 1, 16 - length]
             while p lt stop
                 huff[p] = entry
                 p = p + 1
-            code = code + 1
+            acc_code = acc_code + 1
             k = k + 1
             c = c + 1
-        code = code * 2
+        acc_code = acc_code * 2
         length = length + 1
     return huff
 
@@ -260,9 +260,9 @@ fn low_frequencies[jpeg, coded, marks]
                                 acc = acc + coded[p]
                             p = p + 1
                             nbits = nbits + 8
-                        e = huff[dc_base + shift[acc, 16 - nbits]]
-                        nbits = nbits - shift[e, -8]
-                        s = bitand[e, 255]
+                        sym = huff[dc_base + shift[acc, 16 - nbits]]
+                        nbits = nbits - shift[sym, -8]
+                        s = bitand[sym, 255]
                         diff = 0
                         if s gt 0
                             nbits = nbits - s
@@ -282,9 +282,9 @@ fn low_frequencies[jpeg, coded, marks]
                                     acc = acc + coded[p]
                                 p = p + 1
                                 nbits = nbits + 8
-                            e = huff[ac_base + shift[acc, 16 - nbits]]
-                            nbits = nbits - shift[e, -8]
-                            rs = bitand[e, 255]
+                            sym = huff[ac_base + shift[acc, 16 - nbits]]
+                            nbits = nbits - shift[sym, -8]
+                            rs = bitand[sym, 255]
                             s = bitand[rs, 15]
                             if s eq 0
                                 acc = bitand[acc, pow2[nbits] - 1]
@@ -527,10 +527,10 @@ fn hits_at[img, factor, win, size, stages]
     s2 = rect_sum[fq, bases, 1, 1, inner, inner, stride]
     nf = area * s2 - s1 .* s1
     positive = nf gt 0.0
-    norm = flatten[sqrt[where[positive, nf, ones[len[nf]]]]]
-    keep = positive and (area / norm lt 0.1)
+    norms = flatten[sqrt[where[positive, nf, ones[len[nf]]]]]
+    keep = positive and (area / norms lt 0.1)
     b = flatten[bases[keep]]
-    nrm = flatten[norm[keep]]
+    nrm = flatten[norms[keep]]
     --- the stages: each reads its corners of every window left, and keeps the windows it passes
     n = len[b]
     s = 0

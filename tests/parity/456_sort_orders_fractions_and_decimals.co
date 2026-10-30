@@ -1,0 +1,9 @@
+--- `sort` orders fractions and decimals by value, as `lt`, `min` and `max`
+--- compare them: no row had taken a list of either, and the program was
+--- refused (Rosetta Code, Rational calculator; Vijay, 2026-10-29).
+qs = push[push[push[[], fraction[1, 2]], fraction[1, 3]], fraction[-2, 5]]
+log[sort[qs]]
+ds = push[push[push[[], decimal['1.25']], decimal['0.5']], decimal['-3']]
+log[sort[ds]]
+log[sort[qs][0] lt sort[qs][1]]
+log[type[sort[ds]]]

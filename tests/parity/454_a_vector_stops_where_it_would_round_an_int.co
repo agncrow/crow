@@ -1,0 +1,14 @@
+--- A list of whole numbers written down is a vector, which holds its
+--- numbers as floats: a computed whole number up to 2^53 is held exactly,
+--- and one past it stops where the list is made, in both modes, naming
+--- `push`. It had been rounded silently — `[a, 3]` with `a = 2 ^ 60 + 1`
+--- held 2^60, and `xs[0] eq a` was false (Rosetta Code, Abundant odd
+--- numbers; Vijay, 2026-10-29). A list grown with push keeps every digit.
+a = 2 ^ 53
+xs = [a, 3]
+log[xs[0]]
+b = 2 ^ 60 + 1
+kept = push[push[[], b], 3]
+log[kept[0] eq b]
+ys = [b, 3]
+log[ys[0]]

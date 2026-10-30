@@ -1,0 +1,14 @@
+--- A parsed value pushed onto a list held in a variable whose items
+--- nothing said yet is read as a number — push's rows take one there, so a
+--- later `max` of the list reads numbers (packages/market's bars) — and
+--- where it holds text the stop says why, and how to keep parsed values: a
+--- list made in the call, `push[[], …]`, holds them as they are (Rosetta
+--- Code, Associative array/Merging; Vijay, 2026-10-29).
+j = json['{"a": "x", "b": 2}']
+kept = push[push[[], j['a']], j['b']]
+log[kept]
+xs = []
+xs = push[xs, j['b']]
+log[xs]
+xs = push[xs, j['a']]
+log[xs]

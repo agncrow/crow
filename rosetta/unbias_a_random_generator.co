@@ -24,9 +24,9 @@ fn right[text, width]
     return fmt[text, width = width, align = 'right']
 
 fn row[label, hits, draws]
-    zeros = draws - hits
+    misses = draws - hits
     share = right[fmt[100.0 * hits / draws, decimals = 3], 8]
-    return '`fmt[label, width = 12]` `fmt[hits, width = 9, commas = true]` `fmt[zeros, width = 9, commas = true]` `share`%'
+    return '`fmt[label, width = 12]` `fmt[hits, width = 9, commas = true]` `fmt[misses, width = 9, commas = true]` `share`%'
 
 seed[2026]
 draws = 100000

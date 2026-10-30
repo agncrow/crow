@@ -546,6 +546,23 @@ impl<'a> Lowerer<'a> {
         !hidden && (self.scopes[0].contains(name) || self.v.module_vars.contains(name))
     }
 
+    /// Whether an assignment binds its name anew here, so the names the
+    /// language and the imports take are checked against it
+    /// (`check_reserved`): a name nothing defines, or — inside a function or
+    /// a derivation — one an import makes that no local holds yet. The
+    /// names imports make are among the defined ones (`used`), so `mean` or
+    /// `e` assigned in a function under `use math` had shadowed math's,
+    /// where the same line at the top level, a parameter and a loop's
+    /// variable were refused (Vijay, 2026-10-29: Rosetta Code,
+    /// Pathological floating point problems).
+    pub(super) fn binds_anew(&self, name: &str) -> bool {
+        if !self.defined(name) {
+            return true;
+        }
+        let imported = self.ctx.registry.module_name_of(name).is_some() || self.ctx.registry.has_constant(name);
+        matches!(self.at, Where::In(_) | Where::Derive) && imported && !self.declared(name) && !self.ctx.functions.contains_key(name) && !self.ctx.structs.contains_key(name)
+    }
+
     /// A lowered value's type as a check compares it, read as text. A
     /// call to a function whose returned value's type is not known yet is
     /// of an unknown type, not of none (inference types such a function as
@@ -1150,10 +1167,20 @@ impl<'a> Lowerer<'a> {
                 // (a function that answers nothing, or only fails, gives no
                 // value to compute with)
                 " — a call that answers nothing, or only fails, gives no value, only whether it failed (`.ok`)"
+            } else if matches!(lt, Ty::OptRecord(_)) || matches!(rt, Ty::OptRecord(_)) {
+                // (a function handed a record at one call and an int at
+                // another holds a record or none, and answers one: it had
+                // been named as the record alone; Vijay, 2026-10-29: Rosetta
+                // Code, Monads/List monad)
+                " — a function handed a record and an int holds a record or none (0 is none, another int stops): hand it records, or write one for the ints"
             } else {
                 ""
             };
-            self.refuse(format!("cannot use '{}' with {} and {}{}", op_str, lt.crow_name(), rt.crow_name(), hint));
+            let shown = |t: &Ty| match t {
+                Ty::OptRecord(n) => format!("{} or none", crate::lower::shown(n)),
+                t => t.crow_name(),
+            };
+            self.refuse(format!("cannot use '{}' with {} and {}{}", op_str, shown(&lt), shown(&rt), hint));
         }
     }
 
@@ -2691,7 +2718,7 @@ mod tests {
         assert!(check_source("log[1 in map[a = 1]]\n").unwrap_err().contains("the map's keys are text, not an int"), "{}", check_source("log[1 in map[a = 1]]\n").unwrap_err());
         assert!(check_source("log[len[5]]\n").unwrap_err().contains("len[] takes a list, text, a map, numbers, a frame or bytes, got an int"));
         let sorted = check_source("struct P [x, y]\nlog[sort[[P[3, 4], P[1, 2]]]]\n").unwrap_err();
-        assert!(sorted.contains("sort[] takes a list of ints, a list of numbers, a list of text or numbers, got a list of records"), "{}", sorted);
+        assert!(sorted.contains("sort[] takes a list of ints, a list of numbers, a list of text, a list of fractions, a list of decimals or numbers, got a list of records"), "{}", sorted);
         assert!(check_source("log[range[2.5]]\n").unwrap_err().contains("range[] takes an int, got a number"));
         // a map's membership is the operator's (`has` retired into `in`)
         assert!(check_source("m = map[a = 1]\nlog['a' in m]\n").is_ok());

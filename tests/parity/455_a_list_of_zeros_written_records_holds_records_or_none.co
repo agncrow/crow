@@ -1,0 +1,35 @@
+--- A list of 0s that the program writes records into holds records or
+--- none, as a variable, a field or a parameter given 0 and a record does:
+--- each 0 is none, and an item read from it is a record or none — empty
+--- buckets made of zeros, a record written into one by a function. Its
+--- items had stayed ints, and `e.next` was refused as an int's field
+--- (Rosetta Code, Monads/List monad; Vijay, 2026-10-29). Another int
+--- where records or none are held stops, as one handed alone does.
+struct Entry [key, next]
+
+fn insert[b, k]
+    h = k % len[b]
+    b[h] = Entry[k, b[h]]
+    return b
+
+fn chain[b, k]
+    n = 0
+    e = b[k % len[b]]
+    while e ne 0
+        n = n + 1
+        e = e.next
+    return n
+
+buckets = for i in range[4]
+    0
+buckets = insert[buckets, 5]
+buckets = insert[buckets, 9]
+buckets = insert[buckets, 2]
+log[chain[buckets, 1]]
+log[chain[buckets, 2]]
+log[chain[buckets, 3]]
+
+heads = for i in range[3]
+    i
+heads = insert[heads, 4]
+log[chain[heads, 1]]

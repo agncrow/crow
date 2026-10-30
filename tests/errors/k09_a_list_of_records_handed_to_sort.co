@@ -1,0 +1,10 @@
+--- A list of a kind no row of the builtin takes is refused naming its
+--- items' kind: `sort` of fractions had been refused as `got a list`,
+--- naming no kind at all (Rosetta Code, Rational calculator) — fractions
+--- sort now (Vijay, 2026-10-29), and records, which have no order, are
+--- refused so
+
+struct P [x]
+
+xs = push[push[[], P[2]], P[1]]
+log[sort[xs]]

@@ -65,7 +65,7 @@ fn _huffman[lengths]
 
 --- one symbol of the code, read from bit `bit` on
 fn _decode[data, h, bit]
-    code = 0
+    sym = 0
     first = 0
     index = 0
     at = bit
@@ -74,17 +74,17 @@ fn _decode[data, h, bit]
         i = shift[at, -3]
         if i gte total
             return error['the deflate stream is cut short', 'magpie']
-        code = bitor[code, bitand[shift[byte[data, i], 0 - bitand[at, 7]], 1]]
+        sym = bitor[sym, bitand[shift[byte[data, i], 0 - bitand[at, 7]], 1]]
         at = at + 1
         count = h.counts[size]
-        if code - count lt first
-            place = index + code - first
+        if sym - count lt first
+            place = index + sym - first
             if place lt 0 or place gte len[h.symbols]
                 return error['a Huffman code names no symbol', 'magpie']
             return Sym[h.symbols[place], at]
         index = index + count
         first = shift[first + count, 1]
-        code = shift[code, 1]
+        sym = shift[sym, 1]
     return error['a Huffman code is longer than 15 bits', 'magpie']
 
 --- the length and distance tables of RFC 1951
@@ -144,9 +144,9 @@ fn _codes[data, bit, lit, dist, out]
                 distance = int[db[d.value]] + more.value
                 if distance gt len[out]
                     return error['a deflate back-reference reaches before the start', 'magpie']
-                start = len[out] - distance
+                begin = len[out] - distance
                 for k in range[size]
-                    out = push[out, byte[out, start + k]]
+                    out = push[out, byte[out, begin + k]]
     return Out[out, at]
 
 --- the order a dynamic block's code lengths come in
@@ -223,15 +223,15 @@ fn inflated[data]
                     return error[three.reason, 'magpie']
                 at = three.bit
                 code_lengths[int[order[j]]] = three.value
-            code = _huffman[code_lengths]
-            if not code.ok
-                return error[code.reason, 'magpie']
+            huff = _huffman[code_lengths]
+            if not huff.ok
+                return error[huff.reason, 'magpie']
             lengths = []
             for i in range[nlen + ndist]
                 lengths = push[lengths, 0]
             i = 0
             while i lt nlen + ndist
-                got = _decode[data, code, at]
+                got = _decode[data, huff, at]
                 if not got.ok
                     return error[got.reason, 'magpie']
                 at = got.bit

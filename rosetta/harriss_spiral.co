@@ -79,12 +79,12 @@ fn braille[arcs, w, h, cols]
     weights = [[1, 8], [2, 16], [4, 32], [64, 128]]
     lines = for r in range[rows]
         cells = for c in range[cols]
-            code = 0
+            cval = 0
             for dy in range[4]
                 for dx in range[2]
                     if dots[(4 * r + dy) * across + 2 * c + dx]
-                        code = code + weights[dy][dx]
-            char[10240 + code]
+                        cval = cval + weights[dy][dx]
+            char[10240 + cval]
         trimmed[cells]
     first = 0
     while first lt rows and lines[first] eq ''

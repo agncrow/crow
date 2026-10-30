@@ -256,6 +256,12 @@ fn axis(what: &str, t: &CrowTensor, axis: i64) -> Result<usize, String> {
     }
 }
 
+/// `sum[xs]` of a list of ints: an int, every digit within 64 bits (the
+/// width pass hands a sum that may pass them to `int::sum`).
+pub fn sum_ints(xs: Vec<i64>) -> Result<i64, String> {
+    crate::stops::sum(&xs)
+}
+
 /// `sum[t]`.
 pub fn sum(t: &CrowTensor) -> f64 {
     t.sum()

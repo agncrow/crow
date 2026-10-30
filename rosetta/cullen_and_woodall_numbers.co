@@ -32,12 +32,12 @@ fn primes_below[limit]
 fn pow_mod[base, power, m]
     result = 1
     b = base % m
-    e = power
-    while e gt 0
-        if e % 2 eq 1
+    ex = power
+    while ex gt 0
+        if ex % 2 eq 1
             result = result * b % m
         b = b * b % m
-        e = e / 2
+        ex = ex / 2
     return result
 
 --- whether base a shows that the odd n, n - 1 = d * 2^s, is composite

@@ -128,13 +128,13 @@ fn _reread[t]
     m = listed[t.dir]
     if not m.ok
         return error[m.reason, 'magpie']
-    head = _head_of[t.dir]
-    if not head.ok
-        return error[head.reason, 'magpie']
+    top = _head_of[t.dir]
+    if not top.ok
+        return error[top.reason, 'magpie']
     if t.has_image
         forget['`t.dir`/#last']
         forget['`t.dir`/#row']
-    return Tail[t.dir, m.keys, t.parts, head + 1, false, frame.new[], t.failed, t.answer, t.flushing, '']
+    return Tail[t.dir, m.keys, t.parts, top + 1, false, frame.new[], t.failed, t.answer, t.flushing, '']
 
 --- whether cell `i` is present, by the bitmap
 fn _present[present, i]
@@ -176,12 +176,12 @@ fn _cells_of[col]
     if kind eq 'text'
         cell_bytes = text_bytes_of[col, 0, n]
         cuts = text_ends_of[col, 0, n]
-        start = 0
+        begin = 0
         for i in range[n]
             stop = cuts[i]
             if _present[present, i]
-                out[i] = Cell[4, 0, 0.0, text[slice[cell_bytes, start, stop], '']]
-            start = stop
+                out[i] = Cell[4, 0, 0.0, text[slice[cell_bytes, begin, stop], '']]
+            begin = stop
     return out
 
 --- a key's text: each cell's form and value, so two keys are one where
@@ -354,7 +354,7 @@ fn put_rows[dir, f]
     clear = _failed_flush[name, dir]
     if not clear.ok
         return error[clear.reason, 'magpie']
-    noted = revise[_tails_name[], Tails[slice[['x'], 0, 0]], _noted, name]
+    revised = revise[_tails_name[], Tails[slice[['x'], 0, 0]], _noted, name]
     t = revise[name, _unread[name], _appended, f]
     if len[t.refused] gt 0
         return error[t.refused, 'magpie']

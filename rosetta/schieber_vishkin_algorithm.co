@@ -18,9 +18,9 @@ struct Tree [child, sib, parent]
 struct Labels [pre, beta, alfa, tau, lam]
 
 fn blank[n]
-    zeros = for i in range[n]
+    blanks = for i in range[n]
         0
-    return zeros
+    return blanks
 
 --- the tree of nodes 1..n from each node's parent (0 for a root), children in order
 fn linked[parents]

@@ -1,0 +1,19 @@
+--- `concat[a, b, c, …]` joins its pieces in order, as `concat[[a, b, c]]`
+--- joins a list written down: texts, lists and tensors; the axis form —
+--- two tensors and the axis, written as a number or named — stays the
+--- axis form. Three texts had been refused, "concat[] takes numbers,
+--- numbers and an int" (Rosetta Code, Bioinformatics/Sequence mutation;
+--- Vijay, 2026-10-29).
+a = 'AC'
+b = 'GT'
+c = 'TA'
+log[concat[a, b, c]]
+log[concat['x', 'y', 'z', 'w']]
+log[concat[push[[], 1], push[[], 2], push[[], 3]]]
+xs = [1.5, 2.5]
+log[concat[xs, xs, xs]]
+m = [[1.0, 2.0], [3.0, 4.0]]
+log[concat[m, m, 0]]
+log[concat[m, m, 1]]
+log[concat[m, m, axis = 1]]
+log[concat[[a, b]]]

@@ -584,6 +584,19 @@ pub fn tensor_of_ints(v: &[i64]) -> crate::tensor::CrowTensor {
 /// tensor would, in both modes. (Through the float every time, the round
 /// trip had cost a brainfuck interpreter a third of its time.)
 #[inline(always)]
+/// A computed whole number written into a vector of whole numbers, which
+/// holds its numbers as floats: exact to 2^53, stopped past it (Vijay,
+/// 2026-10-29: it had rounded silently — `[a, 3]` with `a = 2 ^ 60 + 1`
+/// held 2^60, and `xs[0] eq a` was false in both modes).
+pub fn whole_in_vector(n: i64) -> Result<f64, String> {
+    if n.unsigned_abs() <= 1 << 53 { Ok(n as f64) } else { Err(past_vector(n)) }
+}
+
+/// The stop's words, both modes'.
+pub fn past_vector(n: i64) -> String {
+    format!("{} is past 2^53, and a list of whole numbers written down is a vector, which holds its numbers as floats — grow the list with push, a list of ints, to keep every digit", n)
+}
+
 pub fn held_int(n: i64) -> i64 {
     if n.unsigned_abs() <= 1 << 53 { n } else { held_far(n) }
 }

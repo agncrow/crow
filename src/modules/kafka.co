@@ -140,10 +140,10 @@ fn _answer_metadata[root, version, body, host, port]
     topics = bytes['']
     for t in wanted
         partition = concat[[pack[0, 2], pack[0, 4], pack[0, 4], _warray[[pack[0, 4]]], _warray[[pack[0, 4]]]]]
-        head = concat[pack[0, 2], _wstr[t]]
+        header = concat[pack[0, 2], _wstr[t]]
         if version gte 1
-            head = concat[head, pack[0, 1]]
-        topics = concat[topics, concat[head, _warray[[partition]]]]
+            header = concat[header, pack[0, 1]]
+        topics = concat[topics, concat[header, _warray[[partition]]]]
     out = _warray[[broker]]
     if version gte 2
         out = concat[out, _wstr['crow-magpie']]
@@ -195,10 +195,10 @@ fn _answer_produce[root, version, body]
                     base = _landed[dir, recs]
                     if base lt 0
                         err = 2
-            answer = concat[[pack[index, 4], pack[err, 2], pack[base, 8]]]
+            response = concat[[pack[index, 4], pack[err, 2], pack[base, 8]]]
             if version gte 2
-                answer = concat[answer, pack[-1, 8]]
-            answers = concat[answers, answer]
+                response = concat[response, pack[-1, 8]]
+            answers = concat[answers, response]
         topics = concat[topics, concat[_wstr[topic], _array[parts, answers]]]
     if acks eq 0
         return bytes['']
@@ -556,9 +556,9 @@ fn _answer_offset_fetch[root, body]
     blank = frame.new[gid = ['-'], topic = ['-'], partition = [0], offset = [0], meta = ['-']]
     known = blank[blank.gid eq '']
     if exists[dir]
-        latest = magpie.latest[dir]
-        if latest.ok and len[latest] gt 0
-            known = latest[latest.gid eq gid]
+        newest = magpie.latest[dir]
+        if newest.ok and len[newest] gt 0
+            known = newest[newest.gid eq gid]
     topics = bytes['']
     for i in range[count]
         topic = _str_at[body, at]
@@ -681,9 +681,9 @@ fn serve[root, port = 9092, host = '127.0.0.1', rounds = 0]
     waiting_reqs = []
     waiting_until = []
     served = 0
-    round = 0
-    while rounds eq 0 or round lt rounds
-        round = round + 1
+    turn = 0
+    while rounds eq 0 or turn lt rounds
+        turn = turn + 1
         arrived = accept[l, 0.005]
         if arrived.ok
             conns = push[conns, socket_of[arrived, address[arrived], bytes['']]]
@@ -702,13 +702,13 @@ fn serve[root, port = 9092, host = '127.0.0.1', rounds = 0]
                         waiting_reqs = push[waiting_reqs, req]
                         waiting_until = push[waiting_until, float[now[]] + _fetch_wait[slice[req, at, len[req]]]]
                     else
-                        answer = _answer[root, req, host, port]
-                        if not answer.ok
+                        response = _answer[root, req, host, port]
+                        if not response.ok
                             sys.close[stream_of[c]]
                         else
                             served = served + 1
-                            if len[answer] gt 0
-                                sent = send[stream_of[c], answer]
+                            if len[response] gt 0
+                                sent = send[stream_of[c], response]
                     kept = push[kept, c]
                 else
                     kept = push[kept, c]
@@ -721,10 +721,10 @@ fn serve[root, port = 9092, host = '127.0.0.1', rounds = 0]
             req = waiting_reqs[i]
             at = _after_str[req, 8]
             if float[now[]] gte waiting_until[i] or not _fetch_waits[root, unpack[req, 2, 2], slice[req, at, len[req]]]
-                answer = _answer[root, req, host, port]
-                if answer.ok
+                response = _answer[root, req, host, port]
+                if response.ok
                     served = served + 1
-                    sent = send[stream_of[waiting[i]], answer]
+                    sent = send[stream_of[waiting[i]], response]
             else
                 still = push[still, waiting[i]]
                 still_reqs = push[still_reqs, req]

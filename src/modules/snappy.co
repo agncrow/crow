@@ -72,9 +72,9 @@ fn unsnapped[block]
                 i = i + 4
             if offset eq 0 or offset gt len[out]
                 return error['a snappy copy reaches `offset` bytes back where `len[out]` were written', 'magpie']
-            start = len[out] - offset
+            begin = len[out] - offset
             for k in range[length]
-                out = push[out, byte[out, start + k]]
+                out = push[out, byte[out, begin + k]]
         if len[out] gt size
             return error['the snappy block decodes past the `size` bytes promised', 'magpie']
     if len[out] ne size

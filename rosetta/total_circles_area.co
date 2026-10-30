@@ -42,8 +42,8 @@ fn visible[cs]
 
 --- an angle brought into [0, 2 pi)
 fn turn[a]
-    full = 2.0 * pi
-    a - full * floor[a / full]
+    full_turn = 2.0 * pi
+    a - full_turn * floor[a / full_turn]
 
 --- 0, 2 pi and every angle on circle i where another circle crosses it, in order
 fn crossings[cs, i]

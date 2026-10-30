@@ -1,0 +1,13 @@
+--- A page's declarations are set before its other top-level lines run, so
+--- its top-level `seed[n]` runs before them: the facts' draws are seeded,
+--- the same numbers on every run in both modes. They had been drawn
+--- unseeded, a different number each run, and the two modes disagreed
+--- (Rosetta Code, Create an HTML table; Vijay, 2026-10-29).
+use ui, math
+
+seed[2026]
+x = rand[0, 9999]
+rows = for i in range[3]
+    rand[0, 99]
+log[x]
+log[rows]

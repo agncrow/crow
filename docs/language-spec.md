@@ -376,7 +376,7 @@ A list of numbers however it was made — grown by `push`, read from a file, a m
 
 Internally, all-numeric arrays use a fast tensor representation for element-wise operations. This is transparent — numeric arrays behave identically to regular arrays for indexing, iteration, comparison and all builtins: two lists of numbers are `eq` when they hold the same numbers in the same shape, however each was built (a list grown by `push` and a literal, ints and the same floats, a list of rows and a matrix literal). A list of rows — tensors of one shape, grown by `push` from a matrix's rows, or lists of numbers of one length — is a matrix wherever a tensor is taken (`transpose[rows]`, `stack[rows]`, `tensor[rows]`, `mean`), as a list of numbers is a vector; `stack[rows, 1]` stacks its columns. Rows of two shapes stop the program with the reason, in both modes (compiled, a list of rows had been refused where a tensor was taken; a list of lists of numbers had stopped the interpreter and not built compiled). A list of lists whose numbers can fail is no matrix: it is refused before the program runs, and its numbers are read first. A matrix `stack` makes, or `tensor` of a list of lists, has a rank the program knows, so its columns walk as rows and each is numbers (its columns had been read as numbers, and `mean` of one refused).
 
-A tensor holds its numbers as floats, and a float holds a whole number exactly only up to 2^53 (9007199254740992): a literal list of ints past it is a list of ints, which holds each as it is (a tensor had held `9007199254740993` as `…992`), and a matrix literal of them is refused, in both modes. A literal list of whole numbers that a function goes on to hold as a list of ints it builds — `q = [1]`, then `q = grow[q, k]` with `grow` pushing ints — is a list of ints from its first line (it had held floats, converted to ints and back at every call and assignment); one used as numbers stays a tensor.
+A tensor holds its numbers as floats, and a float holds a whole number exactly only up to 2^53 (9007199254740992): a literal list of ints past it is a list of ints, which holds each as it is (a tensor had held `9007199254740993` as `…992`), and a matrix literal of them is refused, in both modes. A literal list of whole numbers that a function goes on to hold as a list of ints it builds — `q = [1]`, then `q = grow[q, k]` with `grow` pushing ints — is a list of ints from its first line (it had held floats, converted to ints and back at every call and assignment); one used as numbers stays a tensor. A computed whole number past 2^53 in a list written down as a vector stops where the list is made, in both modes — `[a, 3]` with `a = 2 ^ 60 + 1` (Vijay, 2026-10-29: it had held 2^60 silently, and `xs[0] eq a` was false); a list grown with `push` is a list of ints and keeps every digit.
 
 
 ### Expression Grouping
@@ -1065,8 +1065,10 @@ t = Node['+', Node['*', leaf, leaf], leaf]
 
 What holds a record or `0` is *a record or none*: such a field, a variable
 first given `0` and later a record (or the other way), a function's
-parameter handed either, and a function's value answering either
-(`fn child[n, side]` answering `n.a` or `n.b`). It passes through all of
+parameter handed either, a function's value answering either
+(`fn child[n, side]` answering `n.a` or `n.b`), and a list's items — a
+list of 0s an item of which is written a record, the empty buckets of a
+hash table (Vijay, 2026-10-29: they had stayed ints). It passes through all of
 them as it is, in both modes. Reading a field of none, or handing none to
 a function that takes a record and reads it, stops the program:
 `cannot access field 'op' on this value`. Whether a link holds none is
@@ -1493,7 +1495,7 @@ A builtin handed a number of arguments, or a kind of argument, it does not take 
 | `commas = true` | Thousands separators | false |
 | `width = n` | Minimum width (pads with `fill`) | off |
 | `align = 'left'/'right'` | Alignment within width | numbers right, strings left |
-| `fill = c` | Pad character | `' '` |
+| `fill = c` | Pad character (`'0'` pads a negative number between its sign and its digits) | `' '` |
 | `percent = true` | Multiply by 100, append `%` (numbers) | false |
 
 ```
@@ -1502,8 +1504,11 @@ fmt[1234.567, decimals = 2, commas = true]   --- 1,234.57
 fmt[0.123, percent = true, decimals = 1]     --- 12.3%
 fmt[42, width = 8]                           --- '      42'
 fmt[42, width = 5, fill = '0']               --- 00042
+fmt[-42, width = 5, fill = '0']              --- -0042
 fmt['alice', width = 8]                      --- 'alice   '
 ```
+
+Zeros fill a number after its sign, as printf and Python pad (it had been `00-42`); any other fill, and a string's, goes before. A float's `decimals` round its exact binary value with ties to even, as Rust, C and Python print floats — `fmt[2.5, decimals = 0]` is `2`, `fmt[0.125, decimals = 2]` is `0.12`, `fmt[0.375, decimals = 2]` is `0.38` — while an exact number (a fraction, a decimal) and `round` round a half away from zero, the school rule: `fmt[fraction[1, 8], decimals = 2]` is `0.13`, `round[2.5]` is `3`, `round[-2.5]` is `-3` (Vijay, 2026-10-29: kept, and said here; printing floats otherwise than every other language would surprise more than the two rules do).
 
 **Name your formats.** For repeated formats, define a function once and use it everywhere — shorter and clearer than any per-slot format code:
 
@@ -1551,9 +1556,9 @@ type[error['x']]  --- 'error'
 | `len[x]` | Length of a list, of text (in characters), of a map (its entries), of a tensor (what a loop walks and an index reads: a vector's numbers, a matrix's rows — `len[flatten[m]]` counts every number), of a frame (its rows), of a frame's column (its cells, a missing one too). `x.len` is the same length; a record's field, a map's key or a frame's column named `len` is its own |
 | `push[arr, value]` | Return new array with value appended; onto a tensor, a number onto a vector or a row onto a matrix. A list holds one kind: an item of another (`push[['a'], 1]`) is refused |
 | `pop[arr]` | Return new array without last element; an empty array stays empty |
-| `concat[a, b]` | Return new array merging two arrays: `a`'s items, then `b`'s. Given one list written down, `concat[[a, b, c]]`, its items joined in order, whatever two of them join — lists, text, tensors, bytes (see Design Note: one word for joining). An empty `a` takes its items from `b` (`idx = []`, then `idx = concat[idx, [i]]` makes a list of ints) |
-| `concat[a, b, axis]` | Concatenate two tensors along an axis |
-| `sort[arr]` | Return new sorted array: numbers ascending, NaN last; text by character code (`'B'` before `'a'`). A list of anything else — bools, records, lists, a matrix's rows — has no order, and is refused (`sort[flatten[m]]` orders a matrix's numbers) |
+| `concat[a, b]` | Return new array merging two arrays: `a`'s items, then `b`'s. Given more pieces, `concat[a, b, c]`, or one list written down, `concat[[a, b, c]]`, they are joined in order, whatever two of them join — lists, text, tensors, bytes (see Design Note: one word for joining). An empty `a` takes its items from `b` (`idx = []`, then `idx = concat[idx, [i]]` makes a list of ints) |
+| `concat[a, b, axis]` | Concatenate two tensors along an axis, written as a number or named (`axis = k`): a third piece held in a variable is joined as a piece |
+| `sort[arr]` | Return new sorted array: numbers ascending, NaN last — fractions and decimals by value, as `lt` compares them (Vijay, 2026-10-29); text by character code (`'B'` before `'a'`). A list of anything else — bools, records, lists, a matrix's rows — has no order, and is refused (`sort[flatten[m]]` orders a matrix's numbers) |
 | `reverse[arr]` | Return new reversed array; text reversed by character |
 | `contains[arr, value]` | The row behind `value in arr` (see Membership; the name is not written): whether an item is `value`, compared as `eq` compares (a record field by field), so a value of another kind than the items is refused — a number in a matrix, whose items are rows (`x in flatten[m]` asks its numbers); of text, whether it holds the part (`'ell' in 'hello'`); of a map or a parsed value, whether it has the key |
 | `any[arr, pred]` | True if any element passes the predicate (parallel, early exit) |
@@ -1573,7 +1578,7 @@ The predicate that `any`, `all` and `find` decide by answers a truth: one whose 
 | `set[m, key, value]` | Return new map with entry added/updated; a value of another kind than the map's is refused, as is a key of the other kind (an empty map takes its first key's kind) |
 | `del[m, key]` | Return new map with entry removed (a key of the other kind is refused) |
 
-**Design Note: one word for joining.** Considered: `gather[chunks]` beside `concat[a, b]` (rejected: two words, and `concat[a, concat[b, concat[c, …]]]` eight brackets deep in the Postgres driver where a list of pieces would do). **Decision (Vijay, 2026-10-08):** `concat` given one list written down joins its items two at a time, in the first lowering, so every kind two pieces join is joined; a list of bytes held in a variable is `concat[chunks]`, the row `gather` was. A list of lists held in a variable is not joined: its items' kind is the lists', which one function over any item kind cannot hold in both modes — write the pieces, or a loop.
+**Design Note: one word for joining.** Considered: `gather[chunks]` beside `concat[a, b]` (rejected: two words, and `concat[a, concat[b, concat[c, …]]]` eight brackets deep in the Postgres driver where a list of pieces would do). **Decision (Vijay, 2026-10-08):** `concat` given one list written down joins its items two at a time, in the first lowering, so every kind two pieces join is joined; a list of bytes held in a variable is `concat[chunks]`, the row `gather` was. **And (Vijay, 2026-10-29):** `concat[a, b, c, …]` joins its pieces written as arguments the same way — a program had written it first (Rosetta Code, Bioinformatics/Sequence mutation), and it was refused — save for the axis form, two tensors and the axis written as a number or named. A list of lists held in a variable is not joined: its items' kind is the lists', which one function over any item kind cannot hold in both modes — write the pieces, or a loop.
 
 **Design Note: a map from two lists.** Considered: a named form, `map[keys = ks, values = vs]` (rejected: the literal already means a map with a key called `keys`); `zip` (rejected, see No Enumerate or Zip). **Decision (Vijay, 2026-10-08):** `map[keys, values]`, positional, the key first as everywhere a key is written — `map[k = v]`, `set[m, key, value]`. The loop that set one entry per word, in the retrieval package and twenty-four other places, is one line.
 
@@ -2091,7 +2096,7 @@ The `math` module is built in — no file needed. It provides tensor creation, e
 
 | Function | Returns |
 |---|---|
-| `sum[t]` | Sum of all elements (float), added as numpy adds them — pairwise, so the error grows as log n and `sum[x]` is `numpy.sum(x)` to the last digit |
+| `sum[t]` | Sum of all elements (float), added as numpy adds them — pairwise, so the error grows as log n and `sum[x]` is `numpy.sum(x)` to the last digit; of a list of ints, an int with every digit (`sum[xs] % 10` of digits pushed one by one; Vijay, 2026-10-29) — a list written down is a vector, and a list whose ints can fail (`int[c]` of text) is read as numbers, so either sums to a float |
 | `mean[t]` | Mean of all elements (float): the sum over the count |
 | `min[t]` | Minimum element (float): NaN where the tensor holds one, as numpy's and IEEE 754's `minimum` answer and as `sum` carries one; of no numbers the program stops (`min of nothing: an empty tensor has no smallest number`), as numpy and Python raise — `min[t, axis]` of an empty axis too. (Until 2026-10-18 a NaN had been passed over and an empty tensor answered `inf`.) |
 | `max[t]` | Maximum element (float): NaN where the tensor holds one; of no numbers the program stops (`max of nothing: an empty tensor has no largest number`) |
@@ -2194,7 +2199,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 
 | Function | Description |
 |---|---|
-| `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Statements run in the order written, and a loop that draws runs in order (§14), so a seeded program draws the same numbers on every run |
+| `seed[n]` | Set the program's RNG seed: every later draw, tensors and the core `rand[]` alike, is repeatable and identical in both modes. Statements run in the order written, and a loop that draws runs in order (§14), so a seeded program draws the same numbers on every run. A page's (a program that holds state) declarations are set before its other top-level lines run, so its top-level `seed[n]` runs before them, wherever it is written: the facts' draws are seeded too (Vijay, 2026-10-29: they had been drawn unseeded) |
 | `randn[d1, d2, ...]` | Standard normal (mean=0, std=1): Box–Muller over two uniform draws a value, written in Crow (`src/modules/math.co`, design rule 20); a negative size stops the program |
 | `normal[mean, std, d1, d2, ...]` | Normal with custom mean/std: `mean + std · randn`, written in Crow; a negative std stops the program |
 | `uniform[low, high, d1, d2, ...]` | Uniform in [low, high): `uniform[0.0, 1.0, 2, 3]` is a 2×3 tensor of values in [0, 1) |

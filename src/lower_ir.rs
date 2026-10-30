@@ -689,6 +689,8 @@ fn listed_item(k: crate::table::Kind) -> Option<Ty> {
         Kind::Words | Kind::Strs | Kind::Texts => Ty::Str,
         Kind::Ints => Ty::Int,
         Kind::Floats => Ty::Float,
+        Kind::Fractions => Ty::Fraction,
+        Kind::Decimals => Ty::Decimal,
         Kind::Bools => Ty::Bool,
         Kind::Chunks => Ty::Bytes,
         Kind::Frames => Ty::Frame(None),
@@ -1470,6 +1472,7 @@ impl<'a> Lowerer<'a> {
             uses: vec![],
             cpu: None,
             gpu: None,
+            seeds: vec![],
             structs: vec![],
             facts: vec![],
             derives: vec![],
@@ -1635,6 +1638,21 @@ impl<'a> Lowerer<'a> {
                     self.current_fn = self.main_of_part();
                     self.ctx.registry.enter(&self.current_fn);
                     let lowered = self.lower_stmt(other)?;
+                    // (a page's top-level call that sets the draws — an
+                    // effect on them answering nothing, `seed[n]` — runs
+                    // before the declarations are set, so their draws are
+                    // seeded; Vijay, 2026-10-29: Rosetta Code, Create an
+                    // HTML table)
+                    if self.holds_state && self.pre.is_empty() {
+                        let mut steps = lowered.iter().filter(|s| !matches!(s, Stmt::Line(_)));
+                        let sets_draws = |row: &crate::table::Row| matches!(row.ret, crate::table::Kind::Unit) && row.props.contains(&crate::table::Prop::Does(crate::effects::Effect::Random));
+                        if let (Some(Stmt::Do(e)), None) = (steps.next(), steps.next())
+                            && matches!(e, Expr::Effect { row: Some(row), .. } | Expr::Call { target: Target::Row(row), .. } if sets_draws(row))
+                        {
+                            part.seeds.push(e.clone());
+                            continue;
+                        }
+                    }
                     self.flush_pre_into(&mut part.main);
                     part.main.extend(lowered);
                 }
@@ -2413,7 +2431,7 @@ impl<'a> Lowerer<'a> {
                 if self.ctx.derives.contains(name) && !crate::modules::is_crow_fn(&self.current_fn) {
                     self.refuse(format!("'{}' is derived — it follows what it reads; change those facts instead of assigning it", name));
                 }
-                if !self.defined(name) {
+                if self.binds_anew(name) {
                     self.check_reserved(name, "variable");
                 }
                 self.check_not_a_function(name, "variable");
@@ -2549,7 +2567,7 @@ impl<'a> Lowerer<'a> {
             S::MultiAssign { names, values } => {
                 // each new name checked against the names taken, after the
                 // values it is given
-                let new: Vec<String> = names.iter().filter(|n| !self.defined(n)).cloned().collect();
+                let new: Vec<String> = names.iter().filter(|n| self.binds_anew(n)).cloned().collect();
                 for n in names {
                     self.check_top_write(n);
                 }
@@ -3851,6 +3869,8 @@ impl<'a> Lowerer<'a> {
                 let ty = as_held(var, failing);
                 Expr::Convert { how: Convert::IntsToFloats, expr: Box::new(expr), ty }
             }
+            // (ints where records or none are held: each 0 none)
+            (Some(var @ Ty::List(i)), Ty::List(e)) if !failing && matches!(i.as_ref(), Ty::OptRecord(_)) && *e == Ty::Int => nones_of(expr, var),
             _ => expr,
         };
         // a frame given other columns in the block it was bound in is bound
@@ -3885,6 +3905,10 @@ impl<'a> Lowerer<'a> {
         // what reads the local from here on is typed by the local as
         // declared: its first value's type, or the type it settles on
         let ty = declared_as(&expr.ty(), self.ctx.vars.get(name));
+        let expr = match (&ty, expr.ty()) {
+            (Ty::List(i), Ty::List(e)) if matches!(i.as_ref(), Ty::OptRecord(_)) && *e == Ty::Int => nones_of(expr, &ty),
+            _ => expr,
+        };
         if !matches!(ty, Ty::Unknown) {
             // (a column keeps its cells' kind: `texts = str[t.at]` is read
             // as a column of text from here on, not of cells unknown)
@@ -4236,6 +4260,15 @@ impl<'a> Lowerer<'a> {
                 // been a list of ints holding a float — crow check --self)
                 Ty::List(inner) if *inner == Ty::Int && read(value).payload() == &Ty::Float => {
                     self.ctx.vars.insert(var.clone(), Ty::List(Box::new(Ty::Float)));
+                }
+                // (and one an item of which is written a record holds records
+                // or none, its 0s none — empty buckets made of zeros, as a
+                // variable given 0 and a record does; Vijay, 2026-10-29:
+                // Rosetta Code, Monads/List monad)
+                Ty::List(inner) if *inner == Ty::Int && matches!(read(value).payload(), Ty::Record(_) | Ty::OptRecord(_)) => {
+                    if let Ty::Record(r) | Ty::OptRecord(r) = read(value).payload() {
+                        self.ctx.vars.insert(var.clone(), Ty::List(Box::new(Ty::OptRecord(r.clone()))));
+                    }
                 }
                 // (and so does whole numbers written down, as a vector, at
                 // the top level, whose lines are scanned one at a time: the
@@ -6142,6 +6175,22 @@ impl<'a> Lowerer<'a> {
                     matches!(c.ty().payload(), Ty::List(e) | Ty::Map(_, e) if **e == Ty::Json)
                         || (made_here(c) && matches!(c.ty().payload(), Ty::List(e) | Ty::Map(_, e) if **e == Ty::Unknown))
                 });
+            // (a parsed value pushed onto a variable's list whose items
+            // nothing says yet is read as push's rows take it, a number, so a
+            // later `max` reads numbers — packages/market's bars; where it
+            // holds text the stop says how to keep parsed values: Vijay,
+            // 2026-10-29: Rosetta Code, Associative array/Merging)
+            let held_in = match lowered.first() {
+                Some(Expr::Local(v, _) | Expr::Move(v, _)) if item_at.is_some() => Some((self.current_fn.clone(), v.clone())),
+                _ => None,
+            };
+            if let Some(at) = &held_in
+                && !open
+                && lowered.first().is_some_and(|c| matches!(c.ty().payload(), Ty::List(e) if **e == Ty::Unknown))
+            {
+                self.ctx.unsaid_pushes.insert(at.clone());
+            }
+            let unsaid = held_in.as_ref().is_some_and(|at| self.ctx.unsaid_pushes.contains(at));
             let mut read_args = Vec::with_capacity(argc);
             for (i, x) in lowered.into_iter().enumerate() {
                 let kind = match (matches!(x.ty().payload(), Ty::Json), &items) {
@@ -6168,6 +6217,17 @@ impl<'a> Lowerer<'a> {
                         let (x, marked) = match x {
                             Expr::Convert { how: Convert::Unwrap, expr: inner, .. } if inner.ty().is_result() => (self.read_json(*inner, &k, &format!("handed to {}", name)), true),
                             x => (self.read_json(x, &k, &format!("handed to {}", name)), false),
+                        };
+                        // (the stop says why it was read so, and how to keep
+                        // parsed values)
+                        let x = match x {
+                            Expr::Call { target, mut args, ty, propagates } if unsaid && item_at == Some(i) && args.len() == 2 => {
+                                if let Expr::Const(Const::Str(said), _) = &mut args[1] {
+                                    said.push_str(", onto a list whose items nothing said yet, so read as a number — push it onto a list made in the call, `push[[], …]`, to keep parsed values");
+                                }
+                                Expr::Call { target, args, ty, propagates }
+                            }
+                            x => x,
                         };
                         arg_types[i] = read(&x);
                         full_types[i] = full(&x);
@@ -6353,7 +6413,7 @@ impl<'a> Lowerer<'a> {
                     let whole = |t: &Ty| matches!(t, Ty::Int | Ty::Big);
                     // (and a list of ints is no list of records: an int is
                     // a record's none only handed alone)
-                    let alike = |held: &Ty, given: &Ty| held.compatible(given) && crate::type_infer::TypeContext::items_alike(held, given);
+                    let alike = |held: &Ty, given: &Ty| held.compatible(given) && crate::type_infer::TypeContext::items_alike_strictly(held, given);
                     let misfit = params.iter().zip(lowered.iter()).enumerate().find(|(_, (p, x))| {
                         let (held, given) = (sans_results(p.payload()), sans_results(x.ty().payload()));
                         // (a parsed value is a kind too: the one function
@@ -6442,6 +6502,10 @@ impl<'a> Lowerer<'a> {
                         // typed as the parameter holds it)
                         (Some(p @ Ty::OptRecord(_)), Ty::Int) if matches!(x, Expr::Const(Const::Int(0), _)) => Expr::Const(Const::Int(0), p.clone()),
                         (Some(p @ Ty::OptRecord(_)), Ty::Int) => self.none_of(x, p),
+                        // (and a list of ints where it holds a list of them —
+                        // a list of 0s the function writes records into — is
+                        // a list of nones, each int checked so)
+                        (Some(p @ Ty::List(pe)), Ty::List(e)) if matches!(pe.as_ref(), Ty::OptRecord(_)) && *e == Ty::Int => nones_of(x, p),
                         _ => x,
                     });
                 }
@@ -7146,7 +7210,7 @@ impl<'a> Lowerer<'a> {
         if crate::table::miscounted(m, name, lowered.len()).is_some() {
             return None;
         }
-        crate::table::module(m, name, &kinds)
+        crate::table::module(m, name, &kinds).map(|row| crate::table::exact_form(row, &kinds))
     }
 
     /// A builtin row's arguments as its parameters take them (docs/
@@ -7344,7 +7408,9 @@ impl<'a> Lowerer<'a> {
         use crate::table::{self, Kind};
         let core = CORE_RESERVED.contains(&name);
         let args: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
-        let Some(kinds) = table::module(module, name, &args).and_then(|row| table::kinds_of(row.params, lowered.len())) else {
+        // (the row the call is answered by: an exact form takes a list of
+        // ints as it is)
+        let Some(kinds) = table::module(module, name, &args).and_then(|row| table::kinds_of(table::exact_form(row, &args).params, lowered.len())) else {
             return lowered;
         };
         let lowered = Self::typed_empties(&kinds, lowered);
@@ -8256,6 +8322,21 @@ fn fallible_items(value: Expr, item: &Ty) -> Expr {
     }
 }
 
+/// A list of ints where a list of records or none is held — empty buckets
+/// made of zeros, written records later: each item checked as one int
+/// handed alone is (0 none, another stopping), by a collecting loop that
+/// answers the list of nones (Vijay, 2026-10-29).
+fn nones_of(x: Expr, slot: &Ty) -> Expr {
+    let Ty::List(item) = slot else { return x };
+    let Some(row) = crate::table::ROWS.iter().find(|r| r.id == "core.__none") else { return x };
+    let var = held_name();
+    let each = vec![
+        Stmt::Do(Expr::Call { target: Target::Row(row), args: vec![Expr::Local(var.clone(), Ty::Int)], ty: Ty::Int, propagates: false }),
+        Stmt::Do(Expr::Const(Const::Int(0), item.as_ref().clone())),
+    ];
+    Expr::ForExpr { var, iter: Box::new(x), body: each, ty: slot.clone(), parallel: false }
+}
+
 /// A hidden name for a converting loop's item, one per loop.
 fn held_name() -> String {
     static HELD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -8323,6 +8404,14 @@ fn declared_as(first: &Ty, settled: Option<&Ty>) -> Ty {
     // (and rows of them, a list of lists of ints)
     if crate::type_infer::settle::is_int_rows(first) && matches!(settled, Some(t) if crate::type_infer::settle::is_int_lists(t)) {
         return Ty::List(Box::new(Ty::List(Box::new(Ty::Int))));
+    }
+    // a list of ints that settles on records or none holds them from its
+    // declaration, its 0s none (`nones_of`)
+    if matches!(first, Ty::List(i) if **i == Ty::Int)
+        && let Some(t @ Ty::List(i)) = settled
+        && matches!(i.as_ref(), Ty::OptRecord(_))
+    {
+        return t.clone();
     }
     // a variable that settles on a record or none — first 0, the empty
     // sentinel, or a record, and the other later — holds a record or none
@@ -9286,11 +9375,11 @@ if r.ok
 
 --- the weather in a city
 fn weather[city]
-    said = 'sunny in `upper[city]`'      --- the sky, as the
+    sky = 'sunny in `upper[city]`'       --- the sky, as the
                                          --- model is told it
 --- at the margin, inside the body
             --- and deeper than it
-    return said
+    return sky
 
 m = reach['openai://127.0.0.1:1/x']
 r = chat[m, ask['hi'], tools = [weather]]
@@ -10515,7 +10604,7 @@ log[drive[3]]
     fn an_indexed_call_and_an_untyped_parameter_type_as_calls_do() {
         let ir = ir_of("use math\nfn f[x]\n    return x .* 2.0\nlog[f[[1.0]][0]]\n");
         assert!(ir.contains("pure f(x: Tensor(Float, [1])) -> Tensor(Float, [1])"), "{}", ir);
-        let ir = ir_of("use math\nfn g[x]\n    e = exp[x - max[x]]\n    return e / sum[e]\nlog[1]\n");
+        let ir = ir_of("use math\nfn g[x]\n    ex = exp[x - max[x]]\n    return ex / sum[ex]\nlog[1]\n");
         assert!(ir.contains("pure g(x: ?) -> ?"), "{}", ir);
         let r = refusal_of("use math, math.nn\nfn loss[w, y]\n    return mse[flatten[w], y]\ngrads = grad[loss][[[1.0], [2.0]], [1.0, 2.0]]\nlog[grads[0][0][0]]\n");
         assert!(r.contains("the rank of the tensor is not known here"), "{}", r);

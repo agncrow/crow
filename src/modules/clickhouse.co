@@ -55,8 +55,8 @@ fn ch_open[parts]
 fn _connection[parts]
     s = open[_part[parts, 'host'], _port_of[parts], _tls_of[parts], 30.0]
     if not s.ok
-        where = _shown[parts]
-        return error['clickhouse connection failed: `s.reason` (`where`)', 'sys']
+        cond = _shown[parts]
+        return error['clickhouse connection failed: `s.reason` (`cond`)', 'sys']
     return s
 
 --- a statement's id, under which the server lists and kills it: this
@@ -179,11 +179,11 @@ fn _literal[p]
     if kind eq 'int' or kind eq 'float'
         return encode[p]
     if kind eq 'str'
-        text = str[p]
-        if not text.ok
+        shown_p = str[p]
+        if not shown_p.ok
             return error['cannot bind the parameter', 'db']
         quoted = ''
-        for c in split[text, '']
+        for c in split[shown_p, '']
             if len[c] gt 0
                 if c eq '\''
                     quoted = '`quoted`\\\''
@@ -388,8 +388,8 @@ fn _sweep[parts, s]
             if owner.ok and owner ne mine and not alive[owner] and owner not in stopped
                 stopped = push[stopped, owner]
     for owner in stopped
-        where = _shown[parts]
-        log['crow db: stopping queries a finished run (process `owner`) left running on `where`']
+        cond = _shown[parts]
+        log['crow db: stopping queries a finished run (process `owner`) left running on `cond`']
         --- (each kill asked whichever answers: kept, not decided on)
         killed = _request_on[parts, s, 'KILL QUERY WHERE query_id LIKE \'crow-`me`-`owner`-%\' ASYNC', 'TabSeparated', _fresh_id[]]
     return 0

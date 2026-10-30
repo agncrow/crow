@@ -9,13 +9,13 @@ use math
 
 --- the line (counted from 1) chosen from a file of n lines
 fn one_of_n[n]
-    choice = 1
+    chosen = 1
     k = 2
     while k lte n
         if rand[] lt 1.0 / k
-            choice = k
+            chosen = k
         k = k + 1
-    choice
+    chosen
 
 --- how many times each of n lines is chosen in the given number of runs
 fn tally[n, runs]
@@ -38,15 +38,15 @@ fn chi_squared[counts, runs]
 
 --- one line of standard input, each line read once and none kept but the choice
 fn one_of_input[]
-    choice = input[]
+    chosen = input[]
     k = 2
     line = input[]
     while line.ok
         if rand[] lt 1.0 / k
-            choice = line
+            chosen = line
         k = k + 1
         line = input[]
-    choice
+    chosen
 
 seed[2026]
 runs = 1000000

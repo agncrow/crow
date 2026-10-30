@@ -68,8 +68,8 @@ fn row[name, country, icao, miles, heading]
     b = fmt[country, width = 16]
     c = fmt[icao, width = 6]
     d = fmt[miles, width = 10, align = 'right']
-    e = fmt[heading, width = 9, align = 'right']
-    return '`a``b``c``d``e`'
+    heading_text = fmt[heading, width = 9, align = 'right']
+    return '`a``b``c``d``heading_text`'
 
 latitude = 51.514669
 longitude = 2.198581

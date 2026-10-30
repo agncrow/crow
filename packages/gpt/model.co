@@ -31,8 +31,8 @@ fn head[h, wq, wk, wv, mask]
     k = h * wk
     v = h * wv
     s = q * transpose[k] / 4.0 + mask
-    e = exp[s - reshape[max[s, 1], rows, 1]]
-    p = e ./ reshape[sum[e, 1], rows, 1]
+    exps = exp[s - reshape[max[s, 1], rows, 1]]
+    p = exps ./ reshape[sum[exps, 1], rows, 1]
     return p * v
 
 --- a block: the two heads' outputs through their slices of the output

@@ -389,7 +389,7 @@ pub fn crow_fmt_f64(
     if percent {
         s.push('%');
     }
-    apply_width(s, width, if align.is_empty() { "right" } else { align }, fill)
+    number_width(s, width, align, fill)
 }
 
 /// `fmt[x, decimals =, commas =, width =, align =, fill =, percent =]`:
@@ -445,7 +445,7 @@ pub fn fmt_big(n: &crate::int::Int, decimals: i64, commas: bool, width: i64, ali
     if percent {
         s.push('%');
     }
-    apply_width(s, width, if align.is_empty() { "right" } else { align }, fill)
+    number_width(s, width, align, fill)
 }
 
 /// `fmt` of a decimal: its digits as it holds them (`12.30`), or rounded to
@@ -506,7 +506,7 @@ fn laid_out(mut s: String, commas: bool, width: i64, align: &str, fill: &str, pe
     if percent {
         s.push('%');
     }
-    apply_width(s, width, if align.is_empty() { "right" } else { align }, fill)
+    number_width(s, width, align, fill)
 }
 
 /// fmt[] kernel for strings: width, align and fill only. Decimals or a
@@ -531,6 +531,20 @@ pub fn crow_fmt_str(
         if align.is_empty() { "left" } else { align },
         fill,
     )
+}
+
+/// A number's text filled to its width, right by default: zeros go
+/// between the sign and the digits, as printf and Python pad them
+/// (`-0042`, where the fill had gone before the sign: `00-42`); any other
+/// fill goes before the sign.
+fn number_width(s: String, width: i64, align: &str, fill: &str) -> Result<String, String> {
+    let align = if align.is_empty() { "right" } else { align };
+    match s.strip_prefix('-') {
+        Some(digits) if align == "right" && fill.starts_with('0') && digits.starts_with(|c: char| c.is_ascii_digit()) && usize::try_from(width).is_ok_and(|w| (1..=crate::stops::MOST).contains(&w)) => {
+            apply_width(digits.to_string(), width - 1, align, fill).map(|t| format!("-{}", t))
+        }
+        _ => apply_width(s, width, align, fill),
+    }
 }
 
 fn apply_width(s: String, width: i64, align: &str, fill: &str) -> Result<String, String> {
@@ -569,6 +583,17 @@ mod tests {
         flush_output();
         assert!(!OUT.is_poisoned());
         assert!(OUT.lock().is_ok_and(|held| held.is_empty()));
+    }
+
+    /// Zeros fill a negative number between its sign and its digits; any
+    /// other fill, and text, goes before
+    #[test]
+    fn zero_fill_goes_after_the_sign() {
+        assert_eq!(fmt_big(&crate::int::Int::from(-42), -1, false, 5, "", "0", false).ok().as_deref(), Some("-0042"));
+        assert_eq!(fmt_big(&crate::int::Int::from(-42), -1, false, 5, "", "*", false).ok().as_deref(), Some("**-42"));
+        assert_eq!(fmt_big(&crate::int::Int::from(42), -1, false, 5, "", "0", false).ok().as_deref(), Some("00042"));
+        assert_eq!(fmt_big(&crate::int::Int::from(-42), -1, false, 2, "", "0", false).ok().as_deref(), Some("-42"));
+        assert_eq!(crow_fmt_str("-42", -1, 5, "", "0", false).ok().as_deref(), Some("-4200"));
     }
 
     #[test]

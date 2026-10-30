@@ -88,12 +88,26 @@ pub fn map_literal_pairs(e: &Expr) -> Option<Vec<(String, Expr)>> {
 /// lists, text, tensors, bytes. (A helper, not inline: the lowering's
 /// recursive frame is what a 43-entry map literal's chain is measured
 /// against in the debug build, parity 48.)
+/// So is `concat[a, b, c, …]`, its pieces written as arguments (Vijay,
+/// 2026-10-29: Rosetta Code, Bioinformatics/Sequence mutation) — except
+/// `concat[m, m2, 0]`, two tensors and the axis they join along, written
+/// as a number or named (`axis = k`).
 #[inline(never)]
 fn joined_pieces(callee: Option<&str>, args: &[Expr]) -> Option<Expr> {
-    if callee != Some("concat") || args.len() != 1 {
+    if callee != Some("concat") {
         return None;
     }
-    let Expr::Array(items) = &args[0] else { return None };
+    let axis = |e: &Expr| match e {
+        Expr::Int(_) | Expr::Named { .. } => true,
+        Expr::UnaryOp { expr, .. } => matches!(expr.as_ref(), Expr::Int(_)),
+        _ => false,
+    };
+    let items: &[Expr] = match args {
+        [Expr::Array(items)] => items,
+        [_, _, third] if axis(third) => return None,
+        _ if args.len() >= 3 => args,
+        _ => return None,
+    };
     let mut it = items.iter().cloned();
     let mut acc = it.next()?;
     for item in it {

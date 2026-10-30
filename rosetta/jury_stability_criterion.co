@@ -42,9 +42,9 @@ fn poly_text[coeffs]
         a = coeffs[i]
         power = n - i
         if a ne 0.0
-            sign = '+'
+            sgn = '+'
             if a lt 0.0
-                sign = '-'
+                sgn = '-'
             size = str[abs[a]]
             if abs[a] eq 1.0 and power gt 0
                 size = ''
@@ -55,12 +55,12 @@ fn poly_text[coeffs]
                 variable = 'z'
             else if power gt 1
                 variable = 'z^`power`'
-            if len[parts] eq 0 and sign eq '+'
+            if len[parts] eq 0 and sgn eq '+'
                 parts = push[parts, '`size``variable`']
             else if len[parts] eq 0
                 parts = push[parts, '-`size``variable`']
             else
-                parts = push[parts, '`sign` `size``variable`']
+                parts = push[parts, '`sgn` `size``variable`']
     return join[parts, ' ']
 
 --- the roots, the eigenvalues of the companion matrix, as text, and the

@@ -110,9 +110,9 @@ fn batches[dir]
     for n in names
         c = [_number[n], _number[n]]
         p = '`dir`/`n`'
-        stats = about[p]
-        if not stats.ok
-            return error[stats.reason, 'magpie']
+        info = about[p]
+        if not info.ok
+            return error[info.reason, 'magpie']
         form = 'batch'
         if _inside[c, segments]
             form = 'stale'
@@ -121,9 +121,9 @@ fn batches[dir]
         forms = push[forms, form]
         levels = push[levels, 0]
         paths = push[paths, p]
-        rows = stats.rows
-        first = stats.first
-        last = stats.last
+        rows = info.rows
+        first = info.first
+        last = info.last
         counts = push[counts, rows + 0]
         firsts = push[firsts, first + 0]
         lasts = push[lasts, last + 0]
@@ -231,9 +231,9 @@ fn _fixed[dir, f, by, time, narrow, stem]
             if had ne time
                 return error['the log at \'`dir`\' keeps its time in \'`had`\', not in \'`time`\'', 'magpie']
         else
-            noted = declare[dir, fixed, ['time'], [time]]
-            if not noted.ok
-                return error[noted.reason, 'magpie']
+            declared = declare[dir, fixed, ['time'], [time]]
+            if not declared.ok
+                return error[declared.reason, 'magpie']
     if len[narrow] gt 0
         wide = note_of[m, 'narrow']
         asked = join[narrow, ',']
@@ -241,13 +241,13 @@ fn _fixed[dir, f, by, time, narrow, stem]
             if wide ne asked
                 return error['the log at \'`dir`\' keeps \'`wide`\' narrow, not \'`asked`\'', 'magpie']
         else
-            noted = declare[dir, fixed, ['narrow'], [asked]]
-            if not noted.ok
-                return error[noted.reason, 'magpie']
+            declared = declare[dir, fixed, ['narrow'], [asked]]
+            if not declared.ok
+                return error[declared.reason, 'magpie']
     if stem and not stems_of[m]
-        noted = declare[dir, fixed, ['stem'], ['true']]
-        if not noted.ok
-            return error[noted.reason, 'magpie']
+        declared = declare[dir, fixed, ['stem'], ['true']]
+        if not declared.ok
+            return error[declared.reason, 'magpie']
     return fixed
 
 --- a frame about to be written, its key and text columns checked to
@@ -306,9 +306,9 @@ fn batch[dir, f, by = [], flush = true, time = '', narrow = [], stem = false]
     --- `narrow` pinned as a list of text
     narrowed = push[narrow, '']
     --- `flush` pinned as a bool (a list of bools had passed as a mask)
-    flushed = 0
+    wrote = 0
     if flush
-        flushed = 1
+        wrote = 1
     if not checked.ok
         return checked
     log_dir = _opened[dir]
@@ -321,9 +321,9 @@ fn batch[dir, f, by = [], flush = true, time = '', narrow = [], stem = false]
     if not first.ok
         return error[first.reason, 'magpie']
     if flush
-        flushed = flush_rows[dir]
-        if not flushed.ok
-            return error[flushed.reason, 'magpie']
+        wrote = flush_rows[dir]
+        if not wrote.ok
+            return error[wrote.reason, 'magpie']
     return first
 
 --- `put[dir, f, by = [], time = '', narrow = [], stem = false]`: the rows appended to
@@ -764,9 +764,9 @@ fn commit[dir, f, seen = -1, columns = [], equal = []]
     first = put_rows[dir, f]
     if not first.ok
         return error[first.reason, 'magpie']
-    flushed = flush_rows[dir]
-    if not flushed.ok
-        return error[flushed.reason, 'magpie']
+    wrote = flush_rows[dir]
+    if not wrote.ok
+        return error[wrote.reason, 'magpie']
     return first
 
 --- the kernel's executor in its own function, the lists copied where
@@ -815,9 +815,9 @@ fn summary[dir, by, of, how, on = [], ops = [], equal = [], lo = '', hi = '', up
         return error['a summary takes one aggregate per column: `len[of]` columns, `len[how]` aggregates', 'magpie']
     if len[on] ne len[ops] or len[on] ne len[equal]
         return error['the predicates are three lists of one length: on, ops and equal', 'magpie']
-    flushed = flush_rows[dir]
-    if not flushed.ok
-        return error[flushed.reason, 'magpie']
+    wrote = flush_rows[dir]
+    if not wrote.ok
+        return error[wrote.reason, 'magpie']
     b = batches[dir]
     if not b.ok
         return b
@@ -872,9 +872,9 @@ fn prior[dir, f, columns = [], upto = -1]
     time = _time[dir]
     if len[time] eq 0
         return error['an as-of join needs the log\'s time column: declare it at the first batch, time = \'ts\'', 'magpie']
-    flushed = flush_rows[dir]
-    if not flushed.ok
-        return error[flushed.reason, 'magpie']
+    wrote = flush_rows[dir]
+    if not wrote.ok
+        return error[wrote.reason, 'magpie']
     b = batches[dir]
     if not b.ok
         return b
@@ -953,9 +953,9 @@ fn _overflow[b]
 fn merge[dir, every = false]
     if _remote[dir]
         return _posted_text[dir, 'merge']
-    flushed = flush_rows[dir]
-    if not flushed.ok
-        return error[flushed.reason, 'magpie']
+    wrote = flush_rows[dir]
+    if not wrote.ok
+        return error[wrote.reason, 'magpie']
     b = batches[dir]
     if not b.ok
         return b
@@ -1112,9 +1112,9 @@ fn _shipped[dir, b]
 --- is: a version of the log, restored by `restore`. Answers how many
 --- files were copied
 fn backup[dir, to]
-    flushed = flush_rows[dir]
-    if not flushed.ok
-        return error[flushed.reason, 'magpie']
+    wrote = flush_rows[dir]
+    if not wrote.ok
+        return error[wrote.reason, 'magpie']
     b = batches[dir]
     if not b.ok
         return b
@@ -1192,9 +1192,9 @@ fn _line_of[c]
 fn _shared[dir, line]
     nl = '\n'
     if line eq 'list'
-        flushed = flush_rows[dir]
-        if not flushed.ok
-            return error[flushed.reason, 'magpie']
+        wrote = flush_rows[dir]
+        if not wrote.ok
+            return error[wrote.reason, 'magpie']
         b = batches[dir]
         if not b.ok
             return error[b.reason, 'magpie']
@@ -1229,9 +1229,9 @@ fn share[dir, port, host = '127.0.0.1', rounds = 0]
         return error[l.reason, 'magpie']
     conns = []
     answered = 0
-    round = 0
-    while rounds eq 0 or round lt rounds
-        round = round + 1
+    turn = 0
+    while rounds eq 0 or turn lt rounds
+        turn = turn + 1
         arrived = accept[l, 0.005]
         if arrived.ok
             conns = push[conns, socket_of[arrived, address[arrived], bytes['']]]
@@ -1242,11 +1242,11 @@ fn share[dir, port, host = '127.0.0.1', rounds = 0]
                 sys.close[stream_of[c]]
             else
                 if len[line] gt 0
-                    reply = _shared[dir, line]
-                    if not reply.ok
+                    got = _shared[dir, line]
+                    if not got.ok
                         sys.close[stream_of[c]]
                     else
-                        sent = send[stream_of[c], reply]
+                        sent = send[stream_of[c], got]
                         answered = answered + 1
                         kept = push[kept, c]
                 else
@@ -1879,11 +1879,11 @@ fn _holding[col, want]
         cell_bytes = text_bytes_of[col, 0, n]
         cuts = text_ends_of[col, 0, n]
         sought = bytes[want.word]
-        start = 0
+        begin = 0
         for i in range[n]
             stop = cuts[i]
-            out = push[out, _present[present, i] and want.form eq 4 and same[slice[cell_bytes, start, stop], sought]]
-            start = stop
+            out = push[out, _present[present, i] and want.form eq 4 and same[slice[cell_bytes, begin, stop], sought]]
+            begin = stop
     return out
 
 --- for each row of a column, whether it lies within the bounds (form 0
@@ -1914,12 +1914,12 @@ fn _within[col, low, high]
     if kind eq 'text'
         cell_bytes = text_bytes_of[col, 0, n]
         cuts = text_ends_of[col, 0, n]
-        start = 0
+        begin = 0
         for i in range[n]
             stop = cuts[i]
-            cell = Want[4, 0, 0.0, text[slice[cell_bytes, start, stop], '']]
+            cell = Want[4, 0, 0.0, text[slice[cell_bytes, begin, stop], '']]
             out = push[out, _present[present, i] and (low.form eq 0 or _at_most[low, cell]) and (high.form eq 0 or _at_least[high, cell])]
-            start = stop
+            begin = stop
     return out
 
 --- the frame with the columns named, in that order (every column when
@@ -1943,13 +1943,13 @@ fn _with_position[names]
 fn _gathered[parts, names]
     if len[parts] eq 0
         return frame.new[]
-    full = []
+    nonempty = []
     for p in parts
         if len[p] gt 0
-            full = push[full, p]
+            nonempty = push[nonempty, p]
     whole = parts[0]
-    if len[full] gt 0
-        whole = stack[full]
+    if len[nonempty] gt 0
+        whole = stack[nonempty]
     if len[whole] gt 1 and '_pos' in whole.columns
         whole = sort[whole, '_pos']
     if len[names] eq 0 or '_pos' in names
@@ -2036,12 +2036,12 @@ fn _find_rows[path, columns, vals, names]
             return error[ents.reason, 'magpie']
         for g in range[groups]
             if admitted[g]
-                e = ents[g]
-                if not _bounds_admit[e, want]
+                ent = ents[g]
+                if not _bounds_admit[ent, want]
                     admitted[g] = false
                 else
-                    if e.bloom_len gt 0
-                        f = value_filter[r, e]
+                    if ent.bloom_len gt 0
+                        f = value_filter[r, ent]
                         if not f.ok
                             return error[f.reason, 'magpie']
                         if not admits[f, hashed]
@@ -2104,9 +2104,9 @@ fn _since_file[p, after, upto, needed]
         return error[ents.reason, 'magpie']
     chosen = []
     for g in range[len[ents]]
-        e = ents[g]
-        before = e.hi.form eq 1 and e.hi.whole lte after
-        past = upto gte 0 and e.lo.form eq 1 and e.lo.whole gt upto
+        ent = ents[g]
+        before = ent.hi.form eq 1 and ent.hi.whole lte after
+        past = upto gte 0 and ent.lo.form eq 1 and ent.lo.whole gt upto
         if not before and not past
             chosen = push[chosen, g]
     cols = wanted[r, needed]
@@ -2166,9 +2166,9 @@ fn _between_file[p, column, lo, hi, upto, needed]
             return error[positions.reason, 'magpie']
         chosen = []
         for g in range[len[ents]]
-            e = ents[g]
+            ent = ents[g]
             pe = positions[g]
-            reach = (bounds.low.form eq 0 or e.hi.form eq 0 or _at_least[e.hi, bounds.low]) and (bounds.high.form eq 0 or e.lo.form eq 0 or _at_most[e.lo, bounds.high])
+            reach = (bounds.low.form eq 0 or ent.hi.form eq 0 or _at_least[ent.hi, bounds.low]) and (bounds.high.form eq 0 or ent.lo.form eq 0 or _at_most[ent.lo, bounds.high])
             past = upto gte 0 and pe.lo.form eq 1 and pe.lo.whole gt upto
             if reach and not past
                 chosen = push[chosen, g]

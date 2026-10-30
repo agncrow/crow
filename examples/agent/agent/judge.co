@@ -17,8 +17,8 @@ fn verdict[words]
 --- question, the answer and the rubric, and how to reply; the model's
 --- refusal is the call's error
 fn graded[m, question, answer, rubric]
-    asked = 'Question: `question`\nAnswer: `answer`\nRubric: `rubric`\n\nDoes the answer meet the rubric? Reply with PASS or FAIL on the first line, then one sentence why.'
-    r = chat[m, ask[asked], system = 'You grade a support agent\'s answers against a rubric, strictly. Reply with PASS or FAIL on the first line, then one sentence why.', tokens = 400, temperature = 0.0]
+    asking = 'Question: `question`\nAnswer: `answer`\nRubric: `rubric`\n\nDoes the answer meet the rubric? Reply with PASS or FAIL on the first line, then one sentence why.'
+    r = chat[m, ask[asking], system = 'You grade a support agent\'s answers against a rubric, strictly. Reply with PASS or FAIL on the first line, then one sentence why.', tokens = 400, temperature = 0.0]
     if not r.ok
         return error[r.reason, 'llm']
     return verdict[str[r.text]]

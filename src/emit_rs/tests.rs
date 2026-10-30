@@ -2618,7 +2618,7 @@ fn a_vector_parameter_only_read_is_read_through_a_view() {
 #[test]
 fn a_loop_item_from_a_column_with_missing_cells_can_fail_in_the_width_pass() {
     let out = transpile(
-        "use frame\nfn joined[xs]\n    head = ''\n    for line in xs\n        head = '`head``line`;'\n    return head\nsj = join[frame.new[k = [1, 2, 3]], frame.new[k = [1, 3], n = [5, 7]], 'k', 'left']\nlog[joined[sj.n]]\n",
+        "use frame\nfn joined[xs]\n    acc = ''\n    for line in xs\n        acc = '`acc``line`;'\n    return acc\nsj = join[frame.new[k = [1, 2, 3]], frame.new[k = [1, 3], n = [5, 7]], 'k', 'left']\nlog[joined[sj.n]]\n",
     );
     assert!(out.contains("let _t1: CrowResult<String> ="), "{}", out);
     assert!(out.contains("let _c = &_t1; if !_c.ok"), "{}", out);

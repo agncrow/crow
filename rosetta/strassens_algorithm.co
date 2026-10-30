@@ -81,9 +81,9 @@ fn distance[a, b]
 fn sci[x]
     if x eq 0.0
         return '0'
-    e = floor[log10[x]]
-    m = x / 10.0 ^ e
-    return '`fmt[m, decimals = 1]`e`e`'
+    ex = floor[log10[x]]
+    m = x / 10.0 ^ ex
+    return '`fmt[m, decimals = 1]`e`ex`'
 
 --- each entry rounded to a whole number (a -0 shown as 0)
 fn rounded[m]

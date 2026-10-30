@@ -70,7 +70,7 @@ fn scaled[raw, by]
 --- vocabulary's order with a fused multiply-add, as the reference's
 --- sparse product sums it
 fn cosine[a, b]
-    dot = 0.0
+    dotted = 0.0
     for i in range[len[a]]
-        dot = fma[a[i], b[i], dot]
-    return dot
+        dotted = fma[a[i], b[i], dotted]
+    return dotted

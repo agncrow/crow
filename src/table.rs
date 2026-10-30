@@ -197,6 +197,11 @@ pub enum Kind {
     Decimal,
     /// `&crow_runtime::fraction::Frac` taken, `Frac` given: an exact ratio.
     Fraction,
+    /// `Vec<crow_runtime::fraction::Frac>` taken and given, moved or copied
+    /// as a list is: exact ratios (`sort`; Vijay, 2026-10-29).
+    Fractions,
+    /// `Vec<crow_runtime::decimal::Dec>` taken and given: exact decimals.
+    Decimals,
     /// `Vec<f64>` taken and given, moved or copied as a list is.
     Floats,
     /// `Vec<String>` taken and given, moved or copied as a list is.
@@ -399,6 +404,10 @@ pub enum IntRange {
     /// A whole number of any size: read from text or a float, or rounded
     /// from an exact number.
     Any,
+    /// The sum of the first argument's items: their range times the most
+    /// items a list is counted to hold (2^48) — digits sum in 64 bits, any
+    /// 64-bit ints grow.
+    Sum,
 }
 
 /// What a builtin does beyond answering its value, declared on its row
@@ -587,6 +596,13 @@ pub struct Row {
     /// The id of the row that keeps every digit in place of this one, which
     /// answers 64 bits (int_width: `int` of text, `floor`, `abs`, …).
     pub big: Option<&'static str>,
+    /// The id of the row a list known to hold ints is answered by in this
+    /// one's place, which takes numbers as floats (`exact_form`): math's
+    /// `sum` of a list of ints is an int, every digit. A second row of the
+    /// name would have left a call of an argument not known yet answering
+    /// nothing known (the rows' answers differ), and that had stuck as a
+    /// text column in Magpie's figures.
+    pub exact: Option<&'static str>,
     /// The range of the int it answers (`IntRange`).
     pub range: IntRange,
     /// The shape of the tensor it answers (`Shape`).
@@ -721,6 +737,8 @@ impl Kind {
             Kind::Ints => Ty::List(Box::new(Ty::Int)),
             Kind::Bigs => Ty::List(Box::new(Ty::Big)),
             Kind::Floats => Ty::List(Box::new(Ty::Float)),
+            Kind::Fractions => Ty::List(Box::new(Ty::Fraction)),
+            Kind::Decimals => Ty::List(Box::new(Ty::Decimal)),
             Kind::Json => Ty::Json,
             Kind::Column => Ty::Column(Box::new(Ty::Unknown)),
             Kind::Bytes => Ty::Bytes,
@@ -771,7 +789,7 @@ impl Kind {
     /// answer of: the compiled program moves the variable the statement
     /// assigns and copies any other.
     pub fn owned(self) -> bool {
-        matches!(self, Kind::List | Kind::MapOf | Kind::Ints | Kind::Bigs | Kind::Floats | Kind::Texts | Kind::Record)
+        matches!(self, Kind::List | Kind::MapOf | Kind::Ints | Kind::Bigs | Kind::Floats | Kind::Fractions | Kind::Decimals | Kind::Texts | Kind::Record)
     }
 
     /// An argument printed the way the runtime function takes it (each of
@@ -809,7 +827,7 @@ impl Kind {
             Kind::Operand => format!("crow_runtime::fused::Operand::from(&({}))", arg),
             Kind::Scalar => format!("crow_runtime::mask::Cell::from(&({}))", arg),
             // moved or copied (an item kept) where the call is made
-            Kind::List | Kind::MapOf | Kind::Ints | Kind::Bigs | Kind::Floats | Kind::Texts | Kind::Item | Kind::Record => format!("({})", arg),
+            Kind::List | Kind::MapOf | Kind::Ints | Kind::Bigs | Kind::Floats | Kind::Fractions | Kind::Decimals | Kind::Texts | Kind::Item | Kind::Record => format!("({})", arg),
             Kind::FnOf(_) | Kind::Walked => format!("({})", arg),
             // (an item of a list a name holds, read where it lies)
             _ => match borrowed_index(arg) {
@@ -888,6 +906,8 @@ impl Kind {
             Kind::Ints => "Vec::<i64>::new()",
             Kind::Bigs => "Vec::<crow_runtime::int::Int>::new()",
             Kind::Floats => "Vec::<f64>::new()",
+            Kind::Fractions => "Vec::<crow_runtime::fraction::Frac>::new()",
+            Kind::Decimals => "Vec::<crow_runtime::decimal::Dec>::new()",
             Kind::Json => "serde_json::Value::Null",
             Kind::Bytes => "crow_runtime::sys::Bytes::default()",
             Kind::Stream => STREAM.default,
@@ -1774,6 +1794,8 @@ macro_rules! read {
     (Ints, $g:expr) => { read_ints(one($g)?)? };
     (Bigs, $g:expr) => { read_bigs(one($g)?)? };
     (Floats, $g:expr) => { read_floats(one($g)?)? };
+    (Fractions, $g:expr) => { read_items(one($g)?, "a list of fractions", read_fraction)? };
+    (Decimals, $g:expr) => { read_items(one($g)?, "a list of decimals", read_decimal)? };
     (Texts, $g:expr) => { read_strs(one($g)?)? };
     (Json, $g:expr) => { &*read_json(one($g)?)? };
     (Column, $g:expr) => { &read_column(one($g)?)? };
@@ -1810,6 +1832,8 @@ macro_rules! answer {
     (TextMap, $x:expr) => { CrowValue::ok(Value::map($x.into_iter().map(|(k, t)| (k, CrowValue::ok(Value::Str(t)))).collect())) };
     (Ints, $x:expr) => { write_ints($x) };
     (Bigs, $x:expr) => { write_bigs($x) };
+    (Fractions, $x:expr) => { CrowValue::ok(Value::Array(std::sync::Arc::new($x.into_iter().map(write_fraction).collect()))) };
+    (Decimals, $x:expr) => { CrowValue::ok(Value::Array(std::sync::Arc::new($x.into_iter().map(write_decimal).collect()))) };
     (Floats, $x:expr) => { write_floats($x) };
     (Texts, $x:expr) => { write_strs($x) };
     (Markup, $x:expr) => { write_markup($x) };
@@ -1971,7 +1995,7 @@ macro_rules! crow {
     ($id:literal, $module:literal, $name:literal, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
             id: $id, name: $name, module: $module, path: IN_CROW,
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", form: "", props: &[], taken: None, big: None, exact: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
             call: |_args: &[CrowValue], _trace: &str| Err(written_in_crow($name)),
             take: |_args: Vec<CrowValue>, _trace: &str| Err(written_in_crow($name)),
         }
@@ -1986,7 +2010,7 @@ macro_rules! maprow {
     ($id:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $fails:tt, $call:path, $take:path) => {
         Row {
             id: $id, name: $name, module: "", path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($fails), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($fails), options: &[], written: "", form: "", props: &[], taken: None, big: None, exact: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
             call: $call,
             take: $take,
         }
@@ -2001,7 +2025,7 @@ macro_rules! memrow {
     ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $call:path, $take:path) => {
         Row {
             id: $id, name: $name, module: $module, path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: Fails::Stops, options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: Fails::Stops, options: &[], written: "", form: "", props: &[], taken: None, big: None, exact: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
             call: $call,
             take: $take,
         }
@@ -2012,7 +2036,7 @@ macro_rules! row {
     ($id:literal, $module:literal, $name:literal, $f:path, ($($k:ident),*) -> $r:ident, $($fails:tt)+) => {
         Row {
             id: $id, name: $name, module: $module, path: stringify!($f),
-            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
+            params: &[$(Kind::$k),*], ret: Kind::$r, fails: fails!($($fails)+), options: &[], written: "", form: "", props: &[], taken: None, big: None, exact: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
             call: |args: &[CrowValue], trace: &str| {
                 let _ = trace;
                 let groups = groups_in_place(&[$(Kind::$k),*], args, $name)?;
@@ -2109,6 +2133,10 @@ pub static ROWS: &[Row] = &[
     Row { big: Some("core.__sort_big"), props: &[Prop::InPlace], ..row!("core.sort_ints", "", "sort", crow_runtime::core::sort_ints, (Ints) -> Ints, never) },
     Row { props: &[Prop::InPlace], ..row!("core.sort_floats", "", "sort", crow_runtime::core::sort_floats, (Floats) -> Floats, never) },
     Row { props: &[Prop::InPlace], ..row!("core.sort_strs", "", "sort", crow_runtime::core::sort_strs, (Texts) -> Texts, never) },
+    // (fractions and decimals by value, as `lt`, `min` and `max` compare
+    // them; Vijay, 2026-10-29: Rosetta Code, Rational calculator)
+    Row { props: &[Prop::InPlace], ..row!("core.sort_fractions", "", "sort", crow_runtime::fraction::sort, (Fractions) -> Fractions, never) },
+    Row { props: &[Prop::InPlace], ..row!("core.sort_decimals", "", "sort", crow_runtime::decimal::sort, (Decimals) -> Decimals, never) },
     Row { shape: Shape::Same(0), props: &[Prop::InPlace], ..row!("core.sort_tensor", "", "sort", crow_runtime::core::sort_tensor, (Tensor) -> Tensor, stops) },
     Row { props: &[Prop::InPlace], ..row!("core.reverse", "", "reverse", crow_runtime::core::reverse, (List) -> List, never) },
     Row { taken: Some("crow_runtime::core::reverse_text_taken"), props: &[Prop::InPlace], take: texts::reverse_taken, ..row!("core.reverse_text", "", "reverse", crow_runtime::core::reverse_text, (Str) -> Str, never) },
@@ -2281,6 +2309,8 @@ pub static ROWS: &[Row] = &[
     Row { range: IntRange::Shift, ..row!("core.__shift_big", "", "__shift_big", crow_runtime::bits::shift_big, (Big, Whole) -> Big, stops) },
     Row { range: IntRange::Max, ..row!("core.__max_big", "", "__max_big", crow_runtime::int::max, (Big, Big) -> Big, never) },
     row!("core.__sort_big", "", "__sort_big", crow_runtime::int::sort, (Bigs) -> Bigs, never),
+    Row { range: IntRange::Sum, big: Some("core.__sum_big"), ..row!("core.__sum_ints", "", "__sum_ints", crow_runtime::math::sum_ints, (Ints) -> Int, stops) },
+    row!("core.__sum_big", "", "__sum_big", crow_runtime::int::sum, (Bigs) -> Big, never),
     row!("core.__float_of_big", "", "__float_of_big", crow_runtime::int::float_of, (Big) -> Float, never),
     // exact numbers (spec, Numbers That Keep Every Digit): a decimal of text,
     // an int, a float (the text it shows) or itself; with digits, every
@@ -2382,7 +2412,9 @@ pub static ROWS: &[Row] = &[
     // math: reductions (an axis out of range is the reason), sorting and
     // selection, shapes (a reshape that does not fill, a transpose of a
     // vector: the reason, where a kernel asserted)
-    Row { props: &[Prop::Differentiable], ..row!("math.sum", "math", "sum", crow_runtime::math::sum, (Tensor) -> Float, never) },
+    // (a list of ints sums to an int, every digit — a float had refused
+    // `sum[xs] % n`; Vijay, 2026-10-29: Rosetta Code, ISBN13 check digit)
+    Row { exact: Some("core.__sum_ints"), props: &[Prop::Differentiable], ..row!("math.sum", "math", "sum", crow_runtime::math::sum, (Tensor) -> Float, never) },
     Row { shape: Shape::Reduce(0, 1), props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.sum_axis", "math", "sum", crow_runtime::math::sum_axis, (Tensor, Int) -> Tensor, stops) },
     Row { props: &[Prop::Differentiable], ..row!("math.mean", "math", "mean", crow_runtime::math::mean, (Tensor) -> Float, never) },
     Row { shape: Shape::Reduce(0, 1), props: &[Prop::Differentiable], options: &[("axis", Preset::Asked)], ..row!("math.mean_axis", "math", "mean", crow_runtime::math::mean_axis, (Tensor, Int) -> Tensor, stops) },
@@ -2831,7 +2863,7 @@ macro_rules! form {
     ($id:literal, $module:literal, $name:literal, ($($k:ident),*)) => {
         Row {
             id: $id, name: $name, module: $module, path: IN_FORM,
-            params: &[$(Kind::$k),*], ret: Kind::Unit, fails: Fails::Never, options: &[], written: "", form: "", props: &[], taken: None, big: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
+            params: &[$(Kind::$k),*], ret: Kind::Unit, fails: Fails::Never, options: &[], written: "", form: "", props: &[], taken: None, big: None, exact: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
             call: |_args: &[CrowValue], _trace: &str| Err(a_form($name)),
             take: |_args: Vec<CrowValue>, _trace: &str| Err(a_form($name)),
         }
@@ -3385,6 +3417,10 @@ pub enum Arg {
     /// A moment, and a list of them.
     Moment,
     Moments,
+    /// A list of fractions.
+    Fractions,
+    /// A list of decimals.
+    Decimals,
     Bytes,
     /// A list of bytes (a connection's chunks).
     Chunks,
@@ -3485,6 +3521,8 @@ impl Arg {
             Arg::Fraction => "a fraction",
             Arg::Moment => "a moment",
             Arg::Moments => "a list of moments",
+            Arg::Fractions => "a list of fractions",
+            Arg::Decimals => "a list of decimals",
             Arg::Json => "a JSON value",
             Arg::Tensor => "numbers",
             Arg::Ints => "a list of ints",
@@ -3590,6 +3628,8 @@ impl Arg {
             Arg::Int => Arg::Ints,
             Arg::Float => Arg::Floats,
             Arg::Moment => Arg::Moments,
+            Arg::Fraction => Arg::Fractions,
+            Arg::Decimal => Arg::Decimals,
             Arg::Tensor => Arg::Tensors,
             Arg::Ints | Arg::Floats => Arg::Rows,
             Arg::Text => Arg::Texts,
@@ -3673,6 +3713,8 @@ impl Kind {
             Kind::Item | Kind::ItemRef => "a value",
             Kind::Ints | Kind::Bigs => "a list of ints",
             Kind::Floats => "a list of numbers",
+            Kind::Fractions => "a list of fractions",
+            Kind::Decimals => "a list of decimals",
             Kind::Texts => "a list of text",
             Kind::Json => "a JSON value",
             Kind::Column => "a frame's column",
@@ -3703,7 +3745,7 @@ impl Kind {
     fn takes(self, a: Arg) -> bool {
         // a list whose items are not known could be any list
         if a == Arg::AnyList {
-            return [Arg::Ints, Arg::Floats, Arg::Texts, Arg::Truths, Arg::Tensors, Arg::Rows, Arg::Records, Arg::Maps, Arg::Items, Arg::Frames].iter().any(|l| self.takes(*l));
+            return [Arg::Ints, Arg::Floats, Arg::Fractions, Arg::Decimals, Arg::Texts, Arg::Truths, Arg::Tensors, Arg::Rows, Arg::Records, Arg::Maps, Arg::Items, Arg::Frames].iter().any(|l| self.takes(*l));
         }
         a == Arg::Unknown
             || match self.each() {
@@ -3732,7 +3774,7 @@ impl Kind {
                 Kind::Mailer => matches!(a, Arg::Handle(h) if h.name == MAILER.name),
                 Kind::Response => matches!(a, Arg::Handle(h) if h.name == RESPONSE.name),
                 Kind::FnOf(_) => a == Arg::Fn,
-                Kind::Walked => matches!(a, Arg::Tensor | Arg::Column | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Rows | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Frames | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments | Arg::AnyList),
+                Kind::Walked => matches!(a, Arg::Tensor | Arg::Column | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Rows | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Frames | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments | Arg::Fractions | Arg::Decimals | Arg::AnyList),
                 // (a transaction's connection is a connection)
                 Kind::Db | Kind::Tx => matches!(a, Arg::Handle(h) if h.name == DB.name || h.name == TX.name),
                 Kind::Request | Kind::Found => false,
@@ -3743,11 +3785,13 @@ impl Kind {
                 // (a list whose items can fail: its items, a failed one
                 // stopping the program, as a sum's numbers do)
                 Kind::Words => matches!(a, Arg::Tensor | Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Column | Arg::Moments | Arg::Fallible | Arg::FallibleNumbers),
-                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Rows | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Frames | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments),
+                Kind::List | Kind::Seq => matches!(a, Arg::Ints | Arg::Floats | Arg::Texts | Arg::Truths | Arg::Tensors | Arg::Rows | Arg::Records | Arg::Maps | Arg::Items | Arg::Chunks | Arg::Frames | Arg::Fallible | Arg::FallibleNumbers | Arg::Moments | Arg::Fractions | Arg::Decimals),
                 Kind::Item | Kind::ItemRef => true,
                 Kind::MapOf | Kind::MapRef | Kind::TextMap => a == Arg::Map,
                 Kind::Ints | Kind::Bigs => a == Arg::Ints,
                 Kind::Floats => a == Arg::Floats,
+                Kind::Fractions => a == Arg::Fractions,
+                Kind::Decimals => a == Arg::Decimals,
                 Kind::Json => a == Arg::Json,
                 Kind::Column => a == Arg::Column,
                 // a function shows as nothing, and JSON holds no function, frame or matrix
@@ -4347,6 +4391,15 @@ pub fn column_read() -> &'static Row {
 /// (int_width): `int` of text or a float, `floor`, `ceil` and `round` answer
 /// a whole number of any size; `abs`, `min` and `max` keep one handed to
 /// them. None for a row with no such form.
+/// The row a call answers by where its argument is known to be a list of
+/// ints (`Row::exact`): the row itself otherwise.
+pub fn exact_form(row: &'static Row, kinds: &[Arg]) -> &'static Row {
+    match (row.exact, kinds) {
+        (Some(id), [Arg::Ints]) => ROWS.iter().find(|r| r.id == id).unwrap_or(row),
+        _ => row,
+    }
+}
+
 pub fn big_form(id: &str) -> Option<&'static Row> {
     let big = ROWS.iter().find(|r| r.id == id)?.big?;
     ROWS.iter().find(|r| r.id == big)

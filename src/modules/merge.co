@@ -80,10 +80,10 @@ fn _row_bytes[df]
     for i in range[n]
         b = fixed
         for cut_ends in texts
-            start = 0
+            begin = 0
             if i gt 0
-                start = cut_ends[i - 1]
-            b = b + cut_ends[i] - start
+                begin = cut_ends[i - 1]
+            b = b + cut_ends[i] - begin
         out = push[out, b]
     return out
 

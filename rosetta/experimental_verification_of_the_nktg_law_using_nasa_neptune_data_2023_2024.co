@@ -17,27 +17,27 @@ fn obs_of[line]
 fn sci[x, digits]
     --- x as C's %.<digits>e writes it: one digit, the point, `digits` more, then the exponent
     if x eq 0.0
-        zeros = repeat['0', digits]
-        return '0.`zeros`e+00'
-    sign = ''
+        zero_digits = repeat['0', digits]
+        return '0.`zero_digits`e+00'
+    sgn = ''
     a = x
     if x lt 0.0
-        sign = '-'
+        sgn = '-'
         a = -x
-    e = floor[log10[a]]
-    mantissa = a / 10.0 ^ e
+    ex = floor[log10[a]]
+    mantissa = a / 10.0 ^ ex
     if mantissa lt 1.0
         mantissa = mantissa * 10.0
-        e = e - 1
+        ex = ex - 1
     text = fmt[mantissa, decimals = digits]
     if starts[text, '10']
-        e = e + 1
+        ex = ex + 1
         text = fmt[mantissa / 10.0, decimals = digits]
     esign = '+'
-    if e lt 0
+    if ex lt 0
         esign = '-'
-    power = fmt[abs[e], width = 2, fill = '0']
-    return '`sign``text`e`esign``power`'
+    power = fmt[abs[ex], width = 2, fill = '0']
+    return '`sgn``text`e`esign``power`'
 
 fn right[text, width]
     return fmt[text, width = width, align = 'right']

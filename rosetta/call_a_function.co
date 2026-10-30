@@ -26,10 +26,10 @@ fn announce[what]
 
 --- a variable number of arguments is a list
 fn total[xs]
-    sum = 0
+    acc = 0
     for x in xs
-        sum = sum + x
-    return sum
+        acc = acc + x
+    return acc
 
 fn double[x]
     return x * 2

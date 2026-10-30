@@ -1,0 +1,13 @@
+--- A function handed a record at one call and an int at another holds a
+--- record or none (spec: 0 is none, another int stops), and arithmetic on
+--- what it answers is refused naming it so, with the way out: the message
+--- had named the record alone, `cannot use '+' with Pick and int`
+--- (Rosetta Code, Monads/List monad; Vijay, 2026-10-29)
+
+struct Pick [x, y]
+
+fn first[x]
+    return x
+
+log[first[5] + 1]
+log[first[Pick[1, 2]].y]

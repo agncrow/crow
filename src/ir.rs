@@ -267,6 +267,11 @@ pub struct Part {
     pub uses: Vec<String>,
     pub cpu: Option<i64>,
     pub gpu: Option<i64>,
+    /// What a page's top level sets the draws from (`seed[n]` of a program
+    /// that holds state): run before its declarations are set, as `cpu` and
+    /// `gpu` are, so the draws they make are seeded — run with the top
+    /// level's other lines, after them, they had been drawn unseeded.
+    pub seeds: Vec<Expr>,
     pub structs: Vec<StructDef>,
     pub facts: Vec<Fact>,
     pub derives: Vec<Derive>,
@@ -1492,6 +1497,9 @@ pub fn print(program: &Program) -> String {
         for s in &part.structs {
             let fields: Vec<String> = s.fields.iter().map(|(n, t)| format!("{}: {}", n, t)).collect();
             let _ = writeln!(out, "  struct {} {{ {} }}", s.name, fields.join(", "));
+        }
+        for e in &part.seeds {
+            let _ = writeln!(out, "  before the facts: {}", expr(e));
         }
         for f in &part.facts {
             let _ = writeln!(

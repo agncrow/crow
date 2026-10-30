@@ -60,6 +60,9 @@ impl Emitter {
             return bound.clone();
         }
         match e {
+            // (the 0 that writes none, where a record or none is held: a
+            // list of 0s made a list of nones yields one per item)
+            Expr::Const(Const::Int(0), Ty::OptRecord(_)) => "None".to_string(),
             Expr::Const(c, _) => self.constant(c),
             Expr::Local(v, _) | Expr::Move(v, _) => self.local(v),
             Expr::Load(f, _) => self.load(f),
@@ -1773,7 +1776,20 @@ impl Emitter {
                 // used — each number had been printed as a traced one, and
                 // `as f64` did not build)
                 let was = std::mem::replace(&mut self.emitting_traced, false);
-                let vals: Vec<String> = items.iter().map(|i| format!("{} as f64", self.expr(i))).collect();
+                // (a computed whole number in a vector of whole numbers is held
+                // exactly, or stops past 2^53, as the interpreter does)
+                let whole = matches!(&lt, Ty::Tensor(e, _) if matches!(e.as_ref(), Ty::Int));
+                let vals: Vec<String> = items
+                    .iter()
+                    .map(|i| {
+                        let v = self.expr(i);
+                        if whole && !matches!(Emitter::raw(i), Expr::Const(..)) && matches!(self.tt(i).payload(), Ty::Int) {
+                            format!("crow_runtime::core::whole_in_vector({}){}", v, self.or_stop())
+                        } else {
+                            format!("{} as f64", v)
+                        }
+                    })
+                    .collect();
                 self.emitting_traced = was;
                 return format!("crow_runtime::tensor::CrowTensor::from_vec(vec![{}], vec![{}])", vals.join(", "), items.len());
             }

@@ -416,6 +416,12 @@ pub fn min(a: &Dec, b: &Dec) -> Dec {
     if b.cmp(a) == Ordering::Less { b.clone() } else { a.clone() }
 }
 
+/// `sort[xs]` of decimals, by value.
+pub fn sort(mut v: Vec<Dec>) -> Vec<Dec> {
+    v.sort_by(|a, b| a.cmp(b));
+    v
+}
+
 pub fn max(a: &Dec, b: &Dec) -> Dec {
     if b.cmp(a) == Ordering::Greater { b.clone() } else { a.clone() }
 }

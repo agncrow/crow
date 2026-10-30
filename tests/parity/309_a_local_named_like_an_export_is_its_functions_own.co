@@ -3,11 +3,14 @@
 --- `relu` in `g` had kept `f`'s `relu[x]` from reaching math.nn's —
 --- "module 'math.nn' has no function 'relu'", in both modes — since the
 --- inliner had read every name the program binds anywhere as shadowing
---- the export everywhere (found writing Magpie's read verbs in Crow).
-use math.nn
+--- the export everywhere (found writing Magpie's read verbs in Crow). The
+--- import is qualified: a bare import's names are refused as a function's
+--- locals, as they are at the top level (Vijay, 2026-10-29); a standard
+--- module's own functions, which meet this, are held by their own tests.
+use math.nn as nn
 
 fn f[x]
-    return relu[x]
+    return nn.relu[x]
 
 fn g[y]
     relu = y + 1

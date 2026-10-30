@@ -1,0 +1,692 @@
+slug	result	reference	note
+100_doors	agrees	Python	
+100_prisoners	agrees	Python	
+15_puzzle_game	not comparable	Python	interactive random game; Python reads a difficulty and stops on the input; Crow's slides, directions and the solve after 28 moves check out by hand
+21_game	not comparable	Python	interactive + random; Python loops on the closed input; Crow traced by hand: computer moves to totals 1 mod 4 (5, 9, 13, 17, 21), refusals and quit right
+24_game	not comparable	Python	interactive game with random digits (Python dealt 5 6 8 3, Crow 4 2 6 5); Crow's values check by hand: 4+2+6+5 = 17, 4/6*(5+2) = 14/3, (1+1)*4+6 = 14, and both 24s
+24_game_solve	agrees	Python	
+4_rings_or_4_squares_puzzle	agrees	Python	
+99_bottles_of_beer	agrees	Python	
+9_billion_names_of_god_the_integer	agrees	Python (the wiki's recorded output)	
+a_plus_b	agrees	Python	
+abbreviations_automatic	agrees	Python (the wiki's recorded output)	
+abbreviations_easy	agrees	Python	
+abbreviations_simple	agrees	Python	
+abc_correlation	agrees	Python	
+abc_problem	agrees	Python	
+abc_words	agrees	Python	
+abelian_sandpile_model	agrees	Python	
+abelian_sandpile_model_identity	agrees	Python	
+abundant_odd_numbers	agrees	Python	
+accumulator_factory	agrees	Python	
+achilles_numbers	agrees	Python	
+aho_corasick_algorithm	agrees	Python	
+aliquot_sequence_classifications	agrees	Python (the wiki's recorded output)	
+almkvist_giullera_formula_for_pi	agrees	Python	
+amb	agrees	Python	
+anadromes	agrees	Python	
+anagram_generator	agrees	Python	
+anagrams_deranged_anagrams	agrees	Python	
+anaprimes	agrees	Python	
+angle_difference_between_two_bearings	agrees	Python	
+animated_spinners	no reference		
+anti_primes	agrees	Python	
+aperys_constant	agrees	Python	
+apply_a_digital_filter_direct_form_ii_transposed	agrees	Python	
+approximate_equality	agrees	Python	
+archimedean_spiral	no reference		
+arena_storage_pool	agrees	Wren (the wiki's recorded output)	
+arithmetic_derivative	agrees	Python	
+arithmetic_evaluation	agrees	Python	
+arithmetic_geometric_mean	Python wrong	Python	the wiki's float AGM stops at a tolerance (0.8472130848351929, off in the 11th digit); Crow's 0.8472130847939792 is the float nearest the 70 places it also prints
+arithmetic_geometric_mean_calculate_pi	agrees	Python	
+arithmetic_numbers	agrees	Python	
+array_length	agrees	Go	
+ascending_primes	agrees	Python	
+ascii_art_diagram_converter	agrees	Python	
+associative_array_merging	agrees	Python	
+attractive_numbers	agrees	Python	
+autogram_checker	agrees	Python	
+average_loop_length	agrees	Python	
+averages_mean_angle	agrees	Go (the wiki's recorded output)	
+averages_pythagorean_means	agrees	Python	
+averages_root_mean_square	agrees	Python	
+avl_tree	agrees	Python	
+babbage_problem	agrees	Python	
+babylonian_spiral	agrees	Python (the wiki's recorded output)	
+balanced_brackets	no reference		
+balanced_ternary	agrees	Python	
+barnsley_fern	no reference		
+base64_decode_data	agrees	Python	
+bell_numbers	agrees	Python	
+benfords_law	agrees	Python	
+berlekamp_massey_algorithm	agrees	Python	
+bernoullis_triangle	agrees	Python	
+bernstein_basis_polynomials	agrees	Python	
+best_shuffle	agrees	Python	
+bifid_cipher	agrees	Python	
+bin_given_limits	agrees	Python	
+binomial_transform	fixed	Python	program: prime flip-flop starts at n=0; the task's sequence starts at n=1
+bioinformatics_base_count	agrees	Python	
+bioinformatics_global_alignment	agrees	Python	
+bioinformatics_sequence_mutation	not comparable	Python	random draws; checked Crow output self-consistent: all 15 logged mutations replay to the printed sequences, base counts 57/48/73/72, 59/50/72/69, 59/52/75/69 right
+biorhythms	agrees	Python	
+bitcoin_address_validation	agrees	Python	
+bitcoin_public_point_to_address	agrees	Python	
+bitwise_io	agrees	Wren	
+blossom_algorithm	agrees	Python	
+blum_integer	agrees	Wren (the wiki's recorded output)	
+boruvka_algorithm	agrees	Python	
+boustrophedon_transform	agrees	Python	
+box_the_compass	agrees	Python	
+boyer_moore_string_search	agrees	Python	
+brazilian_numbers	agrees	Python	
+break_oo_privacy	not comparable	Go	demonstration: Go shows reflect/unsafe access; Crow has no private members and its output (250, PIN 1234, then 1000000; fields in name order as the spec says) follows its program
+brilliant_numbers	agrees	Python	
+bron_kerbosch_algorithm	agrees	Python	
+burrows_wheeler_transform	not comparable	Python	the Python block prints nothing
+calculating_the_value_of_e	agrees	Python	
+calkin_wilf_sequence	agrees	Python	
+call_a_function	agrees	Python	
+canonicalize_cidr	agrees	Python	
+cantor_set	agrees	Python	
+cartesian_product_of_two_or_more_lists	agrees	Python	
+casting_out_nines	agrees	Python	
+catalan_numbers_pascals_triangle	agrees	Python	
+catamorphism	agrees	Python	
+centre_and_radius_of_a_circle_passing_through_3_points_in_a_plane	agrees	Python (the wiki's recorded output)	
+chaocipher	agrees	Python	
+chaos_game	no reference		
+check_if_a_polygon_overlaps_with_a_rectangle	agrees	Python	
+check_if_two_polygons_overlap	agrees	Python	
+check_input_device_is_a_terminal	agrees	Python	
+check_machin_like_formulas	agrees	Python	
+check_output_device_is_a_terminal	agrees	Python	
+cheryls_birthday	agrees	Python	
+chinese_remainder_theorem	agrees	Python	
+chinese_zodiac	agrees	Python	
+christofides_algorithm	Python wrong	Python	Python matches odd vertices greedily (tour 28687.16), not by minimum weight; networkx min_weight_matching gives Crow's exact 22 pairs (6919.32), and Crow's MST 18772.17, Euler 25691.50, tour and length 24261.67 all recomputed identically
+church_numerals	agrees	Python	
+circles_of_given_radius_through_two_points	agrees	Python	
+cistercian_numerals	agrees	Python	
+closures_value_capture	agrees	Python	
+cocke_younger_kasami_cyk_algorithm	agrees	Python	
+colorful_numbers	agrees	Python	
+colour_bars_display	agrees	Go	
+colour_pinstripe_printer	no reference		
+comma_quibbling	agrees	Python	
+command_line_arguments	agrees	Python	
+compare_a_list_of_strings	agrees	Python	
+compile_time_calculation	agrees	Python	
+compiler_ast_interpreter	agrees	Python	
+compiler_code_generator	agrees	Python	
+compiler_lexical_analyzer	agrees	Python	
+compiler_simple_file_inclusion_pre_processor	no reference		
+compiler_syntax_analyzer	agrees	Python	
+compiler_virtual_machine_interpreter	agrees	Python	
+composite_numbers_k_with_no_single_digit_factors_whose_factors_are_all_substring	agrees	Python (the wiki's recorded output)	
+conjugate_transpose	agrees	Python	
+continued_fraction	agrees	Python	
+continued_fraction_arithmetic_construct_from_rational_number	agrees	Python	
+continued_fraction_arithmetic_g_matrix_ng_continued_fraction_n	agrees	Python	
+convert_decimal_number_to_rational	agrees	Python	
+convert_seconds_to_compound_duration	agrees	Python	
+copy_stdin_to_stdout	no reference		
+count_the_coins	agrees	Python	
+create_an_html_table	not comparable	Python	random 4-digit cells in both; Crow's table has the header ,X,Y,Z, row numbers 1-5 and 3 aligned columns as the task asks
+csv_data_manipulation	agrees	Python	
+csv_to_html_translation	no reference		
+cullen_and_woodall_numbers	agrees	Python	
+currency	agrees	Python	
+currying	agrees	Python	
+curzon_numbers	agrees	Python	
+cut_a_rectangle	agrees	Python	
+cycles_of_a_permutation	agrees	Python	
+cyclotomic_polynomial	agrees	Go (the wiki's recorded output)	
+damm_algorithm	agrees	Python	
+dating_agency	agrees	Python	
+de_bruijn_sequences	agrees	Python (the wiki's recorded output)	
+de_polignac_numbers	agrees	Python	
+deceptive_numbers	agrees	Python	
+decorate_sort_undecorate_idiom	agrees	Python	
+deepcopy	not comparable	Go	demonstration: Go prints pointer addresses; Crow output checked line by line: copy changed at every depth (Robert, lead, math [100], Capital City, Alicia, [90,85,77]) while bob/alice unchanged, birthday 26 vs 25, walks a-b-c-a-b-c-a and a-b-c-b-c-b-c right
+demings_funnel	agrees	Python (the wiki's recorded output)	
+department_numbers	agrees	Python	
+descending_primes	agrees	Python	
+detect_division_by_zero	agrees	Python	
+determinant_and_permanent	agrees	Go (the wiki's recorded output)	
+determine_if_a_string_has_all_the_same_characters	agrees	Python	
+determine_if_a_string_has_all_unique_characters	agrees	Python	
+determine_if_a_string_is_collapsible	agrees	Python	
+determine_if_a_string_is_squeezable	agrees	Python	
+determine_if_two_triangles_overlap	agrees	Python	
+dice_game_probabilities	agrees	Python	
+digital_root	agrees	Python	
+disarium_numbers	agrees	Python	
+display_a_linear_combination	agrees	Python	
+display_an_outline_as_a_nested_table	agrees	Python	
+distance_and_bearing	agrees	Python	
+diversity_prediction_theorem	agrees	Python	
+doomsday_rule	agrees	Python	
+dot_product	agrees	Python	
+draw_a_clock	not comparable	Python	a drawing at the time of the run
+draw_a_rotating_cube	no reference		
+draw_a_sphere	agrees	Python	
+draw_a_torus	no reference		
+draw_the_empire_state_building	not comparable	Python	ASCII art: Python prints a fixed box-drawing picture, Crow ray-casts the setbacks, mast and antenna; no computed values to compare
+duffinian_numbers	agrees	Python	
+dutch_national_flag_problem	not comparable	Python	random draws; Crow drawn 5 red/7 white/3 blue, both sorts give 5/7/3 in flag order, in_order false then true (checked)
+earliest_difference_between_prime_gaps	agrees	Go (the wiki's recorded output)	
+eban_numbers	agrees	Python	
+eertree	agrees	Python	
+egyptian_division	agrees	Python	
+ekg_sequence_convergence	agrees	Python	
+elementary_cellular_automaton	agrees	Python	
+elementary_cellular_automaton_infinite_length	agrees	Python	
+elementary_cellular_automaton_random_number_generator	agrees	Python (the wiki's recorded output)	
+elliptic_curve_arithmetic	agrees	Python	
+empty_directory	no reference		
+empty_string	no reference		
+engel_expansion	agrees	Python	
+entropy_narcissist	agrees	Python	
+equal_prime_and_composite_sums	agrees	Python	
+equilibrium_index	agrees	Python	
+erdos_nicolas_numbers	agrees	Python (the wiki's recorded output)	
+erdos_selfridge_categorization_of_primes	agrees	Python	
+erdos_woods_numbers	agrees	Python	
+esthetic_numbers	agrees	Python	
+euclid_mullin_sequence	agrees	Python (the wiki's recorded output)	
+euclidean_rhythm	agrees	Python	
+eulers_identity	no reference		
+eulers_sum_of_powers_conjecture	agrees	Python	
+even_or_odd	agrees	Go	
+evolutionary_algorithm	not comparable	Python	random paths differ; Crow's program follows the task (C=100 copies, parent kept unless a copy is fitter) and the fitness counts checked by hand (gen 0: 4, gen 1: 5, gen 6: 11)
+executable_library	agrees	Python	
+executable_library_hailstone	no reference		
+execute_brain	agrees	Python	
+execute_computer_zero	agrees	Python	
+execute_hq9_plus	no reference		
+execute_snusp	agrees	Python	
+experimental_verification_of_the_nkt_law_interpolating_the_masses_of_8_planets_u	agrees	Python	
+experimental_verification_of_the_nktg_law_in_earth_orbit_based_on_nasas_2025_ear	no reference		
+experimental_verification_of_the_nktg_law_using_nasa_mercury_data_in_2025	agrees	EasyLang	
+experimental_verification_of_the_nktg_law_using_nasa_neptune_data_2023_2024	agrees	Python	
+exponential_digital_sums	agrees	Python	
+exponentiation_order	agrees	Go (the wiki's recorded output)	
+exponentiation_with_infix_operators_in_or_operating_on_the_base	agrees	Python	
+extend_your_language	agrees	Python	
+extreme_floating_point_values	agrees	Go (the wiki's recorded output)	
+faces_from_a_mesh	agrees	Python	
+facial_detection_in_a_photo	agrees	Python	
+factorial_base_numbers_indexing_permutations_of_a_collection	agrees	Python	
+factorial_primes	agrees	Python	
+factorions	agrees	Python	
+factorize_string_into_lyndon_words	agrees	Python	
+fairshare_between_two_and_more	agrees	Python	
+farey_sequence	agrees	Python	
+fast_fourier_transform	agrees	Python	
+fasta_format	agrees	Python	
+feigenbaum_constant_calculation	agrees	Python	
+fermat_pseudoprimes	agrees	Python	
+fibonacci_n_step_number_sequences	agrees	Python	
+fibonacci_word	no reference		
+file_extension_is_in_extensions_list	agrees	Python	
+file_size_distribution	not comparable	Go	different trees (Go its own dir); Crow demo tree checked by hand: 22 files, 3,059,268 bytes, bins 3/3/3/3/4/3/1/2 with byte totals 0/16/200/1562/15570/91920/250000/2700000, median 512, half the bytes in the 2 largest
+find_chess960_starting_position_identifier	agrees	Python	
+find_duplicate_files	no reference		
+find_if_a_point_is_within_a_triangle	agrees	Python	
+find_limit_of_recursion	not comparable	Python	each language reports its own limit: Crow 10000 (its spec's rule; depth 9999->10000 calls consistent), Python 1000 (sys default)
+find_palindromic_numbers_in_both_binary_and_ternary_bases	agrees	Python	
+find_the_intersection_of_a_line_with_a_plane	agrees	Python	
+find_the_intersection_of_two_lines	agrees	Python	
+find_the_last_sunday_of_each_month	agrees	Python	
+find_the_missing_permutation	agrees	Python	
+first_class_functions_use_numbers_analogously	no reference		
+first_perfect_square_in_base_n_with_n_unique_digits	agrees	Python	
+first_power_of_2_that_has_leading_decimal_digits_of_12	agrees	Python	
+fivenum	agrees	Python	
+fixed_length_records	agrees	Go (the wiki's recorded output)	
+flatten_a_list	agrees	Python	
+flipping_bits_game	not comparable	Python	random interactive game; Crow's recorded game checks by hand: column a then row 3 turn 100/001/011 into the target 000/101/000, row 4 refused, T shows the target
+floyds_triangle	agrees	Python	
+forbidden_numbers	agrees	Python	
+four_bit_adder	agrees	Python	
+four_is_magic	agrees	Python	
+four_is_the_number_of_letters_in_the	agrees	Go (the wiki's recorded output)	
+french_republican_calendar	agrees	Wren (the wiki's recorded output)	
+function_prototype	no reference		
+functional_coverage_tree	agrees	Python	
+fusc_sequence	agrees	Python	
+gabows_algorithm	agrees	Python	
+gapful_numbers	agrees	Python	
+gauss_jordan_matrix_inversion	agrees	Python	
+gaussian_elimination	agrees	Python	
+gaussian_primes	agrees	Python (the wiki's recorded output)	
+generate_chess960_starting_position	agrees	Python	
+generate_random_chess_position	not comparable	Python	random positions; each of Crow's 5 FENs checks against the task's rules (one king each, not adjacent, no pawn on its promotion rank, at most 16 a side, black not in check)
+generator_exponential	agrees	Python	
+geohash	agrees	Python	
+get_system_command_output	no reference		
+giuga_numbers	agrees	Python	
+globally_replace_text_in_several_files	agrees	Python	
+gospers_hack	agrees	Python	
+gotchas	no reference		
+graph_colouring	agrees	Python	
+gray_code	agrees	Python (the wiki's recorded output)	
+greatest_prime_dividing_the_n_th_cubefree_number	agrees	Python	
+greatest_subsequential_sum	agrees	Python	
+greedy_algorithm_for_egyptian_fractions	agrees	Python	
+greyscale_bars_display	agrees	Go	
+hailstone_sequence	agrees	Python	
+halt_and_catch_fire	agrees	Python	
+hamiltonian_cycle_via_chvatal_closure	agrees	Python	
+harmonic_series	agrees	Python	
+harriss_spiral	no reference		
+harshad_or_niven_series	agrees	Python	
+hash_join	agrees	Python	
+hashtron_inference	no reference		
+haversine_formula	agrees	Go	
+held_karp_algorithm	agrees	Python	
+hello_world_newbie	not comparable	Python	instructions for a newcomer; each prints its own greeting
+here_document	agrees	Python	
+heronian_triangles	agrees	Python	
+hex_dump	agrees	Python (the wiki's recorded output)	
+hex_words	agrees	Python	
+hickerson_series_of_almost_integers	agrees	Python	
+history_variables	not comparable	Python	a demonstration of the language's own history mechanism
+hofstadter_conway_10_000_sequence	agrees	Python	
+hofstadter_figure_figure_sequences	agrees	Python (the wiki's recorded output)	
+hofstadter_q_sequence	agrees	Python	
+honaker_primes	agrees	Python	
+honeycombs	no reference		
+hopcroft_karp_algorithm	agrees	Python	
+horners_rule_for_polynomial_evaluation	no reference		
+horse_racing	agrees	Python	
+i_before_e_except_after_c	agrees	Python	
+iccanobif_primes	agrees	Python	
+identity_matrix	agrees	Python	
+idiomatically_determine_all_the_characters_that_can_be_used_for_symbols	not comparable	Nim	language-specific (Nim lists Nim's set); Crow probes its compiler, re-run with the current binary gives the same: start A-Z _ a-z (53), then also 0-9 (63), non-ASCII refused, as the spec says (identifiers are ASCII)
+idiomatically_determine_all_the_lowercase_and_uppercase_letters	agrees	Python	
+idoneal_numbers	agrees	Python	
+im_a_software_engineer_get_me_out_of_here	agrees	Python	
+imaginary_base_numbers	agrees	Python	
+include_a_file	not comparable	Go	demonstration (Go builds two files); Crow includes include_a_file_lib.co via use, output follows: greeting, INCLUDED!, (0,0)->(3,4) distance 5, (6,8) distance 10
+include_a_file_lib	no reference		
+inconsummate_numbers_in_base_10	agrees	Python (the wiki's recorded output)	
+increasing_gaps_between_consecutive_niven_numbers	agrees	Python	
+index_finite_lists_of_positive_integers	agrees	Python	
+inner_classes	agrees	Python	
+integer_overflow	agrees	Go	
+integer_sequence	agrees	Python	
+intersecting_number_wheels	agrees	Python	
+inventory_sequence	agrees	Python (the wiki's recorded output)	
+inverted_syntax	agrees	Go	
+isbn13_check_digit	agrees	Python	
+isograms_and_heterograms	agrees	Python (the wiki's recorded output)	
+isqrt_integer_square_root_of_x	agrees	Python	
+iterated_digits_squaring	agrees	Python	
+jacobi_symbol	agrees	Python	
+jacobsthal_numbers	agrees	Python	
+jaro_similarity	agrees	Python	
+jewels_and_stones	agrees	Python	
+johnsons_algorithm	agrees	Python	
+jordan_polya_numbers	agrees	Python	
+json	not comparable	Go	different documents (Go: foo/bar); Crow output checked: loads and re-encodes valid JSON (keys in name order), 2007, Python, 3, 1630, null as a failed value, malformed text refused at column 37 (the stray brace), round trip keeps 3 corners
+json_pointer	agrees	Python	
+juggler_sequence	agrees	Python	
+jump_anywhere	agrees	Python	
+jury_stability_criterion	agrees	Python	
+k_d_tree	agrees	Python	
+kaprekar_numbers	agrees	Python	
+kernighans_large_earthquake_problem	agrees	Python (the wiki's recorded output)	
+keyboard_input_obtain_a_y_or_n_response	not comparable	Python	the Python needs a terminal; Crow's answers to its recorded input check by hand
+kirkpatrick_seidel_algorithm	agrees	Python	
+klarner_rado_sequence	agrees	Python	
+knights_tour	agrees	Python	
+knuths_algorithm_s	agrees	Python	
+koch_curve	agrees	Python	
+kolakoski_sequence	agrees	Python	
+kosaraju	agrees	Python	
+lah_numbers	agrees	Python	
+largest_int_from_concatenated_ints	agrees	Python	
+largest_number_divisible_by_its_digits	agrees	Python	
+largest_proper_divisor_of_n	agrees	Python	
+last_friday_of_each_month	agrees	Python	
+last_letter_first_letter	agrees	Python	
+last_list_item	agrees	Python	
+latin_squares_in_reduced_form	agrees	Python	
+latin_squares_in_reduced_form_randomizing_using_jacobson_and_matthews_technique	agrees	Python	
+law_of_cosines_triples	agrees	Python	
+least_common_multiple	agrees	Python	
+least_m_such_that_n_plus_m_is_prime	agrees	Python (the wiki's recorded output)	
+left_factorials	agrees	Python	
+levenshtein_distance	agrees	Python	
+levenshtein_distance_alignment	Python wrong	Python	p-lace agrees; Python's ndiff line ro-settac-o-de (14 columns against a 13-letter word) is no Levenshtein alignment, Crow's r-oset-tacode / raisethysword has the 8 edits of distance 8 (kitten 3, sunday 3 also right)
+list_rooted_trees	agrees	Python	
+long_literals_with_continuations	agrees	Python	
+long_year	agrees	Python	
+longest_common_subsequence	agrees	Python	
+longest_common_substring	agrees	Python	
+longest_increasing_subsequence	agrees	Python	
+lucky_and_even_lucky_numbers	agrees	Python (the wiki's recorded output)	
+lychrel_numbers	agrees	Python	
+lyndon_word	agrees	Python	
+mac_vendor_lookup	agrees	Python (the wiki's recorded output)	
+mad_libs	agrees	Python	
+magic_8_ball	not comparable	Python	random answers to the input questions; Crow draws one of the 20 standard answers (rand[20] = 0..19) per question and stops at the empty line, as the Python does
+magic_constant	agrees	Python	
+magic_numbers	agrees	Python	
+magic_squares_of_doubly_even_order	agrees	Python	
+magic_squares_of_odd_order	agrees	Python	
+magic_squares_of_singly_even_order	agrees	Python	
+map_range	agrees	Python	
+matrix_digital_rain	no reference		
+maximum_triangle_path_sum	agrees	Python	
+mayan_calendar	agrees	Python	
+mcnuggets_problem	agrees	Python	
+md4	agrees	Go (the wiki's recorded output)	
+meissel_mertens_constant	agrees	Python	
+memory_layout_of_a_data_structure	agrees	Go	
+metallic_ratios	agrees	Python	
+metaprogramming	not comparable	Go	demonstration (Go shadows copy); Crow output follows its program: then chain = nested calls (fox brown quick the), 42*42+1 = 1765, largest 41 and zucchini, 14/49/-7, kinds int/float/str/bool/array/map/Point/fn
+metronome	not comparable	Go	timing/sound task (Go: 72 bpm ticks until ^C); Crow's beat times k*60/tempo checked (0.5 s at 120, 0.667 at 90, 0.349..3.140 at 172) and the H/L patterns right; live mode sleeps float seconds as the spec says
+mian_chowla_sequence	agrees	Python	
+middle_three_digits	agrees	Python	
+mind_boggling_card_trick	agrees	Python	
+minimal_steps_down_to_1	agrees	Python	
+minimum_multiple_of_m_where_digital_sum_equals_m	agrees	Python	
+minimum_positive_multiple_in_base_10_using_only_0_and_1	agrees	Python	
+minkowski_question_mark_function	agrees	Python	
+modified_random_distribution	not comparable	Python	random draws; Crow histogram is V-shaped, sums to 50000, chi-square 17.2 on 19 df against its expected column (4750..250..4750, checked)
+modular_arithmetic	agrees	Python	
+modular_exponentiation	agrees	Python	
+modular_inverse	agrees	Python	
+monads_list_monad	agrees	Python	
+monads_maybe_monad	agrees	Python	
+monads_writer_monad	agrees	Python	
+motor	agrees	Phix (the wiki's recorded output)	
+move_to_front_algorithm	agrees	Python	
+multi_dimensional_array	agrees	Python	
+multifactorial	agrees	Go (the wiki's recorded output)	
+multiple_distinct_objects	no reference		
+multisplit	agrees	Python	
+multiton	agrees	Python	
+munchausen_numbers	agrees	Python	
+musical_scale	no reference		
+n_queens_problem	agrees	Python	
+narcissist	agrees	Python	
+narcissistic_decimal_number	agrees	Python	
+nautical_bell	agrees	Python	
+negative_base_numbers	agrees	Python	
+nested_function	agrees	Python	
+nested_templated_data	agrees	Python	
+next_highest_int_from_digits	agrees	Python	
+nim_game	agrees	Python	
+nktglaw	agrees	Python	
+non_transitive_dice	agrees	Python	
+nonoblock	agrees	Python	
+nonogram_solver	agrees	Python	
+numbers_divisible_by_their_individual_digits_but_not_by_the_product_of_their_dig	agrees	Python	
+numbers_k_such_that_the_last_letter_of_k_is_the_same_as_the_first_letter_of_k_pl	agrees	Python (the wiki's recorded output)	
+numbers_which_are_not_the_sum_of_distinct_squares	agrees	Python	
+numbers_which_are_the_cube_roots_of_the_product_of_their_proper_divisors	agrees	Python	
+numbers_with_equal_rises_and_falls	agrees	Python	
+numeric_error_propagation	agrees	Python	
+numerical_and_alphabetical_suffixes	agrees	Python (the wiki's recorded output)	
+odd_and_square_numbers	agrees	Python	
+odd_word_problem	agrees	Python	
+ohalloran_numbers	agrees	Python	
+old_lady_swallowed_a_fly	agrees	Python	
+old_russian_measure_of_length	agrees	Python (the wiki's recorded output)	
+one_of_n_lines_in_a_file	not comparable	Python	seeded draws: both show each of 10 lines near 100,000 of 1e6; Crow's counts sum to 1e6 and its chi-squared 16.45 recomputes by hand (other seeds give 8.0, 3.8, 5.9)
+one_time_pad	not comparable	Go	random pad (Go: a session like Kotlin's); Crow checked: both ciphertexts recomputed in Python from its pad (LVPXSD..., CIIFMJ...), decryptions round-trip, whole lines marked used (1 of 4 left), 180 letters refused, HELLO with Wikipedia's pad = FLUJS
+one_two_primes	agrees	Python (the wiki's recorded output)	
+openwebnet_password	agrees	Python	
+operator_precedence	no reference		
+order_two_numerical_lists	agrees	Go	
+ormiston_pairs	agrees	Python	
+ormiston_triples	agrees	Python	
+own_digits_power_sum	agrees	Python	
+padovan_n_step_number_sequences	agrees	Python	
+padovan_sequence	agrees	Python	
+pairs_with_common_factors	agrees	Python	
+palindrome_dates	agrees	Python	
+palindromic_gapful_numbers	agrees	Python	
+pan_base_non_primes	agrees	Python	
+pancake_numbers	agrees	Python	
+pangram_checker	agrees	Python	
+paraffins	agrees	Python	
+parse_an_ip_address	agrees	Python (the wiki's recorded output)	
+parsing_rpn_calculator_algorithm	agrees	Python	
+parsing_rpn_to_infix_conversion	agrees	Python	
+parsing_shunting_yard_algorithm	agrees	Python	
+particle_fountain	no reference		
+pascals_triangle_puzzle	agrees	Python (the wiki's recorded output)	
+passphrase_generator	not comparable	Python	random draws; Crow's passphrases follow the task's rules, and its 19,911 words of 4-9 letters and 20.8/103.9/166.2/249.3 bits recompute exactly
+password_generator	agrees	Python	
+pathological_floating_point_problems	agrees	Python	
+peaceful_chess_queen_armies	agrees	Python	
+pell_numbers	agrees	Python	
+penholodigital_squares	agrees	Python	
+penrose_tiling	not comparable	Python	Python prints an SVG of <use> transforms, Crow draws P3 by deflation; Crow's deflation rules match preshing's and its thin/thick counts (10/0, 10/10, 20/30, 50/80 ... 890/1440) follow the 1+1 / 1+2 recurrence
+penta_power_prime_seeds	agrees	Python	
+pentagram	agrees	Go	
+pentomino_tiling	agrees	Python	
+perfect_shuffle	agrees	Python	
+perfect_totient_numbers	agrees	Python	
+periodic_table	agrees	Python	
+peripheral_drift_illusion	no reference		
+perlin_noise	agrees	Python	
+permutations_by_swapping	agrees	Python (the wiki's recorded output)	
+permutations_derangements	agrees	Python	
+permutations_rank_of_a_permutation	agrees	Python	
+phrase_reversals	agrees	Python	
+pi_to_1_million_digits	agrees	Wren	
+pig_the_dice_game	not comparable	Python	interactive and random: the Python asks other questions and stops at EOF on Crow's input; Crow's game checked by hand (each turn's sum, bank, loss on 1; player 2 wins 103 to 84)
+pig_the_dice_game_player	not comparable	Python	random games; shown game replays by its strategies (e.g. keep pace holds at 24 vs rival +21), and all 16 win shares agree within noise with an independent 40k-game simulation (e.g. 0.531/0.537, 0.585/0.581)
+pinstripe_printer	no reference		
+piprimes	agrees	Python	
+plasma_effect	no reference		
+playfair_cipher	agrees	Python	
+plot_coordinate_pairs	no reference		
+poker_hand_analyser	agrees	Python	
+polyspiral	no reference		
+population_count	agrees	Python	
+pragmatic_directives	no reference		
+prime_numbers_whose_neighboring_pairs_are_tetraprimes	agrees	Python	
+prime_reciprocal_sum	agrees	Python	
+prime_triangle	agrees	Python	
+primes_n_2_m_plus_1	agrees	Python (the wiki's recorded output)	
+priority_queue	no reference		
+product_of_min_and_max_prime_factors	agrees	Python	
+pseudo_random_numbers_combined_recursive_generator_mrg32k3a	agrees	Python	
+pseudo_random_numbers_middle_square_method	agrees	Python	
+pseudo_random_numbers_pcg32	agrees	Python	
+pseudo_random_numbers_xorshift_star	agrees	Python	
+punched_cards	agrees	ALGOL_68	
+pythagorean_quadruples	agrees	Python	
+pythagorean_triples	agrees	Python	
+quad_power_prime_seeds	agrees	Python	
+quaternion	agrees	Python	
+quine	agrees	Python	
+quine_mccluskey_algorithm	agrees	Python (the wiki's recorded output)	
+quoting_constructs	no reference		
+radical_of_an_integer	Python wrong	Python	radicals of 99999/499999/999999 (33333, 3937, 111111) agree; Python's radical misses p when the rest is p^2 (9->9, 18->18, 49->49) and its distribution counts 1 under "1" and stops at 999,999 (78735/288725); Crow's 78,734/288,726 are right (78,498 primes + 236 prime powers)
+ramanujans_constant	agrees	Python	
+ramer_douglas_peucker_line_simplification	agrees	Python (the wiki's recorded output)	
+random_latin_squares	not comparable	Python	random squares; Crow's two 5x5 and one 10x10 checked Latin, and 20000 draws reach all 576 order-4 squares (the known count)
+random_number_generator_device	not comparable	Python	random; the wiki block prints nothing; Crow's byte joins check by hand (71 3 33 149 = 0x47032195 = 1191387541) and its device branch reads /dev/urandom correctly when asked
+random_number_generator_included	no reference		
+random_sentence_from_book	not comparable	Python	random sentences (the Python reaches the network, not run); Crow's word-pair model and weighted pick read right, and its sentences are plausible text from the book
+range_consolidation	agrees	Python	
+range_expansion	agrees	Python	
+range_extraction	agrees	Python	
+rate_counter	no reference		
+rational_calculator	agrees	Python (the wiki's recorded output)	
+read_a_specific_line_from_a_file	no reference		
+recamans_sequence	agrees	Python	
+remove_lines_from_a_file	no reference		
+rep_string	agrees	Python	
+repeat	agrees	Python	
+repunit_primes	agrees	Python	
+resistor_mesh	agrees	Python	
+reverse_words_in_a_string	agrees	Go (the wiki's recorded output)	
+rhonda_numbers	agrees	Python	
+riordan_numbers	agrees	Python	
+ripemd_160	agrees	Go (the wiki's recorded output)	
+roman_numerals_decode	agrees	Python	
+roman_numerals_encode	agrees	Python	
+rosetta_code_rank_languages_by_number_of_users	agrees	Python	
+round_robin_tournament_schedule	agrees	Python	
+routh_hurwitz_stability_criterion	agrees	Python	
+rpg_attributes_generator	not comparable	Python	random rolls; each of Crow's five characters checks: totals 81, 76, 79, 80, 86 (all >= 75), at least two scores >= 15, every score in 3..18
+runge_kutta_method	agrees	Go	
+runtime_evaluation	not comparable	Wren	demonstration (Wren REPL/Meta.eval); Crow runs text through its own toolchain, values right: fib 55/12586269025/354224848179261915075, total 42 -> 84, 7*7=49, [6,36], 2^70=1180591620717411303424, SIGXCPU 24 at the 1 s limit
+runtime_evaluation_in_an_environment	agrees	Kotlin	
+ruth_aaron_numbers	agrees	Python (the wiki's recorded output)	
+sailors_coconuts_and_a_monkey_problem	agrees	Python	
+same_fringe	agrees	Python	
+schieber_vishkin_algorithm	agrees	Python	
+sealed_classes_and_methods	agrees	Python	
+search_in_paragraphs_text	agrees	Python	
+selectively_replace_multiple_instances_of_a_character_within_a_string	agrees	Python	
+self_describing_numbers	agrees	Python	
+self_numbers	agrees	Python	
+semordnilap	agrees	Python	
+sequence_nth_number_with_exactly_n_divisors	agrees	Python	
+sequence_smallest_number_greater_than_previous_term_with_exactly_n_divisors	agrees	Python	
+sequence_smallest_number_with_exactly_n_divisors	agrees	Python	
+set_consolidation	agrees	Python	
+set_of_real_numbers	agrees	Python	
+set_right_adjacent_bits	agrees	Python	
+set_the_card_game	agrees	Python (the wiki's recorded output)	
+sha_1	agrees	Python	
+shoelace_formula_for_polygonal_area	agrees	Python	
+shortest_common_supersequence	agrees	Python	
+show_ascii_table	agrees	Python	
+show_the_epoch	agrees	Julia (the wiki's recorded output)	
+sierpinski_pentagon	agrees	Go	
+sierpinski_triangle_graphical	no reference		
+simple_turtle_graphics	no reference		
+sine_wave	no reference		
+singular_value_decomposition	agrees	Python	
+sisyphus_sequence	agrees	Python	
+smallest_number_k_such_that_k_plus_2_m_is_composite_for_all_m_less_than_k	agrees	Python	
+smarandache_wellin_primes	agrees	Python (the wiki's recorded output)	
+smith_numbers	agrees	Python	
+smith_waterman_algorithm	agrees	Fortran (the wiki's recorded output)	
+soloways_recurring_rainfall	agrees	Python	
+solve_a_hidato_puzzle	agrees	Python	
+solve_a_holy_knights_tour	agrees	Python	
+solve_a_hopido_puzzle	agrees	Python	
+solve_a_numbrix_puzzle	agrees	Python	
+solve_a_rubiks_cube	Python wrong	Python	wiki Python needs a file argument and its BFS never enqueues a state (0 moves per phase); with the enqueue restored and Crow's 3 cubes as input it gives Crow's exact phases (29, 35, 33 moves; default cube = Kotlin/Nim/Wren U3 F1 L1 F3 ...), and the scrambles give Crow's cubes under the same move model
+sorensen_dice_coefficient	agrees	Python (the wiki's recorded output)	
+sort_an_outline_at_every_level	agrees	Python	
+sparkline_in_unicode	agrees	Python	
+specific_characters	agrees	Python	
+spelling_of_ordinal_numbers	agrees	Go (the wiki's recorded output)	
+sphenic_numbers	agrees	Python	
+split_a_character_string_based_on_change_of_character	agrees	Python	
+square_but_not_cube	agrees	Python	
+square_free_integers	agrees	Python	
+stair_climbing_puzzle	agrees	Python	
+start_from_a_main_routine	agrees	Python	
+statistics_normal_distribution	not comparable	Python	random draws (the Python plots); Crow's methods read right and its shares 68.3/95.5/99.7% fit a normal; 20 more seeds give deviations scattered around 1 (no bias)
+stern_brocot_sequence	agrees	Python	
+stirling_numbers_of_the_first_kind	agrees	Python	
+stirling_numbers_of_the_second_kind	agrees	Python	
+strassens_algorithm	agrees	Python	
+stream_merge	agrees	Python	
+strip_control_codes_and_extended_characters_from_a_string	agrees	Python	
+sub_unit_squares	agrees	Python (the wiki's recorded output)	
+subleq	agrees	Python	
+substring_top_and_tail	agrees	Python	
+suffixation_of_decimal_numbers	Python wrong	Python	9 of 10 task cases agree (-998.878E, +112K, 16.8M, 456.79T, 415.44727Ti, 457G, +16Mi, 12googol); for 87,654,321 Python rounds to 87.654M where the task's default is all digits, as Crow's 87.654321M; Crow's extras checked exactly
+sum_and_product_puzzle	agrees	Python	
+sum_digits_of_an_integer	agrees	Python	
+sum_multiples_of_3_and_5	Python wrong	Python	233168 and the sums below 10..10^6 agree; Python's 10^20 value 2333333333333332940795175780693005303808 is float noise, Crow's 2333333333333333333316666666666666666668 is exact (and 10^100 checked)
+sum_of_elements_below_main_diagonal_of_matrix	agrees	Python	
+sum_to_100	agrees	Python	
+summarize_and_say_sequence	agrees	Python	
+summarize_primes	agrees	Python	
+super_d_numbers	agrees	Python	
+super_poulet_numbers	Python wrong	Python	first 20 identical; 1016801 is the 109th (Crow, Wren, a recount) where the Python prints its zero-based index 108; Crow's 317th = 10,031,653 matches Wren
+superellipse	agrees	Go	
+superpermutation_minimisation	agrees	Python	
+sylvesters_sequence	agrees	Python	
+sync_subtitles	agrees	Python	
+syntax_highlighting_using_mediawiki_formatting	no reference		
+tarjan	agrees	Python	
+tau_function	agrees	Python	
+teacup_rim_text	agrees	Python	
+temperature_conversion	agrees	Go	
+terminal_control_coloured_text	not comparable	Python	colorama strips its codes off a terminal, so Python shows plain text; Crow writes standard SGR sequences (30-37/90-97, 40-47/100-107, 38;5;196..21 cube edge, 24-bit hues checked by hand)
+terminal_control_unicode_output	agrees	Julia	
+test_integerness	agrees	Go	
+textonyms	agrees	Python	
+the_name_game	agrees	Python	
+the_twelve_days_of_christmas	agrees	Python	
+thue_morse	agrees	Python	
+tonelli_shanks_algorithm	agrees	Python	
+top_rank_per_group	agrees	Python	
+topic_variable	agrees	Go (the wiki's recorded output)	
+topswops	agrees	Python	
+total_circles_area	agrees	Python	
+trabb_pardo_knuth_algorithm	agrees	Python	
+transliterate_english_text_using_the_greek_alphabet	Python wrong	Python	only difference: Python leaves Latin capitals I, A (and J->Latin I in July) where Crow writes Greek Ι, Α (look alike); every other letter identical; Crow's pangram-by-name checked
+tree_datastructures	agrees	Python	
+tree_from_nesting_levels	agrees	Python	
+triangular_numbers	agrees	Python	
+tropical_algebra_overloading	agrees	Python	
+truncate_a_file	agrees	Python	
+truth_table	agrees	Python	
+tuppers_self_referential_formula	agrees	Python	
+two_bullet_roulette	agrees	Python	
+two_identical_strings	agrees	Python	
+ukkonens_suffix_tree_construction	agrees	Julia	
+ultra_useful_primes	agrees	Python	
+unbias_a_random_generator	not comparable	Python	random draws; Crow's rates (33.388, 24.879, 20.165, 16.815%; unbiased 50.110, 49.953, 49.821, 49.955%) are within 1.3 sigma of 1/n and 50%, as Python's are; program reads right
+undulating_numbers	agrees	Python	
+unicode_strings	agrees	Python	
+universal_lambda_machine	agrees	Julia	
+universal_turing_machine	agrees	Python	
+unix_ls	no reference		
+upc	agrees	Python	
+upside_down_numbers	agrees	Python (the wiki's recorded output)	
+url_decoding	agrees	Go (the wiki's recorded output)	
+url_encoding	agrees	Go (the wiki's recorded output)	
+url_parser	agrees	Python	
+utf_8_encode_and_decode	agrees	Python	
+validate_international_securities_identification_number	agrees	Python	
+van_der_corput_sequence	agrees	Python	
+van_eck_sequence	agrees	Python	
+variable_declaration_reset	agrees	Python	
+vector_products	agrees	Python	
+verhoeff_algorithm	agrees	Python	
+visitor_pattern	agrees	Python	
+visualize_a_tree	agrees	Python	
+vogels_approximation_method	agrees	Python	
+voronoi_diagram	no reference		
+wagstaff_primes	agrees	Python	
+war_card_game	not comparable	Python	shuffled decks differ; Crow's game checked by hand: wars take 6 and 10 cards, counts always sum to 52, the short war at turn 129 ends it 0-52
+wasteful_equidigital_and_frugal_numbers	agrees	Python (the wiki's recorded output)	
+water_collected_between_towers	agrees	Python	
+wavelet_matrix	agrees	Python	
+weiler_atherton_polygon_clipping	agrees	Go (the wiki's recorded output)	
+weird_numbers	agrees	Python	
+wolstenholme_numbers	agrees	Python	
+word_frequency	agrees	Python	
+word_ladder	agrees	Python	
+word_search	agrees	Python	
+word_wrap	agrees	Go (the wiki's recorded output)	
+wordle_comparison	agrees	Python	
+world_cup_group_stage	agrees	Python	
+worthwhile_task_shaving	agrees	Python	
+write_float_arrays_to_a_text_file	agrees	Python	
+write_language_name_in_3d_ascii	not comparable	Python	ASCII art of different words (Python writes PYTHON, Crow CROW in stacked cubes); nothing computed to compare
+yellowstone_sequence	agrees	Python (the wiki's recorded output)	
+zeckendorf_number_representation	agrees	Python	
+zero_to_the_zero_power	agrees	Python	
+zhang_suen_thinning_algorithm	agrees	Python	
+zsigmondy_numbers	agrees	Python	

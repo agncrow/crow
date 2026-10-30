@@ -188,14 +188,14 @@ fn _cells_of[col]
     if kind eq 'text'
         cell_bytes = text_bytes_of[col, 0, n]
         cuts = text_ends_of[col, 0, n]
-        start = 0
+        begin = 0
         for i in range[n]
             stop = cuts[i]
             if _present[present, i]
-                out = push[out, Cell[4, 0, 0.0, text[slice[cell_bytes, start, stop], ''], 0, bytes[0]]]
+                out = push[out, Cell[4, 0, 0.0, text[slice[cell_bytes, begin, stop], ''], 0, bytes[0]]]
             else
                 out = push[out, _none_cell[]]
-            start = stop
+            begin = stop
     if kind eq 'vector'
         flat = vectors_of[col, 0, n]
         w = vector_width[col]
@@ -617,17 +617,17 @@ fn _unit[r, g, keys0, by, of, on, opw, equal, pcols, lo, hi, upto]
         ce = entries[r, c]
         if not ce.ok
             return error[ce.reason, 'magpie']
-        e = ce[g]
+        ent = ce[g]
         admitted_any = false
         for i in range[len[on]]
             if not admitted_any and on[i] eq column
                 want = _parse[kind, equal[i]]
                 if not want.ok
                     return error['batch: column \'`column`\': `want.reason`', 'magpie']
-                if _group_may[e, opw[i], want]
+                if _group_may[ent, opw[i], want]
                     sieved = false
-                    if opw[i] eq 'eq' and e.bloom_len gt 0
-                        bf = value_filter[r, e]
+                    if opw[i] eq 'eq' and ent.bloom_len gt 0
+                        bf = value_filter[r, ent]
                         if not bf.ok
                             return error[bf.reason, 'magpie']
                         sieved = not admits[bf, _want_bytes[want]]

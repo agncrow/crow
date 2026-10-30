@@ -60,12 +60,12 @@ fn crossentropy[logits, targets]
     logits_t = tensor[logits]
     targets_t = tensor[targets]
     shape = logits_t.shape
-    rank = len[shape]
-    if rank gt 2 or rank eq 0
-        halt['crossentropy: logits are [classes] or [batch, classes], got `rank` dimensions']
+    axes = len[shape]
+    if axes gt 2 or axes eq 0
+        halt['crossentropy: logits are [classes] or [batch, classes], got `axes` dimensions']
     batch = 1
     classes = shape[0]
-    if rank eq 2
+    if axes eq 2
         batch = shape[0]
         classes = shape[1]
     if classes eq 0

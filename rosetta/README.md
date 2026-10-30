@@ -20,6 +20,7 @@ their own, which this run does not cover.
 | `REVIEW.md` | the tasks not done in full, each with why, for review |
 | `QUESTIONS.md` | decisions the run met that are the language's to make |
 | `findings/` | what writing the tasks found in the compiler: one small program per finding, and `findings/README.md`, where each stands (fixed with the tests that hold it, or open and why) |
+| `held_to_python.tsv` | each task's output held to the wiki's Python solutions: its result, what it was held to, and a note where it is not plain agreement |
 | `run.sh` | the runner |
 
 A slug is the task's title in lower case, accents and punctuation taken out
@@ -41,6 +42,25 @@ compiled program builds in `.crow_build` under the current directory, and the
 first build there takes a minute while later ones take about a second. Runs
 in parallel each need a directory of their own: `WORK=target/rosetta-2
 rosetta/run.sh a b c`.
+
+## Held to Python
+
+On 2026-10-29 every recorded output was held to a third result: the Python
+solutions on the task's page, each run in a sandbox (Python 3.12, writing
+only in a directory of its own, with no network; a Python 2 block converted
+by lib2to3 first), its numbers compared in order with the Crow program's,
+and read by hand wherever the two did not match at once. Where no Python
+ran, the output the page records for Python, or for another language, stood
+in. The comparison runs code from the wiki, so it is not part of `run.sh`;
+`held_to_python.tsv` keeps what it found:
+
+| Result | Tasks |
+|---|---|
+| agrees | 588: 541 held to Python, 47 to another language |
+| not comparable | 42: random draws, interactive games, another input, a demonstration of the language itself |
+| Python wrong | 9: the page's Python is wrong and the Crow answer right, the note says how |
+| fixed | 1: Binomial transform's prime flip-flop sequence began at n = 0, the task's at n = 1 |
+| no reference | 51: no Python and no recorded output to hold the program to |
 
 ## Status
 

@@ -178,6 +178,12 @@ pub fn min(a: &Frac, b: &Frac) -> Frac {
     if b < a { b.clone() } else { a.clone() }
 }
 
+/// `sort[xs]` of fractions, by value.
+pub fn sort(mut v: Vec<Frac>) -> Vec<Frac> {
+    v.sort();
+    v
+}
+
 pub fn max(a: &Frac, b: &Frac) -> Frac {
     if b > a { b.clone() } else { a.clone() }
 }

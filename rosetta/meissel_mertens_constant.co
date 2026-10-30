@@ -58,13 +58,13 @@ fn ln_ratio[p, q, one]
 --- sums of a Chebyshev polynomial's coefficients.
 fn borwein_weights[n]
     weights = []
-    e = 1
+    ex = 1
     d = 0
     i = 0
     while i lte n
-        d = d + e
+        d = d + ex
         weights = push[weights, d]
-        e = e * (n + i) * (n - i) * 4 / ((2 * i + 1) * (2 * i + 2))
+        ex = ex * (n + i) * (n - i) * 4 / ((2 * i + 1) * (2 * i + 2))
         i = i + 1
     return weights
 
@@ -85,18 +85,18 @@ fn zeta[s, weights, one]
 
 fn moebius[n]
     m = n
-    sign = 1
+    sgn = 1
     p = 2
     while p * p lte m
         if m % p eq 0
             m = m / p
             if m % p eq 0
                 return 0
-            sign = -sign
+            sgn = -sgn
         p = p + 1
     if m gt 1
-        sign = -sign
-    return sign
+        sgn = -sgn
+    return sgn
 
 --- Euler's constant by Brent and McMillan's series with N = 2^power: off by about e^-4N.
 fn euler_gamma[one, power]

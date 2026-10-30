@@ -119,6 +119,8 @@ fn values() -> Vec<Val> {
         plain("moment", "moment['2026-01-02T03:04:05Z']"),
         plain("decimal", "decimal['1.25']"),
         plain("fraction", "fraction[1, 3]"),
+        plain("fractions", "push[push[[], fraction[1, 3]], fraction[1, 6]]"),
+        plain("decimals", "push[push[[], decimal['1.25']], decimal['0.5']]"),
         Val { name: "bytes".into(), expr: "bytes['abc']".into(), setup: Vec::new(), imports: vec!["web"] },
         // (the standard library's own layer — `use sys`: bytes, a list of
         // them, a connection to the check's own echo server and its
@@ -221,6 +223,8 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
         Kind::Big => &["big", "int"],
         Kind::Decimal => &["decimal"],
         Kind::Fraction => &["fraction"],
+        Kind::Fractions => &["fractions"],
+        Kind::Decimals => &["decimals"],
         Kind::Floats => &["floats", "vector"],
         Kind::Texts => &["texts"],
         Kind::Json => &["json", "jsonarr"],
@@ -433,11 +437,11 @@ const HELPERS: &[(&str, &str)] = &[
     ("self_in_five", "fn self_in_five[v]\n    return v in [5.0, 3.0, 9.0, 1.0, 7.0]\n"),
     // (a connection to the check's echo server that has been sent something,
     // and one that has asked it a request: what a read waits for is there)
-    ("self_sent", "fn self_sent[]\n    s = open['127.0.0.1', int[env['CROW_SELF_PORT', '9']], false, 5.0]\n    put = send[s, bytes['abc']]\n    return s\n"),
+    ("self_sent", "fn self_sent[]\n    s = open['127.0.0.1', int[env['CROW_SELF_PORT', '9']], false, 5.0]\n    sent = send[s, bytes['abc']]\n    return s\n"),
     // (a stream's feed: the value's text, then a bar — its put named
     // `out`, since `put` is sys's and a parameter is named like no builtin)
     ("self_feed", "fn self_feed[out, x]\n    sent = out[str[x]]\n    more = out['|']\n    return\n"),
-    ("self_asked", "fn self_asked[]\n    s = open['127.0.0.1', int[env['CROW_SELF_PORT', '9']], false, 5.0]\n    put = send[s, bytes['GET /self HTTP/1.1\\r\\nHost: self\\r\\n\\r\\n']]\n    return s\n"),
+    ("self_asked", "fn self_asked[]\n    s = open['127.0.0.1', int[env['CROW_SELF_PORT', '9']], false, 5.0]\n    sent = send[s, bytes['GET /self HTTP/1.1\\r\\nHost: self\\r\\n\\r\\n']]\n    return s\n"),
 ];
 
 /// Every whole-word `name` in `text` written `to`.
@@ -1097,6 +1101,8 @@ fn kind_of_ty(ty: &crate::ir::Ty) -> Option<Kind> {
             Ty::Str => Kind::Strs,
             Ty::Float => Kind::Floats,
             Ty::Int => Kind::Ints,
+            Ty::Fraction => Kind::Fractions,
+            Ty::Decimal => Kind::Decimals,
             Ty::Bool => Kind::Bools,
             Ty::Tensor(..) => Kind::Tensors,
             _ => Kind::List,

@@ -151,15 +151,15 @@ fn quantile[wm, k, l, r]
     j = 0
     while j lt wm.height
         level = wm.levels[j]
-        zeros = zeros_before[level, r] - zeros_before[level, l]
-        if k lt zeros
+        zero_count = zeros_before[level, r] - zeros_before[level, l]
+        if k lt zero_count
             l = zeros_before[level, l]
             r = zeros_before[level, r]
             value = value * 2
         else
             l = level.zeros + ones_before[level, l]
             r = level.zeros + ones_before[level, r]
-            k = k - zeros
+            k = k - zero_count
             value = value * 2 + 1
         j = j + 1
     return value

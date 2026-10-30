@@ -46,12 +46,12 @@ fn percentile[x, p]
         return s[0]
     if p eq 100.0
         return s[n - 1]
-    rank = p / 100.0 * float[n - 1]
-    lo = int[floor[rank]]
-    hi = int[ceil[rank]]
+    place = p / 100.0 * float[n - 1]
+    lo = int[floor[place]]
+    hi = int[ceil[place]]
     if lo eq hi
         return s[lo]
-    frac = rank - float[lo]
+    frac = place - float[lo]
     return s[lo] * (1.0 - frac) + s[hi] * frac
 
 --- `zscore[x]`: each value as its distance from the mean in standard
@@ -158,11 +158,11 @@ fn chisq[observed, expected]
     if a eq 0
         return map[chi2 = nan, p = nan]
     o = flatten[observed_t]
-    e = flatten[expected_t]
+    ex = flatten[expected_t]
     chi2 = 0.0
     for i in range[a]
-        if e[i] ne 0.0
-            chi2 = chi2 + (o[i] - e[i]) * (o[i] - e[i]) / e[i]
+        if ex[i] ne 0.0
+            chi2 = chi2 + (o[i] - ex[i]) * (o[i] - ex[i]) / ex[i]
     df = float[a - 1]
     p = 1.0 - gammainc[df / 2.0, chi2 / 2.0]
     return map[chi2 = chi2, p = p]
@@ -208,10 +208,10 @@ fn _ks_p[lam]
     j = 0
     while j lt 100 and abs[term] gte 0.000000000000001
         jf = float[j + 1]
-        sign = 1.0
+        sgn = 1.0
         if (j + 1) % 2 eq 0
-            sign = -1.0
-        term = sign * exp[-2.0 * jf * jf * lam * lam]
+            sgn = -1.0
+        term = sgn * exp[-2.0 * jf * jf * lam * lam]
         total = total + term
         j = j + 1
     v = 2.0 * total

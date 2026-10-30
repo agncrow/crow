@@ -800,6 +800,8 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             Kind::Ints => items(t, &|e| *e == Ty::Int),
             Kind::Bigs => items(t, &|e| *e == Ty::Big),
             Kind::Floats => items(t, &|e| *e == Ty::Float),
+            Kind::Fractions => items(t, &|e| *e == Ty::Fraction),
+            Kind::Decimals => items(t, &|e| *e == Ty::Decimal),
             Kind::Texts => items(t, &|e| matches!(e, Ty::Str | Ty::Markup)),
             Kind::Json => *t == Ty::Json,
             Kind::Column => matches!(t, Ty::Column(_)),

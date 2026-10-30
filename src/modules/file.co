@@ -199,26 +199,26 @@ fn _statistics[col, from, to, filtered]
         cell_bytes = text_bytes_of[col, from, to]
         cuts = text_ends_of[col, from, to]
         seen = map[]
-        start = 0
+        begin = 0
         lo_len = 0
         hi_len = 0
         for i in range[n]
             stop = cuts[i]
             if _present[present, i]
-                t = text[slice[cell_bytes, start, stop], '']
+                t = text[slice[cell_bytes, begin, stop], '']
                 if lo.form eq 0 or t lt lo.word
                     lo = Bound[4, 0, 0.0, t]
-                    lo_len = stop - start
+                    lo_len = stop - begin
                 if hi.form eq 0 or t gt hi.word
                     hi = Bound[4, 0, 0.0, t]
-                    hi_len = stop - start
+                    hi_len = stop - begin
                 if keep and t not in seen
                     if len[items] gte 65536
                         keep = false
                     else
                         seen = set[seen, t, true]
-                        items = push[items, slice[cell_bytes, start, stop]]
-            start = stop
+                        items = push[items, slice[cell_bytes, begin, stop]]
+            begin = stop
         if lo_len gt 256
             lo = Bound[0, 0, 0.0, '']
         if hi_len gt 256
@@ -266,18 +266,18 @@ fn _token_index[col, from, to, stems]
     cuts = text_ends_of[col, from, to]
     seen = map[]
     docs = 0
-    start = 0
+    begin = 0
     for row in range[n]
         stop = cuts[row]
         if _present[present, row]
             docs = docs + 1
-            for t in terms[text[slice[cell_bytes, start, stop], '']]
+            for t in terms[text[slice[cell_bytes, begin, stop], '']]
                 w = t
                 if stems
                     w = stem[t]
                 if w not in seen
                     seen = set[seen, w, true]
-        start = stop
+        begin = stop
     nwords = len[seen]
     if docs gte 16 and nwords gt docs / 2
         return none
@@ -507,19 +507,19 @@ fn file_of[df, per, first_pos, last_pos, key_names, indexed_names, narrow_names,
     out = magic[]
     groups = []
     n = len[df]
-    start = 0
-    while start lt n
-        stop = start + per
+    begin = 0
+    while begin lt n
+        stop = begin + per
         if stop gt n
             stop = n
-        g = group_bytes[df, start, stop, cols, narrow, stems, len[out]]
+        g = group_bytes[df, begin, stop, cols, narrow, stems, len[out]]
         if not g.ok
             return error[g.reason, 'magpie']
         out = concat[out, g.data]
         for c in range[len[cols.names]]
             blocks[c] = concat[blocks[c], g.entries[c]]
         groups = push[groups, g.rows]
-        start = stop
+        begin = stop
     --- (no notes: lists of text with nothing in them, typed as the notes
     --- a manifest hands are — `[]` here had left them typed by nothing,
     --- and keys of another kind made the compiled notes that kind)
@@ -719,18 +719,18 @@ fn opened[path]
         return error['magpie: `total.reason`', 'magpie']
     if total lt 20
         return error['magpie: \'`path`\' is no Magpie file: it is too short', 'magpie']
-    tail = file[path, total - 12, 12]
-    if not tail.ok
-        return error['magpie: cannot read \'`path`\': `tail.reason`', 'magpie']
-    if not same[slice[tail, 4, 12], magic[]]
-        head = file[path, 0, 8]
-        if head.ok
-            if same[head, magic[]]
+    back = file[path, total - 12, 12]
+    if not back.ok
+        return error['magpie: cannot read \'`path`\': `back.reason`', 'magpie']
+    if not same[slice[back, 4, 12], magic[]]
+        front = file[path, 0, 8]
+        if front.ok
+            if same[front, magic[]]
                 return error['magpie: \'`path`\' is cut short: its end carries no footer', 'magpie']
-            if same[slice[head, 0, 6], bytes['MAGPIE']]
-                return error['magpie: \'`path`\' was written in format `byte[head, 7]`, and this Crow reads format 2 — read it with the Crow that wrote it, or a newer one', 'magpie']
+            if same[slice[front, 0, 6], bytes['MAGPIE']]
+                return error['magpie: \'`path`\' was written in format `byte[front, 7]`, and this Crow reads format 2 — read it with the Crow that wrote it, or a newer one', 'magpie']
         return error['magpie: \'`path`\' is no Magpie file: its end carries no magic', 'magpie']
-    flen = unpack[tail, 0, 4, little = true, signed = false]
+    flen = unpack[back, 0, 4, little = true, signed = false]
     if flen + 20 gt total
         return error['magpie: \'`path`\' is no Magpie file: its footer is longer than the file', 'magpie']
     data = file[path, total - 12 - flen, flen]

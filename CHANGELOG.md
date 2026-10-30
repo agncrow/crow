@@ -272,7 +272,12 @@ history says the rest.
   answers of two calls of one function at two kinds holds each copy's
   answer, where the first round's answer, read with the kind the later
   call gave, had stayed in the field and the program was refused (435).
-- Refused before the program runs (errors j98–k15): a field the record
+  Arithmetic on what a function handed a record and an int answers names
+  it a record or none, with the way out, where it had named the record
+  alone (k32); and a parsed value pushed onto a variable's list whose
+  items nothing said yet, read as a number, says so where it holds text,
+  and how to keep parsed values (457).
+- Refused before the program runs (errors j98–k15, k30–k32): a field the record
   does not declare, written; a name declared twice (functions, records);
   a function value compared (`eq` had compared by name interpreted and
   by address compiled); a function named `contains` or `has`, which no
@@ -539,6 +544,13 @@ history says the rest.
 
 ### Added
 
+- `concat[a, b, c, …]` joins any number of pieces, as `concat[[a, b,
+  c]]` joins a list written down (453); `sort` orders fractions and
+  decimals by value (456); math's `sum` of a list of ints is an int with
+  every digit, so `sum[xs] % 10` runs (451); and a list of 0s an item of
+  which is written a record holds records or none, its 0s none — the
+  empty buckets of a hash table (455). Vijay, 2026-10-29.
+
 - `atan2[y, x]` of two numbers is a number, by the tensor's rule (two
   numbers had been refused, where `sin` of one is its number).
 
@@ -643,6 +655,25 @@ history says the rest.
   `text_column`, `text_dict_column`, with no value per cell.
 
 ### Breaking
+
+- The Rosetta Code run's questions, decided (Vijay, 2026-10-29;
+  rosetta/QUESTIONS.md). A function's local named like a name an import
+  makes — `e` or `mean` under `use math`, `code` under `use bits` — is
+  refused where it is written, as the same name at the top level, a
+  parameter and a loop's variable were (errors k30, k31): it had shadowed
+  the import silently. A computed whole number past 2^53 in a list written
+  down as a vector stops where the list is made, naming `push` (454): it
+  had been rounded silently, `[a, 3]` holding 2^60 for `a = 2 ^ 60 + 1`.
+  `fmt`'s zero fill goes after a number's sign, `-0042` as printf pads,
+  where it had been `00-42` (450). A page's top-level `seed[n]` runs before
+  its declarations are set, so the facts' draws are seeded (452). The
+  axis form of `concat` takes the axis as a number written down or named
+  (`axis = k`): a third piece held in a variable is joined as a piece.
+  The standard library's modules rename the 64 locals the first rule now
+  refuses in their own tests (`start`, `flushed`, `e`, `head`, …), and
+  Magpie's `read_var` answers the list of two ints its row says: written
+  down, its pair had been a vector, which rounded a varint past 2^53 (the
+  second rule's stop found it in the module's own test).
 
 - `use memory` is the standard library's own, as `sys` is (Vijay,
   2026-10-28): a program's import is refused before it runs (`` `memory`

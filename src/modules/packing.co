@@ -97,7 +97,7 @@ fn _unpacked_narrow[data, at, n, width]
     out = []
     if at lt 0 or at gt len[data]
         return out
-    mask = shift[1, width] - 1
+    low_bits = shift[1, width] - 1
     buf = 0
     have = 0
     pos = at
@@ -106,7 +106,7 @@ fn _unpacked_narrow[data, at, n, width]
             buf = bitor[buf, shift[byte[data, pos], have]]
             pos = pos + 1
             have = min[have + 8, 39]
-        out = push[out, bitand[buf, mask]]
+        out = push[out, bitand[buf, low_bits]]
         buf = shift[buf, -width]
         --- (the bits held stay under 40 — a byte is taken only while fewer
         --- than `width` are held, and what is left after a value is under
@@ -125,7 +125,7 @@ fn _unpacked_wide[data, at, n, width]
     rest = width - 32
     if rest lt 1 or rest gt 32
         return out
-    mask = shift[1, rest] - 1
+    low_bits = shift[1, rest] - 1
     buf = 0
     have = 0
     pos = at
@@ -141,7 +141,7 @@ fn _unpacked_wide[data, at, n, width]
             buf = bitor[buf, shift[byte[data, pos], have]]
             pos = pos + 1
             have = min[have + 8, 39]
-        hi = bitand[buf, mask]
+        hi = bitand[buf, low_bits]
         buf = shift[buf, -rest]
         have = bitand[have - rest, 7]
         --- the pattern as the int of its bits: one at or past 2^63 is
@@ -195,7 +195,12 @@ fn read_var[data, at]
             going = false
         else
             moved = moved + 7
-    return [v, pos]
+    --- a list grown by push holds ints; one written down is a vector,
+    --- which would round a count past 2^53
+    pair = []
+    pair = push[pair, v]
+    pair = push[pair, pos]
+    return pair
 
 --- five ints as a list (a literal of numbers is a tensor)
 fn _ints[a, b, c, d, e]
@@ -253,12 +258,13 @@ test the_varints_are_the_kernels[]
         b = put_var[bytes[0], v]
         written = push[written, hex[b]]
         got = read_var[b, 0]
-        assert[got eq [v, len[b]]]
+        assert[got[0] eq v and got[1] eq len[b]]
     --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
     assert[written eq ['00', '01', '7f', '8001', 'ac02', 'ff7f', '808001', 'ffffffff0f', 'ffffffffffffffff7f', 'ffffffffffffffffff01', '80808080808080808001']]
     two = put_var[put_var[bytes[0], 300], 5]
     first = read_var[two, 0]
-    assert[first eq [300, 2] and read_var[two, 2] eq [5, 3]]
+    second = read_var[two, 2]
+    assert[first[0] eq 300 and first[1] eq 2 and second[0] eq 5 and second[1] eq 3]
     cut = bytes[1]
     cut = set[cut, 0, 129]
     assert[read_var[cut, 0].reason eq 'a count is cut short']

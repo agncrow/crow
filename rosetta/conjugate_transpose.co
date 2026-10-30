@@ -35,10 +35,10 @@ fn is_unitary[m, ct]
 
 --- one entry as text: the real part, then the imaginary part with its sign
 fn entry[re, im]
-    sign = '+'
+    sgn = '+'
     if im lt 0.0
-        sign = '-'
-    return '`fmt[re, decimals = 4]``sign``fmt[abs[im], decimals = 4]`i'
+        sgn = '-'
+    return '`fmt[re, decimals = 4]``sgn``fmt[abs[im], decimals = 4]`i'
 
 fn show[title, m]
     log[title]

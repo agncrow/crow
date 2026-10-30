@@ -1026,6 +1026,10 @@ impl Emitter {
                 // build — parity 318)
                 let val = match &ty {
                     Ty::Map(_, item) | Ty::List(item) if matches!(item.as_ref(), Ty::Result(_)) && !matches!(self.tt(given), Ty::Result(_)) => ok_of(&val),
+                    // (an item that holds a record or none given a record
+                    // holds it, given 0 none, as a field does)
+                    Ty::List(item) if matches!(item.as_ref(), Ty::OptRecord(_)) && matches!(Emitter::raw(given), Expr::Const(Const::Int(0), _)) => "None".to_string(),
+                    Ty::List(item) if matches!(item.as_ref(), Ty::OptRecord(_)) && matches!(Self::inner(&self.tt(given)), Ty::Record(_)) => format!("Some(crow_runtime::link::new({}))", val),
                     _ => val,
                 };
                 match &ty {

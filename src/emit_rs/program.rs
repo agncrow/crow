@@ -1522,6 +1522,11 @@ impl Emitter {
             self.needs_crow_runtime = true;
             self.line("crow_runtime::gpu::set_gpu_enabled(true);");
         }
+        // a page's draws seeded before its declarations are set
+        for e in self.part.seeds.clone() {
+            let s = self.top_level_expr(&e);
+            self.line(&format!("{};", s));
+        }
         if self.has_noapp_web && !self.has_page_routes {
             self.line("let mut __crow_app = CrowApp::new();");
         }

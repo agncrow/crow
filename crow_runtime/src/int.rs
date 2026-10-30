@@ -350,6 +350,11 @@ pub fn max(a: &Int, b: &Int) -> Int {
     if b > a { b.clone() } else { a.clone() }
 }
 
+/// math's `sum[xs]` of whole numbers past 64 bits: every digit.
+pub fn sum(v: Vec<Int>) -> Int {
+    v.iter().fold(Int::from(0), |acc, x| acc.add(x))
+}
+
 /// `sort[xs]` of whole numbers, ascending.
 pub fn sort(mut v: Vec<Int>) -> Vec<Int> {
     v.sort_unstable();

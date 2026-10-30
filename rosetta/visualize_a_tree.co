@@ -15,16 +15,16 @@ struct Node [name, kids]
 --- last line above it that is one level less indented
 fn parse[outline]
     nodes = []
-    stack = []
+    todo = []
     for line in outline
         name = trim[line]
         depth = (len[line] - len[name]) / 2
         nodes = push[nodes, Node[name, []]]
         i = len[nodes] - 1
         if depth gt 0
-            parent = stack[depth - 1]
+            parent = todo[depth - 1]
             nodes[parent].kids = push[nodes[parent].kids, i]
-        stack = push[slice[stack, 0, depth], i]
+        todo = push[slice[todo, 0, depth], i]
     return nodes
 
 --- a random tree of the number n: a node whose number is more than 1 has children

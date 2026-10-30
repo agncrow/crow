@@ -1,0 +1,25 @@
+--- math's `sum` of a list of ints is an int with every digit, so `sum[xs]
+--- % 10` of digits runs, and a sum past 64 bits grows: it had been a float
+--- (Rosetta Code, ISBN13 check digit; Vijay, 2026-10-29). A vector, and a
+--- list of floats, still sum to a float.
+use math
+use bits
+
+digits = []
+for c in split['9780306406157', '']
+    digits = push[digits, code[c] - 48]
+log[sum[digits]]
+log[type[sum[digits]]]
+log[sum[digits] % 10]
+bigs = push[push[[], 2 ^ 62], 2 ^ 62]
+log[sum[bigs]]
+log[type[sum[bigs]]]
+huge = push[[], 2 ^ 100]
+log[sum[huge]]
+log[sum[[1.5, 2.5]]]
+log[sum[[1, 2, 3]]]
+
+fn total[xs]
+    return sum[xs]
+
+log[total[push[push[[], 4], 5]]]

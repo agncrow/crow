@@ -731,6 +731,24 @@ impl Walk {
     }
 
     /// The range of an int expression.
+    /// The range of a list's items, as an index of the list reads them (a
+    /// list written down: its items' own).
+    fn items_iv(&mut self, list: &Expr) -> Iv {
+        match list {
+            Expr::ListLit(items, _) => items.iter().fold(Iv::EMPTY, |acc, x| {
+                let iv = self.iv_of(x);
+                acc.join(iv)
+            }),
+            _ => match self.place_of(list) {
+                Some(p) => {
+                    self.made_items(&p, list);
+                    self.get(&Place::Items(Box::new(p)))
+                }
+                None => Iv::TOP,
+            },
+        }
+    }
+
     fn iv_of(&mut self, e: &Expr) -> Iv {
         match e {
             Expr::Const(Const::Int(n), _) => Iv::point(*n as i128),
@@ -799,6 +817,11 @@ impl Walk {
                 }
                 match target {
                     Target::User(g) => self.get(&Place::Ret(g.clone())),
+                    // (a sum is bounded by its items, not by the list)
+                    Target::Row(row) if row.range == crate::table::IntRange::Sum => {
+                        let items = args.first().map_or(Iv::TOP, |a| self.items_iv(a));
+                        row_iv(row, &[items])
+                    }
                     Target::Row(row) => row_iv(row, &ivs),
                     // (a call its values pick a row for, a module's own form:
                     // an int it answers fits 64 bits)
@@ -2041,6 +2064,7 @@ fn row_iv(row: &crate::table::Row, ivs: &[Iv]) -> Iv {
             [a, b] => bits_span(*a, *b),
             _ => Iv::I64,
         },
+        R::Sum => Iv::new(sat(first.lo.min(0).saturating_mul(COUNT)), sat(first.hi.max(0).saturating_mul(COUNT))),
         R::Code => Iv::new(0, 0x10FFFF),
         R::Byte => Iv::new(0, 255),
         // (bytes read as an int: within what the width's bytes spell, of
@@ -2614,7 +2638,15 @@ impl<'a> Retype<'a> {
                                 let iv = self.walk.iv_of(a);
                                 iv.hi < 0 && !iv.neg().fits()
                             });
-                        let grows = (row.range == crate::table::IntRange::Any && row.big.is_some()) || (row.range == crate::table::IntRange::Shift && wide) || abs_grows;
+                        // (a sum grows where its items' range times the
+                        // most items a list holds passes 64 bits)
+                        let sum_grows = row.range == crate::table::IntRange::Sum
+                            && row.big.is_some()
+                            && args.first().is_some_and(|a| {
+                                let items = self.walk.items_iv(a);
+                                !row_iv(row, &[items]).fits()
+                            });
+                        let grows = (row.range == crate::table::IntRange::Any && row.big.is_some()) || (row.range == crate::table::IntRange::Shift && wide) || abs_grows || sum_grows;
                         // (a growing int handed where the growing form takes
                         // one — `fmt[2 ^ 100]`'s value, not its width: a width
                         // past 64 bits beside a float had chosen the form for

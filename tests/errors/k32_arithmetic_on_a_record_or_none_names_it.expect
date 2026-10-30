@@ -1,0 +1,3 @@
+k32_arithmetic_on_a_record_or_none_names_it.co:12:14: cannot use '+' with Pick or none and int — a function handed a record and an int holds a record or none (0 is none, another int stops): hand it records, or write one for the ints
+  12 │ log[first[5] + 1]
+     │              ^

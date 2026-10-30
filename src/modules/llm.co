@@ -400,14 +400,14 @@ fn _reply_openai[j]
     calls = []
     stop = 'other'
     if j.choices.ok and len[j.choices] gt 0
-        choice = j.choices[0]
-        if choice.message.content.ok and type[choice.message.content] eq 'str'
-            words = str[choice.message.content]
-        if choice.message.tool_calls.ok
-            for c in choice.message.tool_calls
+        picked = j.choices[0]
+        if picked.message.content.ok and type[picked.message.content] eq 'str'
+            words = str[picked.message.content]
+        if picked.message.tool_calls.ok
+            for c in picked.message.tool_calls
                 calls = push[calls, _call_text[str[c.id], str[c.function.name], str[c.function.arguments]]]
-        if choice.finish_reason.ok
-            stop = _stop_of[str[choice.finish_reason]]
+        if picked.finish_reason.ok
+            stop = _stop_of[str[picked.finish_reason]]
     return _reply_text[words, calls, _count_of[j.usage.prompt_tokens], _count_of[j.usage.completion_tokens], stop]
 
 --- what a server's refusal says: the JSON error's message where its body
@@ -677,17 +677,17 @@ fn _event_openai[event]
         changes = push[changes, '"input": `_count_of[j.usage.prompt_tokens]`']
         changes = push[changes, '"output": `_count_of[j.usage.completion_tokens]`']
     if j.choices.ok and len[j.choices] gt 0
-        choice = j.choices[0]
-        if choice.delta.content.ok and type[choice.delta.content] eq 'str'
-            changes = push[changes, '"text": `encode[str[choice.delta.content]]`']
-        if choice.delta.tool_calls.ok
-            for c in choice.delta.tool_calls
+        picked = j.choices[0]
+        if picked.delta.content.ok and type[picked.delta.content] eq 'str'
+            changes = push[changes, '"text": `encode[str[picked.delta.content]]`']
+        if picked.delta.tool_calls.ok
+            for c in picked.delta.tool_calls
                 if c.id.ok and type[c.id] eq 'str' and len[str[c.id]] gt 0
                     changes = push[changes, '"start": {"id": `encode[str[c.id]]`, "name": `encode[str[c.function.name]]`}']
                 if c.function.arguments.ok and type[c.function.arguments] eq 'str'
                     changes = push[changes, '"args": `encode[str[c.function.arguments]]`']
-        if choice.finish_reason.ok and type[choice.finish_reason] eq 'str'
-            changes = push[changes, '"stop": "`_stop_of[str[choice.finish_reason]]`"']
+        if picked.finish_reason.ok and type[picked.finish_reason] eq 'str'
+            changes = push[changes, '"stop": "`_stop_of[str[picked.finish_reason]]`"']
             changes = push[changes, '"end_call": true']
     glued11 = join[changes, ', ']
     return json['{`glued11`}']
@@ -786,24 +786,24 @@ fn _follow_with[m, talk, system, tools, most, temperature]
     sent = send[s, concat[bytes['`head_lines`\r\n\r\n'], body]]
     if not sent.ok
         return error['cannot reach the model: `sent.reason`', 'llm']
-    head = read_head[s, now[] + 600.0]
-    if not head.ok
-        return error['cannot reach the model: `head.reason`', 'llm']
+    heading = read_head[s, now[] + 600.0]
+    if not heading.ok
+        return error['cannot reach the model: `heading.reason`', 'llm']
     sock = socket_of[s, '`base``_chat_path[m]`', bytes['']]
     chunked = '0'
-    if 'transfer-encoding' in head.headers and lower[head.headers['transfer-encoding']] eq 'chunked'
+    if 'transfer-encoding' in heading.headers and lower[heading.headers['transfer-encoding']] eq 'chunked'
         chunked = '1'
     note[s, 'llm.chunked', chunked]
     note[s, 'llm.provider', str[m.provider]]
-    if head.status lt 200 or head.status gte 300
-        rest = _decoded_from[sock, head.body]
+    if heading.status lt 200 or heading.status gte 300
+        rest = _decoded_from[sock, heading.body]
         more = recv[s, 65536, 10.0]
         while more.ok and len[more] gt 0 and not _ended[sock]
             rest = concat[rest, _decoded_from[sock, concat[_raw_of[sock], more]]]
             more = recv[s, 65536, 10.0]
         close[s]
-        return error[_refusal_of[head.status, text[rest, '�']], 'llm']
-    first = _decoded_from[sock, head.body]
+        return error[_refusal_of[heading.status, text[rest, '�']], 'llm']
+    first = _decoded_from[sock, heading.body]
     unread[sock, first]
     return sock
 
@@ -1079,8 +1079,8 @@ fn _skills_in[folder]
             described = str[s.fields.description]
             if len[described] lt 1 or len[described] gt 1024
                 return error['the skill `entry`\'s description is `len[described]` characters long, and a description is 1 to 1024', 'llm']
-            where = '`folder`/`entry`'
-            found = push[found, '{"name": `encode[name]`, "description": `encode[described]`, "folder": `encode[where]`}']
+            place = '`folder`/`entry`'
+            found = push[found, '{"name": `encode[name]`, "description": `encode[described]`, "folder": `encode[place]`}']
     glued = join[found, ', ']
     return json['[`glued`]']
 
@@ -1096,9 +1096,9 @@ fn _skills_prompt[skills]
 
 --- the two tools the skills bring, as the model is told them
 fn _skill_schemas[]
-    load = '{"name": "skill", "description": "the instructions of a skill, loaded by its name", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}'
-    file = '{"name": "skill_file", "description": "a file a skill refers to, read by the skill\'s name and the file\'s path inside the skill", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "path": {"type": "string"}}, "required": ["name", "path"]}}'
-    return [load, file]
+    load_tool = '{"name": "skill", "description": "the instructions of a skill, loaded by its name", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}'
+    file_tool = '{"name": "skill_file", "description": "a file a skill refers to, read by the skill\'s name and the file\'s path inside the skill", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "path": {"type": "string"}}, "required": ["name", "path"]}}'
+    return [load_tool, file_tool]
 
 --- the skill of a name, or none
 fn _skill_named[skills, name]

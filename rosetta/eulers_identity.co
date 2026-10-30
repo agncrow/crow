@@ -27,15 +27,15 @@ fn size[z]
 fn sci[d]
     if d eq 0
         return '0'
-    sign = ''
+    sgn = ''
     if d lt 0
-        sign = '-'
+        sgn = '-'
         d = -d
     k = 0
     while d lt 1
         d = d * 10
         k = k + 1
-    return '`sign``round[d, 10]`e-`k`'
+    return '`sgn``round[d, 10]`e-`k`'
 
 i = [0.0, 1.0]
 one = [1.0, 0.0]

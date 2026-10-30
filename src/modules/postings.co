@@ -51,11 +51,11 @@ fn built[col, from, to, stems]
     by_term = map[]
     ndocs = 0
     total = 0
-    start = 0
+    begin = 0
     for row in range[n]
         stop = cuts[row]
         if _present[present, row]
-            toks = terms[text[slice[cell_bytes, start, stop], '']]
+            toks = terms[text[slice[cell_bytes, begin, stop], '']]
             ndocs = ndocs + 1
             total = total + len[toks]
             lengths = push[lengths, len[toks]]
@@ -82,7 +82,7 @@ fn built[col, from, to, stems]
                     by_term = set[by_term, t, rows]
         else
             lengths = push[lengths, 0]
-        start = stop
+        begin = stop
     out = pack[n, 4, little = true]
     longest = 0
     for l in lengths

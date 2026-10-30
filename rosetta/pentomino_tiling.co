@@ -109,24 +109,24 @@ fn regions_fit[board]
     while start lt 64
         if flooded[start] eq '.'
             flooded[start] = '*'
-            stack = [start]
+            todo = [start]
             size = 0
-            while len[stack] gt 0
-                x = stack[-1]
-                stack = pop[stack]
+            while len[todo] gt 0
+                x = todo[-1]
+                todo = pop[todo]
                 size = size + 1
                 if x gte 8 and flooded[x - 8] eq '.'
                     flooded[x - 8] = '*'
-                    stack = push[stack, x - 8]
+                    todo = push[todo, x - 8]
                 if x lt 56 and flooded[x + 8] eq '.'
                     flooded[x + 8] = '*'
-                    stack = push[stack, x + 8]
+                    todo = push[todo, x + 8]
                 if x % 8 gt 0 and flooded[x - 1] eq '.'
                     flooded[x - 1] = '*'
-                    stack = push[stack, x - 1]
+                    todo = push[todo, x - 1]
                 if x % 8 lt 7 and flooded[x + 1] eq '.'
                     flooded[x + 1] = '*'
-                    stack = push[stack, x + 1]
+                    todo = push[todo, x + 1]
             if size % 5 ne 0
                 return false
         start = start + 1

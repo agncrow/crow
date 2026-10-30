@@ -767,8 +767,12 @@ impl TypeContext {
                     // converts what it hands (the lowering's call site): it
                     // had kept the calls' kind, and the lowered program
                     // disagreed with itself — crow check --self; parity 324)
+                    // (and a list of ints an item of which is written a
+                    // record holds records or none: each 0 a call hands is
+                    // none; Vijay, 2026-10-29)
                     let widened = match (pty, &updated) {
                         (Ty::Int, Ty::Float) => true,
+                        (Ty::List(a), Ty::List(b)) if matches!((a.as_ref(), b.as_ref()), (Ty::Int, Ty::OptRecord(_))) => true,
                         (Ty::List(a), Ty::List(b)) | (Ty::Map(_, a), Ty::Map(_, b)) => matches!((a.as_ref(), b.as_ref()), (Ty::Int, Ty::Float)),
                         _ => false,
                     };

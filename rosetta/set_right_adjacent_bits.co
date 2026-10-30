@@ -49,10 +49,10 @@ fn by_characters[written, n]
     return join[out, '']
 
 fn report[written, n]
-    e = len[written]
+    width = len[written]
     result = set_right_adjacent[from_text[written], n]
     log['     Input b: `written`']
-    log['      Result: `to_text[result, e]`']
+    log['      Result: `to_text[result, width]`']
     log['']
 
 log['n = 2; Width e = 4:']

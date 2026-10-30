@@ -39,10 +39,10 @@ fn rows_starting[n, first]
 
 fn code_of[row]
     n = len[row]
-    code = 0
+    key = 0
     for j in range[n]
-        code = bitor[code, shift[1, j * n + row[j] - 1]]
-    return code
+        key = bitor[key, shift[1, j * n + row[j] - 1]]
+    return key
 
 fn completions[square, taken, candidates]
     --- every reduced square whose first rows are these (taken: their codes)
@@ -51,9 +51,9 @@ fn completions[square, taken, candidates]
         return [square]
     found = []
     for row in candidates[i]
-        code = code_of[row]
-        if bitand[taken, code] eq 0
-            found = concat[found, completions[push[square, row], bitor[taken, code], candidates]]
+        key = code_of[row]
+        if bitand[taken, key] eq 0
+            found = concat[found, completions[push[square, row], bitor[taken, key], candidates]]
     return found
 
 fn reduced_squares[n]

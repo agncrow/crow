@@ -1638,7 +1638,7 @@ impl ModuleRegistry {
             }
         }
         match crate::table::module(module, name, &kinds) {
-            Some(row) => row.ty_given(arg_types),
+            Some(row) => crate::table::exact_form(row, &kinds).ty_given(arg_types),
             None => self.modules[idx].type_of(name, arg_types.len()),
         }
     }

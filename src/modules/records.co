@@ -80,11 +80,11 @@ fn _rows_of[data, rows]
         size = unpack[data, pos + 8, 4]
         if size lt 0
             return error['records: message `n` has a negative length', 'kafka']
-        start = pos + 12
-        if start + size gt total
+        begin = pos + 12
+        if begin + size gt total
             reading = false
         else
-            msg = slice[data, start, start + size]
+            msg = slice[data, begin, begin + size]
             if size lt 6
                 return error['records: message `n` is `size` bytes, too few for a message', 'kafka']
             if unpack[msg, 0, 4, signed = false] ne crc32[slice[msg, 4, size]]
@@ -156,7 +156,7 @@ fn _rows_of[data, rows]
                 value_ends = push[value_ends, len[value_text]]
                 value_held = push[value_held, value.held]
                 n = n + 1
-            pos = start + size
+            pos = begin + size
     return Rows[offsets, ats, key_text, key_ends, key_held, value_text, value_ends, value_held, n]
 
 --- the bitmap of which cells are present (no bytes where every one is)

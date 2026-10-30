@@ -1,0 +1,12 @@
+--- A function's local named like a constant an import makes — math's `e`
+--- — is refused where it is written, as the same name at the top level is
+--- (spec, Names Are Never Ambiguous): it had shadowed Euler's number
+--- silently (Rosetta Code, Pathological floating point problems; Vijay,
+--- 2026-10-29)
+use math
+
+fn twice[k]
+    e = k + 1
+    return e * 2
+
+log[twice[3]]

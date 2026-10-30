@@ -1,0 +1,24 @@
+--- Zeros fill a number after its sign, as printf and Python pad: `-0042`,
+--- where the fill had gone before the sign, `00-42` — for an int, a float,
+--- a growing int and with commas; any other fill, and a string's, goes
+--- before (Rosetta Code; Vijay, 2026-10-29). A float's decimals round its
+--- exact binary value with ties to even, and a fraction's, a decimal's and
+--- `round` a half away from zero, as the spec says.
+log[fmt[-42, width = 5, fill = '0']]
+log[fmt[42, width = 5, fill = '0']]
+log[fmt[-42, width = 5, fill = '*']]
+log[fmt[-3.5, decimals = 2, width = 8, fill = '0']]
+log[fmt[-1234567, commas = true, width = 12, fill = '0']]
+log[fmt[2 ^ 70, width = 25, fill = '0']]
+log[fmt[-(2 ^ 70), width = 25, fill = '0']]
+log[fmt['-42', width = 5, fill = '0']]
+log[fmt[-42, width = 2, fill = '0']]
+log[fmt[-42, width = 5, fill = '0', align = 'left']]
+log[fmt[2.5, decimals = 0]]
+log[fmt[0.125, decimals = 2]]
+log[fmt[0.375, decimals = 2]]
+log[fmt[fraction[1, 8], decimals = 2]]
+log[fmt[decimal['0.125'], decimals = 2]]
+log[round[2.5]]
+log[round[-2.5]]
+log[fmt[-2.5, decimals = 0]]

@@ -211,9 +211,9 @@ fn _file_scored[best, r, p, column, uq, fi, k]
     pc = _column_at[r, '_pos']
     out = best
     for g in range[len[ents]]
-        e = ents[g]
-        if e.rows gt 0 and e.absent lt e.rows
-            col = chunk_of[r, c, e]
+        ent = ents[g]
+        if ent.rows gt 0 and ent.absent lt ent.rows
+            col = chunk_of[r, c, ent]
             if not col.ok
                 return error[col.reason, 'magpie']
             n = len[col]

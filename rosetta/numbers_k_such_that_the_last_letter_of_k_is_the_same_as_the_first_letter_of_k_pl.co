@@ -9,15 +9,15 @@ use math
 
 fn name_below_1000[n]
     --- the English name of 0 <= n < 1000 (no "and": it changes no first or last letter)
-    ones = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+    units = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
     tens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
     if n lt 20
-        return ones[n]
+        return units[n]
     if n lt 100
         if n % 10 eq 0
             return tens[n / 10]
-        return '`tens[n / 10]`-`ones[n % 10]`'
-    hundreds = '`ones[n / 100]` hundred'
+        return '`tens[n / 10]`-`units[n % 10]`'
+    hundreds = '`units[n / 100]` hundred'
     if n % 100 eq 0
         return hundreds
     '`hundreds` `name_below_1000[n % 100]`'

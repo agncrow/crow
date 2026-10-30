@@ -16,8 +16,8 @@ fn share[count, n]
 --- the Shannon entropy of a word of 0s and 1s
 fn entropy[word]
     n = len[word]
-    ones = occurs[word, '1']
-    return share[ones, n] + share[n - ones, n]
+    ones_count = occurs[word, '1']
+    return share[ones_count, n] + share[n - ones_count, n]
 
 fn show[n, word]
     shown = word

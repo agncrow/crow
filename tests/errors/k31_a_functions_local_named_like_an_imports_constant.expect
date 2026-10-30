@@ -1,0 +1,3 @@
+k31_a_functions_local_named_like_an_imports_constant.co:9:5: 'e' is a math constant (imported on line 6) — rename the variable, or import qualified: use math as m
+  9 │     e = k + 1
+    │     ^

@@ -610,6 +610,10 @@ impl IrInterp {
                     crow_runtime::cores::set_default(n as usize);
                 }
             }
+            // a page's draws seeded before its declarations are set
+            for e in &part.seeds {
+                self.eval(e).map_err(|e| self.with_line(e))?;
+            }
             for fact in &part.facts {
                 if fact.line > 0 {
                     self.line = fact.line;
@@ -1738,6 +1742,16 @@ impl IrInterp {
                 // is a list, the compiled program's `Vec` (numbers written
                 // as a list literal had been a tensor however the IR typed
                 // them, whose own rows the values then picked)
+                // (a vector of whole numbers holds each exactly, or stops)
+                if let Ty::Tensor(e, _) = ty.payload()
+                    && matches!(e.as_ref(), Ty::Int)
+                    && let Some(n) = vals.iter().find_map(|v| match v.value {
+                        Value::Int(n) if n.unsigned_abs() > 1 << 53 => Some(n),
+                        _ => None,
+                    })
+                {
+                    return Err(crow_runtime::core::past_vector(n));
+                }
                 match ty.payload() {
                     Ty::List(_) => CrowValue::ok(Value::Array(std::sync::Arc::new(vals))),
                     _ => crate::ops::array_literal(vals)?,

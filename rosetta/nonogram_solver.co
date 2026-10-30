@@ -30,10 +30,10 @@ fn settle[line, runs]
     empties = [0]
     p = 0
     while p lt n
-        e = empties[p]
+        en = empties[p]
         if cells[p] eq 0
-            e = e + 1
-        empties = push[empties, e]
+            en = en + 1
+        empties = push[empties, en]
         p = p + 1
     --- before[i * width + j]: the first i cells hold the first j runs, each with an
     --- empty cell after it
@@ -62,9 +62,9 @@ fn settle[line, runs]
         while j gte 0
             fits = cells[i] ne 1 and after[(i + 1) * width + j]
             if not fits and j lt k
-                e = i + runs[j]
-                if e lt n and cells[e] ne 1
-                    if empties[e] eq empties[i] and after[(e + 1) * width + j + 1]
+                en = i + runs[j]
+                if en lt n and cells[en] ne 1
+                    if empties[en] eq empties[i] and after[(en + 1) * width + j + 1]
                         fits = true
             after[i * width + j] = fits
             j = j - 1
@@ -77,11 +77,11 @@ fn settle[line, runs]
     while j lt k
         s = 0
         while s + runs[j] lt n
-            e = s + runs[j]
-            if before[s * width + j] and cells[e] ne 1 and empties[e] eq empties[s]
-                if after[(e + 1) * width + j + 1]
+            en = s + runs[j]
+            if before[s * width + j] and cells[en] ne 1 and empties[en] eq empties[s]
+                if after[(en + 1) * width + j + 1]
                     marks[s] = marks[s] + 1
-                    marks[e] = marks[e] - 1
+                    marks[en] = marks[en] - 1
             s = s + 1
         j = j + 1
     out = []

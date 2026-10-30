@@ -264,12 +264,12 @@ fn _scanned[col, query, atoms, stems, no_df, empty_ix]
     df = no_df
     rows = []
     hits = []
-    start = 0
+    begin = 0
     for row in range[n]
         stop = cuts[row]
         held = len[present] eq 0 or bitand[byte[present, shift[row, -3]], shift[1, bitand[row, 7]]] ne 0
         if held
-            h = _hits_of_text[text[slice[cell_bytes, start, stop], ''], query, atoms, stems, every, asked]
+            h = _hits_of_text[text[slice[cell_bytes, begin, stop], ''], query, atoms, stems, every, asked]
             docs = docs + 1
             total = total + h.size
             if h.any
@@ -283,7 +283,7 @@ fn _scanned[col, query, atoms, stems, no_df, empty_ix]
                 if some
                     rows = push[rows, row]
                     hits = push[hits, h]
-        start = stop
+        begin = stop
     return Counts[docs, total, df, false, empty_ix, rows, hits]
 
 --- the empty index: no lengths, no terms (what a group with no index holds)
@@ -619,7 +619,7 @@ fn snippet_of[doc, query, chars, stems]
         center = found_at
     n = len[tb]
     --- `chars` characters before the center, the text's start where fewer
-    start = 0
+    begin = 0
     seen = 0
     i = center
     looking = true
@@ -628,7 +628,7 @@ fn snippet_of[doc, query, chars, stems]
         if i lt n and bitand[byte[tb, i], 192] ne 128
             seen = seen + 1
             if seen eq chars
-                start = i
+                begin = i
                 looking = false
     --- `chars` characters after the word found, the text's end where fewer
     after = center + found_len
@@ -646,9 +646,9 @@ fn snippet_of[doc, query, chars, stems]
             seen = seen + 1
         i = i + 1
     out = ''
-    if start gt 0
+    if begin gt 0
         out = '…'
-    piece = text[slice[tb, start, stop], '']
+    piece = text[slice[tb, begin, stop], '']
     out = '`out``piece`'
     if stop lt n
         out = '`out`…'
@@ -762,8 +762,8 @@ fn search_rows[paths, column, words, k, stems, snippet]
                 for b in bounds
                     group_bound = group_bound + b
                 threshold = _threshold[kept, k]
-                full = _full[kept, k]
-                if not (group_bound lte threshold and full)
+                whole = _full[kept, k]
+                if not (group_bound lte threshold and whole)
                     acc = map[]
                     for i in range[len[query]]
                         others = group_bound - bounds[i]
@@ -771,7 +771,7 @@ fn search_rows[paths, column, words, k, stems, snippet]
                             block_bound = 1.0
                             if query[i].form lt 3
                                 block_bound = weights[i] * _tf_norm[float[b.max_tf], float[b.min_len], avgdl]
-                            if not (block_bound + others lte threshold and full)
+                            if not (block_bound + others lte threshold and whole)
                                 for j in range[len[b.rows]]
                                     row = b.rows[j]
                                     s = 1.0
@@ -832,11 +832,11 @@ fn search_rows[paths, column, words, k, stems, snippet]
             doc = text[text_bytes_of[cell, 0, 1], '']
             snip_bytes = concat[snip_bytes, bytes[snippet_of[doc, query, snippet, stems]]]
             snip_ends = push[snip_ends, len[snip_bytes]]
-    answer = stack[rows]
-    answer.score = floats_column[scores, bytes[0]]
+    stacked = stack[rows]
+    stacked.score = floats_column[scores, bytes[0]]
     if snippet gt 0
-        answer.snippet = text_column[snip_bytes, snip_ends, bytes[0]]
-    return answer
+        stacked.snippet = text_column[snip_bytes, snip_ends, bytes[0]]
+    return stacked
 
 fn _fresh[dir]
     if exists[dir]

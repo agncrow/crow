@@ -58,14 +58,14 @@ fn _read_exactly[s, n]
 
 --- one message read: its kind byte followed by its payload
 fn _read_message[s]
-    head = _read_exactly[s, 5]
-    if not head.ok
-        return error[head.reason, 'sys']
-    n = _u32_at[head, 1]
+    header = _read_exactly[s, 5]
+    if not header.ok
+        return error[header.reason, 'sys']
+    n = _u32_at[header, 1]
     body = _read_exactly[s, n - 4]
     if not body.ok
         return error[body.reason, 'sys']
-    return concat[slice[head, 0, 1], body]
+    return concat[slice[header, 0, 1], body]
 
 --- the server's words, from an error message's fields (M, the message)
 fn _error_words[payload]
@@ -245,8 +245,8 @@ fn _read_answer[s]
         n = len[chunk]
         if n gte 6 and byte[chunk, n - 6] eq 90 and byte[chunk, n - 5] eq 0 and byte[chunk, n - 4] eq 0 and byte[chunk, n - 3] eq 0 and byte[chunk, n - 2] eq 5
             whole = concat[chunks]
-            complete = frame_of_postgres[whole]
-            if complete.ok or not starts[complete.reason, 'the answer ends early']
+            decoded = frame_of_postgres[whole]
+            if decoded.ok or not starts[decoded.reason, 'the answer ends early']
                 done = true
     return whole
 

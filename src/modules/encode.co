@@ -228,10 +228,10 @@ fn _read_plain_text[data, at, n]
     for l in lens
         total = total + l
         cuts = push[cuts, total]
-    start = at + 1 + count
-    if start + total gt len[data]
-        return error['the file ends `start + total - len[data]` bytes early', 'magpie']
-    return Plain[slice[data, start, start + total], cuts, start + total]
+    begin = at + 1 + count
+    if begin + total gt len[data]
+        return error['the file ends `begin + total - len[data]` bytes early', 'magpie']
+    return Plain[slice[data, begin, begin + total], cuts, begin + total]
 
 --- a text column's chunk: a dictionary where the distinct values are at
 --- most half the cells (4), plain lengths and bytes otherwise (3)
@@ -247,11 +247,11 @@ fn _encode_text[col, from, to]
     dict_bytes = bytes[0]
     dict_ends = []
     dictionary = true
-    start = 0
+    begin = 0
     i = 0
     while i lt n and dictionary
         stop = cuts[i]
-        cell = text[slice[cell_bytes, start, stop], '']
+        cell = text[slice[cell_bytes, begin, stop], '']
         if cell in seen
             codes = push[codes, seen[cell]]
         else
@@ -260,9 +260,9 @@ fn _encode_text[col, from, to]
             else
                 seen = set[seen, cell, len[dict_ends]]
                 codes = push[codes, len[dict_ends]]
-                dict_bytes = concat[dict_bytes, slice[cell_bytes, start, stop]]
+                dict_bytes = concat[dict_bytes, slice[cell_bytes, begin, stop]]
                 dict_ends = push[dict_ends, len[dict_bytes]]
-        start = stop
+        begin = stop
         i = i + 1
     if dictionary and n gt 1
         out = pack[len[dict_ends], 4, little = true]

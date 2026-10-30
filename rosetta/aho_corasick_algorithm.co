@@ -69,8 +69,8 @@ fn show[patterns, found]
         if len[shown] eq 0
             log['`p` does not occur']
         else
-            where = join[shown, ', ']
-            log['`p` starts at `where`']
+            places = join[shown, ', ']
+            log['`p` starts at `places`']
 
 --- how many matches the search found in all, and the longest words among them
 fn report[words, hits, nodes, letters]
