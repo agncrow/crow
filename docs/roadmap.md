@@ -1,6 +1,8 @@
 # Crow Roadmap
 
-What's done, what's remaining, and in what order.
+What's done, what's remaining, and in what order. What Crow does not have
+yet, each gap with the evidence that found it, is in [gaps.md](gaps.md): the
+list this roadmap draws from.
 
 ## Status: What's Done ✅
 
@@ -346,15 +348,14 @@ Vijay (2026-10-11): what Crow can build where vLLM, LangGraph and the SDKs live 
 **Data science (7/10):** Crow has a strong math foundation — ~107 tensor/linalg/stats/signal functions, auto-parallel for loops, autograd, DataFrames, and GPU support. P1 added statistical tests (chi-square, ANOVA, KS, distribution fitting) and linalg completeness (rank, cond). P2 added STFT, spectrogram, and frequency-domain filters (lowpass, highpass, bandpass). P5 verified GPU execution end-to-end with matmul, parallel reduction, and element-wise shaders. Breadth is 7/10 — covers core operations plus statistical testing and signal processing. Depth is 7/10 — individual areas are solid with proper implementations (regularized gamma/beta functions, SVD-based rank, FFT-based filtering, verified GPU dispatch with memory management). Ergonomics is 9/10 — the syntax is genuinely cleaner than Python+NumPy for common operations.
 
 **General-purpose (6/10):**
-- **Stdlib (7/10):** JSON (`json[str]`, `encode[value]`), env vars (`env[name]`, `env[name, default]` + `.env` auto-loading), CLI args (`args[]`), logging (`log[]`), file I/O (`read`, `write`, `exists`, `mkdir`, `ls`, `rm`, `mv`, `cp`), regex (`find`, `matches`, `sub`), date/time (`now`, `date`, `elapsed`), shell (`shell[cmd]`), hashing (`hash[data, algo]`), input (`input[]`). Covers the practical needs for scripting and application development. Still below Python's 200+ modules — missing process management and some niche utilities (the HTTP client is `request`, 2026-10-01).
+- **Stdlib (7/10):** JSON (`json[str]`, `encode[value]`), env vars (`env[name]`, `env[name, default]` + `.env` auto-loading), CLI args (`args[]`), logging (`log[]`), file I/O (`read`, `write`, `exists`, `mkdir`, `ls`, `rm`, `mv`, `cp`), regex (`find`, `matches`, `sub`), moments (`now`, `moment`, fields such as `t.hour`, `fmt`), shell (`shell[cmd]`), hashing (`hash[data, algo]`), input (`input[]`). Covers the practical needs for scripting and application development. Still below Python's 200+ modules — missing process management and some niche utilities (the HTTP client is `request`, 2026-10-01).
 - **Web (8/10, 2026-10-02):** live pages with facts, derivations and handlers as transactions; routes with JSON, binary and streaming answers, CORS, static files, rate limits, uploads and tokens; `widget` as the one door to the program's own JavaScript; apps driven and laid out in tests without a browser, fixtures replayed, baselines diffed; one process, measured (above). Behind the best stacks on client-side reach (no other client code by design), auth beyond a password and a token, and running on more than one machine.
 - **DB (8/10):** Top-level `db` module with connection pooling, parameterized queries, transactions, bulk insert, and forward-only migrations. All three backends (SQLite, PostgreSQL, ClickHouse) fully implemented and live-tested. No ORM (by design — Crow uses raw SQL). 8/10 because the core DB story is complete across OLTP and OLAP engines; missing only advanced features like connection-level event listeners or prepared statement caching.
-- **Ecosystem (1/10):** No real package registry, no community packages, no third-party libraries. `crow install` exists as a command but there's nothing to install. This is the single biggest gap.
+- **Ecosystem (1/10):** No community packages and no third-party libraries yet. Packages work — a package is a git repository, a version its tag, `crow.lock` pins each dependency (P7) — and ten are in `packages/` (features, gpt, graph, kg, market, models, optimize, retrieval, symbolic, vectors), but all are this repository's own. There is no registry by design: a dependency names its repository. This is the single biggest gap.
 
 **What moves the needle:**
-- Ecosystem → 5/10 would require a working registry + 20-30 community packages
-- Web → 8/10 would require end-to-end app testing and the UI framework (P8)
+- Ecosystem → 5/10 would require 20-30 community packages
 - Stdlib → 8/10 would require process management and a few more utilities (the HTTP client landed 2026-10-01)
 
-P0–P5 are complete. P6 (distributed verification), P7 (ecosystem), and P8 (UI framework) are what separate Crow from a production-ready tool.
+P0–P5, the UI framework and P7's packages, notebooks and editor support are complete. P6 (distributed verification), community packages and the gaps in [gaps.md](gaps.md) are what separate Crow from a production-ready tool.
 

@@ -47,6 +47,7 @@ These explain how Crow got here. They are kept for the reasoning; where a code s
 | [bug-classes.md](bug-classes.md) | **Bug classes, removed by construction.** Each kind of bug finch's build found one at a time, the structure that closes the whole class (design rule 12), what that structure found on its first run, and what is left. |
 | [security-review.md](security-review.md) | **crow_web's security review** (2026-09-30, for the 1.0 bar): a page's session and socket, the sign-in cookie, routes, uploads, static files, responses and limits — what holds, what was found and fixed, what is left. |
 | [roadmap.md](roadmap.md) | What is done and what remains, by priority. |
+| [gaps.md](gaps.md) | What Crow does not have yet: each gap with the Rosetta Code tasks or documents that met it, what stands in today and its size; then what wants a decision, and what is out by design. The list the roadmap draws from. |
 | [discovered-features.md](discovered-features.md) | Language features mined from a real trading system's bug history, each written as a proposal; several have shipped. |
 | [automatic-verification.md](automatic-verification.md) | The original design of `crow check`: purity, edge cases, snapshots. |
 | [web-framework.md](web-framework.md) | The web framework's design and module inventory (vision document; sketches may predate current syntax). |
