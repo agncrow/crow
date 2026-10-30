@@ -1614,3 +1614,17 @@ steps on every push and must be green — all but Magpie's suite (the
   copies from a repository comes without its own `crow_modules/`
   (`copy_package`: kg's committed link to magpie had been copied as a
   second magpie inside kg, every name "declared twice").
+- Process memory's names are taken in name order (2026-10-30, Vijay's
+  recorded decision once `memory` was any program's): inside a revision,
+  `memory::not_revising` — the one check revise, recall, remember and
+  forget call — refuses a name that sorts before one the thread revises,
+  so no two threads can wait on each other (Rosetta's Mutex had hung the
+  compiled program). A library's nested names extend the revised one
+  (`<dir>/#last/…`), which sorts after it. A stop inside a script's
+  `later` work is printed and the script goes on, in both modes
+  (`later::spawn`'s catch, the interpreter's inline catch: the one had
+  been silent, the other had ended the program); a stopped revision loses
+  its record unless its function can fail (no copy is made otherwise), so
+  two later works' results may differ by schedule. A function handed to
+  `revise` whose every return is a failure answers the record's kind
+  (`hand_to_row`).

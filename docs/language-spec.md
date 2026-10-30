@@ -2556,7 +2556,7 @@ Import with `use memory` — **meant for library code**: the standard library, a
 |----------|-------------|
 | `remember[name, record]` | The record held for the process under the name, replacing what was |
 | `recall[name, default]` | The record the name holds, or the default where it holds none; typed by the default |
-| `revise[name, default, f, …]` | `f` run under the name's lock, handed the record held (the default where none is) and the rest of the arguments; the record `f` answers is held and answered. The record is handed over, not copied, so a revision costs what `f` does; where `f`'s answer can fail it is copied first, and a failure leaves it as it was and is the answer. Two threads revising one name take turns, and `f` reaching its own name again (a recall, a revision) is refused, where it would wait on itself |
+| `revise[name, default, f, …]` | `f` run under the name's lock, handed the record held (the default where none is) and the rest of the arguments; the record `f` answers is held and answered. The record is handed over, not copied, so a revision costs what `f` does; where `f`'s answer can fail it is copied first, and a failure leaves it as it was and is the answer. Two threads revising one name take turns, and `f` reaching its own name again (a recall, a revision) is refused, where it would wait on itself; it reaches another name only after its own in name order — inside a revision of `'b'`, `'c'` is revised, recalled or remembered and `'a'` is refused alike, so that two revisions on two threads never each hold one name and wait on the other's (Vijay: made public again, two names are taken in name order) |
 | `forget[name]` | Nothing held under the name nor beneath it: a later read answers its default, and the name may take another kind |
 | `canonical[path]` | The path made absolute with its links resolved (as given where it cannot be): the name a path's record is kept under |
 
@@ -4002,7 +4002,10 @@ Semantics, in order of importance:
    running each inline, showed the new.
 3. **A failure stops it.** A failing query inside the fn stops it as it
    stops a handler: nothing it wrote lands, the state keeps its last
-   value, and the notice says why.
+   value, and the notice says why. A script's work that stops prints its
+   stop (`runtime error: line …`) and the script goes on, in both modes:
+   the interpreter, running the work inline, had ended the program, and
+   the compiled program's thread had ended in silence.
 4. **Nothing vanishes at exit.** A script waits for in-flight work before
    ending.
 5. **The interpreter runs the work inline.** `later` promises

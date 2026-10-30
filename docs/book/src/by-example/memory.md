@@ -40,6 +40,10 @@ stops, naming both — and `recall` answers the default where nothing is
 held. `revise` runs its function under the name's lock, handed the record
 held and the rest of its arguments, and holds what the function answers:
 two threads revising one name take turns, and a revision whose function
-fails leaves the record as it was. Names are a tree, so forgetting
+fails leaves the record as it was. Inside a revision, another name is
+reached only after its own in name order — revising `'stats'`, the
+function may revise `'visits'`, and a revision of `'counts'` stops — so
+two revisions on two threads never each hold one name and wait on the
+other's. Names are a tree, so forgetting
 `visits` forgets `visits/today` too, and a record named by a path
 (`canonical[dir]`) goes when `rm` removes the path.

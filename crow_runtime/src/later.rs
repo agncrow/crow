@@ -55,7 +55,16 @@ pub fn spawn(name: &str, work: impl FnOnce() + Send + 'static) -> bool {
         let _guard = InFlight(guard_name.clone());
         let mut next: Work = Box::new(work);
         loop {
-            next();
+            // a stop inside the work ends the work, not the program, and
+            // says why (spec §15: "a failure stops it ... the notice says
+            // why"): the thread had ended in silence, while the
+            // interpreter, running the work inline, ended the program
+            if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(next)) {
+                crate::display::flush_output();
+                if let Some(crate::stops::Stop(text)) = p.downcast_ref::<crate::stops::Stop>() {
+                    eprintln!("runtime error: {}", text);
+                }
+            }
             // asked again meanwhile: run once more; else the name is free,
             // decided under the lock a schedule takes
             let mut reg = crate::lock(registry());

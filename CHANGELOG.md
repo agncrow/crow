@@ -23,6 +23,24 @@ history says the rest.
   copy at every frame its tests made (Magpie's `put_rows`), so the helper
   it hands `revise` had several copies and was refused as a value, and
   checking its files alone had been half the program's build.
+- Two names of process memory are taken in name order (Vijay: "made
+  public again, two locks would be taken in name order"): inside a
+  revision, another name is revised, recalled, remembered or forgotten
+  only after its own, and one before it is refused as a revision reaching
+  its own name is — a runtime stop, alike in both modes. One thread
+  revising 'a' then 'b' inside it, another 'b' then 'a', had hung the
+  compiled program for good while the interpreter answered (Rosetta Code,
+  Mutex; parity 440). Programs may import `memory` now, so the library's
+  own discipline is the language's rule.
+- A stop inside a script's `later` work ends the work, says why
+  (`runtime error: line …`) and lets the script go on, in both modes, as
+  the spec's "a failure stops it" says: the interpreter, running the work
+  inline, had ended the program, and the compiled program's thread had
+  ended in silence (parity 441).
+- A function every return of which is a failure, handed to `revise`,
+  answers a failure of the record's kind: compiled, it had answered `()`
+  where revise's closure took the record, and the program did not build
+  (Rosetta Code, Mutex; parity 442).
 - A call is refused where no row of its name takes the arguments that
   are known, each at its place, an argument of no known kind fitting any:
   any unknown argument had spared the whole call, so `frame.window[f,

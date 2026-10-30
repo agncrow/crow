@@ -1,0 +1,15 @@
+--- A function every return of which is a failure, handed to `revise` as
+--- the revision's function, answers a failure of the record's kind: its
+--- own answer named no kind, and the compiled program answered `()` where
+--- revise's closure took the record — E0308, a program that did not build
+--- (Rosetta Code, Mutex: a withdrawal refused when too little is held).
+use memory
+
+struct C [n]
+
+fn refused[c, why]
+    return error[why, 'demo']
+
+r = revise['parity442.x', C[0], refused, 'no']
+log[r.reason]
+log[recall['parity442.x', C[7]].n]

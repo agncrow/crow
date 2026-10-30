@@ -52,13 +52,25 @@ thread_local! {
     static REVISING: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
-/// Refused where this thread is revising the name: the call would wait on
-/// the lock its own revision holds.
+/// Refused where this thread is revising the name — the call would wait on
+/// the lock its own revision holds — or a name that sorts after it: a
+/// revision takes another name only after its own, in name order, so two
+/// threads revising two names never wait on each other (Vijay: "made
+/// public again, two locks would be taken in name order"; one thread
+/// revising 'a' then 'b' inside it, another 'b' then 'a', had hung the
+/// compiled program for good, while the interpreter, running `later`'s
+/// work inline, answered).
 pub fn not_revising(name: &str) -> Result<(), String> {
-    if REVISING.with(|r| r.borrow().contains(name)) {
-        return Err(format!("memory: '{}' is being revised — a revision's function reaches only the record it is handed, and answers the one to hold", name));
-    }
-    Ok(())
+    REVISING.with(|r| {
+        let r = r.borrow();
+        if r.contains(name) {
+            return Err(format!("memory: '{}' is being revised — a revision's function reaches only the record it is handed, and answers the one to hold", name));
+        }
+        if let Some(after) = r.iter().filter(|held| held.as_str() > name).max() {
+            return Err(format!("memory: '{}' is reached inside the revision of '{}' — a revision reaches another name only after its own, in name order, so that two revisions never wait on each other", name, after));
+        }
+        Ok(())
+    })
 }
 
 /// The refusal of a record of another kind than the one a name holds.
@@ -266,5 +278,29 @@ mod tests {
         remember(name, Other("o".into())).expect("held");
         forget_under("memory-test-").expect("forgotten");
         assert_eq!(recall(name, Count(3)), Ok(Count(3)));
+    }
+
+    /// Inside a revision, a name after its own is revised, recalled and
+    /// remembered; one before it is refused, so that no two threads can
+    /// each hold one name and wait on the other's.
+    #[test]
+    fn a_revision_reaches_other_names_only_in_name_order() {
+        let early = revise("order.a", Count(0), false, |c| {
+            let later = revise("order.b", Count(0), false, |d| (Some(Count(d.0 + 1)), ()));
+            assert!(later.is_ok(), "{:?}", later);
+            assert!(recall("order.b", Count(0)).is_ok());
+            assert!(remember("order.c", Count(5)).is_ok());
+            (Some(Count(c.0 + 1)), ())
+        });
+        assert!(early.is_ok());
+        let refused = revise("order.b", Count(0), false, |c| {
+            let back = revise("order.a", Count(0), false, |d| (Some(d), ()));
+            let read = recall("order.a", Count(0));
+            (Some(c), (back.err(), read.err()))
+        });
+        let (back, read) = refused.expect("the outer revision answers");
+        let back = back.expect("an earlier name is refused");
+        assert!(back.contains("'order.a' is reached inside the revision of 'order.b'"), "{}", back);
+        assert!(read.expect("a recall of it too").contains("in name order"));
     }
 }

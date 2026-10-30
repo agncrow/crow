@@ -1,0 +1,29 @@
+--- Two names of process memory are taken in name order: inside a revision
+--- of one name, a name after it is revised (or recalled, or remembered),
+--- and one before it is refused, as a revision reaching its own name is —
+--- so that two revisions on two threads can never each hold one name and
+--- wait on the other's. One thread revising 'a' then 'b' inside it,
+--- another 'b' then 'a', had hung the compiled program for good while the
+--- interpreter, running `later`'s work inline, answered (Rosetta Code,
+--- Mutex; Vijay: "made public again, two locks would be taken in name
+--- order"). The same in both modes: the second revision stops.
+use memory
+
+struct Count [n]
+
+fn bump[c, k]
+    return Count[c.n + k]
+
+fn then_b[c]
+    b = revise['parity440.b', Count[0], bump, 10]
+    return Count[c.n + b.n]
+
+fn then_a[c]
+    a = revise['parity440.a', Count[0], bump, 1]
+    return Count[c.n + a.n]
+
+first = revise['parity440.a', Count[0], then_b]
+log[first.n]
+log[recall['parity440.b', Count[0]].n]
+second = revise['parity440.b', Count[0], then_a]
+log['not reached']

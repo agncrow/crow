@@ -498,6 +498,16 @@ impl TypeContext {
             }
             if let Some(s) = self.functions.get_mut(f) {
                 s.params = params;
+                // (a function every return of which is a failure answers
+                // what the row holds of it — `revise`'s record — where its
+                // own answer named no kind: compiled, it had answered `()`
+                // where the row's closure takes the record, and the program
+                // did not build; Rosetta's Mutex)
+                if let (crate::table::Kind::Record, Some(held)) = (&sig.ret, &record)
+                    && matches!(&s.return_type, Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit | Ty::Unknown))
+                {
+                    s.return_type = Ty::Result(Box::new(held.clone()));
+                }
             }
         }
     }

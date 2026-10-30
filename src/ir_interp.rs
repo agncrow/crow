@@ -2637,8 +2637,15 @@ impl IrInterp {
                 let rest: Vec<CrowValue> = vals[1..].to_vec();
                 if let Some(held) = self.held.as_mut() {
                     held.push(HeldEffect::Later(f, rest));
-                } else {
-                    let _ = self.call_value(&f, rest)?;
+                } else if let Err(e) = self.call_value(&f, rest) {
+                    // a stop inside the work ends the work, not the
+                    // program, and says why, as the compiled program's
+                    // thread does (spec §15); a control signal goes on
+                    if e.starts_with('\u{1}') {
+                        return Err(e);
+                    }
+                    crow_runtime::display::flush_output();
+                    eprintln!("runtime error: {}", e);
                 }
                 Ok(CrowValue::ok(Value::Bool(true)))
             }

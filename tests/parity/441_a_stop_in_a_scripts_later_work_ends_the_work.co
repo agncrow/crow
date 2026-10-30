@@ -1,0 +1,14 @@
+--- A stop inside a script's `later` work ends the work, not the script,
+--- and says why (spec, Background Work: "a failure stops it ... the
+--- notice says why"): the interpreter, running the work inline, had ended
+--- the program with it, and the compiled program's thread had ended in
+--- silence, the script going on as if nothing had happened. Both print
+--- the stop, then the script goes on.
+fn work[]
+    xs = [1]
+    log[xs[5]]
+
+later[work]
+while running[work]
+    sleep[10]
+log['after the work']
