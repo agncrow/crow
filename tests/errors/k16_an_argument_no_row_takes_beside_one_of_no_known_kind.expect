@@ -1,0 +1,3 @@
+k16_an_argument_no_row_takes_beside_one_of_no_known_kind.co:10:18: window[] takes a frame, text, text, an int, a list of text, a number and text or a frame, text, text, an int, text, a number and text, got a value, text, an int, text, a list, a number and text
+  10 │     return frame.window[f, 'qty', 3, 'sum']
+     │                  ^^^^^^

@@ -3852,6 +3852,16 @@ pub(crate) fn part_prefix_of_declaration(name: &str) -> Option<String> {
     })
 }
 
+/// Whether a function is a part's whose own file does not import ui: an
+/// element's or a control's name in it (`table`, `span`, `select`) is any
+/// name, whatever the entry imports (spec, Modules: each file's imports
+/// are its own). Magpie's lists named `table` and `span` had been refused
+/// as elements outside a view in the magpie example app, which imports ui
+/// where Magpie does not.
+pub(crate) fn part_without_ui(name: &str) -> bool {
+    part_prefix_of_declaration(name).is_some_and(|prefix| !PARTS_WITH_UI.with(|u| u.borrow().contains(&prefix)))
+}
+
 /// The part file a declaration came from, by its module prefix (the
 /// longest that fits); none for the entry file's own.
 fn file_of_declaration(name: &str) -> Option<String> {
@@ -5540,6 +5550,10 @@ thread_local! {
     /// module prefix (`sim_session_`) → the part's project-relative file
     static EXPANSION_PARTS: std::cell::RefCell<std::collections::BTreeMap<String, String>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
+    /// the module prefixes of the parts whose own files import ui (`use
+    /// ui`, `use web.ui`): in the others an element's name is any name
+    static PARTS_WITH_UI: std::cell::RefCell<std::collections::BTreeSet<String>> =
+        const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
     /// module prefix → the part's file on disk, read back to refine an
     /// error's line against the part's own text
     static EXPANSION_FILES: std::cell::RefCell<std::collections::BTreeMap<String, std::path::PathBuf>> =
@@ -5881,6 +5895,9 @@ fn expand_into(
                 continue;
             }
         };
+        // (whether the part's own file imports ui, before its imports are
+        // hoisted beside the program's)
+        let imports_ui = mod_stmts.iter().any(|s| matches!(s, ast::Stmt::Use { path, .. } if path == "ui" || path == "web.ui"));
         // The module's own imports are hoisted first and its references to
         // them rewritten
         let mod_dir = file_path.parent().unwrap_or(source_dir);
@@ -5920,6 +5937,14 @@ fn expand_into(
         });
         EXPANSION_FILES.with(|f| {
             f.borrow_mut().insert(format!("{}_", prefix), canon.clone());
+        });
+        PARTS_WITH_UI.with(|u| {
+            let mut u = u.borrow_mut();
+            if imports_ui {
+                u.insert(format!("{}_", prefix));
+            } else {
+                u.remove(&format!("{}_", prefix));
+            }
         });
         // Collect the module's own top-level names, then rewrite both the
         // declarations AND every reference inside module bodies — a module
@@ -6568,6 +6593,38 @@ mod module_parts_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A part's names are its own imports' in an app that imports ui: in a
+    /// part that does not import ui, a list named `span` or `table` is a
+    /// list and a select of a frame is frame's — Magpie's had been refused
+    /// as elements outside a view in the magpie example app — while a part
+    /// that imports ui is held to ui's names as the entry is.
+    #[test]
+    fn a_parts_names_are_its_own_in_an_app_that_imports_ui() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_ui_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(
+            dir.join("lib/util.co"),
+            "use frame\n\nfn firsts[xs]\n    span = [xs[0], xs[1]]\n    table = span\n    return table[0] + span[1]\n\nfn picked[n]\n    f = frame.new[a = [n], b = [n]]\n    return len[select[f, ['a']].columns]\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("lib/shown.co"), "use ui\n\nfn widest[xs]\n    span = xs\n    return span[0]\n").unwrap();
+        let check = |src: &str| -> Result<(), String> {
+            let stmts = build(src).unwrap();
+            let mut visited = std::collections::HashSet::new();
+            let stmts = expand_module_imports_checked(&stmts, &dir, &mut visited)?;
+            let lowered = lower::lower_program(&stmts).map_err(|e| format!("error: {}", e))?;
+            infer_and_validate(&lowered, false).map(|_| ())
+        };
+        let app = "use web, ui\nuse lib.util\n\nview home[]\n    return div[str[util.firsts[[3, 4]] + util.picked[1]]]\n\nserve[3000]\npage['/', home]\n";
+        assert!(check(app).is_ok(), "{:?}", check(app).err());
+        let held = app.replace("use lib.util\n", "use lib.util, lib.shown\n").replace("util.picked[1]]]", "util.picked[1] + shown.widest[[5]]]]");
+        let err = check(&held).unwrap_err();
+        assert!(err.contains("span"), "{}", err);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// An imported file's functions that nothing the program reaches names
     /// are dropped before the program is typed: one the entry calls, one
     /// that one calls, one handed as a value and one named in an
@@ -6822,10 +6879,12 @@ mod module_parts_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A part's function only its own tests call is typed from their calls
-    /// whichever file is the entry: the entry's build leaves the part's
-    /// tests out, and the function's calls had been run by name there
-    /// (finch's `cut`, `minute` and `channel_tape`, in the app)
+    /// A part's function the program names but whose parameters nothing
+    /// in it types — handed as a value, never called — is typed from the
+    /// part's tests' calls whichever file is the entry: the entry's build
+    /// leaves the part's tests out, and the function's calls had been run
+    /// by name there (finch's `cut`, `minute` and `channel_tape`, in the
+    /// app). One the program does not name at all is not in its build.
     #[test]
     fn a_parts_function_its_tests_call_is_typed_in_the_whole_program() {
         let dir = std::env::temp_dir().join(format!("crow_parts_tested_{}", std::process::id()));
@@ -6837,14 +6896,18 @@ mod module_parts_tests {
             "struct Tape [t, px]\nfn cut[tape, upto]\n    return Tape[min[tape.t, upto], abs[tape.px]]\ntest cuts[]\n    assert[cut[Tape[3.0, -1.0], 2.0].t eq 2.0]\n",
         )
         .unwrap();
-        let stmts = build("use lib.tape\nlog['ready']\n").unwrap();
-        let mut visited = std::collections::HashSet::new();
-        let stmts = expand_module_imports(&stmts, &dir, &mut visited);
-        let lowered = lower::lower_program(&stmts).unwrap();
-        let mut ctx = infer_and_validate(&lowered, false).unwrap();
-        let program = lower_ir::lower(&lowered, &mut ctx, "parts").unwrap();
-        let text = ir::print(&program);
+        let ir_of = |src: &str| {
+            let stmts = build(src).unwrap();
+            let mut visited = std::collections::HashSet::new();
+            let stmts = expand_module_imports(&stmts, &dir, &mut visited);
+            let lowered = lower::lower_program(&stmts).unwrap();
+            let mut ctx = infer_and_validate(&lowered, false).unwrap();
+            ir::print(&lower_ir::lower(&lowered, &mut ctx, "parts").unwrap())
+        };
+        let text = ir_of("use lib.tape\ng = tape.cut\nlog['ready']\n");
         assert!(text.contains("lib_tape_cut(tape: Record(lib_tape_Tape), upto: Float)"), "{}", text);
+        let text = ir_of("use lib.tape\nlog['ready']\n");
+        assert!(!text.contains("lib_tape_cut("), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

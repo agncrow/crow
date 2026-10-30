@@ -880,11 +880,11 @@ impl Emitter {
                 continue;
             }
             let f = self.fns.get(n).unwrap().clone();
-            self.in_crow_fn = crate::modules::is_crow_fn(&f.name);
+            self.enter_fn_kind(&f.name);
             let scope = self.registry.enter(&f.name);
             self.emit_function(&f);
             self.registry.resume(scope);
-            self.in_crow_fn = false;
+            self.leave_fn_kind();
         }
         let derives: Vec<Derive> = self.part.derives.clone();
         for d in &derives {
@@ -902,11 +902,11 @@ impl Emitter {
         }
         for t in self.traced_functions.clone() {
             if let Some(f) = self.fns.get(&t).cloned() {
-                self.in_crow_fn = crate::modules::is_crow_fn(&f.name);
+                self.enter_fn_kind(&f.name);
                 let scope = self.registry.enter(&f.name);
                 self.emit_traced_function(&f);
                 self.registry.resume(scope);
-                self.in_crow_fn = false;
+                self.leave_fn_kind();
             }
         }
         if !self.reactive_event_handlers.is_empty() {

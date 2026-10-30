@@ -1852,7 +1852,7 @@ impl<'a> Lowerer<'a> {
         // ui elements exist only inside view blocks — and a standard module's
         // own function, inlined, keeps its names: llm's `embed` stacks
         // tensor rows in a `use ui` program too (its `stack` is math's)
-        if crate::lower::UI_ELEMENTS.contains(&name) && self.v.ui_mode && !self.in_view() && !crate::modules::is_crow_fn(&self.current_fn) {
+        if crate::lower::UI_ELEMENTS.contains(&name) && self.v.ui_mode && !self.in_view() && self.reads_ui_names() {
             self.refuse(format!(
                 "ui element '{}' can only be used inside a view block — declare the builder with 'view name[params]' instead of 'fn'",
                 name
@@ -1920,7 +1920,7 @@ impl<'a> Lowerer<'a> {
                     // dropdown had been refused once the view's facts were
                     // typed)
                     let first_is_frame = types.first().is_some_and(|t| matches!(t.payload(), Ty::Frame(_)));
-                    if self.in_ui && !crate::modules::is_crow_fn(&self.current_fn) && crate::lower::is_ui_control(name, first_is_frame) {
+                    if self.in_ui && self.reads_ui_names() && crate::lower::is_ui_control(name, first_is_frame) {
                         return;
                     }
                     // a name the core answers too (frame's sort, math's max)

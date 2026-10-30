@@ -1,13 +1,12 @@
 --- inside a standard module, a helper's use of what the program handed is
 --- held to its kinds as the program's own calls are, and the refusal names
---- the function the program called: a list handed as prior's position had
---- reached batch_asof's int through the helper — a stop interpreted, no
---- build compiled. The join is Crow's now (magpie.exec, 2026-10-28), and
---- the list meets its first use there, a comparison with a position (a
---- mask, since a list beside a number is one); a row's kinds inside a
---- helper stay held by j80's `pack`
-use magpie, frame
+--- the function the program called: chat's `system` reaches `len` two
+--- helpers down (`_chat_with`, then `_body_of`), and an int there is
+--- refused naming chat at the program's line. (It had been Magpie's
+--- `prior`, until Magpie became a package of its own.)
+use llm
 
-labels = frame.new[user = ['ann', 'bob'], at = [10, 20]]
-rows = magpie.prior['no-such-log', labels, ['score'], push[[], 5]]
-log[rows]
+m = reach['http://127.0.0.1:1/v1']
+talk = ask['hello']
+r = chat[m, talk, system = 5]
+log[r.ok]

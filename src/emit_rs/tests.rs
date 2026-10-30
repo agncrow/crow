@@ -2147,13 +2147,12 @@ fn test_ui_field_codegen() {
 #[test]
 fn a_select_of_a_frame_is_frames_in_a_page() {
     // the lowering's rule (`is_ui_control`): a select of a frame is frame's
-    // in a page as anywhere, and a standard module's body imports no ui —
-    // magpie's `_gathered` had printed the dropdown, and examples/magpie
-    // did not build compiled
+    // in a page as anywhere — Magpie's `_gathered` had printed the
+    // dropdown, and examples/magpie did not build compiled (a part whose
+    // file does not import ui: main.rs's
+    // a_parts_names_are_its_own_in_an_app_that_imports_ui)
     let own = transpile("use web, ui, frame\nfn cols[n]\n    f = frame.new[a = [n], b = [n]]\n    return select[f, ['a']]\nview render[s]\n    return div[str[len[cols[1].columns]]]\nserve[3000]\npage['/', render]\n");
     assert!(!own.contains("select_input"), "{}", own);
-    let module = transpile("use web, ui, frame, magpie\nderive orders\n    return latest['orders']\nview render[s]\n    return div[str[len[orders]]]\nserve[3000]\npage['/', render]\n");
-    assert!(!module.contains("select_input"), "{}", module);
 }
 
 #[test]

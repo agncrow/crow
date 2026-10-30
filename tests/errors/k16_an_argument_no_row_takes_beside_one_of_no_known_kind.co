@@ -1,0 +1,12 @@
+--- An argument no row of the name takes is refused beside an argument
+--- whose kind is not known yet, which may be any: `window`'s third
+--- argument is text, and `3` is an int whatever `f` turns out to be. Any
+--- argument of no known kind had spared the whole call, and the lowering
+--- handed the int to the text parameter — "internal error: the lowered
+--- program disagrees with itself", in a function nothing calls
+use frame
+
+fn unused[f]
+    return frame.window[f, 'qty', 3, 'sum']
+
+log[1]

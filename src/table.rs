@@ -3358,13 +3358,17 @@ pub const READ_FIRST: &str = " — a value whose type the program does not know 
 
 /// The refusal of a call that no row of its name — in the core (`""`) and
 /// in the modules given — takes, by count or by kind; none when one takes
-/// it, or when an argument's kind is not known before the program runs
-/// (a JSON value's is known only then).
+/// it. An argument whose kind is not known before the program runs may be
+/// of any kind, so such a call is refused only where no row takes the
+/// arguments that are known, each at its place: any unknown argument had
+/// spared the whole call, and `frame.window[f, 'qty', 3, 'sum']` of a
+/// parameter nothing typed reached the lowering, which handed the int to
+/// the text parameter — "the lowered program disagrees with itself".
 pub fn refusal(modules: &[&str], name: &str, args: &[Arg]) -> Option<String> {
     // (a form that declares its kinds — a function parameter, its answer —
     // is checked as a runtime row is)
     let rows: Vec<&Row> = ROWS.iter().chain(FORMS.iter().filter(|r| checked_form(r))).filter(|r| r.name == name && modules.contains(&r.module)).collect();
-    if rows.is_empty() || rows.iter().any(|r| takes(r, args)) || args.contains(&Arg::Unknown) {
+    if rows.is_empty() || rows.iter().any(|r| takes_known(r, args)) {
         return None;
     }
     // a parsed JSON value is read as one type before a builtin computes
@@ -3828,6 +3832,15 @@ impl Kind {
 fn takes(row: &Row, args: &[Arg]) -> bool {
     match spans(row.params, args.len(), row.name) {
         Ok(spans) => row.params.iter().zip(spans).all(|(k, (a, b))| args[a..b].iter().all(|x| accepts(row, *k, *x))),
+        Err(_) => false,
+    }
+}
+
+/// `takes`, an argument whose kind is not known yet taken wherever it
+/// stands (it may be any kind until the program runs).
+fn takes_known(row: &Row, args: &[Arg]) -> bool {
+    match spans(row.params, args.len(), row.name) {
+        Ok(spans) => row.params.iter().zip(spans).all(|(k, (a, b))| args[a..b].iter().all(|x| *x == Arg::Unknown || accepts(row, *k, *x))),
         Err(_) => false,
     }
 }

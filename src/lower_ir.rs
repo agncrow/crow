@@ -151,7 +151,45 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
             }
         }
     }
+    callers_lines(&mut program);
     Ok(program)
+}
+
+/// A dependency's functions — a package's installed under crow_modules,
+/// at any depth — keep no line of their own once the lowering is through
+/// and its refusals are made (they name the package's own file and line):
+/// a stop inside one names the program's line whose call reached it, as a
+/// standard module's does (their lines go as they are inlined; the
+/// emitter notes the call's line, `at_call_line`), where it had named a
+/// line of the package's file the program never wrote — Magpie's
+/// `line 1582` for a parsed value handed to `merge` on the program's line 11.
+fn callers_lines(program: &mut Program) {
+    fn strip(b: &mut Block) {
+        b.retain(|s| !matches!(s, Stmt::Line(_)));
+        for s in b.iter_mut() {
+            match s {
+                Stmt::If { then, els, .. } => {
+                    strip(then);
+                    if let Some(e) = els {
+                        strip(e);
+                    }
+                }
+                Stmt::While { body, .. } | Stmt::For { body, .. } => strip(body),
+                _ => {}
+            }
+        }
+    }
+    for part in &mut program.parts {
+        for f in part.fns.iter_mut().filter(|f| crate::from_dependency(&f.name)) {
+            strip(&mut f.body);
+            // (a collecting loop's body, inside an expression)
+            crate::ir::visit_block_mut(&mut f.body, &mut |e| {
+                if let Expr::ForExpr { body, .. } = e {
+                    strip(body);
+                }
+            });
+        }
+    }
 }
 
 // ── effects: answered, or held to the commit ────────────────────────
@@ -2411,6 +2449,15 @@ impl<'a> Lowerer<'a> {
             Ty::Result(inner) if self.holds_state && self.at == Where::Top && self.ctx.facts.contains(name) => *inner,
             other => other,
         }
+    }
+
+    /// Whether the code lowered now reads the names ui brings — an
+    /// element, a control — in a ui program: never a standard module's
+    /// inlined function, nor a part's whose own file does not import ui
+    /// (each file's imports are its own: Magpie's lists `table` and `span`
+    /// had been read as elements in an app importing ui).
+    pub(super) fn reads_ui_names(&self) -> bool {
+        !crate::modules::is_crow_fn(&self.current_fn) && !crate::part_without_ui(&self.current_fn)
     }
 
     fn sees_facts(&self) -> bool {
@@ -5935,7 +5982,7 @@ impl<'a> Lowerer<'a> {
         // a ui element with its attributes first (lower.rs put them there);
         // a standard module's inlined function keeps its names (llm's
         // `embed` stacks tensor rows: math's `stack`, not the element)
-        if module.is_none() && self.in_ui && crate::lower::UI_ELEMENTS.contains(&name.as_str()) && !crate::modules::is_crow_fn(&self.current_fn) {
+        if module.is_none() && self.in_ui && crate::lower::UI_ELEMENTS.contains(&name.as_str()) && self.reads_ui_names() {
             let mut attrs = Vec::new();
             let mut children = Vec::new();
             // what the call scan reads of the arguments: the attributes as
@@ -6715,7 +6762,7 @@ impl<'a> Lowerer<'a> {
                 let first_is_frame = lowered.first().is_some_and(|x| matches!(x.ty().payload(), Ty::Frame(_)));
                 // (never inside a standard module's body: no module imports
                 // ui, and its `select[whole, names]` is frame's)
-                let control = self.in_ui && !crate::modules::is_crow_fn(&self.current_fn) && crate::lower::is_ui_control(&name, first_is_frame);
+                let control = self.in_ui && self.reads_ui_names() && crate::lower::is_ui_control(&name, first_is_frame);
                 // (an element's name is an element's in a ui program only:
                 // elsewhere `stack[rows]` is math's, checked as math's —
                 // unchecked, a list no row takes had reached the verifier)

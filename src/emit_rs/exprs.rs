@@ -3246,11 +3246,12 @@ impl Emitter {
     /// reached it (crow_runtime::stops::call_line, noted by `at_call_line`).
     /// The position `i` names in a sequence of `len` (each printed Rust),
     /// or the program stops on this statement's line — inside a standard
-    /// module's function written in Crow, on the call's, read only when it
+    /// module's function written in Crow or a dependency's, on the call's,
+    /// read only when it
     /// stops (crow_runtime::stops::at: no call the optimizer cannot see
     /// through, so a loop's reads of a list it does not write are hoisted).
     pub(crate) fn index_at(&self, i: &str, len: &str) -> String {
-        if self.in_crow_fn {
+        if self.caller_line {
             format!("crow_runtime::stops::at_call({}, {})", i, len)
         } else {
             format!("crow_runtime::stops::at({}, {}, {})", i, len, self.current_line)
@@ -3258,18 +3259,19 @@ impl Emitter {
     }
 
     pub(crate) fn line_now(&self) -> String {
-        if self.in_crow_fn {
+        if self.caller_line {
             "crow_runtime::stops::call_line()".to_string()
         } else {
             self.current_line.to_string()
         }
     }
 
-    /// A call of a standard module's function written in Crow, the call's
-    /// line noted first so a stop inside it names this line (inside such a
-    /// function the note already holds the program's line).
+    /// A call of a standard module's function written in Crow, or of a
+    /// dependency's, the call's line noted first so a stop inside it names
+    /// this line (inside such a function the note already holds the
+    /// program's line).
     pub(crate) fn at_call_line(&mut self, callee: &str, call: String) -> String {
-        if crate::modules::is_crow_fn(callee) && !self.in_crow_fn {
+        if (crate::modules::is_crow_fn(callee) || crate::from_dependency(callee)) && !self.caller_line {
             self.needs_crow_runtime = true;
             format!("{{ crow_runtime::stops::at_line({}); {} }}", self.current_line, call)
         } else {

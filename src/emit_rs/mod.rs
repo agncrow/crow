@@ -218,9 +218,17 @@ pub(crate) struct Emitter {
     pub(crate) closure_depth: usize,
     pub(crate) current_line: usize,
     /// Whether the function being emitted is a standard module's written
-    /// in Crow (crate::modules::is_crow_fn): its stops name the line it
-    /// was called from (`line_now`), noted before the call.
+    /// in Crow (crate::modules::is_crow_fn).
     pub(crate) in_crow_fn: bool,
+    /// Whether its stops name the line it was called from (`line_now`,
+    /// noted before the call): a standard module's function, or a
+    /// dependency's (a package installed under crow_modules), whose own
+    /// lines are no line the program wrote.
+    pub(crate) caller_line: bool,
+    /// Whether an element's or a control's name means it here (the
+    /// lowering's `reads_ui_names`): not in a standard module's function,
+    /// nor in a part's whose own file does not import ui.
+    pub(crate) reads_ui_names: bool,
     pub(crate) binop_counter: usize,
     /// The lists a collecting loop bound by value where it refused a failed
     /// one (`_list_N`): walked by value, their items moved into the body.
@@ -310,6 +318,8 @@ impl Emitter {
             closure_depth: 0,
             current_line: 0,
             in_crow_fn: false,
+            caller_line: false,
+            reads_ui_names: true,
             binop_counter: 0,
             owned_lists: HashSet::new(),
             move_target: None,
@@ -490,6 +500,22 @@ fn raw(e: &Expr) -> &Expr {
 pub(crate) use crate::ir::in_place_builtin;
 
 impl Emitter {
+    /// What the function about to be emitted is, by its name: a standard
+    /// module's, a dependency's, a part's without ui (`in_crow_fn`,
+    /// `caller_line`, `reads_ui_names`).
+    pub(crate) fn enter_fn_kind(&mut self, name: &str) {
+        self.in_crow_fn = crate::modules::is_crow_fn(name);
+        self.caller_line = self.in_crow_fn || crate::from_dependency(name);
+        self.reads_ui_names = !self.in_crow_fn && !crate::part_without_ui(name);
+    }
+
+    /// The program's own code again, after a function.
+    pub(crate) fn leave_fn_kind(&mut self) {
+        self.in_crow_fn = false;
+        self.caller_line = false;
+        self.reads_ui_names = true;
+    }
+
     /// The crate feature a row's call needs, declared on the row (table): a
     /// response as Arrow, the GPU, the Parquet kernels.
     pub(crate) fn note_feature(&mut self, name: &str) {

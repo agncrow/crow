@@ -482,10 +482,22 @@ fn fresh_copy(app: &std::path::Path) -> Result<std::path::PathBuf, String> {
     for line in String::from_utf8_lossy(&listed.stdout).split('\0').filter(|l| !l.is_empty()) {
         let from = std::path::Path::new(line);
         let Ok(rel) = from.strip_prefix(app) else { continue };
+        let dest = to.join(rel);
+        // a link the app holds — an installed package, `crow_modules/x` —
+        // links the copy to what it reaches (its relative path would reach
+        // nothing from the copy): skipped as no file, the magpie app had
+        // lost its package and exited, "2 mistakes", in both modes
+        if from.is_symlink() {
+            let reached = std::fs::canonicalize(from).map_err(|e| format!("cannot follow {}: {}", from.display(), e))?;
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::os::unix::fs::symlink(&reached, &dest).map_err(|e| format!("cannot link {}: {}", dest.display(), e))?;
+            continue;
+        }
         if !from.is_file() {
             continue;
         }
-        let dest = to.join(rel);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
