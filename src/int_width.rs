@@ -1577,6 +1577,33 @@ impl Walk {
                 self.flow_into(&place, a);
             }
         }
+        // (and a form that applies a function to each item of a list it
+        // walks — `any[xs, p]`: the parameter takes each item, as a loop's
+        // variable does; a list of growing ints had been handed, item by
+        // item, to a parameter held in 64 bits, and the compiled program
+        // did not build)
+        let mut applied: Vec<(String, usize, Expr)> = Vec::new();
+        crate::ir::visit_expr(e, &mut |x| {
+            if let Some((f, at, list)) = applied_to_items(x) {
+                applied.push((f, at, list.clone()));
+            }
+        });
+        for (g, at, list) in applied {
+            let Some(p) = self.fns.get(g.as_str()).and_then(|ps| ps.get(at)).cloned() else { continue };
+            let item = crate::type_infer::TypeContext::loop_item(list.ty_ref().cloned().unwrap_or(Ty::Unknown));
+            if !is_int(Some(&item)) {
+                continue;
+            }
+            let Some(lp) = self.place_of(&list) else { continue };
+            self.made_items(&lp, &list);
+            let items = Place::Items(Box::new(lp));
+            let r = self.get(&items);
+            let place = Place::Local(g.clone(), p);
+            if self.soft.contains(&self.root(&items)) {
+                self.mark_soft(&place);
+            }
+            self.widen_base(&place, r);
+        }
         // (a collecting loop's body: its assignments and calls)
         if let Expr::ForExpr { var, iter, body, .. } = e {
             let place = self.local(var);
@@ -1967,6 +1994,31 @@ fn handed_on(name: &str, args: &[Expr]) -> Option<(String, usize, usize)> {
     }
 }
 
+/// A form that applies a function of the program to each item of a list
+/// it walks — `any[xs, p]`, `all[xs, p]` and `find[xs, p]` call `p[item]`
+/// by its name: the row says, a function parameter whose signature takes
+/// an `Item` of its `Walked` argument. The function, its item's place
+/// among its parameters, the walked argument's position and the
+/// function's.
+fn applied_positions(name: &str, args: &[Expr]) -> Option<(String, usize, usize, usize)> {
+    let w = crate::table::walked_param(name, args.len())?;
+    crate::table::fn_params(name, args.len()).into_iter().find_map(|(i, sig)| {
+        let at = sig.params.iter().position(|k| matches!(k, crate::table::Kind::Item))?;
+        match args.get(i) {
+            Some(Expr::FnRef(f, _)) => Some((f.clone(), at, w, i)),
+            _ => None,
+        }
+    })
+}
+
+/// A call's `applied_positions`: the function, its item's place among its
+/// parameters, and the list it walks.
+fn applied_to_items(x: &Expr) -> Option<(String, usize, &Expr)> {
+    let Expr::Call { target: Target::Runtime(n), args, .. } = x else { return None };
+    let (f, at, w, _) = applied_positions(n, args)?;
+    args.get(w).map(|list| (f, at, list))
+}
+
 fn is_int(t: Option<&Ty>) -> bool {
     matches!(t.map(|t| t.payload()), Some(Ty::Int) | Some(Ty::Big))
 }
@@ -2146,6 +2198,9 @@ pub fn widen(program: &mut Program) {
             if let Some((f, _, _)) = called_by_name(x) {
                 *named.entry(f.to_string()).or_default() += 1;
             }
+            if let Some((f, _, _)) = applied_to_items(x) {
+                *named.entry(f).or_default() += 1;
+            }
         };
         for f in &part.fns {
             crate::ir::visit_block(&f.body, &mut note);
@@ -2216,8 +2271,25 @@ pub fn widen(program: &mut Program) {
         adapters.insert(name, wrapper);
     }
     if !adapters.is_empty() {
+        // (a form's function called by its name — `any[xs, p]`, `later[f,
+        // a]` — keeps the function itself: what the form hands it is
+        // converted to the parameters it takes, which an adapter of the
+        // 64-bit signature would take narrowed; the visit meets the form
+        // before its arguments, so the form notes where its function lies)
+        let mut by_name: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut swap = |x: &mut Expr| {
+            let named_at = match &*x {
+                Expr::Call { target: Target::Runtime(n), args, .. } => handed_on(n, args).map(|(_, _, start)| start - 1).or_else(|| applied_positions(n, args).map(|(_, _, _, i)| i)).and_then(|i| args.get(i)),
+                Expr::Effect { name, args, .. } => handed_on(name, args).map(|(_, _, start)| start - 1).and_then(|i| args.get(i)),
+                _ => None,
+            }
+            .map(|a| a as *const Expr as usize);
+            if let Some(at) = named_at {
+                by_name.insert(at);
+            }
+            let here = &*x as *const Expr as usize;
             if let Expr::FnRef(name, _) = x
+                && !by_name.contains(&here)
                 && let Some(w) = adapters.get(name.as_str())
             {
                 *name = w.clone();
@@ -2805,6 +2877,21 @@ impl<'a> Retype<'a> {
                         // narrowed as the form's own, a growing int had stopped
                         // a revision interpreted and not built compiled —
                         // parity 349)
+                        // (and one that applies a function to each item of a
+                        // list it walks — `any[xs, p]`: the list's items as
+                        // the parameter takes them, a list of 64-bit ints
+                        // handed where the parameter grows converted whole)
+                        if let Target::Runtime(n) = other
+                            && let Some((f, at, w, _)) = applied_positions(n, args)
+                            && let Some(p) = self.sigs.params.get(f.as_str()).and_then(|ps| ps.get(at)).cloned()
+                            && let Some(list) = args.get_mut(w)
+                            && let Ty::List(item) = list.ty().payload().clone()
+                            && is_int(Some(&item))
+                            && is_int(Some(&p))
+                            && has_big(&item) != has_big(&p)
+                        {
+                            *list = to_type(take(list), &Ty::List(Box::new(p)));
+                        }
                         let mut own = args.len();
                         if let Target::Runtime(n) = other
                             && let Some((f, skipped, start)) = handed_on(n, args)

@@ -9,6 +9,13 @@ history says the rest.
 
 ### Fixed
 
+- A function `any`, `all` and `find` apply to each item of a list takes
+  the items as they are in compiled programs too: given a list holding
+  growing ints, its parameter grows, and a list of 64-bit ints or a
+  vector handed to it elsewhere is converted. The width pass had passed
+  no item's range to the parameter, so a list of growing ints was handed,
+  item by item, to a parameter held in 64 bits, and the program did not
+  build (parity 438; fuzz seed 1793331019).
 - A Magpie log removed while its flush ran keeps none of its rows in
   compiled programs too. The flush runs on a thread of its own there, and
   one that had claimed the rows before an `rm` wrote them a moment later

@@ -47,6 +47,19 @@ impl Emitter {
         }
     }
 
+    /// The item a predicate handed to `any`, `all` or `find` is given, from
+    /// the walked value's item `x`: a predicate taking a growing int (a list
+    /// of growing ints is walked with it elsewhere) is given a vector's
+    /// number, or a 64-bit int, as one; any other takes `x` with its cast.
+    fn pred_item(&self, pred: &Expr, items: &Ty, x: &str) -> Option<String> {
+        let big = fn_named(pred).and_then(|f| self.fns.get(f)).and_then(|sig| sig.params.first()).is_some_and(|(_, t)| matches!(t, Ty::Big));
+        match items {
+            Ty::Tensor(..) if big => Some(format!("crow_runtime::int::Int::from({} as i64)", x)),
+            Ty::List(inner) if big && matches!(inner.as_ref(), Ty::Int) => Some(format!("crow_runtime::int::Int::from({})", x)),
+            _ => None,
+        }
+    }
+
 
     /// SQL parameters: each element of a literal list binds as its own
     /// value; a fallible element reports itself before the statement runs.
@@ -629,10 +642,11 @@ impl Emitter {
             "any" | "all" if n == 2 => {
                 self.needs_rayon = true;
                 if matches!(in0, Ty::Tensor(..)) {
-                    let cast = self.pred_cast(&args[1], &in0);
-                    return Some(Self::on_cores(format!("{}.to_vec().par_iter().{}(|&_x| {}(_x{}))", a[0], name, a[1], cast), true));
+                    let item = self.pred_item(&args[1], &in0, "_x").unwrap_or_else(|| format!("_x{}", self.pred_cast(&args[1], &in0)));
+                    return Some(Self::on_cores(format!("{}.to_vec().par_iter().{}(|&_x| {}({}))", a[0], name, a[1], item), true));
                 }
                 let call = match self.pred_cast(&args[1], &in0) {
+                    _ if self.pred_item(&args[1], &in0, "*_x").is_some() => format!("({})", self.pred_item(&args[1], &in0, "*_x").unwrap_or_default()),
                     "" if self.pred_takes_ref(&args[1]) => "(_x)".to_string(),
                     "" => "(_x.clone())".to_string(),
                     cast => format!("(*_x{})", cast),
@@ -648,13 +662,14 @@ impl Emitter {
                 let default = el.default_rust_value();
                 if matches!(in0, Ty::Tensor(..)) {
                     let cast = if matches!(el, Ty::Int) { " as i64" } else { "" };
-                    let call_cast = self.pred_cast(&args[1], &in0);
+                    let item = self.pred_item(&args[1], &in0, "_x").unwrap_or_else(|| format!("_x{}", self.pred_cast(&args[1], &in0)));
                     return Some(format!(
-                        "{{ match crow_runtime::cores::run(|| {}.to_vec().par_iter().copied().find_first(|&_x| {}(_x{}))) {{ Some(_v) => CrowResult {{ ok: true, value: _v{}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
-                        a[0], a[1], call_cast, cast, default
+                        "{{ match crow_runtime::cores::run(|| {}.to_vec().par_iter().copied().find_first(|&_x| {}({}))) {{ Some(_v) => CrowResult {{ ok: true, value: _v{}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+                        a[0], a[1], item, cast, default
                     ));
                 }
                 let call = match self.pred_cast(&args[1], &in0) {
+                    _ if self.pred_item(&args[1], &in0, "**_x").is_some() => format!("({})", self.pred_item(&args[1], &in0, "**_x").unwrap_or_default()),
                     "" if self.pred_takes_ref(&args[1]) => "(*_x)".to_string(),
                     "" => "((*_x).clone())".to_string(),
                     cast => format!("(**_x{})", cast),

@@ -1,0 +1,24 @@
+--- A function `any`, `all` and `find` apply to each item of a list takes
+--- the items as they are. Given a list holding growing ints (`int` of a
+--- float answers the growing form, and a power past 64 bits is one), its
+--- parameter grows, and a list of 64-bit ints or a vector handed to it
+--- elsewhere is converted to it. Compiled, the items had been handed to a
+--- parameter held in 64 bits, and the program did not build (fuzz seed
+--- 1793331019).
+fn big_enough[x]
+    return x gt 1
+
+fn past_64_bits[x]
+    return x gt 2 ^ 64
+
+grown = push[range[1], int[10.1]]
+log[any[grown, big_enough]]
+log[all[grown, big_enough]]
+log[any[range[4], big_enough]]
+log[all[[3, 1, 2, 3], big_enough]]
+huge = push[range[3], 2 ^ 100]
+log[any[huge, past_64_bits]]
+log[all[huge, past_64_bits]]
+log[find[huge, past_64_bits]]
+log[find[huge, big_enough]]
+log[any[[1, 2], past_64_bits]]

@@ -611,7 +611,12 @@ steps on every push and must be green.
   list handed to a function flows ONE way into its parameter
   (`flow_into`): joined, `report[ones]` and `report[twos]` (twos made of
   ones' items) shared one range that grew round every pass, and every
-  count of k-nucleotide became a big int. `int[text]` always answers the
+  count of k-nucleotide became a big int. A form that applies a function
+  to each item of a list it walks (`any`, `all`, `find`: the row's
+  `Kind::Item` of its `Kind::Walked`) passes the items' range to the
+  function's parameter (`applied_to_items`), and a function a form calls
+  by its name keeps itself, never the 64-bit adapter a function handed as
+  a value gets (parity 438). `int[text]` always answers the
   growing form; `range[n]` clamps its items below 2^48 (soft). Inside a
   function `grad` differentiates, a dual number or a traced value that
   reaches a growing form's row is answered by the name the program wrote
