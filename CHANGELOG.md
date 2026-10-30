@@ -40,6 +40,11 @@ history says the rest.
   program never wrote (`line 1582` of Magpie's main.co, where the program
   handed `merge` a parsed value on its line 11). A part of the program's
   own names its own line, as before.
+- A package installed from a repository comes without its own
+  `crow_modules/`, the links its repository keeps to the packages it is
+  written over: `crow install` puts those beside it, and copied with it,
+  kg's link to magpie had become a second magpie inside kg whose every
+  name was "declared twice" beside the magpie installed for it.
 - `crow test --served` serves an app with the packages it links: the
   copy each mode serves from had held only the app's files, so an app
   over an installed package exited before serving, "2 mistakes".

@@ -1609,5 +1609,8 @@ steps on every push and must be green — all but Magpie's suite (the
   `caller_line` in the emitter); a call's known arguments are held to its
   rows beside an unknown one (`takes_known`: any unknown argument had
   spared the call, and the lowering handed an int to a text parameter);
-  and the served harness links an app's links into the copy it serves
-  (`fresh_copy`; tests/served_links.rs).
+  the served harness links an app's links into the copy it serves
+  (`fresh_copy`; tests/served_links.rs); and a package `crow install`
+  copies from a repository comes without its own `crow_modules/`
+  (`copy_package`: kg's committed link to magpie had been copied as a
+  second magpie inside kg, every name "declared twice").

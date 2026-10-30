@@ -261,6 +261,29 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// A package's files copied into its place under crow_modules: all but its
+/// own `crow_modules/` — the links its repository keeps to the packages it
+/// is written over, while it is worked on — since `crow install` puts its
+/// dependencies beside it, flat. Copied with them, kg's link to magpie had
+/// become a second magpie inside kg, whose files took the prefixes of the
+/// magpie beside it: "declared twice", for every name.
+fn copy_package(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| format!("{}: {}", to.display(), e))?;
+    for entry in std::fs::read_dir(from).map_err(|e| format!("{}: {}", from.display(), e))?.flatten() {
+        let name = entry.file_name();
+        if name == ".git" || name == "crow_modules" {
+            continue;
+        }
+        let (src, dst) = (entry.path(), to.join(&name));
+        if src.is_dir() {
+            copy_tree(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst).map_err(|e| format!("{}: {}", src.display(), e))?;
+        }
+    }
+    Ok(())
+}
+
 /// The file inside an installed package that says what it is: its source
 /// and its commit, so an install that has them already fetches nothing.
 const MARKER: &str = ".crow-package";
@@ -385,7 +408,7 @@ fn install_one(
             #[cfg(unix)]
             std::os::unix::fs::symlink(&abs, &dest).map_err(|e| format!("{}: {}", name, e))?;
             #[cfg(not(unix))]
-            copy_tree(&abs, &dest)?;
+            copy_package(&abs, &dest)?;
             Ok((dest, Some(format!("{}: linked to {}", name, abs.display()))))
         }
         Source::Git { url, subdir, reference } => {
@@ -435,7 +458,7 @@ fn install_one(
             if dest.exists() || dest.is_symlink() {
                 let _ = std::fs::remove_file(&dest).or_else(|_| std::fs::remove_dir_all(&dest));
             }
-            copy_tree(&package, &dest)?;
+            copy_package(&package, &dest)?;
             let hash = tree_hash(&dest)?;
             std::fs::write(dest.join(MARKER), format!("{}\n{}\n{}\n", spec, commit, hash)).map_err(|e| format!("{}: {}", name, e))?;
             let _ = std::fs::remove_dir_all(&fetch);
@@ -569,6 +592,39 @@ mod tests {
         std::fs::write(vectors.join("crowfile"), format!("deps = map[models = '{}']\n", at("v1.0.0"))).unwrap();
         let err = install(&project, &deps, &[], false, &crate::crowfile_deps).unwrap_err();
         assert!(err.contains("models is wanted at two sources") && err.contains("v1.0.0") && err.contains("by the package vectors"), "{}", err);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A package installed from a repository comes without its own
+    /// crow_modules — the links its repository keeps to the packages beside
+    /// it there, which `crow install` puts beside it here: kg's link to
+    /// magpie had been copied as a second magpie inside kg, its names
+    /// "declared twice" beside the magpie installed for it.
+    #[cfg(unix)]
+    #[test]
+    fn a_packages_own_links_to_its_dependencies_are_not_installed() {
+        let base = std::env::temp_dir().join(format!("crow_pkg_links_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (work, bare) = (base.join("work"), base.join("remote.git"));
+        std::fs::create_dir_all(work.join("dep")).unwrap();
+        std::fs::create_dir_all(work.join("pk/crow_modules")).unwrap();
+        let g = |args: &[&str], dir: &Path| git(&[&["-c", "user.name=t", "-c", "user.email=t@t"], args].concat(), Some(dir)).unwrap();
+        g(&["init", "--quiet"], &work);
+        let at = |dir: &str| format!("file://{}//{}@v0.1.0", bare.display(), dir);
+        std::fs::write(work.join("dep/main.co"), "fn one[]\n    return 1\n").unwrap();
+        std::fs::write(work.join("pk/crowfile"), format!("deps = map[dep = '{}']\n", at("dep"))).unwrap();
+        std::fs::write(work.join("pk/main.co"), "use dep\nfn two[]\n    return dep.one[] + 1\n").unwrap();
+        std::os::unix::fs::symlink("../../dep", work.join("pk/crow_modules/dep")).unwrap();
+        g(&["add", "."], &work);
+        g(&["commit", "--quiet", "-m", "v0.1.0"], &work);
+        g(&["tag", "v0.1.0"], &work);
+        git(&["clone", "--quiet", "--bare", &work.to_string_lossy(), &bare.to_string_lossy()], None).unwrap();
+        let project = base.join("app");
+        std::fs::create_dir_all(&project).unwrap();
+        install(&project, &[("pk".to_string(), at("pk"))], &[], false, &crate::crowfile_deps).unwrap();
+        assert!(project.join("crow_modules/pk/main.co").is_file());
+        assert!(project.join("crow_modules/dep/main.co").is_file(), "the dependency, beside it");
+        assert!(!project.join("crow_modules/pk/crow_modules").exists(), "no copy of it inside");
         let _ = std::fs::remove_dir_all(&base);
     }
 
