@@ -568,10 +568,6 @@ fn write_book_block(dir: &std::path::Path, code: &str) -> Result<std::path::Path
 }
 
 fn cmd_test_book() {
-    // the book's page on `sys` shows the standard library's own layer: its
-    // blocks run through the harness's door, which a program has not
-    // SAFETY: set before the blocks' processes are spawned, on one thread
-    unsafe { std::env::set_var("CROW_SYS", "1") };
     let dir = std::path::Path::new("docs/book/src");
     if !dir.is_dir() {
         eprintln!("error: no docs/book/src/ directory found (run from the project root)");
@@ -1251,11 +1247,6 @@ fn cmd_test_packages(only: &[String]) {
 }
 
 fn cmd_test_parity(only: &[String]) {
-    // (a program that shows the standard library's own layer — process
-    // memory's rows, which only the library imports — runs through the
-    // harness's door, as the book's pages do)
-    // SAFETY: set before the programs' processes are spawned, on one thread
-    unsafe { std::env::set_var("CROW_SYS", "1") };
     let dir = std::path::Path::new("tests/parity");
     if !dir.is_dir() {
         eprintln!("error: no tests/parity/ directory found (run from the project root)");
@@ -3548,10 +3539,6 @@ mod ir_tests {
         let lowered = std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(|| {
-                // (the corpus runs through the harness's door: a program
-                // about process memory's rows imports what only the
-                // standard library may)
-                super::DOOR.with(|d| d.set(true));
                 let mut failures = Vec::new();
                 let mut count = 0;
                 for entry in std::fs::read_dir("tests/parity").unwrap() {
@@ -4980,21 +4967,14 @@ mod refine_tests {
 /// module reached through two importers — the tape and the trading parts
 /// both reading the clock — is one copy. This runs *before* type inference
 /// so the main program's call sites can inform module function param types.
-/// Whether a file may import `sys`, the standard library's own layer: the
-/// modules the compiler ships (src/modules), and the harnesses' door
-/// (`CROW_SYS=1`, for the tests and the book that show it). A program
-/// reaches what `sys` builds — `request`, `socket`, the readers — never
-/// `sys` itself (spec, The standard library's layer).
+/// Whether a file may import a database driver's module (`use db.postgres`):
+/// the modules the compiler ships (src/modules), and the self-check's door
+/// (`CROW_SYS=1`, whose cases call a driver's rows). A program connects
+/// through `use db`'s `connect[…]`. (`sys` and process memory are any
+/// file's to import: keeping them to the standard library is a suggestion,
+/// not a rule — Vijay, 2026-10-29.)
 fn sys_allowed(dir: &std::path::Path) -> bool {
-    std::env::var_os("CROW_SYS").is_some() || DOOR.with(|d| d.get()) || in_standard_sources(dir)
-}
-
-thread_local! {
-    /// The harness's door opened for one thread alone: a test lowering the
-    /// parity corpus, whose programs show the standard library's own layer
-    /// as the harness runs them. The environment's door is the process's,
-    /// and other tests close it while they run.
-    static DOOR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    std::env::var_os("CROW_SYS").is_some() || in_standard_sources(dir)
 }
 
 /// Whether a directory is the standard library's own sources, whose
@@ -5040,25 +5020,6 @@ fn module_files(file_rel: &str, source_dir: &std::path::Path) -> Vec<std::path::
     candidates
 }
 
-/// The refusal of a program's import of a module only the standard
-/// library imports (`internal` in modules::MODULES, a driver aside): `sys`
-/// says what a program reaches instead, any other that a program may not.
-fn sys_refusal(path: &str, line: usize) -> String {
-    if path == "sys" {
-        return format!(
-            "line {}: `sys` is the standard library's own layer — a program serves with serve[…], reads with request[…], read[…] and socket[…], and connects with connect[…]",
-            line
-        );
-    }
-    format!("line {}: `{}` is the standard library's own layer — a program may not import it", line, path)
-}
-
-/// Whether only the standard library imports the module: `sys`, process
-/// memory (a driver is refused in its own words, as `use db` carries it).
-fn own_layer(path: &str) -> bool {
-    modules::by_path(path).is_some_and(|m| m.internal && m.driver.is_none())
-}
-
 fn expand_module_imports(
     stmts: &[ast::Stmt],
     source_dir: &std::path::Path,
@@ -5094,9 +5055,6 @@ pub(crate) fn expand_module_imports_checked(
         match st {
             ast::Stmt::Line(n) => line = *n,
             ast::Stmt::Use { path, alias } => {
-                if own_layer(path) && !sys_allowed(source_dir) {
-                    return Err(sys_refusal(path, line));
-                }
                 // (a driver's module; a program's own `db/schema.co` is
                 // `use db.schema`, as `views/home.co` is `use views.home`)
                 if path.starts_with("db.") && modules::by_path(path).is_some() && !sys_allowed(source_dir) {
@@ -5854,28 +5812,6 @@ fn expand_into(
         // The module's own imports are hoisted first and its references to
         // them rewritten
         let mod_dir = file_path.parent().unwrap_or(source_dir);
-        // (a module of the program's may not open the standard library's
-        // layer either: the door is the compiler's own modules')
-        // (refused as a part's refusals are, never by leaving the process:
-        // a language server or a test lowering such a part had exited)
-        if !sys_allowed(mod_dir) {
-            let mut at = 0usize;
-            let mut opens = false;
-            for st in &mod_stmts {
-                match st {
-                    ast::Stmt::Line(n) => at = *n,
-                    ast::Stmt::Use { path, .. } if own_layer(path) => {
-                        ex.refused.push(format!("{}: {}", file_path.display(), sys_refusal(path, at)));
-                        opens = true;
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-            if opens {
-                continue;
-            }
-        }
         ex.depth += 1;
         let mod_stmts = expand_into(&mod_stmts, mod_dir, ex, in_progress);
         ex.depth -= 1;
@@ -7035,31 +6971,21 @@ mod module_parts_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// `use sys` is the standard library's: a program's file is refused
-    /// before it runs, with the way a program reaches what `sys` builds
+    /// `sys` and process memory are any program's or package's to import:
+    /// keeping them to the standard library is a suggestion, not a rule
+    /// (Vijay, 2026-10-29) — a package that needs their speed uses them,
+    /// with no door opened (they had been refused before the program ran)
     #[test]
-    fn a_program_may_not_import_sys() {
+    fn a_program_may_import_sys_and_process_memory() {
         // SAFETY: the door is read by this process alone, in this test
         unsafe { std::env::remove_var("CROW_SYS") };
-        let stmts = crate::build("use sys\nb = bytes['x']\nlog[len[b]]\n").expect("parses");
-        let dir = std::env::temp_dir();
-        let mut visited = std::collections::HashSet::new();
-        let out = expand_module_imports_checked(&stmts, &dir, &mut visited);
-        assert!(out.as_ref().is_err_and(|e| e.contains("line 1: `sys` is the standard library's own layer")), "{:?}", out.map(|_| ()));
-    }
-
-    /// Process memory is the standard library's, as `sys` is: a program's
-    /// import is refused before it runs (Vijay, 2026-10-28)
-    #[test]
-    fn a_program_may_not_import_process_memory() {
-        // SAFETY: the door is read by this process alone, in this test
-        unsafe { std::env::remove_var("CROW_SYS") };
-        let path = modules::MODULES.iter().find(|m| m.internal && m.driver.is_none() && m.path != "sys").map(|m| m.path).expect("a library-only module beside sys");
-        let stmts = crate::build(&format!("use {}\nlog[1]\n", path)).expect("parses");
-        let dir = std::env::temp_dir();
-        let mut visited = std::collections::HashSet::new();
-        let out = expand_module_imports_checked(&stmts, &dir, &mut visited);
-        assert!(out.as_ref().is_err_and(|e| e.contains(&format!("line 1: `{}` is the standard library's own layer — a program may not import it", path))), "{:?}", out.map(|_| ()));
+        for path in modules::MODULES.iter().filter(|m| m.internal && m.driver.is_none()).map(|m| m.path) {
+            let stmts = crate::build(&format!("use {}\nlog[1]\n", path)).expect("parses");
+            let dir = std::env::temp_dir();
+            let mut visited = std::collections::HashSet::new();
+            let out = expand_module_imports_checked(&stmts, &dir, &mut visited);
+            assert!(out.is_ok(), "`use {}`: {:?}", path, out.map(|_| ()));
+        }
     }
 
     /// The gate names an error found in an imported part by the part's

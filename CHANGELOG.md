@@ -1127,6 +1127,16 @@ history says the rest.
 
 ### Changed
 
+- `sys` and process memory (`use memory`) may be imported by any program
+  or package (Vijay, 2026-10-29: keeping them to the standard library is
+  a suggestion, not a rule). They are meant for library code — the
+  standard library, and a package that needs a kernel's speed, which can
+  now live outside the standard library — and a program still serves and
+  connects with `serve` and `connect`. They had been refused outside the
+  standard library before the program ran; the harnesses' door that let
+  the book, the parity corpus and the errors corpus show them is gone
+  (`CROW_SYS` stays as the self-check's door to a driver's module, which
+  a program reaches through `use db`).
 - Magpie is Crow: its Rust kernels — the codec, bit packing, chunk
   encodings, bloom filter, stemmer, postings, file format, manifest,
   sequencer, merge, executor, search, nearest, inflate, snappy and the

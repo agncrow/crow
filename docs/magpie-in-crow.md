@@ -216,11 +216,12 @@ a loop with no effect, which the compiler runs across the cores.
 
 ### 2.7 Packages and the sys layer
 
-`use sys` is refused in a program and allowed in a standard module. A
-package that holds kernels needs it: bytes, files, hashing, memory.
-Proposed, for Vijay: a package's parts may `use sys`, as the standard
-library's may, since a package is library code under the same rules;
-a program still may not. Not needed until Magpie leaves the repository.
+`use sys` had been refused in a program and allowed in a standard
+module. A package that holds kernels needs it: bytes, files, hashing,
+memory. Proposed: a package's parts may `use sys`. Decided wider (Vijay,
+2026-10-29): keeping `sys` and `memory` to the standard library is a
+suggestion, not a rule — any program or package may import them, and a
+package that needs a kernel's speed is written on them.
 
 ## 3. The port
 
@@ -613,7 +614,6 @@ What is left, and why:
 
 ## 5. Open for Vijay
 
-- A package's parts allowed `use sys` (2.7).
 - The flush through `later`: a put under `crow run -i` is durable when
   it answers, and slower for it (2.4).
 - `move` for a file's rename, since `rename` is the frame module's.

@@ -1628,8 +1628,8 @@ fn sandbox(dir: &Path, file: &str, config: &str) -> PathBuf {
 /// draws, a clock that stands still, a replay with nothing recorded (every
 /// request and every server's statement answered from it, so nothing goes
 /// out) unless the case talks to a server of the check's own, the ports of
-/// those servers, the door to the standard library's own layer (CROW_SYS),
-/// and the configuration's switches.
+/// those servers, the door to a driver's module (CROW_SYS: a case calls
+/// `use db.postgres`'s rows), and the configuration's switches.
 fn case_command(program: &Path, run_dir: &Path, config: &Config, live: bool) -> Command {
     let mut cmd = Command::new(program);
     cmd.env_clear();
@@ -2421,9 +2421,9 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
         let _ = MEMORY_GB.set(gb.max(2));
     }
     let start = Instant::now();
-    // the standard library's own layer is the check's to call, as the
-    // book's page on it is (`use sys`, and `use db.postgres`'s rows): the
-    // lowering here, the builds and the cases' processes read the door
+    // a driver's module is the check's to call (`use db.postgres`'s rows,
+    // which a program reaches through `use db`): the lowering here, the
+    // builds and the cases' processes read the door
     // SAFETY: set before any thread of the check starts
     unsafe { std::env::set_var("CROW_SYS", "1") };
     let exe = std::env::current_exe().unwrap_or_default();
@@ -3660,12 +3660,6 @@ mod tests {
         for v in &all {
             // (a function is not shown)
             if matches!(v.name.as_str(), "sizes" | "groups" | "lists" | "fn" | "pred") {
-                continue;
-            }
-            // (the layer's values are lowered by the check itself, its door
-            // open — CROW_SYS — which a unit test does not open: the
-            // variable is the process's, and another test closes it)
-            if v.imports.contains(&"sys") {
                 continue;
             }
             let case = Case::new(format!("shown/{}", v.name), &[v], vec![format!("log[{}]", v.expr)]);

@@ -1,10 +1,11 @@
 # The standard library's layer: `use sys`
 
 `sys` is the layer the standard library's own modules are written on —
-bytes, and a connection to a host. A program may not import it (a program
-serves with `serve`, reads with `request`, `read` and `socket`, connects
-with `connect`); these blocks run through the book harness's door, which
-a program has not.
+bytes, files, and a connection to a host — and so is a package that needs
+a kernel's speed. It is meant for library code: a program serves with
+`serve`, reads with `request`, `read` and `socket`, and connects with
+`connect`, which are built on it. Keeping it to library code is a
+suggestion, not a rule — any program or package may import it.
 
 ```crow
 use sys

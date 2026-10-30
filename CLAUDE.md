@@ -1472,12 +1472,15 @@ steps on every push and must be green.
   bits to it); `unpack` of 1, 2 or 4 bytes is narrow by its row
   (`IntRange::Unpacked`). Bytes appended from a range are fused into
   one copy (fuse.rs: `core.__concat_slice`, `core.__extend_within`).
-  A module only the standard library imports is `internal` on its
-  declaration (`sys`, `memory`); the import check reads the flag, and
-  the book, parity and errors harnesses open the door (`CROW_SYS`, and
-  the corpus-lowering unit test a thread-local `DOOR`, since tests
-  close the process's). No Magpie answer may depend on where a flush
-  cut the rows into files: the interpreter runs `later` inline and the
+  A module meant for library code is `internal` on its declaration
+  (`sys`, `memory`): left out of what a program is offered (an
+  import's suggestion, a call's hint, the documented functions), yet
+  any program or package may import it since 2026-10-29 (Vijay:
+  keeping them to library code is a suggestion, not a rule), so the
+  harnesses' door is gone; `CROW_SYS` is left as the self-check's door
+  to a driver's module (`use db.postgres`), which a program still
+  reaches through `use db`. No Magpie answer may depend on where a
+  flush cut the rows into files: the interpreter runs `later` inline and the
   compiled program on a thread, so `merge` folds a lone batch too (it
   had skipped one, and parity 303 counted differently one compiled run
   in three). And `crow test src/modules/x.co` holds a module's locals

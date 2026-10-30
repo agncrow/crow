@@ -634,7 +634,8 @@ literal flowed through parameters, never a fact's value — a group
 are lowered; (2) `apply` by name only, from a parsed value or a map; (3)
 `describe` and `apply` are sys's (the self-check's door, `CROW_SYS`, and
 the standard modules reach them); a program's own packages do not, this
-phase. Decided beyond the questions: `describe` answers a parsed value
+phase (since 2026-10-29 `sys` is any program's or package's to import:
+keeping it to the standard library is a suggestion, not a rule). Decided beyond the questions: `describe` answers a parsed value
 (a record would need phase 5's declaration in Crow) whose parameter
 field is `takes`, not `kind`, since a value's `kind` is its error's;
 `apply` answers the value encoded as text, as text that can fail — the

@@ -1,10 +1,10 @@
 # Process memory: `use memory`
 
-Process memory is what the standard library's modules keep between calls —
-Magpie's sequencer holds the rows put since its last flush there. A program
-may not import it: a program's state is its variables, and a page's its
-facts. These blocks run through the book harness's door, which a program
-has not, as the `sys` page's do.
+Process memory is what library code keeps between calls — Magpie's
+sequencer holds the rows put since its last flush there. A program's own
+state is its variables, and a page's its facts, so a program seldom needs
+it; keeping it to library code is a suggestion, not a rule, and any
+program or package may import it.
 
 ```crow
 use memory

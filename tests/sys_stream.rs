@@ -2,9 +2,9 @@
 //! `sys.open` reaches a host, `send` and `recv` move bytes, a server that
 //! closed reads as no bytes, a closed stream refuses every call, and a
 //! host nobody answers is the call's error value — the same lines from
-//! `crow run -i` and from the compiled program, through the harness's
-//! door (`CROW_SYS=1`), which a program has not: without it, `use sys` is
-//! refused before the program runs.
+//! `crow run -i` and from the compiled program, which imports `sys` as any
+//! program may (keeping it to the standard library is a suggestion, not a
+//! rule: Vijay, 2026-10-29; it had been refused without the harness's door).
 
 use std::io::{Read, Write};
 use std::process::Command;
@@ -51,36 +51,28 @@ fn crow() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_crow"))
 }
 
-fn run(dir: &std::path::Path, mode: &[&str], port: u16, door: bool) -> (bool, String, String) {
+fn run(dir: &std::path::Path, mode: &[&str], port: u16) -> (bool, String, String) {
     let mut cmd = Command::new(crow());
     cmd.args(mode).arg(dir.join("main.co")).arg(port.to_string()).current_dir(dir);
-    if door {
-        cmd.env("CROW_SYS", "1");
-    } else {
-        cmd.env_remove("CROW_SYS");
-    }
+    cmd.env_remove("CROW_SYS");
     let out = cmd.output().unwrap();
     (out.status.success(), String::from_utf8_lossy(&out.stdout).to_string(), String::from_utf8_lossy(&out.stderr).to_string())
 }
 
 #[test]
-fn a_stream_works_the_same_in_both_modes_and_a_program_may_not_open_it() {
+fn a_stream_works_the_same_in_both_modes() {
     let port = echo_server();
     let dir = std::env::temp_dir().join(format!("crow_sys_stream_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("crowfile"), "name = 'sysstream'\n").unwrap();
     std::fs::write(dir.join("main.co"), PROGRAM).unwrap();
-    let (i_ok, i_out, i_err) = run(&dir, &["run", "-i"], port, true);
+    let (i_ok, i_out, i_err) = run(&dir, &["run", "-i"], port);
     assert!(i_ok, "interpreted: {}", i_err);
     let expected = "true\nstream\n4\nping\n0\nfalse\nthe stream is closed\nfalse\nsys\n6\nllo\n3\ntrue\n";
     assert_eq!(i_out, expected);
-    let (c_ok, c_out, c_err) = run(&dir, &["run"], port, true);
+    let (c_ok, c_out, c_err) = run(&dir, &["run"], port);
     assert!(c_ok, "compiled: {}", c_err);
     assert_eq!(c_out, i_out, "the two modes differ");
-    // the door closed: a program may not import sys
-    let (p_ok, _, p_err) = run(&dir, &["run", "-i"], port, false);
-    assert!(!p_ok);
-    assert!(p_err.contains("`sys` is the standard library's own layer"), "{}", p_err);
     let _ = std::fs::remove_dir_all(&dir);
 }

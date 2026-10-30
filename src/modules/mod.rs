@@ -102,7 +102,7 @@ pub static MODULES: &[Module] = &[
     },
     Module {
         source: Some(SYS_SOURCE), internal: true, registry: true, typed: true,
-        docs: Some("The standard library's own layer: bytes, and a connection to a host, for the modules written in Crow — a program may not import it."),
+        docs: Some("The standard library's own layer: bytes, files, and a connection to a host, for the modules written in Crow and the packages that need a kernel's speed — meant for library code, which any program or package may import."),
         module: Some(|| Arc::new(Named::new("sys"))),
         ..Module::plain("sys", "_sys")
     },
@@ -131,12 +131,12 @@ pub static MODULES: &[Module] = &[
         ..Module::plain("bits", "_bits")
     },
     // process memory: a record held for the process under a name, shared
-    // by its threads — rows of the table, the store the runtime's; the
-    // standard library's own, as `sys` is (Vijay, 2026-10-28: what a
-    // module keeps between calls, never a program's state)
+    // by its threads — rows of the table, the store the runtime's; meant
+    // for library code, as `sys` is (Vijay, 2026-10-29: a suggestion, not
+    // a rule — any program or package may import it)
     Module {
         needs: &[RUNTIME], internal: true, registry: true, pinned: true,
-        docs: Some("Process memory: a record the standard library holds for the process under a name, shared by its threads — remembered, recalled, revised under the name's lock, forgotten; what a module keeps between calls. Only the standard library's modules import it — a program may not."),
+        docs: Some("Process memory: a record the standard library holds for the process under a name, shared by its threads — remembered, recalled, revised under the name's lock, forgotten; what a module keeps between calls. Meant for library code — the standard library and packages that need it — which any program or package may import."),
         module: Some(|| Arc::new(Named::new("memory"))),
         ..Module::plain("memory", "_memory")
     },

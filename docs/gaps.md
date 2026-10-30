@@ -32,7 +32,7 @@ its decision.
 | Hex, binary and octal literals; digit separators (`0xff`, `1_000`) | SHA-1, Pseudo-random numbers/Xorshift star | decimal literals only; `int[text]` reads decimal digits | S, language |
 | `fmt` in scientific notation, hex or binary | the NKTg tasks (a helper writes the exponent), SHA-1 (hex by hand), Two identical strings (base 2 by hand) | `fmt` has `decimals`, commas, width, align, fill and percent; `encode` knows base64 and url | S each |
 | Complex arithmetic: `*`, `/`, `^`, `exp`, `log` of a complex number | Euler's identity, Fast Fourier transform, Conjugate transpose | math's complex numbers are `[re, im]` pairs with `complex`, `real`, `imag`, `magnitude`, `phase` and `conjugate`; the arithmetic is written by hand | M |
-| SHA-1 (and other hash schemes) for programs | SHA-1 | `hash` takes sha256, sha512, md5 and password; `sys.hash` has sha1, but `sys` is the library's own | S |
+| SHA-1 (and other hash schemes) for programs | SHA-1 | `sys.hash[b, 'sha1']`, since any program may `use sys` (2026-10-29); the core's `hash` takes sha256, sha512, md5 and password | S |
 | Text encodings other than UTF-8 (Latin-1, UTF-16) | I before E except after C (a Latin-1 word list, converted with iconv through `shell`), Unicode strings (UTF-16 by hand) | `read` takes UTF-8 only | S once bytes are readable |
 | A leading `+` (`+x`) | Exponentiation with infix operators | refused; write `x` | S, language |
 
@@ -40,14 +40,14 @@ its decision.
 
 | Not built | Met by | Today | Size |
 |---|---|---|---|
-| Binary file input and output: bytes 128 to 255 | Fixed length records, Musical scale, Sine wave, Bitwise IO, Base64 decode data, Random number generator (device), Find duplicate files; the roadmap's byte-level BPE tokenizer | `read` and `write` take UTF-8 text (`read` refuses other bytes); `request[…, save = path]` saves downloaded bytes. Deferred on 2026-10-29 until a program needs it; the spec's Design Note "the standard library's layer" rejected handing programs `sys`'s bytes, so this needs a design of its own | M |
-| A file's size, times and kind (stat) | File size distribution, Find duplicate files, Truncate a file | `sys`'s `filesize` and `modified`, which programs cannot import; `wc -c` and `ls` through `shell` | S |
+| Binary file input and output: bytes 128 to 255 | Fixed length records, Musical scale, Sine wave, Bitwise IO, Base64 decode data, Random number generator (device), Find duplicate files; the roadmap's byte-level BPE tokenizer | `sys`'s bytes, `file` and `store` read and write any bytes, and any program may `use sys` since 2026-10-29; `read` and `write` take UTF-8 text (`read` refuses other bytes), and `request[…, save = path]` saves downloaded bytes | M |
+| A file's size, times and kind (stat) | File size distribution, Find duplicate files, Truncate a file | `sys`'s `filesize` and `modified`, which any program may import since 2026-10-29; a file's kind through `shell` | S |
 | Walking a directory tree; glob patterns | File size distribution | `ls[path]` lists one directory | S |
 | Appending to a file, and truncating one | Stream merge (appends through `shell`), Truncate a file (the system's `truncate`) | `write` replaces the file | S |
-| Reading a file a line or a block at a time | Stream merge (reads through `tail` and `head` in `shell`) | `read` and io's `lines` take the file whole. The spec's Design Note "reads bounded by what a frame holds" keeps Magpie's reads bounded, so a reader that keeps a position needs a design | M |
+| Reading a file a line or a block at a time | Stream merge (reads through `tail` and `head` in `shell`) | `sys`'s `file[path, from, n]` reads a region, and any program may `use sys` since 2026-10-29; `read` and io's `lines` take the file whole, and a reader that keeps a position needs a design (the spec's Design Note "reads bounded by what a frame holds") | M |
 | A monotonic clock, finer than a millisecond | Rate counter | `now[]` is UTC wall time to the millisecond | S |
 | Terminal control: a key without Enter, the cursor, clearing, flushing pending input | Keyboard input/Obtain a Y or N response, Metronome; the games read lines | `input[]` reads a line; colours work as escape codes in text | M (a module) |
-| Starting and talking to a process | the roadmap ("process management") | `shell[cmd]` answers a command's output; `sys.start` runs a process with pipes, for the library only | M |
+| Starting and talking to a process | the roadmap ("process management") | `shell[cmd]` answers a command's output; `sys.start` runs a process with pipes, which any program may import since 2026-10-29 | M |
 | Windows itself | Write to Windows event log | macOS and Linux; Windows inside WSL (the book's Getting Started; docs/distribution-design.md keeps Windows unsupported) | L |
 
 ## Media and the desktop
@@ -152,8 +152,9 @@ most of them. Taking one up means revisiting that decision first.
 - Second forms of one thing: `+=`, double quotes, `+` of texts, a format
   mini-language, bit operators (`use bits` instead), `x.f[a]` method calls.
 - `break` and `continue` in a `for` (a `for` may run in parallel).
-- Threads, channels, locks, raw sockets and bytes for programs (the `sys`
-  layer is the standard library's own); async/await, timers and `every[]`.
+- Threads, channels and locks; async/await, timers and `every[]`. (Raw
+  sockets and bytes are `sys`'s: meant for library code, and any program
+  may import it since 2026-10-29.)
 - The machine's local time zone, and a duration kind (seconds serve).
 - Script tags, inline JavaScript and client-side WASM; a package registry
   (a dependency names its repository); an ORM (SQL is written);

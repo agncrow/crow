@@ -300,6 +300,7 @@ Top-level `db` module (`use db`) with separate `crow_db` crate. All three backen
   - [x] `models`: least squares, logistic regression, k-means, a decision tree, a one-hidden-layer network.
   - [x] `market`: the US equity sessions and the NYSE calendar (holidays, early closes, `phase`), bars from trades and from finer bars.
   - [x] data connectors (built into the language, not a package): every reader takes a URL or an `s3://` object as it takes a file, and `load`/`save` read and write CSV, JSON records and Parquet by the extension (spec, Files, URLs and S3).
+- [x] **`sys` and process memory for packages** (Vijay, 2026-10-29: "use of sys and memory to standard library is a suggestion. developers can use them without any restriction for developing packages which need performance") — any program or package may `use sys` and `use memory`; they are meant for library code, and the reference keeps teaching `serve`, `connect` and a program's own variables as a program's way (they had been refused outside the standard library since 2026-10-03 and 2026-10-28).
 - [x] **Notebook integration** (Sept 30 2026, Vijay: a Jupyter kernel): `crow kernel install`; a notebook is one interpreter session, a cell's logs stream, its value is its result (a frame as a table), an interrupt stops a running cell (spec, Notebooks).
 - [x] **Editor support**: `crow lsp` + VS Code extension (Neovim/Helix/Zed via native LSP clients) — see `crow-lsp.md`.
 
