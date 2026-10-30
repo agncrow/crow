@@ -1,4 +1,4 @@
---- `use magpie.exec`: `summary` over a log's files, in Crow — the
+--- `use magpie.executor`: `summary` over a log's files, in Crow — the
 --- kernel's answer exactly: each row group pruned by its statistics,
 --- its rows masked by the positions, the first key's range and the
 --- predicates, grouped by the keys' cells into partials (a count, a sum
@@ -9,12 +9,12 @@
 use sys
 use bits
 use frame
-use magpie.file
-use magpie.tail
-use magpie.bloom
-use magpie.manifest
-use magpie.merge
-use magpie.encode
+use fileformat
+use sequencer
+use bloom
+use manifest
+use merger
+use columnchunk
 use math
 
 --- a cell of a column (1 an int, 2 a float, 3 a bool, 4 text, 5 a vector
@@ -31,7 +31,7 @@ struct Partial [count, int_sum, sum, mean, m2, least, most, first_pos, first, la
 struct Grouped [places, keys, cells]
 
 fn _none_cell[]
-    return Cell[0, 0, 0.0, '', 0, bytes[0]]
+    return Cell[0, 0, 0.0, '', 0, sys.bytes[0]]
 
 fn _empty_partial[]
     return Partial[0, 0, 0.0, 0.0, 0.0, _none_cell[], _none_cell[], -1, _none_cell[], -1, _none_cell[]]
@@ -157,7 +157,7 @@ fn _cells_of[col]
         nums = ints_of[col, 0, n]
         for i in range[n]
             if _present[present, i]
-                out = push[out, Cell[1, nums[i], 0.0, '', 0, bytes[0]]]
+                out = push[out, Cell[1, nums[i], 0.0, '', 0, sys.bytes[0]]]
             else
                 out = push[out, _none_cell[]]
     if kind eq 'moment'
@@ -165,14 +165,14 @@ fn _cells_of[col]
         zs = zones_of[col, 0, n]
         for i in range[n]
             if _present[present, i]
-                out = push[out, Cell[6, ms[i], 0.0, '', zs[i], bytes[0]]]
+                out = push[out, Cell[6, ms[i], 0.0, '', zs[i], sys.bytes[0]]]
             else
                 out = push[out, _none_cell[]]
     if kind eq 'float'
         reals = floats_of[col, 0, n]
         for i in range[n]
             if _present[present, i]
-                out = push[out, Cell[2, 0, reals[i], '', 0, bytes[0]]]
+                out = push[out, Cell[2, 0, reals[i], '', 0, sys.bytes[0]]]
             else
                 out = push[out, _none_cell[]]
     if kind eq 'bool'
@@ -182,7 +182,7 @@ fn _cells_of[col]
             if flags[i]
                 v = 1
             if _present[present, i]
-                out = push[out, Cell[3, v, 0.0, '', 0, bytes[0]]]
+                out = push[out, Cell[3, v, 0.0, '', 0, sys.bytes[0]]]
             else
                 out = push[out, _none_cell[]]
     if kind eq 'text'
@@ -192,7 +192,7 @@ fn _cells_of[col]
         for i in range[n]
             stop = cuts[i]
             if _present[present, i]
-                out = push[out, Cell[4, 0, 0.0, text[slice[cell_bytes, begin, stop], ''], 0, bytes[0]]]
+                out = push[out, Cell[4, 0, 0.0, sys.text[slice[cell_bytes, begin, stop], ''], 0, sys.bytes[0]]]
             else
                 out = push[out, _none_cell[]]
             begin = stop
@@ -213,7 +213,7 @@ fn _cells_of[col]
 --- a cell as a predicate reads it: a moment as its milliseconds
 fn _as_value[c]
     if c.form eq 6
-        return Cell[1, c.whole, 0.0, '', 0, bytes[0]]
+        return Cell[1, c.whole, 0.0, '', 0, sys.bytes[0]]
     return c
 
 --- a value a program wrote as text, read as a column's kind (a moment as
@@ -228,26 +228,26 @@ fn _parse[cells, value]
             return error[why, 'magpie']
         if n gt 9223372036854775807 or n lt -9223372036854775808
             return error[why, 'magpie']
-        return Cell[1, wrap[n], 0.0, '', 0, bytes[0]]
+        return Cell[1, wrap[n], 0.0, '', 0, sys.bytes[0]]
     if cells eq 'float'
         x = float[trim[value]]
         if not x.ok
             return error['\'`value`\' is no number', 'magpie']
-        return Cell[2, 0, x, '', 0, bytes[0]]
+        return Cell[2, 0, x, '', 0, sys.bytes[0]]
     if cells eq 'bool'
         t = trim[value]
         if t eq 'true'
-            return Cell[3, 1, 0.0, '', 0, bytes[0]]
+            return Cell[3, 1, 0.0, '', 0, sys.bytes[0]]
         if t eq 'false'
-            return Cell[3, 0, 0.0, '', 0, bytes[0]]
+            return Cell[3, 0, 0.0, '', 0, sys.bytes[0]]
         return error['\'`value`\' is no bool', 'magpie']
     if cells eq 'text'
-        return Cell[4, 0, 0.0, value, 0, bytes[0]]
+        return Cell[4, 0, 0.0, value, 0, sys.bytes[0]]
     return error['a column of vectors is compared with nothing: \`nearest\` finds rows by a vector', 'magpie']
 
 --- a file's bound as a cell
 fn _bound_cell[b]
-    return Cell[b.form, b.whole, b.real, b.word, 0, bytes[0]]
+    return Cell[b.form, b.whole, b.real, b.word, 0, sys.bytes[0]]
 
 --- an operator's word, checked: eq, ne, lt, le (lte), gt, ge (gte)
 fn _op[word]
@@ -331,8 +331,8 @@ fn _bitmap_of[flags]
         if not f
             every = false
     if every
-        return bytes[0]
-    out = bytes[shift[len[flags] + 7, -3]]
+        return sys.bytes[0]
+    out = sys.bytes[shift[len[flags] + 7, -3]]
     for i in range[len[flags]]
         if flags[i]
             out = set[out, shift[i, -3], bitor[byte[out, shift[i, -3]], shift[1, bitand[i, 7]]]]
@@ -360,7 +360,7 @@ fn _column_of[cells, kind]
             out = push[out, x]
         return floats_column[out, bitmap]
     if kind eq 'bool'
-        packed = bytes[shift[len[cells] + 7, -3]]
+        packed = sys.bytes[shift[len[cells] + 7, -3]]
         for i in range[len[cells]]
             if cells[i].form eq 3 and cells[i].whole eq 1
                 packed = set[packed, shift[i, -3], bitor[byte[packed, shift[i, -3]], shift[1, bitand[i, 7]]]]
@@ -377,11 +377,11 @@ fn _column_of[cells, kind]
                 zs = push[zs, 0]
         return moments_column[ms, zs, bitmap]
     if kind eq 'text'
-        out = bytes[0]
+        out = sys.bytes[0]
         cut_ends = []
         for c in cells
             if c.form eq 4
-                out = concat[out, bytes[c.word]]
+                out = concat[out, sys.bytes[c.word]]
             cut_ends = push[cut_ends, len[out]]
         return text_column[out, cut_ends, bitmap]
     width = 0
@@ -431,14 +431,14 @@ fn summary_of[paths, by, of, how, on, ops, equal, lo, hi, upto]
     slot = []
     for p in paths
         if _pending_path[p]
-            df = pending_at[p]
+            df = sequencer.pending_at[p]
             if not df.ok
                 return error[df.reason, 'magpie']
             is_held = push[is_held, true]
             slot = push[slot, len[held]]
             held = push[held, df]
         else
-            r = opened[p]
+            r = fileformat.opened[p]
             if not r.ok
                 return error[r.reason, 'magpie']
             is_held = push[is_held, false]
@@ -502,7 +502,7 @@ fn _pending_path[p]
 --- the pending rows' file carries); none where the log has no keys
 fn _log_key[p]
     pieces = split[p, '/.pending']
-    m = listed[pieces[0]]
+    m = manifest.listed[pieces[0]]
     if not m.ok or len[m.keys] eq 0
         return ''
     return m.keys[0]
@@ -569,8 +569,8 @@ fn _want_bytes[want]
             x = 0.0
         return ieee[x, 8, little = true]
     if want.form eq 3
-        return push[bytes[0], want.whole]
-    return bytes[want.word]
+        return push[sys.bytes[0], want.whole]
+    return sys.bytes[want.word]
 
 --- one row group's partials, by key text — none where the group's
 --- statistics show it holds no row the summary reads
@@ -580,7 +580,7 @@ fn _unit[r, g, keys0, by, of, on, opw, equal, pcols, lo, hi, upto]
     if upto gte 0
         pc = _column_at[r, '_pos']
         if pc gte 0
-            pe = entries[r, pc]
+            pe = fileformat.entries[r, pc]
             if not pe.ok
                 return error[pe.reason, 'magpie']
             if pe[g].lo.form eq 1 and pe[g].lo.whole gt upto
@@ -591,7 +591,7 @@ fn _unit[r, g, keys0, by, of, on, opw, equal, pcols, lo, hi, upto]
     if ranged
         kc = _column_at[r, keys0]
         if kc gte 0
-            ke = entries[r, kc]
+            ke = fileformat.entries[r, kc]
             if not ke.ok
                 return error[ke.reason, 'magpie']
             kind = f.columns[kc].cells
@@ -614,7 +614,7 @@ fn _unit[r, g, keys0, by, of, on, opw, equal, pcols, lo, hi, upto]
         if c lt 0
             return error['batch: \'`r.path`\' holds no column \'`column`\'', 'magpie']
         kind = f.columns[c].cells
-        ce = entries[r, c]
+        ce = fileformat.entries[r, c]
         if not ce.ok
             return error[ce.reason, 'magpie']
         ent = ce[g]
@@ -627,18 +627,18 @@ fn _unit[r, g, keys0, by, of, on, opw, equal, pcols, lo, hi, upto]
                 if _group_may[ent, opw[i], want]
                     sieved = false
                     if opw[i] eq 'eq' and ent.bloom_len gt 0
-                        bf = value_filter[r, ent]
+                        bf = fileformat.value_filter[r, ent]
                         if not bf.ok
                             return error[bf.reason, 'magpie']
-                        sieved = not admits[bf, _want_bytes[want]]
+                        sieved = not bloom.admits[bf, _want_bytes[want]]
                     if not sieved
                         admitted_any = true
         if not admitted_any
             return out
-    cols = wanted[r, _unit_names[by, of, on, ranged, keys0]]
+    cols = fileformat.wanted[r, _unit_names[by, of, on, ranged, keys0]]
     if not cols.ok
         return error[cols.reason, 'magpie']
-    df = group_of[r, g, cols]
+    df = fileformat.group_of[r, g, cols]
     if not df.ok
         return error[df.reason, 'magpie']
     return _unit_rows[df, keys0, ranged, low, high, by, of, on, opw, equal, pcols, upto]
@@ -724,7 +724,7 @@ fn _grouped_by_int[df, b, keep]
                 g = len[labels]
                 places = set[places, v, g]
                 kc = []
-                kc = push[kc, Cell[1, v, 0.0, '', 0, bytes[0]]]
+                kc = push[kc, Cell[1, v, 0.0, '', 0, sys.bytes[0]]]
                 labels = push[labels, _key_text[kc]]
                 cells = push[cells, kc]
         gidx = push[gidx, g]
@@ -841,7 +841,7 @@ fn _float_partials[xs, present, gidx, ng, pos]
         if ns[g] eq 0
             parts = push[parts, _empty_partial[]]
         else
-            parts = push[parts, Partial[ns[g], 0, sums[g], avgs[g], m2s[g], Cell[2, 0, los[g], '', 0, bytes[0]], Cell[2, 0, his[g], '', 0, bytes[0]], fps[g], Cell[2, 0, fvs[g], '', 0, bytes[0]], lps[g], Cell[2, 0, lvs[g], '', 0, bytes[0]]]]
+            parts = push[parts, Partial[ns[g], 0, sums[g], avgs[g], m2s[g], Cell[2, 0, los[g], '', 0, sys.bytes[0]], Cell[2, 0, his[g], '', 0, sys.bytes[0]], fps[g], Cell[2, 0, fvs[g], '', 0, sys.bytes[0]], lps[g], Cell[2, 0, lvs[g], '', 0, sys.bytes[0]]]]
     return parts
 
 --- the partials of a column of ints, as `_added` makes them a cell at a
@@ -900,7 +900,7 @@ fn _int_partials[vs, present, gidx, ng, pos]
         if ns[g] eq 0
             parts = push[parts, _empty_partial[]]
         else
-            parts = push[parts, Partial[ns[g], isums[g], sums[g], avgs[g], m2s[g], Cell[1, los[g], 0.0, '', 0, bytes[0]], Cell[1, his[g], 0.0, '', 0, bytes[0]], fps[g], Cell[1, fvs[g], 0.0, '', 0, bytes[0]], lps[g], Cell[1, lvs[g], 0.0, '', 0, bytes[0]]]]
+            parts = push[parts, Partial[ns[g], isums[g], sums[g], avgs[g], m2s[g], Cell[1, los[g], 0.0, '', 0, sys.bytes[0]], Cell[1, his[g], 0.0, '', 0, sys.bytes[0]], fps[g], Cell[1, fvs[g], 0.0, '', 0, sys.bytes[0]], lps[g], Cell[1, lvs[g], 0.0, '', 0, sys.bytes[0]]]]
     return parts
 
 --- a column's kind as the first file's footer names it
@@ -928,10 +928,10 @@ fn _answer[kinds, path, by, of, how, key_cells, totals]
         idx = []
         for i in range[n]
             idx = push[idx, i]
-        keyed._summary_order_ = ints_column[idx, bytes[0]]
+        keyed._summary_order_ = ints_column[idx, sys.bytes[0]]
         sorted = sort[keyed, by]
         order = ints_of[sorted._summary_order_, 0, n]
-        keyed = select[sorted, by]
+        keyed = frame.select[sorted, by]
     out = keyed
     if len[by] eq 0
         out = frame.new[]
@@ -949,19 +949,19 @@ fn _answer[kinds, path, by, of, how, key_cells, totals]
             counts = []
             for p in parts
                 counts = push[counts, p.count]
-            out.`label` = ints_column[counts, bytes[0]]
+            out.`label` = ints_column[counts, sys.bytes[0]]
         if h eq 'sum'
             if kind eq 'int' or kind eq 'bool'
                 sums = []
                 for p in parts
                     sums = push[sums, p.int_sum]
-                out.`label` = ints_column[sums, bytes[0]]
+                out.`label` = ints_column[sums, sys.bytes[0]]
             else
                 if kind eq 'float'
                     sums = []
                     for p in parts
                         sums = push[sums, p.sum]
-                    out.`label` = floats_column[sums, bytes[0]]
+                    out.`label` = floats_column[sums, sys.bytes[0]]
                 else
                     return error['batch: sum of column \'`name`\', which holds `kind`', 'magpie']
         if h eq 'mean' or h eq 'var' or h eq 'std'
@@ -1011,9 +1011,9 @@ fn _whole_of[x]
 --- or another kind
 fn _moment_of[c]
     if c.form eq 1 or c.form eq 6
-        return Cell[1, c.whole, 0.0, '', 0, bytes[0]]
+        return Cell[1, c.whole, 0.0, '', 0, sys.bytes[0]]
     if c.form eq 2
-        return Cell[1, _whole_of[c.real], 0.0, '', 0, bytes[0]]
+        return Cell[1, _whole_of[c.real], 0.0, '', 0, sys.bytes[0]]
     return _none_cell[]
 
 --- a candidate of the join: its moment, its position, the file it came
@@ -1121,12 +1121,12 @@ fn asof_rows[paths, labels, keyed, time, asked, upto]
     --- rows are read whole)
     first_columns = slice[['x'], 0, 0]
     if _pending_path[paths[0]]
-        df0 = pending_at[paths[0]]
+        df0 = sequencer.pending_at[paths[0]]
         if not df0.ok
             return error[df0.reason, 'magpie']
         first_columns = df0.columns
     else
-        first = opened[paths[0]]
+        first = fileformat.opened[paths[0]]
         if not first.ok
             return error[first.reason, 'magpie']
         for c in first.footer.columns
@@ -1151,7 +1151,7 @@ fn asof_rows[paths, labels, keyed, time, asked, upto]
     for fi in range[len[paths]]
         p = paths[fi]
         if _pending_path[p]
-            df = pending_at[p]
+            df = sequencer.pending_at[p]
             if not df.ok
                 return error[df.reason, 'magpie']
             for name in needed
@@ -1163,10 +1163,10 @@ fn asof_rows[paths, labels, keyed, time, asked, upto]
             file_kinds = push[file_kinds, kinds]
             cands = _cands_of[df, keyed, time, bring, latest, upto, fi, cands]
         else
-            r = opened[p]
+            r = fileformat.opened[p]
             if not r.ok
                 return error[r.reason, 'magpie']
-            cols = wanted[r, needed]
+            cols = fileformat.wanted[r, needed]
             if not cols.ok
                 return error[cols.reason, 'magpie']
             kinds = slice[['x'], 0, 0]
@@ -1174,7 +1174,7 @@ fn asof_rows[paths, labels, keyed, time, asked, upto]
                 kinds = push[kinds, r.footer.columns[_column_at[r, b]].cells]
             file_kinds = push[file_kinds, kinds]
             for g in range[len[r.footer.groups]]
-                df = group_of[r, g, cols]
+                df = fileformat.group_of[r, g, cols]
                 if not df.ok
                     return error[df.reason, 'magpie']
                 cands = _cands_of[df, keyed, time, bring, latest, upto, fi, cands]
@@ -1217,21 +1217,21 @@ fn _fresh[dir]
     return dir
 
 --- a frame's image, digested — each column's name and its chunk (its
---- kind, its missing cells, its cells, as magpie.encode writes them):
+--- kind, its missing cells, its cells, as magpie.columnchunk writes them):
 --- what a recorded answer is held to
 fn _image[f]
     n = len[f]
-    out = bytes['`n`']
+    out = sys.bytes['`n`']
     for name in f.columns
-        out = concat[out, bytes[name]]
-        out = concat[out, chunk[f.`name`, 0, n, false]]
+        out = concat[out, sys.bytes[name]]
+        out = concat[out, columnchunk.chunk[f.`name`, 0, n, false]]
     return slice[hash[out, 'sha256'], 0, 16]
 
 --- the kernel's answers of a summary over two files
 test summary_is_the_kernels[]
     nothing = slice[['x'], 0, 0]
     dir = _fresh['target/crow_exec_summary']
-    k = declare[dir, ['day', 'sym'], nothing, nothing]
+    k = manifest.declare[dir, ['day', 'sym'], nothing, nothing]
     days = []
     syms = []
     pxs = []
@@ -1242,8 +1242,8 @@ test summary_is_the_kernels[]
         pxs = push[pxs, float[(i * 37) % 101] / 8.0]
         vols = push[vols, (i * 13) % 50]
     df = frame.new[day = days, sym = syms, px = pxs, vol = vols]
-    a = write_batch[dir, 0, 0, df, ['day', 'sym'], nothing]
-    b = write_batch[dir, 1, 900, df, ['day', 'sym'], nothing]
+    a = merger.write_batch[dir, 0, 0, df, ['day', 'sym'], nothing]
+    b = merger.write_batch[dir, 1, 900, df, ['day', 'sym'], nothing]
     paths = ['`dir`/000000000000.batch', '`dir`/000000000001.batch']
     hows = ['count', 'sum', 'min', 'max', 'mean', 'var', 'std', 'first', 'last']
     seen = []
@@ -1271,7 +1271,7 @@ test summary_is_the_kernels[]
 test summary_by_an_int_column_is_the_cells_summary[]
     nothing = slice[['x'], 0, 0]
     dir = _fresh['target/crow_exec_summary_int']
-    k = declare[dir, ['day', 'sym'], nothing, nothing]
+    k = manifest.declare[dir, ['day', 'sym'], nothing, nothing]
     days = []
     syms = []
     pxs = []
@@ -1282,8 +1282,8 @@ test summary_by_an_int_column_is_the_cells_summary[]
         pxs = push[pxs, float[(i * 37) % 101] / 8.0]
         vols = push[vols, (i * 13) % 50]
     df = frame.new[day = days, sym = syms, px = pxs, vol = vols]
-    a = write_batch[dir, 0, 0, df, ['day', 'sym'], nothing]
-    b = write_batch[dir, 1, 900, df, ['day', 'sym'], nothing]
+    a = merger.write_batch[dir, 0, 0, df, ['day', 'sym'], nothing]
+    b = merger.write_batch[dir, 1, 900, df, ['day', 'sym'], nothing]
     paths = ['`dir`/000000000000.batch', '`dir`/000000000001.batch']
     hows = ['count', 'sum', 'min', 'max', 'mean', 'var', 'std', 'first', 'last']
     seen = []
@@ -1298,7 +1298,7 @@ test summary_by_an_int_column_is_the_cells_summary[]
 test asof_is_the_kernels[]
     nothing = slice[['x'], 0, 0]
     dir = _fresh['target/crow_exec_asof']
-    k = declare[dir, ['sym'], ['time'], ['ts']]
+    k = manifest.declare[dir, ['sym'], ['time'], ['ts']]
     syms = []
     tss = []
     pxs = []
@@ -1307,8 +1307,8 @@ test asof_is_the_kernels[]
         tss = push[tss, i * 10]
         pxs = push[pxs, float[(i * 37) % 101] / 8.0]
     df = frame.new[sym = syms, ts = tss, px = pxs]
-    a = write_batch[dir, 0, 0, frame.head[df, 150], ['sym'], nothing]
-    b = write_batch[dir, 1, 150, frame.tail[df, 150], ['sym'], nothing]
+    a = merger.write_batch[dir, 0, 0, frame.head[df, 150], ['sym'], nothing]
+    b = merger.write_batch[dir, 1, 150, frame.tail[df, 150], ['sym'], nothing]
     paths = ['`dir`/000000000000.batch', '`dir`/000000000001.batch']
     labels = frame.new[sym = ['s1', 's2', 's3', 's9', 's1'], ts = [5, 1495, 2990, 100, -3], label = [1, 0, 1, 1, 0]]
     seen = []

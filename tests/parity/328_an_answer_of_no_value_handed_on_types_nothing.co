@@ -8,5 +8,5 @@
 use magpie
 
 log['merging a parsed value']
-log[merge[json['{"a": 1}'], true]]
+log[magpie.merge[json['{"a": 1}'], true]]
 log['not reached']

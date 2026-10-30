@@ -1,5 +1,5 @@
-//! The Kafka door in both modes (spec, section 13: kafka): a Crow program
-//! serving `serve[root, port]` is driven by the pure-Python client — a
+//! The Kafka door in both modes (packages/magpie, `use magpie.kafka`): a
+//! Crow program serving `kafka.serve[root, port]` is driven by the pure-Python client — a
 //! producer sends three records, a consumer group reads them from the
 //! start and commits, a second consumer of the group takes up after the
 //! commit — interpreted and compiled. The client is looked for as
@@ -8,6 +8,8 @@
 //! as the Postgres tests skip without `initdb`.
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+
+mod common;
 
 fn python_with_kafka() -> Option<String> {
     let candidates: Vec<String> = std::env::var("CROW_KAFKA_PYTHON").ok().into_iter().chain(["python3".to_string()]).collect();
@@ -39,8 +41,9 @@ fn drive(interpreted: bool, script: &str) {
     let dir = std::env::temp_dir().join(format!("crow-kafka-{}-{}-{}", if interpreted { "i" } else { "c" }, script.trim_end_matches(".py"), std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    common::link_magpie(&dir);
     let port = free_port();
-    std::fs::write(dir.join("door.co"), format!("use kafka\n\nserved = serve['magpie', {port}]\nlog[served]\n")).unwrap();
+    std::fs::write(dir.join("door.co"), format!("use magpie.kafka\n\nserved = kafka.serve['magpie', {port}]\nlog[served]\n")).unwrap();
     let crow = env!("CARGO_BIN_EXE_crow");
     let mut cmd = Command::new(crow);
     cmd.arg("run");

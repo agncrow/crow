@@ -1,4 +1,4 @@
---- `use magpie.nearest`: `nearest` over a log's files, in Crow — the k
+--- `use magpie.knn`: `nearest` over a log's files, in Crow — the k
 --- rows whose vector column lies nearest a query vector by the cosine:
 --- the inner product of the row's unit vector and the query's, each
 --- vector over its norm (the square root of its squares summed in order),
@@ -11,9 +11,9 @@ use sys
 use bits
 use frame
 use math
-use magpie.file
-use magpie.tail
-use magpie.merge
+use fileformat
+use sequencer
+use merger
 
 --- a scored row: its score, its position, and where it lies
 struct Hit [score, pos, file, group, row]
@@ -80,16 +80,16 @@ fn _offered[best, h, k]
 fn _empty_scored[paths]
     if len[paths] eq 0
         f = frame.new[]
-        f.score = floats_column[[], bytes[0]]
+        f.score = floats_column[[], sys.bytes[0]]
         return f
-    r = opened[paths[0]]
+    r = fileformat.opened[paths[0]]
     if not r.ok
         return error[r.reason, 'magpie']
-    every = wanted[r, slice[['x'], 0, 0]]
+    every = fileformat.wanted[r, slice[['x'], 0, 0]]
     if not every.ok
         return error[every.reason, 'magpie']
-    f = empty_of[r, every]
-    f.score = floats_column[[], bytes[0]]
+    f = fileformat.empty_of[r, every]
+    f.score = floats_column[[], sys.bytes[0]]
     return f
 
 --- the place of a column in a file, -1 for none
@@ -126,7 +126,7 @@ fn nearest_rows[paths, column, query, k]
         if '/.pending' in p
             --- (the sequencer's pending rows, read through the kernel until
             --- the sequencer is Crow's: scored as one group)
-            df = pending_at[p]
+            df = sequencer.pending_at[p]
             if not df.ok
                 return error[df.reason, 'magpie']
             pending = set[pending, fi, df]
@@ -140,7 +140,7 @@ fn nearest_rows[paths, column, query, k]
                 return error[more.reason, 'magpie']
             best = more
         else
-            r = opened[p]
+            r = fileformat.opened[p]
             if not r.ok
                 return error[r.reason, 'magpie']
             readers = set[readers, fi, r]
@@ -158,16 +158,16 @@ fn nearest_rows[paths, column, query, k]
             rows = push[rows, frame.head[frame.tail[df, len[df] - h.row], 1]]
         else
             r = readers[h.file]
-            every = wanted[r, slice[['x'], 0, 0]]
+            every = fileformat.wanted[r, slice[['x'], 0, 0]]
             if not every.ok
                 return error[every.reason, 'magpie']
-            g = group_of[r, h.group, every]
+            g = fileformat.group_of[r, h.group, every]
             if not g.ok
                 return error[g.reason, 'magpie']
             rows = push[rows, frame.head[frame.tail[g, len[g] - h.row], 1]]
         scores = push[scores, h.score]
-    whole = stack[rows]
-    whole.score = floats_column[scores, bytes[0]]
+    whole = frame.stack[rows]
+    whole.score = floats_column[scores, sys.bytes[0]]
     return whole
 
 --- the best k with one more column's rows offered: each present row
@@ -205,7 +205,7 @@ fn _file_scored[best, r, p, column, uq, fi, k]
     cells = r.footer.columns[c].cells
     if cells ne 'vector'
         return error['batch: column \'`column`\' holds `cells`, not vectors', 'magpie']
-    ents = entries[r, c]
+    ents = fileformat.entries[r, c]
     if not ents.ok
         return error[ents.reason, 'magpie']
     pc = _column_at[r, '_pos']
@@ -213,13 +213,13 @@ fn _file_scored[best, r, p, column, uq, fi, k]
     for g in range[len[ents]]
         ent = ents[g]
         if ent.rows gt 0 and ent.absent lt ent.rows
-            col = chunk_of[r, c, ent]
+            col = fileformat.chunk_of[r, c, ent]
             if not col.ok
                 return error[col.reason, 'magpie']
             n = len[col]
             positions = range[n]
             if pc gte 0
-                pg = group_of[r, g, [pc]]
+                pg = fileformat.group_of[r, g, [pc]]
                 if not pg.ok
                     return error[pg.reason, 'magpie']
                 positions = ints_of[pg._pos, 0, n]
@@ -246,8 +246,8 @@ test nearest_is_the_kernels[]
     made = mkdir[dir]
     f1 = frame.new[id = [1, 2, 3], e = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]]
     f2 = frame.new[id = [4, 5, 6], e = [[2.0, 0.0], [0.0, 0.0], [3.0, 4.0]]]
-    a = write_batch[dir, 1, 0, f1, nothing, nothing]
-    b = write_batch[dir, 2, 3, f2, nothing, nothing]
+    a = merger.write_batch[dir, 1, 0, f1, nothing, nothing]
+    b = merger.write_batch[dir, 2, 3, f2, nothing, nothing]
     paths = ['`dir`/000000000001.batch', '`dir`/000000000002.batch']
     seen = []
     for q in [[1.0, 0.0], [0.0, 1.0], [0.6, 0.8], [-1.0, 0.5]]

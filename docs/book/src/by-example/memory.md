@@ -1,7 +1,7 @@
 # Process memory: `use memory`
 
-Process memory is what library code keeps between calls — Magpie's
-sequencer holds the rows put since its last flush there. A program's own
+Process memory is what library code keeps between calls — the Magpie
+package's sequencer holds the rows put since its last flush there. A program's own
 state is its variables, and a page's its facts, so a program seldom needs
 it; keeping it to library code is a suggestion, not a rule, and any
 program or package may import it.
@@ -34,7 +34,7 @@ true
 
 A record held for the process under a name outlives the call that put it
 there and is shared by the program's threads: what a module keeps between
-calls, as Magpie's sequencer keeps the rows put since its last flush. A
+calls, as the Magpie package's sequencer keeps the rows put since its last flush. A
 name holds one kind of record — a read with a default of another kind
 stops, naming both — and `recall` answers the default where nothing is
 held. `revise` runs its function under the name's lock, handed the record

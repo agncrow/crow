@@ -9,5 +9,5 @@
 use magpie, frame
 
 labels = frame.new[user = ['ann', 'bob'], at = [10, 20]]
-rows = prior['no-such-log', labels, ['score'], push[[], 5]]
+rows = magpie.prior['no-such-log', labels, ['score'], push[[], 5]]
 log[rows]

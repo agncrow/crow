@@ -1,4 +1,4 @@
---- `use magpie.records`: the Kafka wire's record sets, the
+--- `use magpie.recordsets`: the Kafka wire's record sets, the
 --- per-byte half of the Kafka door, in Crow: a legacy message set (magic
 --- 1, the format brokers of 0.10 wrote and every client still reads)
 --- decoded into a frame and encoded from one, each message's CRC-32
@@ -8,9 +8,9 @@
 use sys
 use bits
 use frame
-use magpie.inflate
-use magpie.snappy
-use magpie.encode
+use inflate
+use snappy
+use columnchunk
 
 --- the rows of a message set as columns being built
 struct Rows [offsets, ats, keys, key_ends, key_held, values, value_ends, value_held, count]
@@ -24,7 +24,7 @@ fn _field[msg, at, n, what]
         return error['records: message `n` is cut inside its `what`\'s length', 'kafka']
     size = unpack[msg, at, 4]
     if size lt 0
-        return Field[bytes[0], false, at + 4]
+        return Field[sys.bytes[0], false, at + 4]
     if at + 4 + size gt len[msg]
         return error['records: message `n` is cut inside its `what`', 'kafka']
     return Field[slice[msg, at + 4, at + 4 + size], true, at + 4 + size]
@@ -33,24 +33,24 @@ fn _field[msg, at, n, what]
 --- `\x82SNAPPY\x00`, two ints of version, then blocks each led by its
 --- compressed length — or one raw block
 fn _snappy_kafka[v]
-    magic = bytes[0]
+    magic = sys.bytes[0]
     for b in [130, 83, 78, 65, 80, 80, 89, 0]
         magic = push[magic, int[b]]
     if len[v] gte 16 and same[slice[v, 0, 8], magic]
-        out = bytes[0]
+        out = sys.bytes[0]
         p = 16
         while p + 4 lte len[v]
             size = unpack[v, p, 4, signed = false]
             p = p + 4
             if p + size gt len[v]
                 return error['a snappy block is cut short', 'kafka']
-            block = unsnapped[slice[v, p, p + size]]
+            block = snappy.unsnapped[slice[v, p, p + size]]
             if not block.ok
                 return error['snappy: `block.reason`', 'kafka']
             out = concat[out, block]
             p = p + size
         return out
-    whole = unsnapped[v]
+    whole = snappy.unsnapped[v]
     if not whole.ok
         return error['snappy: `whole.reason`', 'kafka']
     return whole
@@ -59,7 +59,7 @@ fn _snappy_kafka[v]
 fn _no_rows[]
     none = []
     held = slice[[true], 0, 0]
-    return Rows[none, none, bytes[0], none, held, bytes[0], none, held, 0]
+    return Rows[none, none, sys.bytes[0], none, held, sys.bytes[0], none, held, 0]
 
 --- the rows read so far with one message set's more
 fn _rows_of[data, rows]
@@ -87,7 +87,7 @@ fn _rows_of[data, rows]
             msg = slice[data, begin, begin + size]
             if size lt 6
                 return error['records: message `n` is `size` bytes, too few for a message', 'kafka']
-            if unpack[msg, 0, 4, signed = false] ne crc32[slice[msg, 4, size]]
+            if unpack[msg, 0, 4, signed = false] ne inflate.crc32[slice[msg, 4, size]]
                 return error['records: message `n` does not match its checksum', 'kafka']
             magic = byte[msg, 4]
             attributes = byte[msg, 5]
@@ -112,9 +112,9 @@ fn _rows_of[data, rows]
                 --- the inner messages are the records
                 if not value.held
                     return error['records: message `n` is compressed and holds nothing', 'kafka']
-                inner = bytes[0]
+                inner = sys.bytes[0]
                 if codec eq 1
-                    unzipped = gunzipped[value.data]
+                    unzipped = inflate.gunzipped[value.data]
                     if not unzipped.ok
                         return error['records: message `n` does not unzip: `unzipped.reason`', 'kafka']
                     inner = unzipped
@@ -143,9 +143,9 @@ fn _rows_of[data, rows]
                 value_text = concat[value_text, more.values]
                 n = n + more.count
             else
-                if key.held and not text[key.data].ok
+                if key.held and not sys.text[key.data].ok
                     return error['records: message `n`\'s key is no UTF-8 text', 'kafka']
-                if value.held and not text[value.data].ok
+                if value.held and not sys.text[value.data].ok
                     return error['records: message `n`\'s value is no UTF-8 text', 'kafka']
                 offsets = push[offsets, offset]
                 ats = push[ats, at]
@@ -166,8 +166,8 @@ fn _bitmap_of[flags]
         if not f
             every = false
     if every
-        return bytes[0]
-    out = bytes[shift[len[flags] + 7, -3]]
+        return sys.bytes[0]
+    out = sys.bytes[shift[len[flags] + 7, -3]]
     for i in range[len[flags]]
         if flags[i]
             out = set[out, shift[i, -3], bitor[byte[out, shift[i, -3]], shift[1, bitand[i, 7]]]]
@@ -185,8 +185,8 @@ fn message_rows[data]
     if not rows.ok
         return error[rows.reason, 'kafka']
     f = frame.new[]
-    f.offset = ints_column[rows.offsets, bytes[0]]
-    f.at = ints_column[rows.ats, bytes[0]]
+    f.offset = ints_column[rows.offsets, sys.bytes[0]]
+    f.at = ints_column[rows.ats, sys.bytes[0]]
     f.key = text_column[rows.keys, rows.key_ends, _bitmap_of[rows.key_held]]
     f.value = text_column[rows.values, rows.value_ends, _bitmap_of[rows.value_held]]
     return f
@@ -207,7 +207,7 @@ fn message_set[df]
         if name not in df.columns
             return error['records: the frame holds no column \'`name`\'', 'kafka']
     n = len[df]
-    out = bytes[0]
+    out = sys.bytes[0]
     if n eq 0
         return out
     --- (the kinds as the first row meets them, as the kernel's rows do)
@@ -238,7 +238,7 @@ fn message_set[df]
         stamp = ats[r]
         if not _present[at_present, r]
             stamp = -1
-        msg = bytes[0]
+        msg = sys.bytes[0]
         msg = push[msg, 1]
         msg = push[msg, 0]
         msg = concat[msg, pack[stamp, 8]]
@@ -256,13 +256,13 @@ fn message_set[df]
         value_from = value_ends[r]
         out = concat[out, pack[offsets[r], 8]]
         out = concat[out, pack[len[msg] + 4, 4]]
-        out = concat[out, pack[crc32[msg], 4]]
+        out = concat[out, pack[inflate.crc32[msg], 4]]
         out = concat[out, msg]
     return out
 
 --- bytes from a list of numbers
 fn _bytes_of[nums]
-    out = bytes[0]
+    out = sys.bytes[0]
     for x in nums
         out = push[out, int[x]]
     return out
@@ -272,19 +272,19 @@ fn _digest[b]
     return slice[hash[b, 'sha256'], 0, 16]
 
 --- a frame's image, digested — each column's name and its chunk (its
---- kind, its missing cells, its cells, as magpie.encode writes them)
+--- kind, its missing cells, its cells, as magpie.columnchunk writes them)
 fn _image[f]
     n = len[f]
-    out = bytes['`n`']
+    out = sys.bytes['`n`']
     for name in f.columns
-        out = concat[out, bytes[name]]
-        out = concat[out, chunk[f.`name`, 0, n, false]]
+        out = concat[out, sys.bytes[name]]
+        out = concat[out, columnchunk.chunk[f.`name`, 0, n, false]]
     return _digest[out]
 
 --- a wrapper message around an inner set: magic 1, the codec, no key,
 --- the compressed set as its value, offset 1
 fn _wrapped[inner, codec]
-    msg = bytes[0]
+    msg = sys.bytes[0]
     msg = push[msg, 1]
     msg = push[msg, codec]
     msg = concat[msg, pack[7, 8]]
@@ -293,7 +293,7 @@ fn _wrapped[inner, codec]
     msg = concat[msg, inner]
     out = pack[1, 8]
     out = concat[out, pack[len[msg] + 4, 4]]
-    out = concat[out, pack[crc32[msg], 4]]
+    out = concat[out, pack[inflate.crc32[msg], 4]]
     return concat[out, msg]
 
 --- the same message sets as the kernel's both ways, plain and wrapped
@@ -305,17 +305,17 @@ test records_are_the_kernels[]
     cut_ends = []
     for e in [2, 2, 4]
         cut_ends = push[cut_ends, int[e]]
-    f.key = text_column[bytes['k1k3'], cut_ends, push[bytes[0], 5]]
+    f.key = text_column[sys.bytes['k1k3'], cut_ends, push[sys.bytes[0], 5]]
     mine = message_set[f]
     seen = []
     seen = push[seen, _digest[mine]]
     seen = push[seen, _image[message_rows[mine]]]
-    gz = _wrapped[gzip_stored[mine], 1]
+    gz = _wrapped[inflate.gzip_stored[mine], 1]
     seen = push[seen, _image[message_rows[gz]]]
-    sn = _wrapped[snappy_literal[mine], 2]
+    sn = _wrapped[snappy.snappy_literal[mine], 2]
     seen = push[seen, _image[message_rows[sn]]]
     framing = _bytes_of[[130, 83, 78, 65, 80, 80, 89, 0, 0, 0, 0, 1, 0, 0, 0, 1]]
-    block = snappy_literal[mine]
+    block = snappy.snappy_literal[mine]
     xerial = concat[concat[framing, pack[len[block], 4]], block]
     xs = _wrapped[xerial, 2]
     seen = push[seen, _image[message_rows[xs]]]

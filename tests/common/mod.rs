@@ -1,4 +1,5 @@
-//! What the integration tests share: a Postgres cluster of the test's own.
+//! What the integration tests share: a Postgres cluster of the test's own,
+//! and the Magpie package beside a test's programs.
 
 #![allow(dead_code)]
 
@@ -54,3 +55,13 @@ impl Drop for Scratch {
     }
 }
 
+/// The Magpie package installed beside a test's programs, as `crow install`
+/// links a dependency: `crow_modules/magpie` naming the repository's
+/// packages/magpie, which `use magpie` (and `use magpie.kafka`) then reach.
+pub fn link_magpie(dir: &std::path::Path) {
+    let modules = dir.join("crow_modules");
+    std::fs::create_dir_all(&modules).unwrap();
+    let package = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("packages/magpie");
+    let _ = std::fs::remove_file(modules.join("magpie"));
+    std::os::unix::fs::symlink(package, modules.join("magpie")).unwrap();
+}

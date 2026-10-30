@@ -7,7 +7,7 @@
 --- blamed (it had been: a copy lowered before its caller's body had no
 --- chain on record, and the first export reaching the helper answered)
 use magpie, frame
-ok = lookup['nowhere', ['day'], ['x'], ['timestamp']]
+ok = magpie.lookup['nowhere', ['day'], ['x'], ['timestamp']]
 log[ok.reason]
-bad = latest['nowhere', ['id']]
+bad = magpie.latest['nowhere', ['id']]
 log[bad.reason]

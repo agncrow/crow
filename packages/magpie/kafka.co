@@ -1,4 +1,4 @@
---- `use kafka`: the Kafka door of the magpie (spec, kafka). A topic is a log
+--- `use magpie.kafka`: the Kafka door of the magpie (REFERENCE.md). A topic is a log
 --- under the door's root (`<root>/<topic>`, one partition, its positions
 --- the offsets); a producer's records are appended as one batch, a
 --- consumer's fetch is `since` from its offset, a group's commits and
@@ -7,15 +7,15 @@
 --- magic 1, which every client still writes and reads when the door says
 --- so in ApiVersions — framed, parsed and answered here in Crow over the
 --- sys layer; the per-byte half (a message set to a frame and back, the
---- checksums) is magpie.records' (`message_rows`, `message_set`). The door
+--- checksums) is magpie.recordsets' (`message_rows`, `message_set`). The door
 --- serves every connection from one loop, polling each in turn, so both
 --- modes run it the same way. One member per consumer group is served
 --- in full; a second member joining makes the generation move, and the
 --- first hears so at its heartbeat and joins again. The tests are the
---- module's own: `crow test src/modules/kafka.co`.
+--- part's own: `crow test packages/magpie/kafka.co`.
 use sys
 use magpie
-use magpie.records
+use recordsets
 use frame
 use math
 
@@ -25,7 +25,7 @@ fn _str_at[b, at]
     n = unpack[b, at, 2]
     if n lt 0
         return ''
-    return text[slice[b, at + 2, at + 2 + n], '?']
+    return sys.text[slice[b, at + 2, at + 2 + n], '?']
 
 fn _after_str[b, at]
     n = unpack[b, at, 2]
@@ -36,7 +36,7 @@ fn _after_str[b, at]
 fn _bytes_at[b, at]
     n = unpack[b, at, 4]
     if n lt 0
-        return bytes['']
+        return sys.bytes['']
     return slice[b, at + 4, at + 4 + n]
 
 fn _after_bytes[b, at]
@@ -47,7 +47,7 @@ fn _after_bytes[b, at]
 
 --- the wire's writers
 fn _wstr[s]
-    return concat[pack[len[bytes[s]], 2], bytes[s]]
+    return concat[pack[len[sys.bytes[s]], 2], sys.bytes[s]]
 
 fn _wbytes[b]
     return concat[pack[len[b], 4], b]
@@ -90,7 +90,7 @@ fn _api_versions[]
 --- 2 are the classic layout
 fn _answer_api_versions[version]
     if version gte 3
-        entries = bytes['']
+        entries = sys.bytes['']
         for piece in _api_versions[]
             entries = concat[entries, concat[piece, pack[0, 1]]]
         return concat[[pack[0, 2], pack[len[_api_versions[]] + 1, 1], entries, pack[0, 4], pack[0, 1]]]
@@ -137,7 +137,7 @@ fn _answer_metadata[root, version, body, host, port]
     broker = concat[[pack[0, 4], _wstr[host], pack[port, 4]]]
     if version gte 1
         broker = concat[broker, pack[-1, 2]]
-    topics = bytes['']
+    topics = sys.bytes['']
     for t in wanted
         partition = concat[[pack[0, 2], pack[0, 4], pack[0, 4], _warray[[pack[0, 4]]], _warray[[pack[0, 4]]]]]
         header = concat[pack[0, 2], _wstr[t]]
@@ -171,13 +171,13 @@ fn _answer_produce[root, version, body]
     acks = unpack[body, 0, 2]
     count = unpack[body, 6, 4]
     at = 10
-    topics = bytes['']
+    topics = sys.bytes['']
     for i in range[count]
         topic = _str_at[body, at]
         at = _after_str[body, at]
         parts = unpack[body, at, 4]
         at = at + 4
-        answers = bytes['']
+        answers = sys.bytes['']
         for j in range[parts]
             index = unpack[body, at, 4]
             payload = _bytes_at[body, at + 4]
@@ -188,7 +188,7 @@ fn _answer_produce[root, version, body]
                 err = _unknown_topic[]
             else
                 dir = _ensure_topic[root, topic]
-                recs = message_rows[payload]
+                recs = recordsets.message_rows[payload]
                 if not recs.ok
                     err = 2
                 else
@@ -201,7 +201,7 @@ fn _answer_produce[root, version, body]
             answers = concat[answers, response]
         topics = concat[topics, concat[_wstr[topic], _array[parts, answers]]]
     if acks eq 0
-        return bytes['']
+        return sys.bytes['']
     out = _array[count, topics]
     if version gte 1
         out = concat[out, pack[0, 4]]
@@ -211,17 +211,17 @@ fn _answer_produce[root, version, body]
 fn _fetched[dir, offset, most]
     rows = magpie.since[dir, offset]
     if not rows.ok
-        return bytes['']
+        return sys.bytes['']
     if len[rows] eq 0
-        return bytes['']
+        return sys.bytes['']
     taken = frame.head[rows, most]
     --- the rows as the log holds them, the offset the log's position (the
     --- producer's own offset column, kept as written, overwritten here)
     out = taken
     out.offset = taken._pos
-    encoded = message_set[out]
+    encoded = recordsets.message_set[out]
     if not encoded.ok
-        return bytes['']
+        return sys.bytes['']
     return encoded
 
 --- the position past a log's last row, 0 for none
@@ -239,20 +239,20 @@ fn _answer_fetch[root, version, body]
         at = 16
     count = unpack[body, at, 4]
     at = at + 4
-    topics = bytes['']
+    topics = sys.bytes['']
     for i in range[count]
         topic = _str_at[body, at]
         at = _after_str[body, at]
         parts = unpack[body, at, 4]
         at = at + 4
-        answers = bytes['']
+        answers = sys.bytes['']
         for j in range[parts]
             index = unpack[body, at, 4]
             offset = unpack[body, at + 4, 8]
             at = at + 16
             err = 0
             watermark = 0
-            payload = bytes['']
+            payload = sys.bytes['']
             dir = _topic_dir[root, topic]
             if index ne 0 or not exists[dir]
                 err = _unknown_topic[]
@@ -311,13 +311,13 @@ fn _earliest[dir]
 fn _answer_list_offsets[root, version, body]
     count = unpack[body, 4, 4]
     at = 8
-    topics = bytes['']
+    topics = sys.bytes['']
     for i in range[count]
         topic = _str_at[body, at]
         at = _after_str[body, at]
         parts = unpack[body, at, 4]
         at = at + 4
-        answers = bytes['']
+        answers = sys.bytes['']
         for j in range[parts]
             index = unpack[body, at, 4]
             stamp = unpack[body, at + 4, 8]
@@ -402,7 +402,7 @@ fn _answer_join_group[root, version, body]
     count = unpack[body, at, 4]
     at = at + 4
     protocol = ''
-    meta = bytes['']
+    meta = sys.bytes['']
     if count gt 0
         protocol = _str_at[body, at]
         at = _after_str[body, at]
@@ -427,7 +427,7 @@ fn _answer_join_group[root, version, body]
     if not wrote.ok
         return concat[[pack[2, 2], pack[-1, 4], _wstr[''], _wstr[''], _wstr[member], _warray[[]]]]
     now_rows = _current[_group_rows[root, gid]]
-    members = bytes['']
+    members = sys.bytes['']
     for i in range[len[now_rows]]
         decoded = unbase64[str[now_rows.meta[i]]]
         members = concat[members, concat[_wstr[str[now_rows.member[i]]], _wbytes[decoded]]]
@@ -444,7 +444,7 @@ fn _answer_sync_group[root, body]
     count = unpack[body, at, 4]
     at = at + 4
     rows = _group_rows[root, gid]
-    mine = bytes['']
+    mine = sys.bytes['']
     for i in range[count]
         who = _str_at[body, at]
         at = _after_str[body, at]
@@ -462,7 +462,7 @@ fn _answer_sync_group[root, body]
     if len[mine] eq 0
         mine = _kept_assignment[root, gid, member]
     if len[mine] eq 0 and count eq 0
-        return concat[pack[27, 2], _wbytes[bytes['']]]
+        return concat[pack[27, 2], _wbytes[sys.bytes['']]]
     return concat[pack[0, 2], _wbytes[mine]]
 
 --- the assignment the leader stored for a member, or no bytes
@@ -470,10 +470,10 @@ fn _kept_assignment[root, gid, member]
     rows = _group_rows[root, gid]
     own = rows[rows.member eq member]
     if len[own] eq 0 or own.assignment[0] eq ''
-        return bytes['']
+        return sys.bytes['']
     decoded = unbase64[own.assignment[0]]
     if not decoded.ok
-        return bytes['']
+        return sys.bytes['']
     return decoded
 
 --- Heartbeat: the member's generation is the group's, or a rebalance is
@@ -523,13 +523,13 @@ fn _answer_offset_commit[root, version, body]
     dir = '`root`/_offsets'
     if not exists[dir]
         made = mkdir[dir]
-    topics = bytes['']
+    topics = sys.bytes['']
     for i in range[count]
         topic = _str_at[body, at]
         at = _after_str[body, at]
         parts = unpack[body, at, 4]
         at = at + 4
-        answers = bytes['']
+        answers = sys.bytes['']
         for j in range[parts]
             index = unpack[body, at, 4]
             offset = unpack[body, at + 4, 8]
@@ -559,13 +559,13 @@ fn _answer_offset_fetch[root, body]
         newest = magpie.latest[dir]
         if newest.ok and len[newest] gt 0
             known = newest[newest.gid eq gid]
-    topics = bytes['']
+    topics = sys.bytes['']
     for i in range[count]
         topic = _str_at[body, at]
         at = _after_str[body, at]
         parts = unpack[body, at, 4]
         at = at + 4
-        answers = bytes['']
+        answers = sys.bytes['']
         for j in range[parts]
             index = unpack[body, at, 4]
             at = at + 4
@@ -588,7 +588,7 @@ fn _answer[root, req, host, port]
     correlation = unpack[req, 4, 4]
     at = _after_str[req, 8]
     body = slice[req, at, len[req]]
-    out = bytes['']
+    out = sys.bytes['']
     if api eq 18
         out = _answer_api_versions[version]
     else
@@ -598,7 +598,7 @@ fn _answer[root, req, host, port]
             if api eq 0
                 out = _answer_produce[root, version, body]
                 if len[out] eq 0
-                    return bytes['']
+                    return sys.bytes['']
             else
                 if api eq 1
                     out = _answer_fetch[root, version, body]
@@ -637,27 +637,27 @@ fn _answer[root, req, host, port]
 fn _frame_of[c]
     have = leftover[c]
     if len[have] lt 4
-        got = recv[stream_of[c], 4 - len[have], 0.005]
+        got = sys.recv[stream_of[c], 4 - len[have], 0.005]
         if not got.ok
             unread[c, have]
             if starts[got.reason, 'no data']
-                return bytes['']
+                return sys.bytes['']
             return error[got.reason, 'kafka']
         if len[got] eq 0
             return error['closed', 'kafka']
         have = concat[have, got]
         if len[have] lt 4
             unread[c, have]
-            return bytes['']
+            return sys.bytes['']
     size = unpack[have, 0, 4]
     if size lt 0 or size gt 100000000
         return error['a request of `size` bytes is no request', 'kafka']
     while len[have] lt 4 + size
-        got = recv[stream_of[c], 4 + size - len[have], 0.005]
+        got = sys.recv[stream_of[c], 4 + size - len[have], 0.005]
         if not got.ok
             unread[c, have]
             if starts[got.reason, 'no data']
-                return bytes['']
+                return sys.bytes['']
             return error[got.reason, 'kafka']
         if len[got] eq 0
             return error['closed', 'kafka']
@@ -672,7 +672,7 @@ fn _frame_of[c]
 --- 0). Answers how many requests it served, or the reason it could not
 --- listen
 fn serve[root, port = 9092, host = '127.0.0.1', rounds = 0]
-    l = listen[host, port]
+    l = sys.listen[host, port]
     if not l.ok
         return error[l.reason, 'kafka']
     made = mkdir[root]
@@ -686,7 +686,7 @@ fn serve[root, port = 9092, host = '127.0.0.1', rounds = 0]
         turn = turn + 1
         arrived = accept[l, 0.005]
         if arrived.ok
-            conns = push[conns, socket_of[arrived, address[arrived], bytes['']]]
+            conns = push[conns, socket_of[arrived, address[arrived], sys.bytes['']]]
         kept = []
         for c in conns
             req = _frame_of[c]
@@ -708,7 +708,7 @@ fn serve[root, port = 9092, host = '127.0.0.1', rounds = 0]
                         else
                             served = served + 1
                             if len[response] gt 0
-                                sent = send[stream_of[c], response]
+                                sent = sys.send[stream_of[c], response]
                     kept = push[kept, c]
                 else
                     kept = push[kept, c]
@@ -724,7 +724,7 @@ fn serve[root, port = 9092, host = '127.0.0.1', rounds = 0]
                 response = _answer[root, req, host, port]
                 if response.ok
                     served = served + 1
-                    sent = send[stream_of[waiting[i]], response]
+                    sent = sys.send[stream_of[waiting[i]], response]
             else
                 still = push[still, waiting[i]]
                 still_reqs = push[still_reqs, req]
@@ -752,18 +752,18 @@ fn _body[response]
 --- the wire's readers and writers agree, and a request frames as a client
 --- frames one
 test the_wire_reads_what_it_writes[]
-    b = concat[[_wstr['hello'], pack[-1, 2], _wbytes[bytes['xy']], pack[-1, 4], pack[-7, 8]]]
+    b = concat[[_wstr['hello'], pack[-1, 2], _wbytes[sys.bytes['xy']], pack[-1, 4], pack[-7, 8]]]
     assert[_str_at[b, 0] eq 'hello']
     assert[_after_str[b, 0] eq 7]
     assert[_str_at[b, 7] eq '']
     assert[_after_str[b, 7] eq 9]
-    assert[text[_bytes_at[b, 9]] eq 'xy']
+    assert[sys.text[_bytes_at[b, 9]] eq 'xy']
     assert[_after_bytes[b, 9] eq 15]
     assert[len[_bytes_at[b, 15]] eq 0]
     assert[_after_bytes[b, 15] eq 19]
     assert[unpack[b, 19, 8] eq -7]
     assert[len[_warray[[]]] eq 4]
-    r = _request[18, 0, 42, bytes['']]
+    r = _request[18, 0, 42, sys.bytes['']]
     assert[unpack[r, 0, 4] eq len[r] - 4]
     assert[unpack[r, 4, 2] eq 18 and unpack[r, 8, 4] eq 42 and _str_at[r, 12] eq 'crow']
 
@@ -771,12 +771,12 @@ test the_wire_reads_what_it_writes[]
 --- makes the topics asked, FindCoordinator names this door
 test the_door_describes_itself[]
     root = _scratch['kafka-test-meta']
-    r = _answer[root, _unframed[_request[18, 0, 1, bytes['']]], '127.0.0.1', 9092]
+    r = _answer[root, _unframed[_request[18, 0, 1, sys.bytes['']]], '127.0.0.1', 9092]
     assert[unpack[r, 4, 4] eq 1]
     body = _body[r]
     assert[unpack[body, 0, 2] eq 0 and unpack[body, 2, 4] eq 21]
     assert[unpack[body, 6, 2] eq 0 and unpack[body, 8, 2] eq 0 and unpack[body, 10, 2] eq 2]
-    flex = _body[_answer[root, _unframed[_request[18, 4, 11, bytes['']]], '127.0.0.1', 9092]]
+    flex = _body[_answer[root, _unframed[_request[18, 4, 11, sys.bytes['']]], '127.0.0.1', 9092]]
     assert[unpack[flex, 0, 2] eq 0 and unpack[flex, 2, 1] eq 22 and unpack[flex, 3, 2] eq 0 and unpack[flex, 7, 2] eq 2 and unpack[flex, 9, 1] eq 0]
     assert[len[flex] eq 2 + 1 + 21 * 7 + 4 + 1]
     m = _answer[root, _unframed[_request[3, 1, 2, _warray[[_wstr['orders']]]]], '127.0.0.1', 9092]
@@ -786,7 +786,7 @@ test the_door_describes_itself[]
     assert[_topics[root] eq ['orders']]
     f = _body[_answer[root, _unframed[_request[10, 0, 3, _wstr['g1']]], '127.0.0.1', 9092]]
     assert[unpack[f, 0, 2] eq 0 and unpack[f, 2, 4] eq 0 and _str_at[f, 6] eq '127.0.0.1' and unpack[f, 17, 4] eq 9092]
-    assert[_answer[root, _unframed[_request[99, 0, 4, bytes['']]], '127.0.0.1', 9092].kind eq 'kafka']
+    assert[_answer[root, _unframed[_request[99, 0, 4, sys.bytes['']]], '127.0.0.1', 9092].kind eq 'kafka']
     gone = rm[root]
 
 --- a produce lands its records in the topic's log at the next offsets;
@@ -795,7 +795,7 @@ test the_door_describes_itself[]
 test records_go_in_and_come_out[]
     root = _scratch['kafka-test-produce']
     recs = frame.new[offset = [0, 1], at = [1700000000000, 1700000001000], key = ['k', 'k2'], value = ['one', 'two']]
-    produce = concat[[pack[1, 2], pack[1000, 4], _array[1, concat[_wstr['t'], _array[1, concat[pack[0, 4], _wbytes[message_set[recs]]]]]]]]
+    produce = concat[[pack[1, 2], pack[1000, 4], _array[1, concat[_wstr['t'], _array[1, concat[pack[0, 4], _wbytes[recordsets.message_set[recs]]]]]]]]
     p = _body[_answer[root, _unframed[_request[0, 2, 5, produce]], '127.0.0.1', 9092]]
     assert[unpack[p, 0, 4] eq 1 and _str_at[p, 4] eq 't']
     assert[unpack[p, 7, 4] eq 1 and unpack[p, 11, 4] eq 0 and unpack[p, 15, 2] eq 0 and unpack[p, 17, 8] eq 0]
@@ -807,7 +807,7 @@ test records_go_in_and_come_out[]
     f = _body[_answer[root, _unframed[_request[1, 3, 8, fetch]], '127.0.0.1', 9092]]
     assert[unpack[f, 0, 4] eq 0 and unpack[f, 4, 4] eq 1 and _str_at[f, 8] eq 't']
     assert[unpack[f, 11, 4] eq 1 and unpack[f, 15, 4] eq 0 and unpack[f, 19, 2] eq 0 and unpack[f, 21, 8] eq 6]
-    got = message_rows[_bytes_at[f, 29]]
+    got = recordsets.message_rows[_bytes_at[f, 29]]
     assert[got.offset eq [1, 2, 3, 4, 5] and got.value eq ['two', 'one', 'two', 'one', 'two']]
     assert[got.at[0] eq 1700000001000]
     past = _body[_answer[root, _unframed[_request[1, 3, 9, concat[[pack[-1, 4], pack[100, 4], pack[1, 4], pack[1000000, 4], _warray[[concat[_wstr['t'], _warray[[concat[[pack[0, 4], pack[9, 8], pack[1000000, 4]]]]]]]]]]]], '127.0.0.1', 9092]]
@@ -824,7 +824,7 @@ test records_go_in_and_come_out[]
 --- heartbeat from an old generation hears of the rebalance
 test a_group_member_joins_syncs_and_commits[]
     root = _scratch['kafka-test-group']
-    meta = concat[[pack[0, 2], _warray[[_wstr['t']]], _wbytes[bytes['']]]]
+    meta = concat[[pack[0, 2], _warray[[_wstr['t']]], _wbytes[sys.bytes['']]]]
     join = concat[[_wstr['g'], pack[30000, 4], pack[60000, 4], _wstr[''], _wstr['consumer'], _warray[[concat[_wstr['range'], _wbytes[meta]]]]]]
     j = _body[_answer[root, _unframed[_request[11, 1, 1, join]], '127.0.0.1', 9092]]
     assert[unpack[j, 0, 2] eq 0 and unpack[j, 2, 4] eq 1 and _str_at[j, 6] eq 'range']
@@ -835,7 +835,7 @@ test a_group_member_joins_syncs_and_commits[]
     assert[leader eq member and starts[member, 'crow-']]
     at = _after_str[j, at]
     assert[unpack[j, at, 4] eq 1 and _str_at[j, at + 4] eq member]
-    assignment = concat[[pack[0, 2], _warray[[concat[_wstr['t'], _warray[[pack[0, 4]]]]]], _wbytes[bytes['']]]]
+    assignment = concat[[pack[0, 2], _warray[[concat[_wstr['t'], _warray[[pack[0, 4]]]]]], _wbytes[sys.bytes['']]]]
     sync = concat[[_wstr['g'], pack[1, 4], _wstr[member], _array[1, concat[_wstr[member], _wbytes[assignment]]]]]
     s = _body[_answer[root, _unframed[_request[14, 0, 2, sync]], '127.0.0.1', 9092]]
     assert[unpack[s, 0, 2] eq 0 and _bytes_at[s, 2] eq assignment]

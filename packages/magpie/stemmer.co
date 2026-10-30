@@ -1,11 +1,11 @@
---- `use magpie.stem`: the Porter stemmer (Porter, 1980), in Crow — for
+--- `use magpie.stemmer`: the Porter stemmer (Porter, 1980), in Crow — for
 --- English, as a log that declares `stem` applies it to every token at
 --- the index and at the query: `running`, `runs` and `runner` all `run`.
 --- The algorithm's five steps, written out as the paper gives them, over
 --- a word's bytes as ASCII letters; a token with any other character, or
 --- of two letters or fewer, is left as it is. The kernel's answer word
 --- for word (docs/magpie-in-crow.md, section 3). The tests are the
---- module's own: `crow test src/modules/stem.co`, held to the kernel
+--- part's own: `crow test packages/magpie/stemmer.co`, held to the kernel
 --- through its test-only row until the kernel goes.
 use sys
 
@@ -66,7 +66,7 @@ fn _cvc[w, n]
 
 --- whether the word ends in the suffix
 fn _ends[w, suffix]
-    tail = bytes[suffix]
+    tail = sys.bytes[suffix]
     n = len[w]
     k = len[tail]
     if n lt k
@@ -81,9 +81,9 @@ struct Step [w, done]
 fn _replace_if[w, suffix, with, m]
     if not _ends[w, suffix]
         return Step[w, false]
-    stem_end = len[w] - len[bytes[suffix]]
+    stem_end = len[w] - len[sys.bytes[suffix]]
     if _measure[w, stem_end] gt m
-        return Step[concat[slice[w, 0, stem_end], bytes[with]], true]
+        return Step[concat[slice[w, 0, stem_end], sys.bytes[with]], true]
     return Step[w, true]
 
 --- the first `n` letters
@@ -94,7 +94,7 @@ fn _cut[w, n]
 --- that is not all lowercase ASCII letters, or has two or fewer, is
 --- itself
 fn stem[word]
-    w = bytes[word]
+    w = sys.bytes[word]
     n = len[w]
     if n lte 2
         return word
@@ -161,7 +161,7 @@ fn stem[word]
     while i lt len[suffixes4] and not stepped
         s = suffixes4[i]
         if _ends[w, s]
-            stem_end = len[w] - len[bytes[s]]
+            stem_end = len[w] - len[sys.bytes[s]]
             if _measure[w, stem_end] gt 1
                 w = _cut[w, stem_end]
             stepped = true
@@ -181,7 +181,7 @@ fn stem[word]
     --- step 5b
     if _measure[w, len[w]] gt 1 and _double[w] and byte[w, len[w] - 1] eq 108
         w = _cut[w, len[w] - 1]
-    return text[w, '']
+    return sys.text[w, '']
 
 --- Porter's own examples stem as the paper says, and every word of a
 --- paragraph stems as the kernel stems it

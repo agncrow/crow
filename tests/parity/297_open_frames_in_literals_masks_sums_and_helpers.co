@@ -17,7 +17,7 @@ d = 'parity-297-open'
 gone = rm[d]
 f = frame.new[sym = ['A', 'B', 'A'], close = [1.5, 2.5, 3.5], status = ['ready', 'late', 'ready'], day = ['d1', 'd1', 'd1'], when = ['2026-09-17T10:00:00Z', '2026-09-17T10:01:00Z', '2026-09-17T10:02:00Z']]
 f.ts = moment[f.when]
-first = batch[d, f, by = ['sym']]
+first = magpie.batch[d, f, by = ['sym']]
 log[first]
 
 --- a frame literal from an open frame's cells, in a function whose
@@ -26,15 +26,15 @@ fn answer[rows, cut]
     mine = sort[rows[rows.ts lte cut], 'ts']
     return frame.new[last = [mine.close[len[mine] - 1]], n = [len[mine]]]
 cut = moment['2026-09-17T10:05:00Z']
-rows = lookup[d, ['sym'], ['A']]
+rows = magpie.lookup[d, ['sym'], ['A']]
 log[answer[rows, cut].last]
-held = lookup[d, ['sym'], ['B']]
+held = magpie.lookup[d, ['sym'], ['B']]
 log[answer[held, cut].last]
 log[answer[held, cut].n]
 
 --- a mask conjunction over a frame that can fail
 day = env['PARITY_297_DAY', 'd1']
-ds = latest[d]
+ds = magpie.latest[d]
 dd = ds[ds.day eq day and ds.status eq 'ready' and ds.sym eq 'A']
 log[dd.close]
 log[len[ds[ds.day eq day or ds.sym eq 'nobody']]]
@@ -55,7 +55,7 @@ log[total]
 --- call with the open frame itself
 fn ordered[frame_rows]
     return sort[frame_rows, '_pos']
-hit = lookup[d, ['sym'], ['A']]
+hit = magpie.lookup[d, ['sym'], ['A']]
 out = frame.new[]
 if hit.ok
     out = hit

@@ -4991,8 +4991,12 @@ fn module_files(file_rel: &str, source_dir: &std::path::Path) -> Vec<std::path::
     // The path is rooted at the project (the directory holding the
     // crowfile), so a part under views/ reaches a part under sim/
     // whichever file is the entry; without a crowfile the entry file's
-    // directory is the root
-    let root = project_root(source_dir);
+    // directory is the root. An installed package's files reach each other
+    // inside it, spelled as the importer reached the package: a linked
+    // package's real path says nothing of crow_modules, and the files its
+    // files import had lost the package's name — prefixed as the program's
+    // own, a program's `deep.co` beside a package's was declared twice
+    let root = package_dir(source_dir).unwrap_or_else(|| project_root(source_dir));
     // a package reaches the packages installed beside it — its own
     // dependencies, which `crow install` puts in the same crow_modules/
     // (read from the directory as its path spells it: a linked
@@ -5003,8 +5007,8 @@ fn module_files(file_rel: &str, source_dir: &std::path::Path) -> Vec<std::path::
     // a package imported by its own name from inside itself (its example,
     // its held tests) is its main.co, as it is from a program that depends
     // on it (`crow_modules/<name>/main.co` below) — unless the name is a
-    // standard module's, which an app may be named after (examples/magpie
-    // imports `magpie`, the module, from its own main.co)
+    // standard module's, which an app may be named after (an app named
+    // `llm` imports `llm`, the module, from its own main.co)
     if crowfile_name(&root).as_deref() == Some(file_rel) && crate::modules::by_path(file_rel).is_none() {
         candidates.push(root.join("main.co"));
     }
@@ -5099,11 +5103,20 @@ pub(crate) fn expand_module_imports_checked(
         }
         out.push(st);
     }
+    let out = unreached_parts_dropped(out, &ex.done);
     // Each part is validated alone, as `crow test part.co` sees it — its
     // own names unprefixed, its imports inlined — so a name a part reserves
     // by what it imports, or a handler nothing in the part wires, is
-    // refused whichever file is the entry
-    for path in ex.done.keys() {
+    // refused whichever file is the entry. A package installed beside the
+    // program — its main file and every file that imports, each spelled
+    // under crow_modules/ (`module_files`) — is not: it is held to its own
+    // tests where it is made, and validated in each program, its tests'
+    // calls had typed copies of its functions at every frame its tests
+    // made (Magpie's `put_rows` copied per test frame, and the helper it
+    // hands `revise` copied for none), and checking its files alone had
+    // been half of a program's build
+    let dependency = |path: &std::path::PathBuf| ex.written.get(path).unwrap_or(path).components().any(|c| c.as_os_str() == "crow_modules");
+    for path in ex.done.keys().filter(|p| !dependency(p)) {
         validate_part_alone_from(path, ex.written.get(path).map(|d| d.as_path()))?;
     }
     // a part's function is typed from its tests' calls whichever file is
@@ -5112,6 +5125,7 @@ pub(crate) fn expand_module_imports_checked(
     let tested: TestedCalls = ex
         .done
         .iter()
+        .filter(|(path, _)| !dependency(path))
         .flat_map(|(path, names)| {
             let calls = PART_TEST_CALLS.with(|c| c.borrow().get(path).cloned().unwrap_or_default());
             calls.into_iter().map(|(f, types)| {
@@ -5645,6 +5659,64 @@ fn validate_part_alone_now(path: &std::path::Path, written: Option<&std::path::P
     // what its tests call its functions with, for the programs importing it
     PART_TEST_CALLS.with(|c| c.borrow_mut().insert(path.to_path_buf(), ctx.tested));
     Ok(())
+}
+
+/// The program with the functions of its imported files that nothing it
+/// reaches names dropped: the entry's own statements, functions and tests
+/// are kept whatever calls them, and an imported file's function only where
+/// one of those — or a function kept — names it (a call, a value handed, a
+/// word of an interpolation), as the standard modules' inliner keeps only
+/// the functions a program reaches: a program importing a package had
+/// lowered all of it — 424 functions where Magpie's windows reach 239, and
+/// twice the build. (A program's own part is validated alone, every one of
+/// its functions with it.)
+fn unreached_parts_dropped(
+    stmts: Vec<ast::Stmt>,
+    done: &std::collections::BTreeMap<std::path::PathBuf, std::collections::BTreeMap<String, String>>,
+) -> Vec<ast::Stmt> {
+    let hoisted: std::collections::BTreeSet<&str> = done.values().flat_map(|names| names.values().map(|n| n.as_str())).collect();
+    // (every name a statement says: its identifiers, and the words of its
+    // texts, where an interpolation's code lies)
+    fn words(v: &serde_json::Value, into: &mut std::collections::BTreeSet<String>) {
+        match v {
+            serde_json::Value::String(s) => {
+                into.extend(s.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).map(str::to_string));
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|i| words(i, into)),
+            serde_json::Value::Object(fields) => fields.values().for_each(|f| words(f, into)),
+            _ => {}
+        }
+    }
+    let said = |s: &ast::Stmt| {
+        let mut into = std::collections::BTreeSet::new();
+        if let Ok(v) = serde_json::to_value(s) {
+            words(&v, &mut into);
+        }
+        into
+    };
+    let part_fn = |s: &ast::Stmt| match s {
+        ast::Stmt::FnDecl { name, .. } if hoisted.contains(name.as_str()) => Some(name.clone()),
+        _ => None,
+    };
+    let mut bodies: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> = std::collections::BTreeMap::new();
+    let mut todo: Vec<String> = Vec::new();
+    for s in &stmts {
+        match part_fn(s) {
+            Some(name) => {
+                bodies.insert(name, said(s));
+            }
+            None => todo.extend(said(s)),
+        }
+    }
+    let mut reached: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    while let Some(w) = todo.pop() {
+        if let Some(next) = bodies.get(&w)
+            && reached.insert(w)
+        {
+            todo.extend(next.iter().cloned());
+        }
+    }
+    stmts.into_iter().filter(|s| part_fn(s).is_none_or(|name| reached.contains(&name))).collect()
 }
 
 #[derive(Default)]
@@ -6493,6 +6565,73 @@ mod module_parts_tests {
         assert!(!err.contains("with"), "the entry's own form, not its rewrite: {}", err);
         let own = leaking.replacen("use lib.helpers\n", "use lib.helpers, frame, math\n", 1);
         assert!(check(&own).is_ok(), "{:?}", check(&own).err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An imported file's functions that nothing the program reaches names
+    /// are dropped before the program is typed: one the entry calls, one
+    /// that one calls, one handed as a value and one named in an
+    /// interpolation are kept, and the entry's own uncalled function too.
+    #[test]
+    fn a_parts_functions_nothing_reaches_are_dropped() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_reached_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'reached'\n").unwrap();
+        std::fs::write(
+            dir.join("lib/tools.co"),
+            "fn called[x]\n    helper[x] + 1\n\nfn helper[x]\n    x * 2\n\nfn positive[x]\n    x gt 0\n\nfn shown[x]\n    x * 3\n\nfn never[x]\n    x + 100\n",
+        )
+        .unwrap();
+        let stmts = build("use lib.tools\n\nfn mine[x]\n    x\n\nlog[tools.called[1]]\nlog[any[[1, 2], tools.positive]]\nlog['`tools.shown[3]`']\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports_checked(&stmts, &dir, &mut visited).unwrap();
+        let fns: Vec<&str> = stmts.iter().filter_map(|s| if let ast::Stmt::FnDecl { name, .. } = s { Some(name.as_str()) } else { None }).collect();
+        for f in ["lib_tools_called", "lib_tools_helper", "lib_tools_positive", "lib_tools_shown", "mine"] {
+            assert!(fns.contains(&f), "{} kept, among {:?}", f, fns);
+        }
+        assert!(!fns.contains(&"lib_tools_never"), "{:?}", fns);
+        let lowered = lower::lower_program(&stmts).unwrap();
+        assert!(infer_and_validate(&lowered, false).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A package linked into crow_modules names every file it brings by
+    /// the package, however deep its own imports go: the file its main
+    /// file's import imports had been prefixed as the program's own (its
+    /// root read where the link points), so a program's `deep.co` beside
+    /// the package's was "declared twice" — and, read as no dependency's,
+    /// the package's inner files were each validated alone in every build
+    /// of the program (Magpie's, half the build).
+    #[test]
+    fn a_linked_packages_files_keep_its_name_at_every_depth() {
+        let dir = std::env::temp_dir().join(format!("crow_linked_depth_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let pk = dir.join("pkgsrc/pk");
+        std::fs::create_dir_all(&pk).unwrap();
+        std::fs::create_dir_all(dir.join("app/crow_modules")).unwrap();
+        std::fs::write(pk.join("crowfile"), "name = 'pk'\n").unwrap();
+        std::fs::write(pk.join("main.co"), "use mid\n\nfn hello[x]\n    mid.twice[x] + 1\n").unwrap();
+        std::fs::write(pk.join("mid.co"), "use deep\n\nfn twice[x]\n    deep.scale[x] * 2\n").unwrap();
+        std::fs::write(pk.join("deep.co"), "fn scale[x]\n    x * 10\n").unwrap();
+        std::os::unix::fs::symlink("../../pkgsrc/pk", dir.join("app/crow_modules/pk")).unwrap();
+        let app = dir.join("app");
+        std::fs::write(app.join("crowfile"), "name = 'app'\n").unwrap();
+        std::fs::write(app.join("deep.co"), "fn scale[x]\n    x - 1\n").unwrap();
+        let stmts = build("use pk\nuse deep\n\nlog[pk.hello[2]]\nlog[deep.scale[2]]\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports_checked(&stmts, &app, &mut visited).unwrap();
+        let fns: Vec<&str> = stmts.iter().filter_map(|s| if let ast::Stmt::FnDecl { name, .. } = s { Some(name.as_str()) } else { None }).collect();
+        for f in ["pk_hello", "pk_mid_twice", "pk_deep_scale", "deep_scale"] {
+            assert!(fns.contains(&f), "{} among {:?}", f, fns);
+        }
+        let lowered = lower::lower_program(&stmts).unwrap();
+        assert!(infer_and_validate(&lowered, false).is_ok());
+        // the program's own part is validated alone; none of the package's
+        let package = std::fs::canonicalize(&pk).unwrap();
+        let validated: Vec<std::path::PathBuf> = VALIDATED_PARTS.with(|v| v.borrow().keys().cloned().collect());
+        assert!(validated.iter().any(|p| p.ends_with("app/deep.co")), "{:?}", validated);
+        assert!(!validated.iter().any(|p| p.starts_with(&package)), "{:?}", validated);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

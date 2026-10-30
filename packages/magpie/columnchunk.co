@@ -1,4 +1,4 @@
---- `use magpie.encode`: a column chunk, in Crow — the cells of one column
+--- `use magpie.columnchunk`: a column chunk, in Crow — the cells of one column
 --- over one row group as a Magpie file writes them, encoded by the
 --- column's kind and passed through the codec where that shrinks them,
 --- the Rust kernel's bytes byte for byte (docs/magpie-in-crow.md,
@@ -22,13 +22,13 @@
 --- time; the arithmetic over ints wraps to 64 bits where the kernel's does
 --- (`wrapsub`, `wrapadd`), the one place a span past 64 bits is decided
 --- running on growing ints, as the kernel decides it on 128. The tests
---- are the module's own: `crow test src/modules/encode.co`, held to the
+--- are the part's own: `crow test packages/magpie/columnchunk.co`, held to the
 --- kernel through its test-only rows until the kernel goes.
 use sys
 use bits
 use frame
-use magpie.packing
-use magpie.codec
+use bitpack
+use lz77
 
 --- an encoding and its payload
 struct Part [enc, payload]
@@ -78,7 +78,7 @@ fn _filled_ints[vals, present]
 fn _encode_ints[vals]
     n = len[vals]
     if n eq 0
-        return Part[0, bytes[9]]
+        return Part[0, sys.bytes[9]]
     base = vals[0]
     top = vals[0]
     for v in vals
@@ -86,7 +86,7 @@ fn _encode_ints[vals]
             base = v
         if v gt top
             top = v
-    for_width = width_of[wrapsub[top, base]]
+    for_width = bitpack.width_of[wrapsub[top, base]]
     for_size = 9 + _packed_bytes[n, for_width]
     use_delta = false
     dmin = 0
@@ -112,7 +112,7 @@ fn _encode_ints[vals]
                     wmax = d
             i = i + 1
         if not overflow
-            width = width_of[wrapsub[wmax, wmin]]
+            width = bitpack.width_of[wrapsub[wmax, wmin]]
             size = 17 + _packed_bytes[n - 1, width]
             if size lt for_size
                 use_delta = true
@@ -131,7 +131,7 @@ fn _encode_ints[vals]
                     emax = e
                 i = i + 1
             if emax - emin lte 18446744073709551615 and emin gte -9223372036854775808 and emin lte 9223372036854775807
-                width = width_of[wrap[emax - emin]]
+                width = bitpack.width_of[wrap[emax - emin]]
                 size = 17 + _packed_bytes[n - 1, width]
                 if size lt for_size
                     use_delta = true
@@ -145,14 +145,14 @@ fn _encode_ints[vals]
         while i lt n
             deltas = push[deltas, wrapsub[wrapsub[vals[i], vals[i - 1]], dmin]]
             i = i + 1
-        out = concat[out, packed[deltas, width]]
+        out = concat[out, bitpack.packed[deltas, width]]
         return Part[1, out]
     out = pack[base, 8, little = true]
     out = push[out, for_width]
     offsets = []
     for v in vals
         offsets = push[offsets, wrapsub[v, base]]
-    out = concat[out, packed[offsets, for_width]]
+    out = concat[out, bitpack.packed[offsets, for_width]]
     return Part[0, out]
 
 --- `n` ints decoded from the payload at `at` by the encoding, and the
@@ -164,7 +164,7 @@ fn _decode_ints[enc, data, at, n]
         base = unpack[data, at, 8, little = true]
         width = byte[data, at + 8]
         count = _packed_bytes[n, width]
-        offs = unpacked[data, at + 9, n, width]
+        offs = bitpack.unpacked[data, at + 9, n, width]
         if not offs.ok
             return error[offs.reason, 'magpie']
         vals = []
@@ -181,7 +181,7 @@ fn _decode_ints[enc, data, at, n]
         if n eq 0
             return Read[vals, at + 17]
         count = _packed_bytes[n - 1, width]
-        deltas = unpacked[data, at + 17, n - 1, width]
+        deltas = bitpack.unpacked[data, at + 17, n - 1, width]
         if not deltas.ok
             return error[deltas.reason, 'magpie']
         vals = push[vals, first]
@@ -203,10 +203,10 @@ fn _plain_text[cell_bytes, cuts]
         if l gt longest
             longest = l
         last = e
-    width = width_of[longest]
-    out = bytes[0]
+    width = bitpack.width_of[longest]
+    out = sys.bytes[0]
     out = push[out, width]
-    out = concat[out, packed[lens, width]]
+    out = concat[out, bitpack.packed[lens, width]]
     out = concat[out, cell_bytes]
     return out
 
@@ -220,7 +220,7 @@ fn _read_plain_text[data, at, n]
         return error['the file ends 1 bytes early', 'magpie']
     width = byte[data, at]
     count = _packed_bytes[n, width]
-    lens = unpacked[data, at + 1, n, width]
+    lens = bitpack.unpacked[data, at + 1, n, width]
     if not lens.ok
         return error[lens.reason, 'magpie']
     cuts = []
@@ -244,14 +244,14 @@ fn _encode_text[col, from, to]
         limit = 1
     seen = map[]
     codes = []
-    dict_bytes = bytes[0]
+    dict_bytes = sys.bytes[0]
     dict_ends = []
     dictionary = true
     begin = 0
     i = 0
     while i lt n and dictionary
         stop = cuts[i]
-        cell = text[slice[cell_bytes, begin, stop], '']
+        cell = sys.text[slice[cell_bytes, begin, stop], '']
         if cell in seen
             codes = push[codes, seen[cell]]
         else
@@ -267,9 +267,9 @@ fn _encode_text[col, from, to]
     if dictionary and n gt 1
         out = pack[len[dict_ends], 4, little = true]
         out = concat[out, _plain_text[dict_bytes, dict_ends]]
-        width = width_of[len[dict_ends] - 1]
+        width = bitpack.width_of[len[dict_ends] - 1]
         out = push[out, width]
-        out = concat[out, packed[codes, width]]
+        out = concat[out, bitpack.packed[codes, width]]
         return Part[4, out]
     return Part[3, _plain_text[cell_bytes, cuts]]
 
@@ -277,7 +277,7 @@ fn _encode_text[col, from, to]
 --- present: bit i of byte i / 8
 fn _bitmap[flags, present]
     n = len[flags]
-    out = bytes[shift[n + 7, -3]]
+    out = sys.bytes[shift[n + 7, -3]]
     for i in range[n]
         if flags[i] and _present[present, i]
             at = shift[i, -3]
@@ -291,7 +291,7 @@ fn chunk[col, from, to, narrow]
     n = to - from
     present = present_of[col, from, to]
     kind = cell_kind[col]
-    part = Part[0, bytes[0]]
+    part = Part[0, sys.bytes[0]]
     if kind eq 'int'
         part = _encode_ints[_filled_ints[ints_of[col, from, to], present]]
     if kind eq 'float'
@@ -311,7 +311,7 @@ fn chunk[col, from, to, narrow]
     if kind eq 'moment'
         ms = _encode_ints[_filled_ints[millis_of[col, from, to], present]]
         offs = _encode_ints[zones_of[col, from, to]]
-        payload = bytes[0]
+        payload = sys.bytes[0]
         payload = push[payload, ms.enc]
         payload = concat[payload, ms.payload]
         payload = push[payload, offs.enc]
@@ -336,7 +336,7 @@ fn chunk[col, from, to, narrow]
     --- past 64 bytes the codec is tried, and kept where it shrinks the
     --- payload by a tenth or more
     if raw_len gte 64
-        c = compress[part.payload]
+        c = lz77.compress[part.payload]
         if len[c] + len[c] / 10 lt raw_len
             stored = c
             coded = true
@@ -345,7 +345,7 @@ fn chunk[col, from, to, narrow]
         flags = flags + 1
     if coded
         flags = flags + 2
-    out = bytes[0]
+    out = sys.bytes[0]
     out = push[out, part.enc]
     out = push[out, flags]
     out = concat[out, pack[n, 4, little = true]]
@@ -376,7 +376,7 @@ fn unchunk[data, kind]
     raw_len = unpack[data, 6, 4, little = true, signed = false]
     stored_len = unpack[data, 10, 4, little = true, signed = false]
     at = 14
-    present = bytes[0]
+    present = sys.bytes[0]
     if bitand[flags, 1] ne 0
         count = shift[n + 7, -3]
         if at + count gt total
@@ -388,7 +388,7 @@ fn unchunk[data, kind]
     stored = slice[data, at, at + stored_len]
     payload = stored
     if bitand[flags, 2] ne 0
-        plain = decompress[stored, raw_len]
+        plain = lz77.decompress[stored, raw_len]
         if not plain.ok
             return error[plain.reason, 'magpie']
         payload = plain
@@ -427,7 +427,7 @@ fn unchunk[data, kind]
             if at + 1 gt len[payload]
                 return error['the file ends 1 bytes early', 'magpie']
             width = byte[payload, at]
-            codes = unpacked[payload, at + 1, n, width]
+            codes = bitpack.unpacked[payload, at + 1, n, width]
             if not codes.ok
                 return error[codes.reason, 'magpie']
             --- (a code naming no value stops, as the row says)
@@ -490,7 +490,7 @@ fn _floats[a, b, c, d, e]
 
 --- a presence bitmap over five cells with the second missing
 fn _second_missing[]
-    present = bytes[1]
+    present = sys.bytes[1]
     present = set[present, 0, 29]
     return present
 
@@ -505,7 +505,7 @@ fn _digest[b]
 --- dictionary, bools, moments, vectors, and a payload the codec shrinks
 test the_chunks_are_the_kernels_byte_for_byte[]
     seen = []
-    none = bytes[0]
+    none = sys.bytes[0]
     gap = _second_missing[]
     cols = []
     cols = push[cols, ints_column[_ints[3, 1, 2, 1000000, -7], none]]
@@ -513,7 +513,7 @@ test the_chunks_are_the_kernels_byte_for_byte[]
     cols = push[cols, ints_column[_ints[100, 101, 102, 103, 104], none]]
     cols = push[cols, ints_column[_ints[9223372036854775807, -9223372036854775808, 0, 1, -1], none]]
     cols = push[cols, floats_column[_floats[1.5, -2.25, 0.0, 10.0 ^ 300, -0.0], gap]]
-    truths = bytes[1]
+    truths = sys.bytes[1]
     truths = set[truths, 0, 21]
     cols = push[cols, bools_column[truths, 5, gap]]
     cols = push[cols, moments_column[_ints[0, 1000, 2000, 3000, 4000], _ints[0, 60, 0, -300, 0], gap]]

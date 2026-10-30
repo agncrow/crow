@@ -1,5 +1,12 @@
 # Magpie in Crow: the kernels rewritten, and what the language gains for it
 
+(Since 2026-10-29 Magpie is a package, `packages/magpie`: the modules
+this note ports are its parts, under its files' names — `codec` is
+`lz77`, `packing` `bitpack`, `encode` `columnchunk`, `file` `fileformat`,
+`tail` `sequencer`, `merge` `merger`, `exec` `executor`, `search`
+`searcher`, `nearest` `knn`, `stem` `stemmer`, `records` `recordsets` —
+and their tests run from there: `crow test packages/magpie/lz77.co`.)
+
 Decided by Vijay, 2026-10-27: a package is written in Crow, and its
 author writes no Rust. Magpie is the first package held to that rule,
 and it is the hardest case, because two thirds of it is Rust today:

@@ -83,7 +83,7 @@ pub(super) fn declared(row: &Row, args: &[Expr]) -> Option<Dims> {
 /// argument's shape); none where they differ.
 pub(super) fn agreed(module: Option<&str>, name: &str, args: &[Expr]) -> Option<Dims> {
     let mut answer: Option<Option<Dims>> = None;
-    for row in crate::table::ROWS.iter().filter(|r| r.name == name && module.is_none_or(|m| r.module == m) && matches!(r.ret, Kind::Tensor | Kind::Tensors)) {
+    for row in crate::table::runtime_rows(name).filter(|r| module.is_none_or(|m| r.module == m) && matches!(r.ret, Kind::Tensor | Kind::Tensors)) {
         let d = declared(row, args);
         match &answer {
             None => answer = Some(d),

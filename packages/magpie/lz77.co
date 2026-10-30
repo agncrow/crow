@@ -1,4 +1,4 @@
---- `use magpie.codec`: Magpie's codec, in Crow — an LZ77 byte codec of
+--- `use magpie.lz77`: Magpie's codec, in Crow — an LZ77 byte codec of
 --- our own, applied to a chunk's payload where it shrinks it, the Rust
 --- original's stream byte for byte (docs/magpie-in-crow.md, section 3:
 --- the first kernel ported, and the one the port is measured on). A
@@ -13,8 +13,8 @@
 --- position seen, and the encoder is greedy. The decoder is the loop
 --- every LZ decoder is, every offset and length checked against what is
 --- there, so a corrupt stream is refused with its reason and never read
---- past its end. The tests are the module's own: `crow test
---- src/modules/codec.co`, held to the Rust codec through its test-only
+--- past its end. The tests are the part's own: `crow test
+--- packages/magpie/lz77.co`, held to the Rust codec through its test-only
 --- rows until the kernel goes.
 use sys
 use bits
@@ -48,7 +48,7 @@ fn _nibble[n]
 --- alone; a run of one byte, or of a few, shrinks to a few bytes per 255
 fn compress[data]
     n = len[data]
-    out = bytes[0]
+    out = sys.bytes[0]
     --- the last position seen for each hash, -1 for none
     table = []
     for i in range[32768]
@@ -110,7 +110,7 @@ fn compress[data]
 --- why
 fn decompress[data, raw_len]
     n = len[data]
-    out = bytes[0]
+    out = sys.bytes[0]
     i = 0
     going = true
     while going
@@ -176,15 +176,15 @@ fn decompress[data, raw_len]
 
 --- a text repeated to about the bytes asked
 fn _repeated[piece, about]
-    out = bytes[0]
-    unit = bytes[piece]
+    out = sys.bytes[0]
+    unit = sys.bytes[piece]
     while len[out] lt about
         out = concat[out, unit]
     return out
 
 --- bytes that repeat little: a linear congruence's low byte, every byte
 fn _noise[count, seed]
-    out = bytes[0]
+    out = sys.bytes[0]
     x = seed
     for i in range[count]
         x = bitand[x * 1103515245 + 12345, 2147483647]
@@ -201,16 +201,16 @@ fn _digest[b]
 --- bytes that repeat little (growing by a few per 255 literals at most),
 --- and a window's worth and more of distance
 test the_streams_are_the_rust_codecs_byte_for_byte[]
-    zeros = bytes[100000]
+    zeros = sys.bytes[100000]
     text = _repeated['the quick brown fox jumps over the lazy dog; ', 50000]
-    mixed = bytes[300]
+    mixed = sys.bytes[300]
     for i in range[300]
         mixed = set[mixed, i, 7]
     for i in range[300]
         mixed = push[mixed, i - 2 * shift[i, -1]]
     noise = _noise[65536, 305419896]
     far = concat[noise, slice[noise, 0, 1000]]
-    samples = [bytes[''], bytes['abc'], zeros, text, mixed, noise, far]
+    samples = [sys.bytes[''], sys.bytes['abc'], zeros, text, mixed, noise, far]
     sizes = []
     seen = []
     for s in samples
@@ -227,7 +227,7 @@ test the_streams_are_the_rust_codecs_byte_for_byte[]
 
 --- a corrupt stream is refused with its reason, as the kernel refuses it
 test a_corrupt_stream_is_refused[]
-    good = compress[bytes['hello hello hello hello hello']]
+    good = compress[sys.bytes['hello hello hello hello hello']]
     assert[not decompress[good, 5].ok]
     assert[not decompress[good, 100].ok]
     assert[not decompress[slice[good, 0, len[good] - 1], 29].ok]
@@ -235,10 +235,10 @@ test a_corrupt_stream_is_refused[]
     broken = decompress[bad, 29]
     --- a literal corrupted decodes to other bytes, or is refused
     assert[not broken.ok or len[broken] eq 29]
-    cut = bytes[2]
+    cut = sys.bytes[2]
     cut = set[cut, 0, 5]
     cut = set[cut, 1, 97]
     assert[decompress[cut, 5].reason eq 'the codec stream is cut short']
-    back = bytes[3]
+    back = sys.bytes[3]
     back = set[back, 1, 9]
     assert[decompress[back, 9].reason eq 'the codec stream reaches 9 bytes back where 0 were written']

@@ -174,7 +174,7 @@ fn said_by(name: &str, keep: impl Fn(&crate::table::Row) -> bool, at: usize, arg
     // — where no row of the name takes a scalar (`max` takes numbers one
     // at a time and a tensor whole: its cell is a number)
     let mut tensor = false;
-    for row in crate::table::ROWS.iter().filter(|r| r.name == name && keep(r)) {
+    for row in crate::table::runtime_rows(name).filter(|r| keep(r)) {
         let Some(kinds) = crate::table::kinds_of(row.params, argc) else { continue };
         let Some(k) = kinds.get(at) else { continue };
         // a row that takes a parsed value there takes it as it is (`key in

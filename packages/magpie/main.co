@@ -1,5 +1,5 @@
 --- `use magpie`: the log as a directory of batch files and a manifest
---- (spec, magpie). Each commit is one file, written once (magpie.merge's
+--- (REFERENCE.md). Each commit is one file, written once (magpie.merger's
 --- `write_batch`, the sequencer's flush): a frame given a position per
 --- row, sorted by the log's keys, with the statistics a reader prunes by
 --- in its index. The
@@ -16,20 +16,20 @@
 --- segments and the tail of batches the directory lists). One process
 --- writes a log; two writers on one machine claim numbers through the
 --- kernel, which links a file into place only where no file of the
---- number exists, so a slip is a retry. The tests are the module's own:
---- `crow test src/modules/magpie.co`.
+--- number exists, so a slip is a retry. The tests are the package's own:
+--- `crow test packages/magpie/main.co`.
 use sys
 use bits
 use frame
 use math
-use magpie.file
-use magpie.bloom
-use magpie.manifest
-use magpie.merge
-use magpie.exec
-use magpie.nearest
-use magpie.search
-use magpie.tail
+use fileformat
+use bloom
+use manifest
+use merger
+use executor
+use knn
+use searcher
+use sequencer
 
 --- the tail: the batch files in a directory, in order
 --- (`000000000017.batch`); a segment is named by its counter
@@ -78,13 +78,13 @@ fn batches[dir]
     --- they are seen at least once — and a file covering their first
     --- positions says those were flushed in between, so the pending rows
     --- listed begin past it, and every row is seen once
-    waiting = pending_of[dir]
+    waiting = sequencer.pending_of[dir]
     if not waiting.ok
         return error[waiting.reason, 'magpie']
     names = _names[dir]
     if not names.ok
         return names
-    segs = catalog_of[dir]
+    segs = manifest.catalog_of[dir]
     if not segs.ok
         return error[segs.reason, 'magpie']
     segments = []
@@ -110,7 +110,7 @@ fn batches[dir]
     for n in names
         c = [_number[n], _number[n]]
         p = '`dir`/`n`'
-        info = about[p]
+        info = fileformat.about[p]
         if not info.ok
             return error[info.reason, 'magpie']
         form = 'batch'
@@ -185,7 +185,7 @@ fn _words[named]
 --- the log's keys, as its manifest declares them: none for a log with
 --- no manifest yet
 fn _keys[dir]
-    m = listed[dir]
+    m = manifest.listed[dir]
     if not m.ok
         return error[m.reason, 'magpie']
     return m.keys
@@ -195,7 +195,7 @@ fn _keys[dir]
 --- and one naming no keys takes the log's. Answers the keys the batch is
 --- written by
 fn _fixed[dir, f, by, time, narrow, stem]
-    m = listed[dir]
+    m = manifest.listed[dir]
     if not m.ok
         return error[m.reason, 'magpie']
     if len[time] gt 0 and time not in f.columns
@@ -218,7 +218,7 @@ fn _fixed[dir, f, by, time, narrow, stem]
         --- the list copied for the call, which takes it as a value: `by`
         --- is read again below (compiled, the row had moved it)
         named = by
-        made = declare[dir, named, names, texts]
+        made = manifest.declare[dir, named, names, texts]
         if not made.ok
             return error[made.reason, 'magpie']
         return by
@@ -226,26 +226,26 @@ fn _fixed[dir, f, by, time, narrow, stem]
     if len[by] gt 0 and join[by, ','] ne join[fixed, ',']
         return error['the log at \'`dir`\' is keyed by `_words[fixed]`, not by `_words[by]`', 'magpie']
     if len[time] gt 0
-        had = note_of[m, 'time']
+        had = manifest.note_of[m, 'time']
         if len[had] gt 0
             if had ne time
                 return error['the log at \'`dir`\' keeps its time in \'`had`\', not in \'`time`\'', 'magpie']
         else
-            declared = declare[dir, fixed, ['time'], [time]]
+            declared = manifest.declare[dir, fixed, ['time'], [time]]
             if not declared.ok
                 return error[declared.reason, 'magpie']
     if len[narrow] gt 0
-        wide = note_of[m, 'narrow']
+        wide = manifest.note_of[m, 'narrow']
         asked = join[narrow, ',']
         if len[wide] gt 0
             if wide ne asked
                 return error['the log at \'`dir`\' keeps \'`wide`\' narrow, not \'`asked`\'', 'magpie']
         else
-            declared = declare[dir, fixed, ['narrow'], [asked]]
+            declared = manifest.declare[dir, fixed, ['narrow'], [asked]]
             if not declared.ok
                 return error[declared.reason, 'magpie']
-    if stem and not stems_of[m]
-        declared = declare[dir, fixed, ['stem'], ['true']]
+    if stem and not manifest.stems_of[m]
+        declared = manifest.declare[dir, fixed, ['stem'], ['true']]
         if not declared.ok
             return error[declared.reason, 'magpie']
     return fixed
@@ -317,11 +317,11 @@ fn batch[dir, f, by = [], flush = true, time = '', narrow = [], stem = false]
     fixed = _fixed[dir, f, by, time, narrow, stem]
     if not fixed.ok
         return fixed
-    first = put_rows[dir, f]
+    first = sequencer.put_rows[dir, f]
     if not first.ok
         return error[first.reason, 'magpie']
     if flush
-        wrote = flush_rows[dir]
+        wrote = sequencer.flush_rows[dir]
         if not wrote.ok
             return error[wrote.reason, 'magpie']
     return first
@@ -353,7 +353,7 @@ fn put[dir, f, by = [], time = '', narrow = [], stem = false]
     fixed = _fixed[dir, f, by, time, narrow, stem]
     if not fixed.ok
         return fixed
-    first = put_rows[dir, f]
+    first = sequencer.put_rows[dir, f]
     if not first.ok
         return error[first.reason, 'magpie']
     return first
@@ -365,9 +365,9 @@ fn put[dir, f, by = [], time = '', narrow = [], stem = false]
 fn sync[dir]
     if _remote[dir]
         return _posted_int[dir, 'sync']
-    if len[bytes[dir]] eq 0
+    if len[sys.bytes[dir]] eq 0
         return error['sync needs a log directory', 'magpie']
-    drained = flush_rows[dir]
+    drained = sequencer.flush_rows[dir]
     if not drained.ok
         return error[drained.reason, 'magpie']
     found = ls[dir]
@@ -375,7 +375,7 @@ fn sync[dir]
         return error['batch: cannot read \'`dir`\': `found.reason`', 'magpie']
     count = 0
     for name in found
-        if number_of[name] gte 0 or counter_of[name] gte 0 or name eq 'manifest'
+        if manifest.number_of[name] gte 0 or manifest.counter_of[name] gte 0 or name eq 'manifest'
             path = '`dir`/`name`'
             done = flushed[path]
             if not done.ok
@@ -515,7 +515,7 @@ fn latest[dir, upto = -1, columns = [], lo = '', hi = '', equal = []]
             return error['no log at \'`dir`\'', 'magpie']
         --- the list copied for the row, which takes it as a value
         asked = equal
-        row = newest_row[dir, asked]
+        row = sequencer.newest_row[dir, asked]
         if not row.ok
             return error[row.reason, 'magpie']
         return row
@@ -562,7 +562,7 @@ fn latest[dir, upto = -1, columns = [], lo = '', hi = '', equal = []]
     if len[fixed] eq 0
         return rows
     newest = sort[rows, '_pos', desc = true]
-    return sort[unique[newest, fixed], '_pos']
+    return sort[frame.unique[newest, fixed], '_pos']
 
 --- the rows of several files holding the values
 fn _found[paths, on, equal, columns]
@@ -612,14 +612,14 @@ fn lookup[dir, on, equal, columns = []]
 --- the kernel's row in its own function, as `_found` is: the lists copied
 --- where the row takes them
 fn _searched[paths, column, words, k, stems, snippet]
-    return search_rows[paths, column, words, k, stems, snippet]
+    return searcher.search_rows[paths, column, words, k, stems, snippet]
 
 --- whether the log stems its words, as its manifest declares
 fn _stems[dir]
-    m = listed[dir]
+    m = manifest.listed[dir]
     if not m.ok
         return false
-    return stems_of[m]
+    return manifest.stems_of[m]
 
 --- `search[dir, column, words, k = 10, snippet = 0]`: the k rows whose
 --- text `column` best matches the words — each a word (read as its
@@ -639,7 +639,7 @@ fn search[dir, column, words, k = 10, snippet = 0]
         q_words = _joined['words', words]
         return _asked[dir, 'search', 'k=`k`&snippet=`snippet``q_col``q_words`']
     --- the kinds pinned here, outside the helper: a list of text, ints
-    if len[bytes[column]] eq 0
+    if len[sys.bytes[column]] eq 0
         return error['search needs a column name', 'magpie']
     --- the words pinned as a list of text (an empty word is no token, and
     --- the kernel reads each word as its tokens), k and the snippet as ints
@@ -668,7 +668,7 @@ fn search[dir, column, words, k = 10, snippet = 0]
     return hits
 
 fn _nearest_in[paths, column, vector, k]
-    return nearest_rows[paths, column, vector, k]
+    return knn.nearest_rows[paths, column, vector, k]
 
 --- `nearest[dir, column, vector, k = 10]`: the k rows whose vector
 --- `column` lies nearest the query `vector` by the cosine — the inner
@@ -686,7 +686,7 @@ fn nearest[dir, column, vector, k = 10]
             pieces = push[pieces, str[x]]
         q_vec = _joined['vector', pieces]
         return _asked[dir, 'nearest', 'k=`k``q_col``q_vec`']
-    if len[bytes[column]] eq 0
+    if len[sys.bytes[column]] eq 0
         return error['nearest needs a column name', 'magpie']
     --- the query pinned as a tensor of numbers, k as an int
     q = tensor[vector]
@@ -743,7 +743,7 @@ fn commit[dir, f, seen = -1, columns = [], equal = []]
     --- sequencer's index in memory; any other read against the files
     if len[columns] gt 0 and join[columns, ','] eq join[fixed, ',']
         asked = equal
-        last = last_position[dir, asked]
+        last = sequencer.last_position[dir, asked]
         if not last.ok
             return error[last.reason, 'magpie']
         if last gt seen
@@ -761,10 +761,10 @@ fn commit[dir, f, seen = -1, columns = [], equal = []]
                     hit = held[held._pos gt seen]
                     if len[hit] gt 0
                         return error['conflict: `columns[j]` = `equal[j]` was written at position `hit._pos[0]`, after snapshot `seen`', 'magpie']
-    first = put_rows[dir, f]
+    first = sequencer.put_rows[dir, f]
     if not first.ok
         return error[first.reason, 'magpie']
-    wrote = flush_rows[dir]
+    wrote = sequencer.flush_rows[dir]
     if not wrote.ok
         return error[wrote.reason, 'magpie']
     return first
@@ -772,7 +772,7 @@ fn commit[dir, f, seen = -1, columns = [], equal = []]
 --- the kernel's executor in its own function, the lists copied where
 --- the rows take them
 fn _summarised[paths, by, of, how, on, ops, equal, lo, hi, upto]
-    return summary_of[paths, by, of, how, on, ops, equal, lo, hi, upto]
+    return executor.summary_of[paths, by, of, how, on, ops, equal, lo, hi, upto]
 
 --- `summary[dir, by, of, how, on = [], ops = [], equal = [], lo = '', hi = '', upto = -1]`:
 --- an aggregate pushed below the reader — one kernel over the segments
@@ -815,7 +815,7 @@ fn summary[dir, by, of, how, on = [], ops = [], equal = [], lo = '', hi = '', up
         return error['a summary takes one aggregate per column: `len[of]` columns, `len[how]` aggregates', 'magpie']
     if len[on] ne len[ops] or len[on] ne len[equal]
         return error['the predicates are three lists of one length: on, ops and equal', 'magpie']
-    wrote = flush_rows[dir]
+    wrote = sequencer.flush_rows[dir]
     if not wrote.ok
         return error[wrote.reason, 'magpie']
     b = batches[dir]
@@ -837,14 +837,14 @@ fn summary[dir, by, of, how, on = [], ops = [], equal = [], lo = '', hi = '', up
 
 --- the kernel's as-of join in its own function
 fn _asof[paths, labels, by, time, columns, upto]
-    return asof_rows[paths, labels, by, time, columns, upto]
+    return executor.asof_rows[paths, labels, by, time, columns, upto]
 
 --- the log's time column, as its manifest declares it; empty where none
 fn _time[dir]
-    m = listed[dir]
+    m = manifest.listed[dir]
     if not m.ok
         return ''
-    return note_of[m, 'time']
+    return manifest.note_of[m, 'time']
 
 --- `prior[dir, f, columns = [], upto = -1]`: the as-of join over the log — for each
 --- row of `f`, which holds the log's keys and a moment in the log's time
@@ -872,7 +872,7 @@ fn prior[dir, f, columns = [], upto = -1]
     time = _time[dir]
     if len[time] eq 0
         return error['an as-of join needs the log\'s time column: declare it at the first batch, time = \'ts\'', 'magpie']
-    wrote = flush_rows[dir]
+    wrote = sequencer.flush_rows[dir]
     if not wrote.ok
         return error[wrote.reason, 'magpie']
     b = batches[dir]
@@ -897,7 +897,7 @@ fn _unlisted[dir]
     found = ls[dir]
     if not found.ok
         return []
-    segs = catalog_of[dir]
+    segs = manifest.catalog_of[dir]
     if not segs.ok
         return []
     names = []
@@ -937,7 +937,7 @@ fn _overflow[b]
     return paths
 
 --- `merge[dir, every = false]`: the log compacted in two moves. The
---- tail's batch files are folded into a segment of level 1 (magpie.merge,
+--- tail's batch files are folded into a segment of level 1 (magpie.merger,
 --- `merge_files`: the streaming merge, one row group per input in
 --- memory; the rows sorted by the log's keys, the latest version of each
 --- key kept — or every row, with `every`, for an append-only table whose
@@ -953,7 +953,7 @@ fn _overflow[b]
 fn merge[dir, every = false]
     if _remote[dir]
         return _posted_text[dir, 'merge']
-    wrote = flush_rows[dir]
+    wrote = sequencer.flush_rows[dir]
     if not wrote.ok
         return error[wrote.reason, 'magpie']
     b = batches[dir]
@@ -980,7 +980,7 @@ fn merge[dir, every = false]
         --- the paths copied for the row (it takes its lists as values, and
         --- `inputs` is read again below: compiled, the row had moved it)
         named = inputs
-        folded = merge_files[dir, named, every]
+        folded = merger.merge_files[dir, named, every]
         if not folded.ok
             return error[folded.reason, 'magpie']
         made = folded
@@ -1001,7 +1001,7 @@ fn merge[dir, every = false]
             rounds = 64
         else
             named = chosen
-            folded = merge_files[dir, named, every]
+            folded = merger.merge_files[dir, named, every]
             if not folded.ok
                 return error[folded.reason, 'magpie']
             for p in chosen
@@ -1071,7 +1071,7 @@ fn _place[to]
 --- bytes kept under a place: an S3 object, or a file
 fn _kept[path, data]
     if starts[path, 's3://']
-        --- the sys row, qualified: the module's own `put` shadows it here
+        --- the sys row, qualified: the file's own `put` shadows it here
         sent = sys.put[path, data]
         if not sent.ok
             return error[sent.reason, 'magpie']
@@ -1084,7 +1084,7 @@ fn _kept[path, data]
 --- bytes read from a place: an S3 object, or a file
 fn _fetched[path]
     if starts[path, 's3://']
-        got = fetch[path, map[], map[], 0.0]
+        got = sys.fetch[path, map[], map[], 0.0]
         if not got.ok
             return error[got.reason, 'magpie']
         return got.body
@@ -1112,7 +1112,7 @@ fn _shipped[dir, b]
 --- is: a version of the log, restored by `restore`. Answers how many
 --- files were copied
 fn backup[dir, to]
-    wrote = flush_rows[dir]
+    wrote = sequencer.flush_rows[dir]
     if not wrote.ok
         return error[wrote.reason, 'magpie']
     b = batches[dir]
@@ -1163,17 +1163,17 @@ fn restore[saved, dir]
                 return error[kept.reason, 'magpie']
             restored = restored + 1
     --- the log's positions changed under this process: its tail forgotten
-    forgotten = forget_log[dir]
+    forgotten = sequencer.forget_log[dir]
     return restored
 
 --- a line of a follower's request, read without waiting: empty text
 --- where none has arrived whole yet, the bytes past it kept for the next
 fn _line_of[c]
     have = leftover[c]
-    nl = bytes['\n']
+    nl = sys.bytes['\n']
     at = find[have, nl]
     while at lt 0
-        got = recv[stream_of[c], 4096, 0.005]
+        got = sys.recv[stream_of[c], 4096, 0.005]
         if not got.ok
             unread[c, have]
             if starts[got.reason, 'no data']
@@ -1184,7 +1184,7 @@ fn _line_of[c]
         have = concat[have, got]
         at = find[have, nl]
     unread[c, slice[have, at + 1, len[have]]]
-    return text[slice[have, 0, at], '?']
+    return sys.text[slice[have, 0, at], '?']
 
 --- a request's answer: `list` is the live files and the manifest, a
 --- count then a name and its bytes per line; `get <name>` is the file's
@@ -1192,7 +1192,7 @@ fn _line_of[c]
 fn _shared[dir, line]
     nl = '\n'
     if line eq 'list'
-        wrote = flush_rows[dir]
+        wrote = sequencer.flush_rows[dir]
         if not wrote.ok
             return error[wrote.reason, 'magpie']
         b = batches[dir]
@@ -1203,7 +1203,7 @@ fn _shared[dir, line]
         for name in names
             n = _size_of['`dir`/`name`']
             out = '`out``name` `n``nl`'
-        return bytes[out]
+        return sys.bytes[out]
     if starts[line, 'get ']
         name = slice[line, 4, len[line]]
         if '/' in name or not (ends[name, '.batch'] or ends[name, '.segment'] or name eq 'manifest')
@@ -1211,7 +1211,7 @@ fn _shared[dir, line]
         data = file['`dir`/`name`']
         if not data.ok
             return error[data.reason, 'magpie']
-        return concat[bytes['`len[data]``nl`'], data]
+        return concat[sys.bytes['`len[data]``nl`'], data]
     return error['\'`line`\' is no request of a log', 'magpie']
 
 --- `share[dir, port, host = '127.0.0.1', rounds = 0]`: the log served to
@@ -1224,7 +1224,7 @@ fn _shared[dir, line]
 --- `rounds` loops have run (forever with 0). Answers how many requests
 --- it answered
 fn share[dir, port, host = '127.0.0.1', rounds = 0]
-    l = listen[host, port]
+    l = sys.listen[host, port]
     if not l.ok
         return error[l.reason, 'magpie']
     conns = []
@@ -1234,7 +1234,7 @@ fn share[dir, port, host = '127.0.0.1', rounds = 0]
         turn = turn + 1
         arrived = accept[l, 0.005]
         if arrived.ok
-            conns = push[conns, socket_of[arrived, address[arrived], bytes['']]]
+            conns = push[conns, socket_of[arrived, address[arrived], sys.bytes['']]]
         kept = []
         for c in conns
             line = _line_of[c]
@@ -1246,7 +1246,7 @@ fn share[dir, port, host = '127.0.0.1', rounds = 0]
                     if not got.ok
                         sys.close[stream_of[c]]
                     else
-                        sent = send[stream_of[c], got]
+                        sent = sys.send[stream_of[c], got]
                         answered = answered + 1
                         kept = push[kept, c]
                 else
@@ -1258,10 +1258,10 @@ fn share[dir, port, host = '127.0.0.1', rounds = 0]
 --- a line of the server's answer, waited for (the connection's own wait)
 fn _line_waited[c]
     have = leftover[c]
-    nl = bytes['\n']
+    nl = sys.bytes['\n']
     at = find[have, nl]
     while at lt 0
-        got = recv[stream_of[c], 65536, 0.0]
+        got = sys.recv[stream_of[c], 65536, 0.0]
         if not got.ok
             return error[got.reason, 'magpie']
         if len[got] eq 0
@@ -1269,13 +1269,13 @@ fn _line_waited[c]
         have = concat[have, got]
         at = find[have, nl]
     unread[c, slice[have, at + 1, len[have]]]
-    return text[slice[have, 0, at], '?']
+    return sys.text[slice[have, 0, at], '?']
 
 --- exactly n bytes of the server's answer, waited for
 fn _exact[c, n]
     have = leftover[c]
     while len[have] lt n
-        got = recv[stream_of[c], n - len[have], 0.0]
+        got = sys.recv[stream_of[c], n - len[have], 0.0]
         if not got.ok
             return error[got.reason, 'magpie']
         if len[got] eq 0
@@ -1299,9 +1299,9 @@ fn follow[dir, host, port, seconds = 5.0]
     s = open[host, port, false, seconds]
     if not s.ok
         return error[s.reason, 'magpie']
-    c = socket_of[s, '`host`:`port`', bytes['']]
+    c = socket_of[s, '`host`:`port`', sys.bytes['']]
     nl = '\n'
-    asked = send[s, bytes['list`nl`']]
+    asked = sys.send[s, sys.bytes['list`nl`']]
     if not asked.ok
         return error[asked.reason, 'magpie']
     count_line = _line_waited[c]
@@ -1326,7 +1326,7 @@ fn follow[dir, host, port, seconds = 5.0]
     for name in names
         --- a file the follower holds is whole; the manifest is taken every time
         if name not in have or name eq 'manifest'
-            asked_for = send[s, bytes['get `name``nl`']]
+            asked_for = sys.send[s, sys.bytes['get `name``nl`']]
             if not asked_for.ok
                 return error[asked_for.reason, 'magpie']
             size_line = _line_waited[c]
@@ -1350,7 +1350,7 @@ fn follow[dir, host, port, seconds = 5.0]
                 gone = rm[b.path[i]]
     for p in _unlisted[dir]
         gone = rm[p]
-    forgotten = forget_log[dir]
+    forgotten = sequencer.forget_log[dir]
     return fetched
 
 --- the HTTP door: the verbs over JSON, so a program in another process
@@ -1363,7 +1363,7 @@ fn follow[dir, host, port, seconds = 5.0]
 --- Content-Length); the bytes past it kept for the next
 fn _http_request[c]
     have = leftover[c]
-    got = recv[stream_of[c], 65536, 0.002]
+    got = sys.recv[stream_of[c], 65536, 0.002]
     if not got.ok
         if not starts[got.reason, 'no data']
             unread[c, have]
@@ -1372,15 +1372,15 @@ fn _http_request[c]
         if len[got] eq 0
             return error['closed', 'magpie']
         have = concat[have, got]
-    gap = find[have, bytes['\r\n\r\n']]
+    gap = find[have, sys.bytes['\r\n\r\n']]
     if gap lt 0
         unread[c, have]
         return ''
-    header = text[slice[have, 0, gap], '?']
+    header = sys.text[slice[have, 0, gap], '?']
     hl = split[header, '\r\n']
     req_line = split[hl[0], ' ']
     if len[req_line] lt 2
-        unread[c, bytes['']]
+        unread[c, sys.bytes['']]
         return error['no request line', 'magpie']
     length = 0
     for i in range[1, len[hl]]
@@ -1393,7 +1393,7 @@ fn _http_request[c]
     if begin + length gt len[have]
         unread[c, have]
         return ''
-    payload = text[slice[have, begin, begin + length], '?']
+    payload = sys.text[slice[have, begin, begin + length], '?']
     unread[c, slice[have, begin + length, len[have]]]
     target = req_line[1]
     pieces = split[target, '?']
@@ -1440,9 +1440,9 @@ fn _http_reply[http_code, payload]
         why = 'Bad Request'
     if http_code eq 404
         why = 'Not Found'
-    n = len[bytes[payload]]
+    n = len[sys.bytes[payload]]
     top = 'HTTP/1.1 `http_code` `why``nl`Content-Type: application/json`nl`Content-Length: `n``nl`Connection: keep-alive`nl``nl`'
-    return concat[bytes[top], bytes[payload]]
+    return concat[sys.bytes[top], sys.bytes[payload]]
 
 --- a frame as a response, or the error it is
 fn _framed[f]
@@ -1551,7 +1551,7 @@ fn door[root, port, host = '127.0.0.1', rounds = 0]
     log_dir = _opened[root]
     if not log_dir.ok
         return log_dir
-    l = listen[host, port]
+    l = sys.listen[host, port]
     if not l.ok
         return error[l.reason, 'magpie']
     conns = []
@@ -1561,7 +1561,7 @@ fn door[root, port, host = '127.0.0.1', rounds = 0]
         turn = turn + 1
         arrived = accept[l, 0.005]
         if arrived.ok
-            conns = push[conns, socket_of[arrived, address[arrived], bytes['']]]
+            conns = push[conns, socket_of[arrived, address[arrived], sys.bytes['']]]
         kept = []
         for c in conns
             req = _http_request[c]
@@ -1570,7 +1570,7 @@ fn door[root, port, host = '127.0.0.1', rounds = 0]
             else
                 if len[req] gt 0
                     wire = _http_answer[root, json[req]]
-                    sent = send[stream_of[c], wire]
+                    sent = sys.send[stream_of[c], wire]
                     answered = answered + 1
                 kept = push[kept, c]
         conns = kept
@@ -1720,7 +1720,7 @@ fn _one[label, x]
 
 --- a door's answer read back as its status, for the tests
 fn _http_status[dir, meth, loc, qs, payload]
-    wire = text[_http_answer[dir, json[encode[map[method = meth, path = loc, query = qs, body = payload]]]], '?']
+    wire = sys.text[_http_answer[dir, json[encode[map[method = meth, path = loc, query = qs, body = payload]]]], '?']
     req_line = split[wire, ' ']
     http_code = int[req_line[1]]
     if not http_code.ok
@@ -1730,8 +1730,8 @@ fn _http_status[dir, meth, loc, qs, payload]
 --- a door's answer read back as its body, for the tests
 fn _http_body[dir, meth, loc, qs, payload]
     reply_bytes = _http_answer[dir, json[encode[map[method = meth, path = loc, query = qs, body = payload]]]]
-    gap = find[reply_bytes, bytes['\r\n\r\n']]
-    return text[slice[reply_bytes, gap + 4, len[reply_bytes]], '?']
+    gap = find[reply_bytes, sys.bytes['\r\n\r\n']]
+    return sys.text[slice[reply_bytes, gap + 4, len[reply_bytes]], '?']
 
 --- the HTTP door's request parser and its answers, at known values
 test the_http_door_answers_the_verbs[]
@@ -1805,8 +1805,8 @@ fn _bytes_of[want]
             x = 0.0
         return ieee[x, 8, little = true]
     if want.form eq 3
-        return push[bytes[0], want.whole]
-    return bytes[want.word]
+        return push[sys.bytes[0], want.whole]
+    return sys.bytes[want.word]
 
 --- whether a bound is at or below a value of its form (true where the
 --- forms differ)
@@ -1878,7 +1878,7 @@ fn _holding[col, want]
     if kind eq 'text'
         cell_bytes = text_bytes_of[col, 0, n]
         cuts = text_ends_of[col, 0, n]
-        sought = bytes[want.word]
+        sought = sys.bytes[want.word]
         begin = 0
         for i in range[n]
             stop = cuts[i]
@@ -1917,7 +1917,7 @@ fn _within[col, low, high]
         begin = 0
         for i in range[n]
             stop = cuts[i]
-            cell = Want[4, 0, 0.0, text[slice[cell_bytes, begin, stop], '']]
+            cell = Want[4, 0, 0.0, sys.text[slice[cell_bytes, begin, stop], '']]
             out = push[out, _present[present, i] and (low.form eq 0 or _at_most[low, cell]) and (high.form eq 0 or _at_least[high, cell])]
             begin = stop
     return out
@@ -1930,7 +1930,7 @@ fn _only[df, names, path]
     for w in names
         if w not in df.columns
             return error['batch: \'`path`\' holds no column \'`w`\'', 'magpie']
-    return select[df, names]
+    return frame.select[df, names]
 
 --- the names a read by position must hold: the ones wanted and `_pos`
 fn _with_position[names]
@@ -1949,12 +1949,12 @@ fn _gathered[parts, names]
             nonempty = push[nonempty, p]
     whole = parts[0]
     if len[nonempty] gt 0
-        whole = stack[nonempty]
+        whole = frame.stack[nonempty]
     if len[whole] gt 1 and '_pos' in whole.columns
         whole = sort[whole, '_pos']
     if len[names] eq 0 or '_pos' in names
         return whole
-    return select[whole, names]
+    return frame.select[whole, names]
 
 --- whether a path names the pending rows (`<dir>/.pending@first-last`):
 --- the sequencer's, read through the kernel until it is Crow's
@@ -1964,7 +1964,7 @@ fn _pending_path[p]
 --- the pending rows a path names, with the columns asked in that order
 --- (every column where none is), as a file's read hands them
 fn _pending_read[p, names]
-    df = pending_at[p]
+    df = sequencer.pending_at[p]
     if not df.ok
         return error[df.reason, 'magpie']
     if len[names] eq 0
@@ -1972,7 +1972,7 @@ fn _pending_read[p, names]
     for c in names
         if c not in df.columns
             return error['batch: \'`p`\' holds no column \'`c`\'', 'magpie']
-    return select[df, names]
+    return frame.select[df, names]
 
 --- the rows of a frame where every column holds its value
 fn _held_rows[df, columns, wants]
@@ -2013,7 +2013,7 @@ fn _find_rows[path, columns, vals, names]
                 return error['batch: column \'`name`\': `want.reason`', 'magpie']
             wants = push[wants, want]
         return _only[_held_rows[df, columns, wants], names, path]
-    r = opened[path]
+    r = fileformat.opened[path]
     if not r.ok
         return error[r.reason, 'magpie']
     groups = len[r.footer.groups]
@@ -2031,7 +2031,7 @@ fn _find_rows[path, columns, vals, names]
             return error['batch: column \'`column`\': `want.reason`', 'magpie']
         wants = push[wants, want]
         hashed = _bytes_of[want]
-        ents = entries[r, c]
+        ents = fileformat.entries[r, c]
         if not ents.ok
             return error[ents.reason, 'magpie']
         for g in range[groups]
@@ -2041,19 +2041,19 @@ fn _find_rows[path, columns, vals, names]
                     admitted[g] = false
                 else
                     if ent.bloom_len gt 0
-                        f = value_filter[r, ent]
+                        f = fileformat.value_filter[r, ent]
                         if not f.ok
                             return error[f.reason, 'magpie']
-                        if not admits[f, hashed]
+                        if not bloom.admits[f, hashed]
                             admitted[g] = false
-    cols = wanted[r, needed]
+    cols = fileformat.wanted[r, needed]
     if not cols.ok
         return error[cols.reason, 'magpie']
     chosen = []
     for g in range[groups]
         if admitted[g]
             chosen = push[chosen, g]
-    df = groups_of[r, chosen, cols]
+    df = fileformat.groups_of[r, chosen, cols]
     if not df.ok
         return error[df.reason, 'magpie']
     return _only[_held_rows[df, columns, wants], names, path]
@@ -2093,13 +2093,13 @@ fn _since_file[p, after, upto, needed]
         if not df.ok
             return error[df.reason, 'magpie']
         return _between_positions[df, after, upto]
-    r = opened[p]
+    r = fileformat.opened[p]
     if not r.ok
         return error[r.reason, 'magpie']
     pc = _column_at[r, '_pos']
     if pc lt 0
         return error['batch: \'`p`\' holds no column \'_pos\'', 'magpie']
-    ents = entries[r, pc]
+    ents = fileformat.entries[r, pc]
     if not ents.ok
         return error[ents.reason, 'magpie']
     chosen = []
@@ -2109,10 +2109,10 @@ fn _since_file[p, after, upto, needed]
         past = upto gte 0 and ent.lo.form eq 1 and ent.lo.whole gt upto
         if not before and not past
             chosen = push[chosen, g]
-    cols = wanted[r, needed]
+    cols = fileformat.wanted[r, needed]
     if not cols.ok
         return error[cols.reason, 'magpie']
-    df = groups_of[r, chosen, cols]
+    df = fileformat.groups_of[r, chosen, cols]
     if not df.ok
         return error[df.reason, 'magpie']
     return _between_positions[df, after, upto]
@@ -2145,7 +2145,7 @@ fn _between_file[p, column, lo, hi, upto, needed]
             return error[read_all.reason, 'magpie']
         df = read_all
     else
-        r = opened[p]
+        r = fileformat.opened[p]
         if not r.ok
             return error[r.reason, 'magpie']
         c = _column_at[r, column]
@@ -2155,13 +2155,13 @@ fn _between_file[p, column, lo, hi, upto, needed]
         bounds = _bounds_of[cells, column, lo, hi]
         if not bounds.ok
             return error[bounds.reason, 'magpie']
-        ents = entries[r, c]
+        ents = fileformat.entries[r, c]
         if not ents.ok
             return error[ents.reason, 'magpie']
         pc = _column_at[r, '_pos']
         if pc lt 0
             return error['batch: \'`p`\' holds no column \'_pos\'', 'magpie']
-        positions = entries[r, pc]
+        positions = fileformat.entries[r, pc]
         if not positions.ok
             return error[positions.reason, 'magpie']
         chosen = []
@@ -2172,10 +2172,10 @@ fn _between_file[p, column, lo, hi, upto, needed]
             past = upto gte 0 and pe.lo.form eq 1 and pe.lo.whole gt upto
             if reach and not past
                 chosen = push[chosen, g]
-        cols = wanted[r, cols_needed]
+        cols = fileformat.wanted[r, cols_needed]
         if not cols.ok
             return error[cols.reason, 'magpie']
-        read_some = groups_of[r, chosen, cols]
+        read_some = fileformat.groups_of[r, chosen, cols]
         if not read_some.ok
             return error[read_some.reason, 'magpie']
         df = read_some
@@ -2230,7 +2230,7 @@ fn _between_rows[paths, column, lo, hi, upto, names]
 fn _scratch[name]
     gone = rm[name]
     made = mkdir[name]
-    forgotten = forget_log[name]
+    forgotten = sequencer.forget_log[name]
     return name
 
 --- an empty log has no positions; each append claims the next; a read
@@ -2282,7 +2282,7 @@ test the_keys_are_declared_once[]
     first = batch[dir, frame.new[id = [1], at = [1000], qty = [10]], by = ['id'], time = 'at']
     assert[first eq 0]
     assert[_keys[dir] eq ['id']]
-    assert[note_of[listed[dir], 'time'] eq 'at']
+    assert[manifest.note_of[manifest.listed[dir], 'time'] eq 'at']
     other = batch[dir, frame.new[id = [2], at = [1001], qty = [20]], by = ['qty']]
     assert[other.kind eq 'magpie']
     assert[other.reason eq 'the log at \'magpie-test-keys\' is keyed by id, not by qty']
@@ -2365,7 +2365,7 @@ test a_merge_folds_the_tail_into_a_segment[]
     assert[merge[dir] eq '`dir`/S000000000001.segment']
     files = batches[dir]
     assert[len[files] eq 1 and files.form eq ['segment'] and files.level eq [1] and files.number eq [0] and files.high eq [1] and files.rows eq [3] and files.first eq [0] and files.last eq [3]]
-    segs = catalog_of[dir]
+    segs = manifest.catalog_of[dir]
     assert[segs.name eq ['S000000000001.segment'] and segs.rows eq [3]]
     assert[head[dir] eq 3]
     after = latest[dir]
@@ -2652,7 +2652,7 @@ test a_backup_is_restored[]
 test a_shared_log_answers_its_followers[]
     dir = _scratch['magpie-test-share']
     a = batch[dir, frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]
-    listing = text[_shared[dir, 'list'], '?']
+    listing = sys.text[_shared[dir, 'list'], '?']
     lines = split[listing, '\n']
     assert[lines[0] eq '2']
     assert[starts[lines[1], '000000000000.batch ']]

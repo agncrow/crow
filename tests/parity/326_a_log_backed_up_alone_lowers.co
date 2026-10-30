@@ -8,6 +8,6 @@
 --- program's mistake (crow check --self: magpie.backup).
 use magpie
 
-r = backup['no-such-log', 'no-such-backup']
+r = magpie.backup['no-such-log', 'no-such-backup']
 log[r.ok]
 log[len[r.reason] gt 0]

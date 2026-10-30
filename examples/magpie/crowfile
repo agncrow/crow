@@ -1,1 +1,2 @@
-name = 'magpie'
+name = 'magpie_example'
+deps = map[magpie = '../../packages/magpie']

@@ -9,6 +9,28 @@ history says the rest.
 
 ### Fixed
 
+- A package linked into `crow_modules` names every file it brings by
+  the package, however deep its own imports go. A file its main file's
+  import imported had been prefixed as the program's own — the package's
+  root read where the link points, which says nothing of `crow_modules` —
+  so a program's `deep.co` beside the package's was "declared twice",
+  the baseline put the package's file in the program, and the package's
+  inner files were read as the program's parts.
+- A package installed beside a program — its main file and every file
+  that imports — is held to its tests where it is made: it is not
+  validated alone in each build of the program, and its tests' calls no
+  longer type the program's copies of its functions. They had typed a
+  copy at every frame its tests made (Magpie's `put_rows`), so the helper
+  it hands `revise` had several copies and was refused as a value, and
+  checking its files alone had been half the program's build.
+- A program's function named as a standard module's inlined functions
+  are (`_frame_of`, `_math_mean`: the module's prefix, then a word) is
+  the program's own. It had been taken for the module's by its name
+  alone and read in the module's scope, where the program's functions
+  are not seen: its call of one stopped the interpreter, "does not run
+  'total' yet" (parity 439). A function is a module's when the module's
+  source declares it.
+
 - A float's bytes are the same on every machine: `sys.float_bytes` and
   `sys.ieee` write a NaN as the one quiet NaN (0x7ff8…, 0x7fc0… at single
   precision), whatever bits the arithmetic left in it. x86's `0.0 / 0.0`
@@ -704,6 +726,26 @@ history says the rest.
 
 ### Breaking
 
+- Magpie is a package, not the standard library (Vijay, 2026-10-29):
+  `packages/magpie`, documented by its README (the tour), REFERENCE.md
+  (every function and part, the design notes) and PARTS.md (each part at
+  work), its `example.co` running all of them in both modes. A program
+  installs it as any dependency (`deps = map[magpie =
+  'github.com/agncrow/crow/packages/magpie@main']`, `crow install`) and
+  calls it qualified, as a package is called: `magpie.put[d, f]`,
+  `magpie.latest[d]`. The doors are its parts — `use magpie.kafka`, then
+  `kafka.serve[root, port]`; `use magpie.redis`, then `redis.serve[…]` —
+  and the parts take their files' names: `codec` is `lz77`, `packing`
+  `bitpack`, `encode` `columnchunk`, `file` `fileformat`, `tail`
+  `sequencer`, `merge` `merger`, `exec` `executor`, `search` `searcher`,
+  `nearest` `knn`, `stem` `stemmer`, `records` `recordsets` (a part named
+  like a function of the package or a builtin — `merge`, `search`,
+  `encode` — reads as that function where both are reached). The book's
+  three Magpie pages and the sys page's stretch on the parts moved into
+  the package, and the spec's sections with them; the spec says where it
+  is. Its answers are the module's: the example prints, line for line,
+  what the book's blocks recorded.
+
 - The Rosetta Code run's questions, decided (Vijay, 2026-10-29;
   rosetta/QUESTIONS.md). A function's local named like a name an import
   makes — `e` or `mean` under `use math`, `code` under `use bits` — is
@@ -1127,6 +1169,16 @@ history says the rest.
 
 ### Changed
 
+- A program builds as fast with a package as with a standard module:
+  an imported file's functions that nothing the program reaches names
+  are dropped before it is typed, as the standard modules' inliner keeps
+  only what a program reaches (a program had lowered every function of
+  a package it imported: 424 of Magpie's where its windows reach 239),
+  and the checks read a name's rows from the table's index, where
+  `check_call` had scanned the table once per call and once more per
+  import, and an arity's refusal text twice for every row tried. A
+  program over Magpie lowers in 1.6 s; it took 8.5 s, and 1.5 s when
+  Magpie was a standard module.
 - `sys` and process memory (`use memory`) may be imported by any program
   or package (Vijay, 2026-10-29: keeping them to the standard library is
   a suggestion, not a rule). They are meant for library code — the

@@ -15,9 +15,10 @@ and `training` answers what pandas's `merge_asof` answers.
 deps = map[features = 'github.com/agncrow/crow/packages/features@main']
 ```
 
-`crow install` checks the package out into `crow_modules/features`, and
-`crow.lock` pins the commit it took and the hash of the files it
-installed. A program imports it and calls it qualified:
+`crow install` checks the package out into `crow_modules/features`, and the
+package it is written over, magpie, beside it; `crow.lock` pins the
+commit each took and the hash of the files it installed. A program
+imports it and calls it qualified:
 
 ```
 use magpie, frame

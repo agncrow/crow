@@ -37,14 +37,14 @@ fn q_ch[conn, q, sym, day, upto, ids]
 
 fn lake_rows[root, q, sym, day]
     if q eq 1
-        return lookup['`root`/bars', ['day', 'symbol'], [day, sym], ['timestamp', 'close', 'volume']]
+        return magpie.lookup['`root`/bars', ['day', 'symbol'], [day, sym], ['timestamp', 'close', 'volume']]
     if q eq 2
-        return lookup['`root`/bars', ['day', 'symbol'], [day, sym], ['symbol', 'timestamp', 'close', 'high', 'volume']]
+        return magpie.lookup['`root`/bars', ['day', 'symbol'], [day, sym], ['symbol', 'timestamp', 'close', 'high', 'volume']]
     if q eq 3
-        return lookup['`root`/bars', ['day'], [day], ['symbol', 'volume']]
+        return magpie.lookup['`root`/bars', ['day'], [day], ['symbol', 'volume']]
     if q eq 4
-        return scan['`root`/bars', 0, -1, ['day', 'volume']]
-    return lookup['`root`/bars', ['day'], [day], ['symbol', 'timestamp', 'close', 'volume', 'dataset_id']]
+        return magpie.scan['`root`/bars', 0, -1, ['day', 'volume']]
+    return magpie.lookup['`root`/bars', ['day'], [day], ['symbol', 'timestamp', 'close', 'volume', 'dataset_id']]
 
 fn lake_answer[q, rows, cut, ids]
     if q eq 1
@@ -80,7 +80,7 @@ fn lake_answer[q, rows, cut, ids]
     return g
 
 --- the universe's dataset ids, the same for every system
-ds = latest['`root`/datasets', columns = ['id', 'day', 'granularity', 'status']]
+ds = magpie.latest['`root`/datasets', columns = ['id', 'day', 'granularity', 'status']]
 dd = ds[ds.day eq day]
 dd = dd[dd.granularity eq '1s']
 dd = dd[dd.status eq 'ready']

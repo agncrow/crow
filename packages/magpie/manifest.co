@@ -13,7 +13,7 @@
 --- by its number, a segment `S000000000003.segment` by its counter.
 use sys
 use frame
-use magpie.file
+use fileformat
 
 --- a log's manifest: its keys, its notes (their names in order, and their
 --- texts), its segments as a frame of nine columns, and whether the log
@@ -26,14 +26,14 @@ fn segment_columns[]
 
 --- no segments: the nine columns, empty
 fn _no_segments[]
-    none = bytes[0]
+    none = sys.bytes[0]
     return _segments_of[text_column[none, [], none], [], [], [], [], [], [], [], text_column[none, [], none]]
 
 --- the segments' frame from its columns' parts, each column named as
 --- the program reads it (its kind known where it is read: `segs.number[i]`
 --- an int, `segs.name[i]` text)
 fn _segments_of[names, levels, numbers, highs, firsts, lasts, counts, sizes, ranges]
-    none = bytes[0]
+    none = sys.bytes[0]
     f = frame.new[]
     f.name = names
     f.level = ints_column[levels, none]
@@ -101,20 +101,20 @@ fn listed[dir]
     path = '`dir`/manifest'
     if not exists[path]
         return unlisted[]
-    r = opened[path]
+    r = fileformat.opened[path]
     if not r.ok
         return error['magpie: the manifest of \'`dir`\': `r.reason`', 'magpie']
-    cols = wanted[r, segment_columns[]]
+    cols = fileformat.wanted[r, segment_columns[]]
     if not cols.ok
         return error[cols.reason, 'magpie']
     every = []
     for g in range[len[r.footer.groups]]
         every = push[every, g]
-    raw = groups_of[r, every, cols]
+    raw = fileformat.groups_of[r, every, cols]
     if not raw.ok
         return error[raw.reason, 'magpie']
     n = len[raw]
-    none = bytes[0]
+    none = sys.bytes[0]
     names = text_column[text_bytes_of[raw.name, 0, n], text_ends_of[raw.name, 0, n], none]
     ranges = text_column[text_bytes_of[raw.ranges, 0, n], text_ends_of[raw.ranges, 0, n], none]
     segments = _segments_of[names, ints_of[raw.level, 0, n], ints_of[raw.number, 0, n], ints_of[raw.high, 0, n], ints_of[raw.first, 0, n], ints_of[raw.last, 0, n], ints_of[raw.rows, 0, n], ints_of[raw.bytes, 0, n], ranges]
@@ -182,8 +182,8 @@ fn counter[m]
 fn listed_bytes[m]
     nothing = slice[['x'], 0, 0]
     df = m.segments
-    cols = columns_of[df, nothing]
-    out = magic[]
+    cols = fileformat.columns_of[df, nothing]
+    out = fileformat.magic[]
     blocks = []
     groups = []
     n = len[df]
@@ -191,7 +191,7 @@ fn listed_bytes[m]
         wide = []
         for c in cols.names
             wide = push[wide, false]
-        g = group_bytes[df, 0, n, cols, wide, false, len[out]]
+        g = fileformat.group_bytes[df, 0, n, cols, wide, false, len[out]]
         if not g.ok
             return error[g.reason, 'magpie']
         out = concat[out, g.data]
@@ -199,8 +199,8 @@ fn listed_bytes[m]
         groups = push[groups, g.rows]
     else
         for c in cols.names
-            blocks = push[blocks, bytes[0]]
-    return finish[out, blocks, groups, cols, 0, -1, m.keys, m.note_names, m.note_texts]
+            blocks = push[blocks, sys.bytes[0]]
+    return fileformat.finish[out, blocks, groups, cols, 0, -1, m.keys, m.note_names, m.note_texts]
 
 --- `write_listed[dir, m]`: the manifest written — to `.manifest.part`,
 --- flushed, moved over `manifest`, the directory flushed: one atomic

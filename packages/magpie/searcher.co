@@ -1,4 +1,4 @@
---- `use magpie.search`: `search` over a log's files, in Crow —
+--- `use magpie.searcher`: `search` over a log's files, in Crow —
 --- BM25 as Lucene scores it, over the whole log as one corpus, with the
 --- query forms Lucene has: a word, a phrase (a word with a space: the
 --- tokens in order), a prefix (`kit*`), a fuzzy word (`kitchn~`, within
@@ -12,14 +12,14 @@ use sys
 use bits
 use frame
 use math
-use magpie.file
-use magpie.tail
-use magpie.manifest
-use magpie.merge
-use magpie.encode
-use magpie.bloom
-use magpie.postings
-use magpie.stem
+use fileformat
+use sequencer
+use manifest
+use merger
+use columnchunk
+use bloom
+use postings
+use stemmer
 
 --- a term of a query: its form (1 a word, 2 a phrase, 3 a prefix, 4 a
 --- fuzzy word), its word (a word's, a prefix's, a fuzzy word's), its
@@ -95,7 +95,7 @@ fn terms_of[words, stems]
                     toks = slice[['x'], 0, 0]
                     for t in terms[w]
                         if stems
-                            toks = push[toks, stem[t]]
+                            toks = push[toks, stemmer.stem[t]]
                         else
                             toks = push[toks, t]
                     if len[toks] eq 1
@@ -149,7 +149,7 @@ fn _hits_of_text[doc, query, atoms, stems, every, asked]
     for p in range[n]
         t = toks[p]
         if stems
-            t = stem[t]
+            t = stemmer.stem[t]
         --- (only the words the query asks are placed, unless a prefix or a
         --- fuzzy word asks of every word: what is read below is no other —
         --- every word of every text had been placed, a list copied out of
@@ -195,7 +195,7 @@ fn _hits_of_text[doc, query, atoms, stems, every, asked]
                 gap = len[split[k, '']] - wn
                 if gap lt 0
                     gap = 0 - gap
-                if not m and gap lte term.edits and levenshtein[term.word, k, term.edits] lte term.edits
+                if not m and gap lte term.edits and postings.levenshtein[term.word, k, term.edits] lte term.edits
                     m = true
         tf = push[tf, f]
         matched = push[matched, m]
@@ -269,7 +269,7 @@ fn _scanned[col, query, atoms, stems, no_df, empty_ix]
         stop = cuts[row]
         held = len[present] eq 0 or bitand[byte[present, shift[row, -3]], shift[1, bitand[row, 7]]] ne 0
         if held
-            h = _hits_of_text[text[slice[cell_bytes, begin, stop], ''], query, atoms, stems, every, asked]
+            h = _hits_of_text[sys.text[slice[cell_bytes, begin, stop], ''], query, atoms, stems, every, asked]
             docs = docs + 1
             total = total + h.size
             if h.any
@@ -288,7 +288,7 @@ fn _scanned[col, query, atoms, stems, no_df, empty_ix]
 
 --- the empty index: no lengths, no terms (what a group with no index holds)
 fn _empty_index[]
-    return parsed[concat[pack[0, 4, little = true], push[push[bytes[0], 0], 0]]]
+    return postings.parsed[concat[pack[0, 4, little = true], push[push[sys.bytes[0], 0], 0]]]
 
 --- whether a path names the tail's pending rows (`<dir>/.pending@first-last`)
 fn _pending_path[p]
@@ -303,7 +303,7 @@ fn _part_of[path, column, query, atoms, stems]
         no_df = push[no_df, 0]
     if _pending_path[path]
         --- (the tail's pending rows, read whole and scanned as one group)
-        rows_of = pending_at[path]
+        rows_of = sequencer.pending_at[path]
         if not rows_of.ok
             return error[rows_of.reason, 'magpie']
         if column not in rows_of.columns
@@ -313,7 +313,7 @@ fn _part_of[path, column, query, atoms, stems]
         one = []
         one = push[one, _scanned[rows_of.`column`, query, atoms, stems, no_df, empty_ix]]
         return Part[path, true, rows_of, 0, one]
-    r = opened[path]
+    r = fileformat.opened[path]
     if not r.ok
         return error[r.reason, 'magpie']
     c = _column_at[r, column]
@@ -321,7 +321,7 @@ fn _part_of[path, column, query, atoms, stems]
         return error['batch: \'`path`\' holds no column \'`column`\'', 'magpie']
     if r.footer.columns[c].cells ne 'text'
         return error['batch: column \'`column`\' holds no text to search', 'magpie']
-    ents = entries[r, c]
+    ents = fileformat.entries[r, c]
     if not ents.ok
         return error[ents.reason, 'magpie']
     simple = _simple[query]
@@ -335,24 +335,24 @@ fn _part_of[path, column, query, atoms, stems]
             admitted = true
             if simple
                 admitted = false
-                bf = token_filter[r, ent]
+                bf = fileformat.token_filter[r, ent]
                 if not bf.ok
                     return error[bf.reason, 'magpie']
                 for w in words
-                    if not admitted and admits[bf, bytes[w]]
+                    if not admitted and bloom.admits[bf, sys.bytes[w]]
                         admitted = true
             if not admitted or ent.docs eq 0
                 groups = push[groups, Counts[ent.docs, ent.words, no_df, false, empty_ix, no_rows, no_hits]]
             else
-                blob = index_bytes[r, ent]
+                blob = fileformat.index_bytes[r, ent]
                 if not blob.ok
                     return error[blob.reason, 'magpie']
-                ix = parsed[blob]
+                ix = postings.parsed[blob]
                 if not ix.ok
                     return error['batch: \'`path`\': `ix.reason`', 'magpie']
                 df = []
                 for a in atoms
-                    t = term_of[ix, a]
+                    t = postings.term_of[ix, a]
                     if t lt 0
                         df = push[df, 0]
                     else
@@ -361,7 +361,7 @@ fn _part_of[path, column, query, atoms, stems]
         else
             only = []
             only = push[only, c]
-            frame_g = group_of[r, g, only]
+            frame_g = fileformat.group_of[r, g, only]
             if not frame_g.ok
                 return error[frame_g.reason, 'magpie']
             groups = push[groups, _scanned[frame_g.`column`, query, atoms, stems, no_df, empty_ix]]
@@ -430,7 +430,7 @@ fn _positions_of[r, g]
         return []
     only = []
     only = push[only, pc]
-    f = group_of[r, g, only]
+    f = fileformat.group_of[r, g, only]
     if not f.ok
         return error[f.reason, 'magpie']
     return ints_of[f._pos, 0, len[f]]
@@ -447,7 +447,7 @@ fn _readers_of[parts]
     out = map[]
     for fi in range[len[parts]]
         if not parts[fi].held
-            r = opened[parts[fi].path]
+            r = fileformat.opened[parts[fi].path]
             if not r.ok
                 return error[r.reason, 'magpie']
             out = set[out, '`fi`', r]
@@ -455,10 +455,10 @@ fn _readers_of[parts]
 
 --- a group of a file's part with every column, through its reader
 fn _group_rows[r, g]
-    every = wanted[r, slice[['x'], 0, 0]]
+    every = fileformat.wanted[r, slice[['x'], 0, 0]]
     if not every.ok
         return error[every.reason, 'magpie']
-    return group_of[r, g, every]
+    return fileformat.group_of[r, g, every]
 
 --- one row of a group's rows
 fn _row_at[rows, row]
@@ -477,10 +477,10 @@ struct Run [max_tf, min_len, rows, tfs]
 --- a word's postings in one index, block by block
 fn _word_runs[ix, word]
     out = []
-    t = term_of[ix, word]
+    t = postings.term_of[ix, word]
     if t lt 0
         return out
-    blocks = blocks_of[ix, t]
+    blocks = postings.blocks_of[ix, t]
     if not blocks.ok
         return error[blocks.reason, 'magpie']
     for b in blocks
@@ -498,7 +498,7 @@ fn _constant_runs[ix, places]
     out = []
     rows = []
     for t in places
-        blocks = blocks_of[ix, t]
+        blocks = postings.blocks_of[ix, t]
         if not blocks.ok
             return error[blocks.reason, 'magpie']
         for b in blocks
@@ -523,10 +523,10 @@ fn _phrase_runs[ix, parts]
     out = []
     lists = []
     for w in parts
-        t = term_of[ix, w]
+        t = postings.term_of[ix, w]
         if t lt 0
             return out
-        blocks = blocks_of[ix, t]
+        blocks = postings.blocks_of[ix, t]
         if not blocks.ok
             return error[blocks.reason, 'magpie']
         at = map[]
@@ -567,28 +567,28 @@ fn _runs_of[ix, t]
     if t.form eq 2
         return _phrase_runs[ix, t.parts]
     if t.form eq 3
-        return _constant_runs[ix, with_prefix[ix, t.word]]
-    return _constant_runs[ix, within[ix, t.word, t.edits]]
+        return _constant_runs[ix, postings.with_prefix[ix, t.word]]
+    return _constant_runs[ix, postings.within[ix, t.word, t.edits]]
 
 --- the files' columns, a `score` and (where asked) a `snippet`, with no
 --- rows
 fn _empty_scored[paths, with_snippet]
     if len[paths] eq 0
         f = frame.new[]
-        f.score = floats_column[[], bytes[0]]
+        f.score = floats_column[[], sys.bytes[0]]
         if with_snippet
-            f.snippet = text_column[bytes[0], [], bytes[0]]
+            f.snippet = text_column[sys.bytes[0], [], sys.bytes[0]]
         return f
-    r = opened[paths[0]]
+    r = fileformat.opened[paths[0]]
     if not r.ok
         return error[r.reason, 'magpie']
-    every = wanted[r, slice[['x'], 0, 0]]
+    every = fileformat.wanted[r, slice[['x'], 0, 0]]
     if not every.ok
         return error[every.reason, 'magpie']
-    g = empty_of[r, every]
-    g.score = floats_column[[], bytes[0]]
+    g = fileformat.empty_of[r, every]
+    g.score = floats_column[[], sys.bytes[0]]
     if with_snippet
-        g.snippet = text_column[bytes[0], [], bytes[0]]
+        g.snippet = text_column[sys.bytes[0], [], sys.bytes[0]]
     return g
 
 --- `snippet_of[doc, query, chars, stems]`: the text around the first
@@ -596,19 +596,19 @@ fn _empty_scored[paths, with_snippet]
 --- character boundaries, an ellipsis where it is cut; the start of the
 --- text where no word is found
 fn snippet_of[doc, query, chars, stems]
-    tb = bytes[doc]
-    low = bytes[lower[doc]]
+    tb = sys.bytes[doc]
+    low = sys.bytes[lower[doc]]
     found_at = -1
     found_len = 0
     for t in query
         needle = t.word
         if t.form eq 2
             needle = join[t.parts, ' ']
-        nb = bytes[needle]
+        nb = sys.bytes[needle]
         i = find[low, nb]
         size = len[nb]
         if i lt 0 and stems
-            sb = bytes[stem[needle]]
+            sb = sys.bytes[stemmer.stem[needle]]
             i = find[low, sb]
             size = len[sb]
         if i gte 0 and (found_at lt 0 or i lt found_at)
@@ -648,7 +648,7 @@ fn snippet_of[doc, query, chars, stems]
     out = ''
     if begin gt 0
         out = '…'
-    piece = text[slice[tb, begin, stop], '']
+    piece = sys.text[slice[tb, begin, stop], '']
     out = '`out``piece`'
     if stop lt n
         out = '`out`…'
@@ -806,7 +806,7 @@ fn search_rows[paths, column, words, k, stems, snippet]
         ranked = out
     rows = []
     scores = []
-    snip_bytes = bytes[0]
+    snip_bytes = sys.bytes[0]
     snip_ends = []
     --- (each group read once, however many of the k best it holds, as the
     --- kernel read them: a group read per row had decoded a group's every
@@ -829,13 +829,13 @@ fn search_rows[paths, column, words, k, stems, snippet]
         scores = push[scores, s.score]
         if snippet gt 0
             cell = one.`column`
-            doc = text[text_bytes_of[cell, 0, 1], '']
-            snip_bytes = concat[snip_bytes, bytes[snippet_of[doc, query, snippet, stems]]]
+            doc = sys.text[text_bytes_of[cell, 0, 1], '']
+            snip_bytes = concat[snip_bytes, sys.bytes[snippet_of[doc, query, snippet, stems]]]
             snip_ends = push[snip_ends, len[snip_bytes]]
-    stacked = stack[rows]
-    stacked.score = floats_column[scores, bytes[0]]
+    stacked = frame.stack[rows]
+    stacked.score = floats_column[scores, sys.bytes[0]]
     if snippet gt 0
-        stacked.snippet = text_column[snip_bytes, snip_ends, bytes[0]]
+        stacked.snippet = text_column[snip_bytes, snip_ends, sys.bytes[0]]
     return stacked
 
 fn _fresh[dir]
@@ -845,14 +845,14 @@ fn _fresh[dir]
     return dir
 
 --- a frame's image, digested — each column's name and its chunk (its
---- kind, its missing cells, its cells, as magpie.encode writes them):
+--- kind, its missing cells, its cells, as magpie.columnchunk writes them):
 --- what a recorded answer is held to
 fn _image[f]
     n = len[f]
-    out = bytes['`n`']
+    out = sys.bytes['`n`']
     for name in f.columns
-        out = concat[out, bytes[name]]
-        out = concat[out, chunk[f.`name`, 0, n, false]]
+        out = concat[out, sys.bytes[name]]
+        out = concat[out, columnchunk.chunk[f.`name`, 0, n, false]]
     return slice[hash[out, 'sha256'], 0, 16]
 
 --- the same rows, scores and snippets as the kernel's search, over a
@@ -860,7 +860,7 @@ fn _image[f]
 test search_is_the_kernels[]
     nothing = slice[['x'], 0, 0]
     dir = _fresh['target/crow_search_k']
-    k = declare[dir, ['id'], nothing, nothing]
+    k = manifest.declare[dir, ['id'], nothing, nothing]
     notes = ['a crate of apples for the shop', 'pears for the kitchen table', 'the kitchen table holds apples and pears', 'running late to the kitchen', 'kitten on the kitchen table', 'apple pie, apple tart', 'nothing here', 'Kitchens and kitchenware']
     ids = []
     texts = []
@@ -868,9 +868,9 @@ test search_is_the_kernels[]
         ids = push[ids, i]
         texts = push[texts, '`notes[i % 8]` `i`']
     df = frame.new[id = ids, note = texts]
-    a = write_batch[dir, 0, 0, frame.head[df, 32], ['id'], ['note']]
-    b = write_batch[dir, 1, 32, frame.tail[df, 32], ['id'], nothing]
-    merged = merge_files[dir, ['`dir`/000000000000.batch'], false]
+    a = merger.write_batch[dir, 0, 0, frame.head[df, 32], ['id'], ['note']]
+    b = merger.write_batch[dir, 1, 32, frame.tail[df, 32], ['id'], nothing]
+    merged = merger.merge_files[dir, ['`dir`/000000000000.batch'], false]
     paths = ['`dir`/000000000001.batch']
     seg = ls[dir]
     for f in seg
@@ -885,7 +885,7 @@ test search_is_the_kernels[]
                 for st in [false, true]
                     mine = search_rows[paths, 'note', q, kk, st, sn]
                     images = '`images` `_image[mine]`'
-        seen = push[seen, slice[hash[bytes[images], 'sha256'], 0, 16]]
+        seen = push[seen, slice[hash[sys.bytes[images], 'sha256'], 0, 16]]
     --- (the kernel's rows for each query — twelve searches each, by k, the
     --- snippet's words and stemming — recorded before it was deleted,
     --- 2026-10-28)

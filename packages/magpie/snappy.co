@@ -29,7 +29,7 @@ fn unsnapped[block]
             reading = false
         else
             width = width + 7
-    out = bytes[0]
+    out = sys.bytes[0]
     while i lt total
         tag = byte[block, i]
         i = i + 1
@@ -85,7 +85,7 @@ fn unsnapped[block]
 --- — a valid block, no compression: what a test writes to drive the
 --- reader
 fn snappy_literal[data]
-    out = bytes[0]
+    out = sys.bytes[0]
     n = len[data]
     going = true
     while going
@@ -114,7 +114,7 @@ fn snappy_literal[data]
 
 --- bytes from a list of numbers
 fn _bytes_of[nums]
-    out = bytes[0]
+    out = sys.bytes[0]
     for x in nums
         out = push[out, int[x]]
     return out
@@ -122,15 +122,15 @@ fn _bytes_of[nums]
 --- the kernel's own vectors: literals, copies of each width, an
 --- overlapping copy, and blocks refused
 test snappy_reads_the_kernels_blocks[]
-    assert[same[unsnapped[snappy_literal[bytes[0]]], bytes[0]]]
-    word = bytes['snappy snappy snappy']
+    assert[same[unsnapped[snappy_literal[sys.bytes[0]]], sys.bytes[0]]]
+    word = sys.bytes['snappy snappy snappy']
     many = word
     for i in range[12]
         many = concat[many, many]
     assert[same[unsnapped[snappy_literal[many]], many]]
-    assert[text[unsnapped[_bytes_of[[8, 12, 97, 98, 99, 100, 1, 4]]]] eq 'abcdabcd']
-    assert[text[unsnapped[_bytes_of[[8, 4, 97, 98, 22, 2, 0]]]] eq 'abababab']
-    assert[text[unsnapped[_bytes_of[[6, 4, 120, 121, 15, 2, 0, 0, 0]]]] eq 'xyxyxy']
+    assert[sys.text[unsnapped[_bytes_of[[8, 12, 97, 98, 99, 100, 1, 4]]]] eq 'abcdabcd']
+    assert[sys.text[unsnapped[_bytes_of[[8, 4, 97, 98, 22, 2, 0]]]] eq 'abababab']
+    assert[sys.text[unsnapped[_bytes_of[[6, 4, 120, 121, 15, 2, 0, 0, 0]]]] eq 'xyxyxy']
     assert[not unsnapped[_bytes_of[[8, 12, 97, 98, 99, 100, 1, 9]]].ok]
     assert[not unsnapped[_bytes_of[[9, 12, 97, 98, 99, 100, 1, 4]]].ok]
     assert[not unsnapped[_bytes_of[[8, 12, 97, 98]]].ok]

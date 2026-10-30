@@ -1,2 +1,2 @@
 name = 'measure'
-deps = map[vectors = '../../../packages/vectors', kg = '../../../packages/kg']
+deps = map[vectors = '../../../packages/vectors', kg = '../../../packages/kg', magpie = '../../../packages/magpie']

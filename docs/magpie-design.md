@@ -9,7 +9,13 @@ The first architecture holds at tens of millions of rows and was never
 released. (Since 2026-10-28 the kernels this note describes in Rust are
 Crow — each ported and held to the Rust kernel's bytes, then the Rust
 deleted: docs/magpie-in-crow.md. Where this note says a kernel does
-something, the Crow module of that name does it now, the same way.)
+something, the Crow module of that name does it now, the same way. And
+since 2026-10-29 Magpie is a package, `packages/magpie`, its modules the
+package's parts under the names of its files — `tail` is `sequencer`,
+`merge` `merger`, `file` `fileformat`, `encode` `columnchunk`, `codec`
+`lz77`, `packing` `bitpack`, `stem` `stemmer`, `exec` `executor`,
+`search` `searcher`, `nearest` `knn`, `records` `recordsets` — called
+qualified, as a package is: `magpie.latest[…]`, `kafka.serve[…]`.)
 Vijay's decisions, 2026-10-26:
 
 - **The name is `magpie`**: the corvid that gathers everything into one

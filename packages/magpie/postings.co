@@ -14,13 +14,13 @@
 --- per posting a varint row delta, a varint count, the same count again
 --- and varint position deltas. The same counts a scan of the column
 --- yields, so a group with an index and one without score alike. The
---- tests are the module's own: `crow test src/modules/postings.co`, held
+--- tests are the part's own: `crow test packages/magpie/postings.co`, held
 --- to the kernel through its test-only row until the kernel goes.
 use sys
 use bits
 use frame
-use magpie.packing
-use magpie.stem
+use bitpack
+use stemmer
 
 --- a posting: the row, the term's count in it, its positions
 struct Post [row, tf, positions]
@@ -55,7 +55,7 @@ fn built[col, from, to, stems]
     for row in range[n]
         stop = cuts[row]
         if _present[present, row]
-            toks = terms[text[slice[cell_bytes, begin, stop], '']]
+            toks = terms[sys.text[slice[cell_bytes, begin, stop], '']]
             ndocs = ndocs + 1
             total = total + len[toks]
             lengths = push[lengths, len[toks]]
@@ -63,7 +63,7 @@ fn built[col, from, to, stems]
             for p in range[len[toks]]
                 t = toks[p]
                 if stems
-                    t = stem[t]
+                    t = stemmer.stem[t]
                 if t in here
                     here[t] = push[here[t], p]
                 else
@@ -88,11 +88,11 @@ fn built[col, from, to, stems]
     for l in lengths
         if l gt longest
             longest = l
-    width = width_of[longest]
+    width = bitpack.width_of[longest]
     out = push[out, width]
-    out = concat[out, packed[lengths, width]]
+    out = concat[out, bitpack.packed[lengths, width]]
     --- the postings blob first, so each term's offsets are known
-    blob = bytes[0]
+    blob = sys.bytes[0]
     dict = keys[by_term]
     dfs = []
     offs = []
@@ -121,22 +121,22 @@ fn built[col, from, to, stems]
             blob = concat[blob, pack[min_len, 4, little = true]]
             for i in range[at, stop]
                 g = gathered[i]
-                blob = put_var[blob, g.row - last_row]
+                blob = bitpack.put_var[blob, g.row - last_row]
                 last_row = g.row
-                blob = put_var[blob, len[g.positions]]
-                blob = put_var[blob, len[g.positions]]
+                blob = bitpack.put_var[blob, len[g.positions]]
+                blob = bitpack.put_var[blob, len[g.positions]]
                 last_p = 0
                 for p in g.positions
-                    blob = put_var[blob, p - last_p]
+                    blob = bitpack.put_var[blob, p - last_p]
                     last_p = p
             at = stop
         dfs = push[dfs, count]
         offs = push[offs, off]
         lens = push[lens, len[blob] - off]
-    out = put_var[out, len[dict]]
+    out = bitpack.put_var[out, len[dict]]
     for i in range[len[dict]]
-        out = put_var[out, len[bytes[dict[i]]]]
-        out = concat[out, bytes[dict[i]]]
+        out = bitpack.put_var[out, len[sys.bytes[dict[i]]]]
+        out = concat[out, sys.bytes[dict[i]]]
         out = concat[out, pack[dfs[i], 4, little = true]]
         out = concat[out, pack[offs[i], 8, little = true]]
         out = concat[out, pack[lens[i], 4, little = true]]
@@ -158,11 +158,11 @@ fn parsed[data]
     n = unpack[data, 0, 4, little = true, signed = false]
     width = byte[data, 4]
     count = shift[n * width + 7, -3]
-    lengths = unpacked[data, 5, n, width]
+    lengths = bitpack.unpacked[data, 5, n, width]
     if not lengths.ok
         return error[lengths.reason, 'magpie']
     at = 5 + count
-    nt = read_var[data, at]
+    nt = bitpack.read_var[data, at]
     if not nt.ok
         return nt
     at = nt[1]
@@ -171,13 +171,13 @@ fn parsed[data]
     offs = []
     lens = []
     for i in range[nt[0]]
-        size = read_var[data, at]
+        size = bitpack.read_var[data, at]
         if not size.ok
             return size
         at = size[1]
         if at + size[0] + 16 gt total
             return error['the file ends `at + size[0] + 16 - total` bytes early', 'magpie']
-        term = text[slice[data, at, at + size[0]]]
+        term = sys.text[slice[data, at, at + size[0]]]
         if not term.ok
             return error['a name is no UTF-8', 'magpie']
         dict = push[dict, term]
@@ -294,22 +294,22 @@ fn blocks_of[ix, term]
         at = at + 9
         posts = []
         for i in range[count]
-            delta = read_var[ix.blob, at]
+            delta = bitpack.read_var[ix.blob, at]
             if not delta.ok
                 return delta
             row = last_row + delta[0]
             last_row = row
-            tf = read_var[ix.blob, delta[1]]
+            tf = bitpack.read_var[ix.blob, delta[1]]
             if not tf.ok
                 return tf
-            np = read_var[ix.blob, tf[1]]
+            np = bitpack.read_var[ix.blob, tf[1]]
             if not np.ok
                 return np
             at = np[1]
             positions = []
             last_p = 0
             for j in range[np[0]]
-                step = read_var[ix.blob, at]
+                step = bitpack.read_var[ix.blob, at]
                 if not step.ok
                     return step
                 p = last_p + step[0]
@@ -329,7 +329,7 @@ fn _digest[b]
 --- terms, prefixes and edits as the kernel's tests say
 test an_index_round_trips_and_answers_terms_prefixes_and_edits[]
     seen = []
-    docs = text_column[bytes['the quick brown foxthe fox and the dogbrown bread'], _cuts[19, 19, 38, 49, 49], _gap[]]
+    docs = text_column[sys.bytes['the quick brown foxthe fox and the dogbrown bread'], _cuts[19, 19, 38, 49, 49], _gap[]]
     made = built[docs, 0, 5, false]
     assert[made.docs eq 4 and made.words eq 11]
     seen = push[seen, _digest[made.blob]]
@@ -354,7 +354,7 @@ test an_index_round_trips_and_answers_terms_prefixes_and_edits[]
     stemmed = built[docs, 0, 5, true]
     seen = push[seen, _digest[stemmed.blob]]
     assert[parsed[stemmed.blob].terms eq ['and', 'bread', 'brown', 'dog', 'fox', 'quick', 'the']]
-    assert[not parsed[bytes[3]].ok]
+    assert[not parsed[sys.bytes[3]].ok]
     --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
     assert[seen eq ['ebc1224424d0fd72', 'ebc1224424d0fd72']]
 
@@ -371,7 +371,7 @@ fn _cuts[a, b, c, d, e]
 --- a bitmap with the second of five cells missing (the fifth is present
 --- and empty)
 fn _gap[]
-    present = bytes[1]
+    present = sys.bytes[1]
     present = set[present, 0, 29]
     return present
 

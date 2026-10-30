@@ -146,128 +146,6 @@ pub static MODULES: &[Module] = &[
         module: Some(|| Arc::new(Named::new("llm"))),
         ..Module::plain("llm", "_llm")
     },
-    // the log as a directory of batch files: one commit, one file, written
-    // once by the kernel; the sequencer, the reads and the catalog in Crow
-    Module {
-        source: Some(MAGPIE_SOURCE), needs: &[], registry: true,
-        docs: Some("The log as a directory of batch files: each commit one file written once, holding its rows' positions, sorted by key, with the statistics a reader prunes by; appends, reads from a position, the latest version of each key, lookups, and a sequencer that refuses a stale read."),
-        module: Some(|| Arc::new(Named::new("magpie"))),
-        ..Module::plain("magpie", "_magpie")
-    },
-    // the Kafka door of the magpie: the 0.10.1 protocol in Crow over the sys
-    // layer's listener, the message sets the kernel's
-    Module {
-        source: Some(KAFKA_SOURCE), needs: &[], registry: true,
-        docs: Some("The Kafka door of the magpie: a topic a log, a producer's records appended as a batch, a consumer's fetch a read from its offset, groups and their commits two logs of their own — the protocol a 0.10.1 broker speaks, served from one loop."),
-        module: Some(|| Arc::new(Named::new("kafka"))),
-        ..Module::plain("kafka", "_kafka")
-    },
-    // the RESP door of Magpie: Redis's protocol in Crow over the sys
-    // layer's listener, the keys and the streams logs of Magpie's
-    Module {
-        source: Some(REDIS_SOURCE), needs: &[], registry: true,
-        docs: Some("The RESP door of Magpie: a Redis client's SET and GET a put and a read of the image, INCR and MGET and DEL over a log keyed by the key, a stream a log of its own with XADD and XREAD by position — RESP2 as redis-cli and every client write it, served from one loop."),
-        module: Some(|| Arc::new(Named::new("redis"))),
-        ..Module::plain("redis", "_redis")
-    },
-    // Magpie's kernels in Crow (docs/magpie-in-crow.md), each a module
-    // under magpie, imported by the verbs: the codec first
-    Module {
-        source: Some(CODEC_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("Magpie's codec, in Crow: the LZ77 byte codec a chunk's payload goes through where it shrinks it, the Rust kernel's stream byte for byte — compress and decompress over the sys layer's bytes."),
-        module: Some(|| Arc::new(Named::new("magpie.codec"))),
-        ..Module::plain("magpie.codec", "_magpie_codec")
-    },
-    Module {
-        source: Some(PACKING_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("Bits and varints, in Crow: the two ways a number is written into a Magpie file — values at a width of bits each, little-endian, and LEB128 counts — the Rust kernel's bytes byte for byte."),
-        module: Some(|| Arc::new(Named::new("magpie.packing"))),
-        ..Module::plain("magpie.packing", "_magpie_packing")
-    },
-    Module {
-        source: Some(ENCODE_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("A column chunk, in Crow: the cells of one column over one row group as a Magpie file writes them — ints by frame of reference or delta, floats as their bits, text plain or as a dictionary, bools as a bitmap, moments, vectors — through the codec where it shrinks them, the kernel's bytes byte for byte."),
-        module: Some(|| Arc::new(Named::new("magpie.encode"))),
-        ..Module::plain("magpie.encode", "_magpie_encode")
-    },
-    Module {
-        source: Some(BLOOM_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("A bloom filter over byte strings, in Crow: k hashes into m bits, FNV-1a and a mix of it, the kernel's bits bit for bit — what a file keeps per column chunk, and per indexed text column over its tokens."),
-        module: Some(|| Arc::new(Named::new("magpie.bloom"))),
-        ..Module::plain("magpie.bloom", "_magpie_bloom")
-    },
-    Module {
-        source: Some(STEM_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("The Porter stemmer, in Crow: a word's stem as the paper gives it, for a log that declares `stem` — running, runs and runner all run — the kernel's answer word for word."),
-        module: Some(|| Arc::new(Named::new("magpie.stem"))),
-        ..Module::plain("magpie.stem", "_magpie_stem")
-    },
-    Module {
-        source: Some(POSTINGS_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("A text column's index over one row group, in Crow: the documents' lengths, a sorted dictionary of terms, and each term's postings in blocks with their bounds — the kernel's bytes byte for byte; terms found by word, by prefix and within an edit distance."),
-        module: Some(|| Arc::new(Named::new("magpie.postings"))),
-        ..Module::plain("magpie.postings", "_magpie_postings")
-    },
-    Module {
-        source: Some(FILE_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("A Magpie file, in Crow: a frame written as row groups of column chunks with their statistics and filters, column blocks and a footer, and read back by region — a footer, one column's block, one group's chunk — the kernel's bytes byte for byte."),
-        module: Some(|| Arc::new(Named::new("magpie.file"))),
-        ..Module::plain("magpie.file", "_magpie_file")
-    },
-    Module {
-        source: Some(MANIFEST_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("A log's manifest, in Crow: its live segments and what the log declares of itself — its keys, its time column, its narrow columns, whether it stems — a Magpie file of one group replaced whole, the kernel's bytes byte for byte; and the names a log's files carry."),
-        module: Some(|| Arc::new(Named::new("magpie.manifest"))),
-        ..Module::plain("magpie.manifest", "_magpie_manifest")
-    },
-    Module {
-        source: Some(MERGE_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("The streaming merge, in Crow: batches and segments folded into segments of bounded size, the rows in the log's keys' order then position, the newest version of each key kept — one group per input held — and the manifest switched in one step; the kernel's segments byte for byte."),
-        module: Some(|| Arc::new(Named::new("magpie.merge"))),
-        ..Module::plain("magpie.merge", "_magpie_merge")
-    },
-    Module {
-        source: Some(TAIL_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("The sequencer, in Crow: a log's rows put since the last flush, numbered as they arrive, held for the process in memory with the key index and the newest row of each key, flushed as one batch file by work a put asks for — what a reader of the process sees at once, and another once flushed."),
-        module: Some(|| Arc::new(Named::new("magpie.tail"))),
-        ..Module::plain("magpie.tail", "_magpie_tail")
-    },
-    Module {
-        source: Some(EXEC_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("The executor, in Crow: aggregates over a log's files pushed below the reader — each row group pruned by its statistics and filters, its rows masked and grouped into partials merged in order — and the as-of join, each label's newest row at or before its moment; the kernel's answers exactly."),
-        module: Some(|| Arc::new(Named::new("magpie.exec"))),
-        ..Module::plain("magpie.exec", "_magpie_exec")
-    },
-    Module {
-        source: Some(NEAREST_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("The nearest rows by a vector, in Crow: every present row of a log's vector column scored by the cosine with the query, a group at a time, the best k kept — a greater score first, an earlier position between equals — the kernel's answer row for row."),
-        module: Some(|| Arc::new(Named::new("magpie.nearest"))),
-        ..Module::plain("magpie.nearest", "_magpie_nearest")
-    },
-    Module {
-        source: Some(SEARCH_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("Search over a log, in Crow: BM25 as Lucene scores it over the whole log as one corpus — a word, a phrase, a prefix, a fuzzy word — from a group's index where it has one and its text where it has none, the blocks that cannot reach the k-th score skipped, a snippet around the first hit; the kernel's ranking and scores to the last digit."),
-        module: Some(|| Arc::new(Named::new("magpie.search"))),
-        ..Module::plain("magpie.search", "_magpie_search")
-    },
-    Module {
-        source: Some(INFLATE_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("Inflate and gzip, in Crow: a raw deflate stream's stored, fixed and dynamic Huffman blocks decoded, a gzip member's header read and its CRC-32 and length checked — the decoder the Kafka door reads a producer's compressed records with."),
-        module: Some(|| Arc::new(Named::new("magpie.inflate"))),
-        ..Module::plain("magpie.inflate", "_magpie_inflate")
-    },
-    Module {
-        source: Some(SNAPPY_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("Snappy's raw block format decoded, in Crow: literal runs and copies of three widths — the decoder the Kafka door reads a producer's snappy-compressed records with."),
-        module: Some(|| Arc::new(Named::new("magpie.snappy"))),
-        ..Module::plain("magpie.snappy", "_magpie_snappy")
-    },
-    Module {
-        source: Some(RECORDS_SOURCE), needs: &[], registry: true, under: Some("magpie"),
-        docs: Some("The Kafka wire's record sets, in Crow: a legacy message set decoded into a frame and encoded from one, each message's CRC-32 checked and written, a compressed wrapper read as the records it holds — the kernel's bytes byte for byte."),
-        module: Some(|| Arc::new(Named::new("magpie.records"))),
-        ..Module::plain("magpie.records", "_magpie_records")
-    },
     // tools from other programs, and a program as one: the client on
     // request, the server a function a route calls (it answers responses,
     // so crow_web comes with the import)
@@ -402,28 +280,6 @@ pub(crate) const SYS_SOURCE: &str = include_str!("sys.co");
 /// `use llm`: a language model as a connection, written in Crow.
 pub(crate) const LLM_SOURCE: &str = include_str!("llm.co");
 pub(crate) const MCP_SOURCE: &str = include_str!("mcp.co");
-/// The log over batch files, written in Crow on the sys layer.
-pub(crate) const MAGPIE_SOURCE: &str = include_str!("magpie.co");
-/// The Kafka door, written in Crow over the magpie and the sys layer.
-pub(crate) const KAFKA_SOURCE: &str = include_str!("kafka.co");
-/// The RESP door, written in Crow over Magpie and the sys layer.
-pub(crate) const REDIS_SOURCE: &str = include_str!("redis.co");
-pub(crate) const CODEC_SOURCE: &str = include_str!("codec.co");
-pub(crate) const PACKING_SOURCE: &str = include_str!("packing.co");
-pub(crate) const ENCODE_SOURCE: &str = include_str!("encode.co");
-pub(crate) const BLOOM_SOURCE: &str = include_str!("bloom.co");
-pub(crate) const STEM_SOURCE: &str = include_str!("stem.co");
-pub(crate) const POSTINGS_SOURCE: &str = include_str!("postings.co");
-pub(crate) const FILE_SOURCE: &str = include_str!("file.co");
-pub(crate) const MANIFEST_SOURCE: &str = include_str!("manifest.co");
-pub(crate) const MERGE_SOURCE: &str = include_str!("merge.co");
-pub(crate) const TAIL_SOURCE: &str = include_str!("tail.co");
-pub(crate) const EXEC_SOURCE: &str = include_str!("exec.co");
-pub(crate) const NEAREST_SOURCE: &str = include_str!("nearest.co");
-pub(crate) const SEARCH_SOURCE: &str = include_str!("search.co");
-pub(crate) const INFLATE_SOURCE: &str = include_str!("inflate.co");
-pub(crate) const SNAPPY_SOURCE: &str = include_str!("snappy.co");
-pub(crate) const RECORDS_SOURCE: &str = include_str!("records.co");
 /// `io.lines`, `io.csv`: readers written in Crow.
 pub(crate) const IO_SOURCE: &str = include_str!("io.co");
 /// `frame.load`, `frame.save`: written in Crow.
@@ -513,7 +369,11 @@ pub fn crow_imports() -> Vec<(String, Vec<String>)> {
 /// the program's own.
 /// `crow_scope_of`, borrowed: the module's prefix as the table holds it.
 pub fn crow_scope_str(name: &str) -> Option<&'static str> {
-    let name = name.strip_prefix("_traced_").unwrap_or(name);
+    let name = inlined_base(name);
+    if !inlined_names().contains(name) {
+        return None;
+    }
+    // (the longest prefix that fits: `_web_auth_sign` is web.auth's, not web's)
     crow_modules()
         .filter(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_')
         .max_by_key(|(_, prefix)| prefix.len())
@@ -527,19 +387,47 @@ pub fn scope_of_call(name: &str) -> &'static str {
 }
 
 pub fn crow_scope_of(name: &str) -> Option<String> {
-    let name = name.strip_prefix("_traced_").unwrap_or(name);
-    // (the longest prefix that fits: `_web_auth_sign` is web.auth's, not web's)
-    crow_modules()
-        .filter(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_')
-        .max_by_key(|(_, prefix)| prefix.len())
-        .map(|(_, p)| p.to_string())
+    crow_scope_str(name).map(str::to_string)
 }
 
 /// Whether a function of the program is a standard module's, inlined: its
 /// stops name the line it was called from, not a line of the module's.
+/// Read off the names the modules' functions are inlined under, never off
+/// a prefix alone, which a program's own function can begin with: the
+/// program's `_frame_of` had been taken for the frame module's, and the
+/// program's functions were invisible inside it.
 pub fn is_crow_fn(name: &str) -> bool {
+    inlined_names().contains(inlined_base(name))
+}
+
+/// Every function a standard module written in Crow declares, helpers
+/// too, by the name it is inlined under (`_math_nn_relu`, `_llm__talk_of`).
+fn inlined_names() -> &'static std::collections::HashSet<String> {
+    static NAMES: std::sync::LazyLock<std::collections::HashSet<String>> = std::sync::LazyLock::new(|| {
+        MODULES
+            .iter()
+            .filter_map(|m| Some((m.prefix, parse_source(m.source?).ok()?)))
+            .flat_map(|(prefix, stmts)| {
+                stmts.into_iter().filter_map(move |s| match s {
+                    crate::ast::Stmt::FnDecl { name, .. } => Some(format!("{}_{}", prefix, name)),
+                    _ => None,
+                })
+            })
+            .collect()
+    });
+    &NAMES
+}
+
+/// A function's own name past the copies made of it: a traced copy
+/// (`_traced_f`), a copy per signature (`f__2`), a value's adapter
+/// (`f__handed`).
+fn inlined_base(name: &str) -> &str {
     let name = name.strip_prefix("_traced_").unwrap_or(name);
-    crow_modules().any(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_')
+    let name = name.strip_suffix("__handed").unwrap_or(name);
+    match name.rsplit_once("__") {
+        Some((base, n)) if !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()) => base,
+        _ => name,
+    }
 }
 
 /// The functions a module written in Crow declares for programs: its

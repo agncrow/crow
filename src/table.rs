@@ -3001,6 +3001,17 @@ pub fn rows_named(name: &str) -> impl Iterator<Item = &'static Row> {
     index.get(name).map_or(&[][..], |rows| rows.as_slice()).iter().copied()
 }
 
+/// The runtime's rows of a name (`ROWS`: no form, and no hidden row by
+/// the name it is written as), in the table's order — what a scan of
+/// `ROWS` by the name finds, read from the index: the checks ask it of
+/// every call, and a scan per question (and per import) had been a tenth
+/// of a package's build, its code checked where a standard module's is
+/// not.
+pub fn runtime_rows(name: &str) -> impl Iterator<Item = &'static Row> {
+    let table = ROWS.as_ptr_range();
+    rows_named(name).filter(move |r| r.name == name && table.contains(&(*r as *const Row)))
+}
+
 /// A module's rows of a name, the forms included.
 /// Whether the builtin of this name runs its function under a name's lock
 /// (`Prop::Revises`): the backends' question, answered by the form's row.
@@ -3935,7 +3946,7 @@ pub fn wrong_key(key: crate::ir::Key, given: &Ty) -> String {
 /// the index behind a hidden row, else `name[]`.
 pub fn form(name: &str) -> String {
     // (a row that declares how it is written: the language's forms)
-    if let Some(r) = ROWS.iter().find(|r| r.name == name && !r.form.is_empty()) {
+    if let Some(r) = runtime_rows(name).find(|r| !r.form.is_empty()) {
         return r.form.to_string();
     }
     match name {
@@ -3953,7 +3964,7 @@ pub fn form(name: &str) -> String {
         "__text_map" => "a map of text".to_string(),
         "__groups" => "a call's tensors (`anova[a, b]`)".to_string(),
         // a hidden row reached by an option: as the program writes it
-        _ => format!("{}[]", ROWS.iter().find(|r| r.name == name && !r.written.is_empty()).map_or(name, |r| r.written)),
+        _ => format!("{}[]", runtime_rows(name).find(|r| !r.written.is_empty()).map_or(name, |r| r.written)),
     }
 }
 

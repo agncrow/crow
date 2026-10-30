@@ -9,7 +9,7 @@
 --- little-endian) and its bits. The hashes are 64-bit patterns held as
 --- ints, computed with `wrapmul` and `bitxor` as the kernel computes them
 --- on u64; a position is the pattern read as unsigned modulo m. The
---- tests are the module's own: `crow test src/modules/bloom.co`, held to
+--- tests are the part's own: `crow test packages/magpie/bloom.co`, held to
 --- the kernel through its test-only rows until the kernel goes.
 use sys
 use bits
@@ -26,7 +26,7 @@ fn sized[items]
     if least lt 8
         least = 8
     m = least * 8
-    return Bloom[bytes[m / 8], m, 6]
+    return Bloom[sys.bytes[m / 8], m, 6]
 
 --- a 64-bit pattern's bits from `n` up, as a non-negative int: the
 --- kernel's logical shift of a u64 (`shift` of a negative int carries the
@@ -106,7 +106,7 @@ fn admits[f, b]
 --- `filter_bytes[f]`: the filter as a file holds it — its hash count, its
 --- bit count as eight bytes little-endian, its bits
 fn filter_bytes[f]
-    out = bytes[0]
+    out = sys.bytes[0]
     out = push[out, f.k]
     out = concat[out, pack[f.m, 8, little = true]]
     out = concat[out, f.slots]
@@ -153,15 +153,15 @@ test a_filter_admits_what_it_holds_and_is_the_kernels[]
             false_positives = push[false_positives, i]
     assert[len[false_positives] eq 225]
     shown = str[false_positives]
-    assert[_digest[bytes[shown]] eq '0e4459bde7b8eade']
-    assert[not filter_of[bytes[2]].ok]
-    tiny = bytes[10]
+    assert[_digest[sys.bytes[shown]] eq '0e4459bde7b8eade']
+    assert[not filter_of[sys.bytes[2]].ok]
+    tiny = sys.bytes[10]
     tiny = set[tiny, 0, 6]
     tiny = set[tiny, 1, 64]
     assert[not filter_of[tiny].ok]
     --- the words of a text, as a token filter holds them
     wordset = sized[3]
     for w in ['apple', 'banana', 'cherry']
-        wordset = add[wordset, bytes[w]]
+        wordset = add[wordset, sys.bytes[w]]
     assert[hex[filter_bytes[wordset]] eq '0640000000000000001800618890720cc1']
-    assert[admits[wordset, bytes['banana']] and not admits[wordset, bytes['durian']]]
+    assert[admits[wordset, sys.bytes['banana']] and not admits[wordset, sys.bytes['durian']]]

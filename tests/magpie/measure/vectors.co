@@ -26,26 +26,26 @@ while written lt n
     rows = randn[per, w]
     ids = range[written, written + per]
     f = frame.new[id = ids, e = rows]
-    p = batch[d, f, by = ['id']]
+    p = magpie.batch[d, f, by = ['id']]
     written = written + per
 t_merge0 = now[]
-seg = merge[d]
+seg = magpie.merge[d]
 t_merge1 = now[]
 log['rows `n` width `w` merged in `fmt[ms[t_merge0, t_merge1], decimals = 0]` ms']
 q = randn[w]
 
 --- Magpie, from the files
 times = []
-hits = nearest[d, 'e', q, k]
+hits = magpie.nearest[d, 'e', q, k]
 for r in range[reps]
     a = now[]
-    hits = nearest[d, 'e', q, k]
+    hits = magpie.nearest[d, 'e', q, k]
     b = now[]
     times = push[times, ms[a, b]]
 log['magpie nearest from the files: `fmt[median[times], decimals = 1]` ms (k = `k`)']
 
 --- the flat index over the matrix in memory
-whole = latest[d, columns = ['id', 'e']]
+whole = magpie.latest[d, columns = ['id', 'e']]
 m = tensor[whole.e]
 a = now[]
 ix = flat.index[m]

@@ -1,10 +1,12 @@
-//! The RESP door in both modes (spec, section 13: redis): a Crow program
-//! serving `serve[root, port]` is driven by a client of this test's own
+//! The RESP door in both modes (packages/magpie, `use magpie.redis`): a
+//! Crow program serving `redis.serve[root, port]` is driven by a client of this test's own
 //! that speaks RESP2 as redis-cli does — SET, GET, INCR, MGET, DEL, a
 //! stream added to and read — interpreted and compiled.
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+
+mod common;
 
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
@@ -74,8 +76,9 @@ fn drive(interpreted: bool) {
     let dir = std::env::temp_dir().join(format!("crow-redis-{}-{}", if interpreted { "i" } else { "c" }, std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    common::link_magpie(&dir);
     let port = free_port();
-    std::fs::write(dir.join("door.co"), format!("use redis\n\nserved = serve['store', {port}]\nlog[served]\n")).unwrap();
+    std::fs::write(dir.join("door.co"), format!("use magpie.redis\n\nserved = redis.serve['store', {port}]\nlog[served]\n")).unwrap();
     let crow = env!("CARGO_BIN_EXE_crow");
     let mut cmd = Command::new(crow);
     cmd.arg("run");

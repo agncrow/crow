@@ -1,1 +1,2 @@
 name = 'kg'
+deps = map[magpie = 'github.com/agncrow/crow/packages/magpie@main']

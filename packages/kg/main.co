@@ -47,14 +47,14 @@ fn _live[es]
 fn node[root, id, label = '', props = '{}', at = -1]
     t = _when[at]
     f = frame.new[id = [id], label = [label], props = [props], gone = [false], at = [t]]
-    return put[_nodes[root], f, by = ['id'], time = 'at']
+    return magpie.put[_nodes[root], f, by = ['id'], time = 'at']
 
 --- a node retired: a tombstone, which `nodes` skips (its edges stay
 --- until unlinked)
 fn retire[root, id, at = -1]
     t = _when[at]
     f = frame.new[id = [id], label = [''], props = ['{}'], gone = [true], at = [t]]
-    return put[_nodes[root], f, by = ['id'], time = 'at']
+    return magpie.put[_nodes[root], f, by = ['id'], time = 'at']
 
 --- an edge from `src` to `dst` by the relation `rel`, with a weight and
 --- its provenance (`origin`: where the fact came from, kept in the
@@ -71,10 +71,10 @@ fn _edge[root, src, rel, dst, weight, origin, gone, at]
     t = _when[at]
     fwd = frame.new[src = [src], rel = [rel], dst = [dst], weight = [weight], source = [origin], gone = [gone], at = [t]]
     rev = frame.new[dst = [dst], rel = [rel], src = [src], weight = [weight], source = [origin], gone = [gone], at = [t]]
-    p = put[_edges[root], fwd, by = ['src', 'rel', 'dst'], time = 'at']
+    p = magpie.put[_edges[root], fwd, by = ['src', 'rel', 'dst'], time = 'at']
     if not p.ok
         return p
-    q = put[_back[root], rev, by = ['dst', 'rel', 'src'], time = 'at']
+    q = magpie.put[_back[root], rev, by = ['dst', 'rel', 'src'], time = 'at']
     if not q.ok
         return q
     return p
@@ -86,7 +86,7 @@ fn nodes[root, upto = -1]
     if not exists[d]
         blank = frame.new[id = [''], label = [''], props = [''], gone = [true], at = [0], _pos = [-1]]
         return blank[blank.gone eq false]
-    n = latest[d, upto]
+    n = magpie.latest[d, upto]
     if not n.ok
         return error[n.reason, 'kg']
     return _live[n]
@@ -97,7 +97,7 @@ fn edges[root, upto = -1]
     d = _edges[root]
     if not exists[d]
         return _none[]
-    es = latest[d, upto]
+    es = magpie.latest[d, upto]
     if not es.ok
         return error[es.reason, 'kg']
     return _live[es]
@@ -115,7 +115,7 @@ fn inbound[root, id, rel = '', upto = -1]
 fn _run[d, id, rel, upto]
     if not exists[d]
         return _none[]
-    got = latest[d, upto, lo = id, hi = id]
+    got = magpie.latest[d, upto, lo = id, hi = id]
     if not got.ok
         return error[got.reason, 'kg']
     live = _live[got]
@@ -129,7 +129,7 @@ fn history[root, id, upto = -1]
     d = _edges[root]
     if not exists[d]
         return _none[]
-    got = lookup[d, ['src'], [id]]
+    got = magpie.lookup[d, ['src'], [id]]
     if not got.ok
         return error[got.reason, 'kg']
     if upto lt 0
@@ -166,7 +166,7 @@ fn _hop[root, frontier, rel, upto]
             lo = id
         if id gt hi
             hi = id
-    got = latest[d, upto, lo = lo, hi = hi]
+    got = magpie.latest[d, upto, lo = lo, hi = hi]
     if not got.ok
         return error[got.reason, 'kg']
     live = _live[got]
@@ -399,7 +399,7 @@ fn embed[root, id, v, at = -1]
     t = _when[at]
     rows = push[[], tensor[v]]
     f = frame.new[id = [id], e = rows, at = [t]]
-    return put[_vectors[root], f, by = ['id'], time = 'at']
+    return magpie.put[_vectors[root], f, by = ['id'], time = 'at']
 
 --- the k nodes whose newest embedding lies nearest the vector by the
 --- cosine (Magpie's `nearest` over the vectors log; `similar`, since a
@@ -413,10 +413,10 @@ fn similar[root, v, k = 10, upto = -1]
     blank = frame.new[id = [''], score = [0.0]]
     if not exists[d]
         return blank[blank.score gt 1.0]
-    newest = latest[d, upto, ['id', '_pos']]
+    newest = magpie.latest[d, upto, ['id', '_pos']]
     if not newest.ok
         return error[newest.reason, 'kg']
-    m = metrics[d]
+    m = magpie.metrics[d]
     if not m.ok
         return error[m.reason, 'kg']
     rows = m.rows[0]
@@ -439,7 +439,7 @@ fn similar[root, v, k = 10, upto = -1]
 --- column the row lacks when none is named), missing cells where none
 --- — Magpie's `prior` over the edges log
 fn asof[root, f, columns = []]
-    return prior[_edges[root], f, columns]
+    return magpie.prior[_edges[root], f, columns]
 
 --- a fresh root for a test: whatever a run before left, removed
 fn _fresh[root]

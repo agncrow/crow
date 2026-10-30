@@ -1105,8 +1105,7 @@ steps on every push and must be green.
   carries a write's reason (a list of two widths) where `Cells::from` is
   infallible; `Kind::Cells` takes `Arg::Tensors | Arg::Rows`. Traps: a
   package's function may not be named like an export it imports (kg's
-  `nearest` is `similar`); magpie's `head` shadows frame's inside a
-  package importing both (`frame.head[f, n]`); `_joined` takes a list of
+  `nearest` is `similar`); `_joined` takes a list of
   text, so a vector goes into the door's query piece by piece. A package
   of one file is `main.co` (kg, features): `use kg` resolves to it from
   inside the package (its example, its held tests: the crowfile's name)
@@ -1415,10 +1414,11 @@ steps on every push and must be green.
   `sys::group_signal_args` builds the form (and signals no pid of 0 or 1);
   main.rs and served_parity.rs already wrote it.
 
-- Magpie is Crow (2026-10-28): `src/modules/{magpie,tail,merge,file,
-  manifest,encode,codec,packing,bloom,stem,postings,exec,search,nearest,
-  inflate,snappy,records}.co`; the Rust kernels and their sys rows are
-  deleted. The modules' tests hold the port to the kernels' answers as
+- Magpie is Crow (2026-10-28), and a package since 2026-10-29:
+  `packages/magpie/{main,sequencer,merger,fileformat,manifest,
+  columnchunk,lz77,bitpack,bloom,stemmer,postings,executor,searcher,knn,
+  inflate,snappy,recordsets,kafka,redis}.co`; the Rust kernels and their
+  sys rows are deleted. The parts' tests hold the port to the kernels' answers as
   recorded digests (`_digest`: the first 16 hex digits of a SHA-256 of
   the bytes; `_image` of a frame: its columns' names and chunks) — a
   deliberate change of the format changes those literals, and says why.
@@ -1569,3 +1569,32 @@ steps on every push and must be green.
   f[x]`. A path write grows a tensor where it lies as it does a list
   (`Row::grows_in_place`; the emitter takes it with `std::mem::take`, so
   `CrowTensor` has a `Default`, an empty vector).
+- Magpie is a package (2026-10-29, Vijay: step 1 of two, its own
+  repository next): `packages/magpie`, called qualified (`magpie.put`,
+  `use magpie.kafka` then `kafka.serve`), reached through committed
+  relative links (`crow_modules/magpie` under tests/parity, tests/errors,
+  tests/magpie/measure, examples/magpie, packages/kg and features) and,
+  from a Rust test, `common::link_magpie`. Its README, REFERENCE.md and
+  PARTS.md were made from the book's pages, the spec's sections and the
+  sys page's stretch (scripts in the scratchpad of that day, not kept):
+  a change to Magpie's behaviour updates them by hand, and `example.co`
+  (every block, in a function of its own, its names its own) checks the
+  code in both modes. What moving it found in the compiler: a linked
+  package's own imports resolve under the package as the importer
+  spelled it (`module_files` roots them at `package_dir`, never where
+  the link points — a second-level file had been prefixed as the
+  program's own, and a program's `deep.co` beside it "declared twice");
+  everything under `crow_modules/`, at every depth, is a dependency's —
+  neither validated alone in each build nor typing the program by its
+  tests (half the build, and copies typed at its tests' frames); an
+  imported file's functions nothing the program reaches names are
+  dropped before it is typed (`unreached_parts_dropped`, by the words
+  each statement says — a name the scan misses is lost, so a new way to
+  reach a function must say its name); a standard module's function is
+  one its source declares (`modules::is_crow_fn` reads `inlined_names`),
+  never a name that begins with its prefix (a program's `_frame_of` had
+  been read in frame's scope: parity 439); and package code is checked
+  as a program's, so a check's per-call question reads an index
+  (`table::runtime_rows`; a scan of ROWS per call and per import had
+  been a tenth of the build). A runtime stop inside a part names the
+  part's line, not its file (open).

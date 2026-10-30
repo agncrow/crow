@@ -8,6 +8,8 @@
 use std::path::Path;
 use std::process::Command;
 
+mod common;
+
 fn crow() -> String {
     let release = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/release/crow");
     if release.exists() {
@@ -35,10 +37,11 @@ fn drive(interpreted: bool, step: &str) {
     let base = std::env::temp_dir().join(format!("crow-magpie-crash-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
+    common::link_magpie(&base);
     // three batches, then a merge that the cut ends
     std::fs::write(
         base.join("crash.co"),
-        "use magpie\nuse frame\n\na = batch['log', frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]\nb = batch['log', frame.new[id = [2, 3], qty = [25, 30]]]\nc = batch['log', frame.new[id = [1], qty = [15]]]\nlog[head['log']]\nm = merge['log']\nlog['merged: `m`']\n",
+        "use magpie\nuse frame\n\na = magpie.batch['log', frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]\nb = magpie.batch['log', frame.new[id = [2, 3], qty = [25, 30]]]\nc = magpie.batch['log', frame.new[id = [1], qty = [15]]]\nlog[magpie.head['log']]\nm = magpie.merge['log']\nlog['merged: `m`']\n",
     )
     .unwrap();
     let (code, stdout, stderr) = run(&base, interpreted, "crash.co", Some(step));
@@ -49,7 +52,7 @@ fn drive(interpreted: bool, step: &str) {
     // the next read answers the table whole, and the next merge leaves one live segment
     std::fs::write(
         base.join("after.co"),
-        "use magpie\nuse frame\n\nb = batches['log']\nlog[b.form]\nlog[latest['log'].qty]\nlog[head['log']]\nm = merge['log']\nlog[len[m] gt 0]\nafter = batches['log']\nlog[after.form]\nlog[latest['log'].qty]\nlog[lookup['log', ['id'], ['2']].qty]\nlog[batch['log', frame.new[id = [4], qty = [40]]]]\n",
+        "use magpie\nuse frame\n\nb = magpie.batches['log']\nlog[b.form]\nlog[magpie.latest['log'].qty]\nlog[magpie.head['log']]\nm = magpie.merge['log']\nlog[len[m] gt 0]\nafter = magpie.batches['log']\nlog[after.form]\nlog[magpie.latest['log'].qty]\nlog[magpie.lookup['log', ['id'], ['2']].qty]\nlog[magpie.batch['log', frame.new[id = [4], qty = [40]]]]\n",
     )
     .unwrap();
     let (code, stdout, stderr) = run(&base, true, "after.co", None);
@@ -69,17 +72,18 @@ fn drive_pending(interpreted: bool) {
     let base = std::env::temp_dir().join(format!("crow-magpie-pending-{}-{}", if interpreted { "i" } else { "c" }, std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
+    common::link_magpie(&base);
     // a batch (a put and a flush: the cut's first reach), then a put the
     // cut ends the process after, before its flush
     std::fs::write(
         base.join("cut.co"),
-        "use magpie\nuse frame\n\na = batch['log', frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]\nlog[a]\nb = put['log', frame.new[id = [3], qty = [30]]]\nlog[since['log', 0].qty]\nlog['past the cut']\n",
+        "use magpie\nuse frame\n\na = magpie.batch['log', frame.new[id = [1, 2], qty = [10, 20]], by = ['id']]\nlog[a]\nb = magpie.put['log', frame.new[id = [3], qty = [30]]]\nlog[magpie.since['log', 0].qty]\nlog['past the cut']\n",
     )
     .unwrap();
     let (code, stdout, stderr) = run(&base, interpreted, "cut.co", Some("pending:2"));
     assert_eq!(code, 3, "the cut ends the process (interpreted: {interpreted}): {stdout} {stderr}");
     assert_eq!(stdout, "0\n", "the batch answered, the put did not: {stdout}");
-    std::fs::write(base.join("after.co"), "use magpie\nuse frame\n\nlog[batches['log'].form]\nlog[since['log', 0].qty]\nlog[head['log']]\nlog[put['log', frame.new[id = [4], qty = [40]]]]\nlog[sync['log']]\nlog[latest['log'].qty]\n").unwrap();
+    std::fs::write(base.join("after.co"), "use magpie\nuse frame\n\nlog[magpie.batches['log'].form]\nlog[magpie.since['log', 0].qty]\nlog[magpie.head['log']]\nlog[magpie.put['log', frame.new[id = [4], qty = [40]]]]\nlog[magpie.sync['log']]\nlog[magpie.latest['log'].qty]\n").unwrap();
     let (code, stdout, stderr) = run(&base, true, "after.co", None);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(stdout, "['batch']\n[10, 20]\n1\n2\n3\n[10, 20, 40]\n", "the flushed rows stay, the pending one is lost, the next put takes its position: {stdout}");

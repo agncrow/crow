@@ -11,9 +11,10 @@ shortest paths. Each answers the same in `crow run -i` and `crow run`.
 deps = map[kg = 'github.com/agncrow/crow/packages/kg@main']
 ```
 
-`crow install` checks the package out into `crow_modules/kg`, and
-`crow.lock` pins the commit it took and the hash of the files it
-installed. A program imports it and calls it qualified:
+`crow install` checks the package out into `crow_modules/kg`, and the
+package it is written over, magpie, beside it; `crow.lock` pins the
+commit each took and the hash of the files it installed. A program
+imports it and calls it qualified:
 
 ```
 use magpie, frame

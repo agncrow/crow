@@ -32,7 +32,7 @@ fn declare[dir, entity, time]
 --- column a read left on the rows is dropped. Answers the first
 --- position the rows took
 fn append[g, f]
-    return put[g.dir, _without_pos[f], by = g.entity, time = g.time]
+    return magpie.put[g.dir, _without_pos[f], by = g.entity, time = g.time]
 
 --- the rows without the position column a read leaves
 fn _without_pos[f]
@@ -49,14 +49,14 @@ fn _without_pos[f]
 --- store's read; a frame of one row, or of none where the entity has
 --- no row yet
 fn online[g, key]
-    return latest[g.dir, equal = key]
+    return magpie.latest[g.dir, equal = key]
 
 --- a window of the group's history: every row from position `from` up
 --- to `upto` (every row with -1), in position order, with `columns`
 --- (every column when none is named): the offline store, read a window
 --- at a time
 fn history[g, from = 0, upto = -1, columns = []]
-    return scan[g.dir, from, upto, columns]
+    return magpie.scan[g.dir, from, upto, columns]
 
 --- a training set: the labels — the entity's columns and a moment in
 --- the groups' time column — with each group's features beside them as
@@ -70,7 +70,7 @@ fn history[g, from = 0, upto = -1, columns = []]
 fn training[labels, groups, columns = [], upto = -1]
     acc = labels
     for g in groups
-        joined = prior[g.dir, acc, columns, upto]
+        joined = magpie.prior[g.dir, acc, columns, upto]
         if not joined.ok
             return error[joined.reason, 'features']
         acc = joined
@@ -91,7 +91,7 @@ fn backfill[g, source, f, from = 0, upto = -1, per = 100000]
         hi_pos = lo_pos + per - 1
         if hi_pos gt end_pos
             hi_pos = end_pos
-        piece = scan[source, lo_pos, hi_pos]
+        piece = magpie.scan[source, lo_pos, hi_pos]
         if not piece.ok
             return error[piece.reason, 'features']
         if len[piece] gt 0
@@ -109,7 +109,7 @@ fn backfill[g, source, f, from = 0, upto = -1, per = 100000]
 --- appended; answers the last source position taken — `after` where
 --- none came in time — the loop's next `after`
 fn stream[g, source, f, after, seconds]
-    fresh = tail[source, after, seconds]
+    fresh = magpie.tail[source, after, seconds]
     if not fresh.ok
         return error[fresh.reason, 'features']
     if len[fresh] eq 0
@@ -127,10 +127,10 @@ fn stream[g, source, f, after, seconds]
 --- group has no rows) — from the log's figures and a summary pushed
 --- below the reader, the history never read whole
 fn freshness[g]
-    m = metrics[g.dir]
+    m = magpie.metrics[g.dir]
     if not m.ok
         return error[m.reason, 'features']
-    s = summary[g.dir, [], [g.time], ['max']]
+    s = magpie.summary[g.dir, [], [g.time], ['max']]
     if not s.ok
         return error[s.reason, 'features']
     col = '`g.time`_max'
@@ -158,7 +158,7 @@ fn _when[at]
 fn define[dir, feature, g, meaning, computed = '', at = -1]
     t = _when[at]
     f = frame.new[feature = [feature], log = [g.dir], entity = [join[g.entity, ',']], moment = [g.time], meaning = [meaning], computed = [computed], at = [t]]
-    return put[dir, f, by = ['feature'], time = 'at']
+    return magpie.put[dir, f, by = ['feature'], time = 'at']
 
 --- the entities whose embedding feature `column` lies nearest the
 --- vector by the cosine (Magpie's `nearest` over the group's log): the
@@ -166,12 +166,12 @@ fn define[dir, feature, g, meaning, computed = '', at = -1]
 --- feature like any other, written by `append` as a column of vectors,
 --- served by `online` and joined into a training set by `training`
 fn similar[g, column, v, k = 10]
-    return nearest[g.dir, column, v, k]
+    return magpie.nearest[g.dir, column, v, k]
 
 --- the registry: every feature's newest definition, in the order the
 --- newest definitions were written
 fn defined[dir]
-    return latest[dir]
+    return magpie.latest[dir]
 
 --- a fresh log for a test: whatever a run before left, removed
 fn _fresh[dir]
@@ -209,7 +209,7 @@ test one_write_is_both_stores[]
 
 test a_backfill_and_a_stream_answer_the_same_rows[]
     src = _fresh['features-test-source']
-    assert[put[src, frame.new[user = ['a', 'b', 'a', 'c', 'b', 'a', 'c'], at = [1, 2, 3, 4, 5, 6, 7], amount = [10.0, 60.0, 20.0, 80.0, 5.0, 90.0, 15.0]], by = ['user'], time = 'at'] eq 0]
+    assert[magpie.put[src, frame.new[user = ['a', 'b', 'a', 'c', 'b', 'a', 'c'], at = [1, 2, 3, 4, 5, 6, 7], amount = [10.0, 60.0, 20.0, 80.0, 5.0, 90.0, 15.0]], by = ['user'], time = 'at'] eq 0]
     back = declare[_fresh['features-test-back'], ['user'], 'at']
     live = declare[_fresh['features-test-live'], ['user'], 'at']
     assert[backfill[back, src, _spend, 0, -1, 3] eq 7]
@@ -274,5 +274,5 @@ test the_registry_is_a_log[]
     assert[d.feature eq ['spent', 'clicks']]
     assert[d.meaning eq ['amount spent in the trailing day', 'clicks in the trailing day, bots left out']]
     assert[d.entity eq ['user,day', 'user,day'] and d.moment eq ['at', 'at'] and d.log eq ['features-test-registry-group', 'features-test-registry-group']]
-    assert[len[scan[reg]] eq 3]
+    assert[len[magpie.scan[reg]] eq 3]
     gone = rm[reg]

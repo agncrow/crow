@@ -134,6 +134,7 @@ written from a matrix (its rows) or a list of vectors, read one cell at
 a time as a tensor, whole as its matrix (`tensor[df.e]`). It has no
 order and no cell-by-cell arithmetic — `sort` by it or a `sum` over it
 stops the program — and `save` writes it as JSON records or Parquet,
-not CSV. Magpie holds the column and finds rows by it (`nearest`).
+not CSV. The Magpie package holds the column and finds rows by it
+(`magpie.nearest`).
 
 Reference: spec section 13 (frame) and book chapter 10.

@@ -1,7 +1,7 @@
---- `use magpie.file`: a Magpie file, in Crow — one format for a batch, a
+--- `use magpie.fileformat`: a Magpie file, in Crow — one format for a batch, a
 --- segment and the manifest, the kernel's bytes byte for byte
 --- (docs/magpie-in-crow.md, section 3). The magic, then the row groups:
---- each column's chunk (magpie.encode) followed by the column's filters
+--- each column's chunk (magpie.columnchunk) followed by the column's filters
 --- over the group — a value filter where the distinct values are few
 --- enough, a token filter and the postings (magpie.postings) for a text
 --- column the log indexes; then a block per column, one entry per group
@@ -14,16 +14,16 @@
 --- reader reads the last bytes, then the footer, then only what it is
 --- asked for: one column's block to prune by, one group's chunk to
 --- decode, the groups decoded across the cores. The tests are the
---- module's own: `crow test src/modules/file.co`, held to the kernel
+--- part's own: `crow test packages/magpie/fileformat.co`, held to the kernel
 --- through its test-only row until the kernel goes.
 use sys
 use bits
 use frame
-use magpie.packing
-use magpie.encode
-use magpie.bloom
-use magpie.postings
-use magpie.stem
+use bitpack
+use columnchunk
+use bloom
+use postings
+use stemmer
 
 --- a group's min or max of a column: `form` 0 for none, 1 an int (or a
 --- moment's milliseconds, in `whole`), 2 a float (`real`), 3 a bool
@@ -86,7 +86,7 @@ fn _present[present, i]
 --- `magic[]`: the file's magic — `MAGPIE`, a zero and the format, 2 —
 --- which a file begins and ends with
 fn magic[]
-    m = bytes['MAGPIE']
+    m = sys.bytes['MAGPIE']
     m = push[m, 0]
     return push[m, 2]
 
@@ -113,8 +113,8 @@ fn _kind_word[b]
 
 --- a text written as its varint length and its bytes
 fn _put_text[out, s]
-    out = put_var[out, len[bytes[s]]]
-    return concat[out, bytes[s]]
+    out = bitpack.put_var[out, len[sys.bytes[s]]]
+    return concat[out, sys.bytes[s]]
 
 --- whether a float is negative zero (which the bounds keep apart from
 --- zero, as the kernel's min and max do: -0 below 0)
@@ -216,7 +216,7 @@ fn _statistics[col, from, to, filtered]
                     hi = Bound[3, v, 0.0, '']
                 if keep and v not in seen
                     seen = set[seen, v, true]
-                    items = push[items, push[bytes[0], v]]
+                    items = push[items, push[sys.bytes[0], v]]
     if kind eq 'text'
         cell_bytes = text_bytes_of[col, from, to]
         cuts = text_ends_of[col, from, to]
@@ -227,7 +227,7 @@ fn _statistics[col, from, to, filtered]
         for i in range[n]
             stop = cuts[i]
             if _present[present, i]
-                t = text[slice[cell_bytes, begin, stop], '']
+                t = sys.text[slice[cell_bytes, begin, stop], '']
                 if lo.form eq 0 or t lt lo.word
                     lo = Bound[4, 0, 0.0, t]
                     lo_len = stop - begin
@@ -266,10 +266,10 @@ fn _statistics[col, from, to, filtered]
                         seen = set[seen, h, true]
                         items = push[items, rb]
     count = -1
-    sieve = bytes[0]
+    sieve = sys.bytes[0]
     if keep
         count = len[items]
-        sieve = filter_bytes[filled[sized[len[items]], items]]
+        sieve = bloom.filter_bytes[bloom.filled[bloom.sized[len[items]], items]]
     return Stats[absent, count, lo, hi, sieve]
 
 --- a text column's index over a group: a filter over its distinct tokens,
@@ -281,7 +281,7 @@ fn _statistics[col, from, to, filtered]
 --- group's value filter already admits or refuses the group); the stemmer
 --- applied where the log stems
 fn _token_index[col, from, to, stems]
-    none = Tokens[false, bytes[0], bytes[0], 0, 0]
+    none = Tokens[false, sys.bytes[0], sys.bytes[0], 0, 0]
     n = to - from
     present = present_of[col, from, to]
     cell_bytes = text_bytes_of[col, from, to]
@@ -293,10 +293,10 @@ fn _token_index[col, from, to, stems]
         stop = cuts[row]
         if _present[present, row]
             docs = docs + 1
-            for t in terms[text[slice[cell_bytes, begin, stop], '']]
+            for t in terms[sys.text[slice[cell_bytes, begin, stop], '']]
                 w = t
                 if stems
-                    w = stem[t]
+                    w = stemmer.stem[t]
                 if w not in seen
                     seen = set[seen, w, true]
         begin = stop
@@ -307,10 +307,10 @@ fn _token_index[col, from, to, stems]
         return none
     items = []
     for w in keys[seen]
-        items = push[items, bytes[w]]
-    sieve = filled[sized[nwords], items]
-    made = built[col, from, to, stems]
-    return Tokens[true, filter_bytes[sieve], made.blob, made.docs, made.words]
+        items = push[items, sys.bytes[w]]
+    sieve = bloom.filled[bloom.sized[nwords], items]
+    made = postings.built[col, from, to, stems]
+    return Tokens[true, bloom.filter_bytes[sieve], made.blob, made.docs, made.words]
 
 --- a bound written: its kind, then an int as eight bytes little-endian, a
 --- float as its bits, a bool as a byte, text as its length and bytes
@@ -426,7 +426,7 @@ fn group_bytes[df, from, to, cols, narrow, stems, base]
     names = df.columns
     if len[names] ne len[cols.names]
         return error['the group holds `len[names]` columns and the file `len[cols.names]`', 'magpie']
-    out = bytes[0]
+    out = sys.bytes[0]
     entries = []
     rows = to - from
     for c in range[len[names]]
@@ -435,7 +435,7 @@ fn group_bytes[df, from, to, cols, narrow, stems, base]
         kind = cell_kind[col]
         if name ne cols.names[c] or kind ne cols.kinds[c]
             return error['column `c` of the group is \'`name`\' of kind `kind`, and the file\'s is \'`cols.names[c]`\' of kind `cols.kinds[c]`', 'magpie']
-        piece = chunk[col, from, to, narrow[c]]
+        piece = columnchunk.chunk[col, from, to, narrow[c]]
         chunk_off = base + len[out]
         chunk_len = len[piece]
         out = concat[out, piece]
@@ -446,7 +446,7 @@ fn group_bytes[df, from, to, cols, narrow, stems, base]
             bloom_off = base + len[out]
             bloom_len = len[st.sieve]
             out = concat[out, st.sieve]
-        tk = Tokens[false, bytes[0], bytes[0], 0, 0]
+        tk = Tokens[false, sys.bytes[0], sys.bytes[0], 0, 0]
         if cols.indexed[c] and kind eq 'text'
             tk = _token_index[col, from, to, stems]
         tok_off = 0
@@ -478,22 +478,22 @@ fn finish[out, blocks, groups, cols, first_pos, last_pos, key_names, note_names,
     rows = 0
     for g in groups
         rows = rows + g
-    footer = bytes[0]
+    footer = sys.bytes[0]
     footer = push[footer, 2]
     footer = concat[footer, pack[rows, 8, little = true]]
     footer = concat[footer, pack[first_pos, 8, little = true]]
     footer = concat[footer, pack[last_pos, 8, little = true]]
-    footer = put_var[footer, len[key_names]]
+    footer = bitpack.put_var[footer, len[key_names]]
     for k in key_names
         footer = _put_text[footer, k]
-    footer = put_var[footer, len[note_names]]
+    footer = bitpack.put_var[footer, len[note_names]]
     for i in range[len[note_names]]
         footer = _put_text[footer, note_names[i]]
         footer = _put_text[footer, note_texts[i]]
-    footer = put_var[footer, len[groups]]
+    footer = bitpack.put_var[footer, len[groups]]
     for g in groups
         footer = concat[footer, pack[g, 4, little = true]]
-    footer = put_var[footer, len[cols.names]]
+    footer = bitpack.put_var[footer, len[cols.names]]
     for c in range[len[cols.names]]
         footer = _put_text[footer, cols.names[c]]
         footer = push[footer, _kind_byte[cols.kinds[c]]]
@@ -525,7 +525,7 @@ fn file_of[df, per, first_pos, last_pos, key_names, indexed_names, narrow_names,
     blocks = []
     for c in range[len[cols.names]]
         narrow = push[narrow, cols.kinds[c] eq 'float' and cols.names[c] in narrow_names]
-        blocks = push[blocks, bytes[0]]
+        blocks = push[blocks, sys.bytes[0]]
     out = magic[]
     groups = []
     n = len[df]
@@ -557,7 +557,7 @@ fn _short[data, at, n]
 
 --- a text read as its varint length and its bytes
 fn _piece[data, at]
-    got = read_var[data, at]
+    got = bitpack.read_var[data, at]
     if not got.ok
         return error[got.reason, 'magpie']
     n = got[0]
@@ -565,7 +565,7 @@ fn _piece[data, at]
     s = _short[data, at, n]
     if s gt 0
         return error['the file ends `s` bytes early', 'magpie']
-    t = text[slice[data, at, at + n]]
+    t = sys.text[slice[data, at, at + n]]
     if not t.ok
         return error['a name is no UTF-8', 'magpie']
     return Piece[t, at + n]
@@ -665,7 +665,7 @@ fn _footer[data, path]
     first = unpack[data, 9, 8, little = true]
     last = unpack[data, 17, 8, little = true]
     at = 25
-    nk = read_var[data, at]
+    nk = bitpack.read_var[data, at]
     if not nk.ok
         return error['`bad``nk.reason`', 'magpie']
     at = nk[1]
@@ -676,7 +676,7 @@ fn _footer[data, path]
             return error['`bad``p.reason`', 'magpie']
         key_names = push[key_names, p.s]
         at = p.at
-    nn = read_var[data, at]
+    nn = bitpack.read_var[data, at]
     if not nn.ok
         return error['`bad``nn.reason`', 'magpie']
     at = nn[1]
@@ -692,7 +692,7 @@ fn _footer[data, path]
             return error['`bad``q.reason`', 'magpie']
         note_texts = push[note_texts, q.s]
         at = q.at
-    ng = read_var[data, at]
+    ng = bitpack.read_var[data, at]
     if not ng.ok
         return error['`bad``ng.reason`', 'magpie']
     at = ng[1]
@@ -703,7 +703,7 @@ fn _footer[data, path]
             return error['`bad`the file ends `s` bytes early', 'magpie']
         groups = push[groups, unpack[data, at, 4, little = true, signed = false]]
         at = at + 4
-    nc = read_var[data, at]
+    nc = bitpack.read_var[data, at]
     if not nc.ok
         return error['`bad``nc.reason`', 'magpie']
     at = nc[1]
@@ -749,7 +749,7 @@ fn opened[path]
         if front.ok
             if same[front, magic[]]
                 return error['magpie: \'`path`\' is cut short: its end carries no footer', 'magpie']
-            if same[slice[front, 0, 6], bytes['MAGPIE']]
+            if same[slice[front, 0, 6], sys.bytes['MAGPIE']]
                 return error['magpie: \'`path`\' was written in format `byte[front, 7]`, and this Crow reads format 2 — read it with the Crow that wrote it, or a newer one', 'magpie']
         return error['magpie: \'`path`\' is no Magpie file: its end carries no magic', 'magpie']
     flen = unpack[back, 0, 4, little = true, signed = false]
@@ -813,7 +813,7 @@ fn value_filter[r, e]
     data = file[r.path, e.bloom_off, e.bloom_len]
     if not data.ok
         return error['magpie: cannot read \'`r.path`\' at `e.bloom_off`: `data.reason`', 'magpie']
-    f = filter_of[data]
+    f = bloom.filter_of[data]
     if not f.ok
         return error['magpie: \'`r.path`\': `f.reason`', 'magpie']
     return f
@@ -826,7 +826,7 @@ fn token_filter[r, e]
     data = file[r.path, e.tok_off, e.tok_len]
     if not data.ok
         return error['magpie: cannot read \'`r.path`\' at `e.tok_off`: `data.reason`', 'magpie']
-    f = filter_of[data]
+    f = bloom.filter_of[data]
     if not f.ok
         return error['magpie: \'`r.path`\': `f.reason`', 'magpie']
     return f
@@ -848,7 +848,7 @@ fn chunk_of[r, c, e]
     data = file[r.path, e.chunk_off, e.chunk_len]
     if not data.ok
         return error['magpie: cannot read \'`r.path`\' at `e.chunk_off`: `data.reason`', 'magpie']
-    col = unchunk[data, m.cells]
+    col = columnchunk.unchunk[data, m.cells]
     if not col.ok
         return error['magpie: \'`r.path`\', column \'`m.name`\': `col.reason`', 'magpie']
     return col
@@ -859,7 +859,7 @@ fn _frame_of[pieces, gi, names, kinds, path]
     f = frame.new[]
     n = len[names]
     for ci in range[n]
-        col = unchunk[pieces[gi * n + ci], kinds[ci]]
+        col = columnchunk.unchunk[pieces[gi * n + ci], kinds[ci]]
         if not col.ok
             return error['magpie: \'`path`\', column \'`names[ci]`\': `col.reason`', 'magpie']
         name = names[ci]
@@ -870,7 +870,7 @@ fn _frame_of[pieces, gi, names, kinds, path]
 --- answers them) and no rows
 fn empty_of[r, cols]
     f = frame.new[]
-    none = bytes[0]
+    none = sys.bytes[0]
     for c in cols
         m = r.footer.columns[c]
         name = m.name
@@ -925,7 +925,7 @@ fn groups_of[r, groups, cols]
         if not p.ok
             return error[p.reason, 'magpie']
         plain = push[plain, p]
-    return stack[plain]
+    return frame.stack[plain]
 
 --- `group_of[r, g, cols]`: one group's rows with the columns asked
 fn group_of[r, g, cols]
@@ -977,7 +977,7 @@ fn _floats[a, b, c, d, e]
 --- names to index, a flag, and the positions
 fn _frame[]
     df = frame.new[id = [3, 1, 2, 1, 9], name = ['Apple pie', 'banana split', 'Cherry tart', 'apple crumble', 'durian'], ok = [true, false, true, true, false], _pos = [0, 1, 2, 3, 4]]
-    gap = bytes[0]
+    gap = sys.bytes[0]
     gap = push[gap, 23]
     df.price = floats_column[_floats[2.5, 1.0, 0.0 / 0.0, 0.5, 4.0], gap]
     return df
@@ -1055,9 +1055,9 @@ test a_file_of_two_groups_is_the_kernels_and_reads_back[]
     assert[names[0].indexed]
     assert[names[0].docs eq 3 and names[0].words eq 6]
     sieve = token_filter[r, names[0]]
-    assert[admits[sieve, bytes['cherry']] and not admits[sieve, bytes['durian']]]
+    assert[bloom.admits[sieve, sys.bytes['cherry']] and not bloom.admits[sieve, sys.bytes['durian']]]
     vals = value_filter[r, ids[0]]
-    assert[admits[vals, pack[3, 8, little = true]] and not admits[vals, pack[9, 8, little = true]]]
+    assert[bloom.admits[vals, pack[3, 8, little = true]] and not bloom.admits[vals, pack[9, 8, little = true]]]
     assert[not value_filter[r, entries[r, 3][0]].ok]
     both = []
     both = push[both, 0]
@@ -1092,12 +1092,12 @@ test float_bounds_and_wide_columns_are_the_kernels[]
     zs = _floats[0.0, -0.0, 1.5, nan, -0.0]
     more = _floats[nan, nan, -0.0, 0.0, 2.0]
     f = frame.new[]
-    f.z = floats_column[concat[zs, more], bytes[0]]
-    f.n = ints_column[range[10], bytes[0]]
+    f.z = floats_column[concat[zs, more], sys.bytes[0]]
+    f.n = ints_column[range[10], sys.bytes[0]]
     seen = push[seen, _digest[file_of[f, 2, 0, 9, nothing, nothing, nothing, false]]]
     seen = push[seen, _digest[file_of[f, 5, 0, 9, nothing, nothing, nothing, false]]]
     wide = frame.new[]
-    wide.k = ints_column[range[70000], bytes[0]]
+    wide.k = ints_column[range[70000], sys.bytes[0]]
     made = file_of[wide, 70000, 0, 69999, nothing, nothing, nothing, false]
     seen = push[seen, _digest[made]]
     --- (recorded from the Rust kernel before it was deleted, 2026-10-28)
@@ -1118,7 +1118,7 @@ test a_torn_or_foreign_file_is_refused_with_its_reason[]
     --- (the kernel's words, recorded before it was deleted, 2026-10-28)
     assert[e.reason eq 'magpie: \'target/crow_file_test/cut.batch\' is cut short: its end carries no footer']
     foreign = '`dir`/foreign.batch'
-    kept = store[foreign, bytes['PAR1 this is not a magpie file at all, not even close']]
+    kept = store[foreign, sys.bytes['PAR1 this is not a magpie file at all, not even close']]
     assert[find[opened[foreign].reason, 'no Magpie file'].ok]
     assert[opened[foreign].reason eq 'magpie: \'target/crow_file_test/foreign.batch\' is no Magpie file: its end carries no magic']
     newer = '`dir`/newer.batch'

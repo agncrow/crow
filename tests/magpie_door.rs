@@ -1,10 +1,12 @@
-//! The HTTP door in both modes (spec, section 13: magpie, `serve`): a
-//! Crow program serving `serve[dir, port]` is reached by a second program
+//! The HTTP door in both modes (packages/magpie, `door`): a Crow program
+//! serving `magpie.door[dir, port]` is reached by a second program
 //! through the same verbs given the door's URL — interpreted and
 //! compiled — and by a plain HTTP client of this test's own.
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+
+mod common;
 
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
@@ -52,8 +54,9 @@ fn drive(interpreted: bool) {
     let dir = std::env::temp_dir().join(format!("crow-magpie-door-{}-{}", if interpreted { "i" } else { "c" }, std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    common::link_magpie(&dir);
     let port = free_port();
-    std::fs::write(dir.join("door.co"), format!("use magpie\n\nserved = door['store', {port}]\nlog[served]\n")).unwrap();
+    std::fs::write(dir.join("door.co"), format!("use magpie\n\nserved = magpie.door['store', {port}]\nlog[served]\n")).unwrap();
     let crow = env!("CARGO_BIN_EXE_crow");
     let mut cmd = Command::new(crow);
     cmd.arg("run");
@@ -74,7 +77,7 @@ fn drive(interpreted: bool) {
     assert_eq!(http(port, "GET", "/../orders/head", "").0, 404);
     // a second program, through the verbs given the URL, in the other mode
     let client = dir.join("client.co");
-    std::fs::write(&client, format!("use magpie\nuse frame\n\nd = 'http://127.0.0.1:{port}/orders'\nlog[head[d]]\nlog[batch[d, frame.new[id = [3], qty = [30]]]]\nlog[latest[d].qty]\nlog[lookup[d, ['id'], ['2'], ['qty']].qty]\nlog[latest[d, equal = ['3']].qty]\nlog[summary[d, [], ['qty'], ['sum']].qty_sum]\nlog[since[d, 1, 2].qty]\nlog[put[d, frame.new[id = [4], qty = [40]]]]\nlog[sync[d] gte 1]\nlog[len[merge[d]] gt 0]\nlog[batches[d].form]\nlog[lookup[d, ['nosuch'], ['1']].kind]\n")).unwrap();
+    std::fs::write(&client, format!("use magpie\nuse frame\n\nd = 'http://127.0.0.1:{port}/orders'\nlog[magpie.head[d]]\nlog[magpie.batch[d, frame.new[id = [3], qty = [30]]]]\nlog[magpie.latest[d].qty]\nlog[magpie.lookup[d, ['id'], ['2'], ['qty']].qty]\nlog[magpie.latest[d, equal = ['3']].qty]\nlog[magpie.summary[d, [], ['qty'], ['sum']].qty_sum]\nlog[magpie.since[d, 1, 2].qty]\nlog[magpie.put[d, frame.new[id = [4], qty = [40]]]]\nlog[magpie.sync[d] gte 1]\nlog[len[magpie.merge[d]] gt 0]\nlog[magpie.batches[d].form]\nlog[magpie.lookup[d, ['nosuch'], ['1']].kind]\n")).unwrap();
     let mut client_cmd = Command::new(crow);
     client_cmd.arg("run");
     if !interpreted {

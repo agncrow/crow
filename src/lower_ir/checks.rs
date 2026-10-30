@@ -1482,7 +1482,7 @@ impl<'a> Lowerer<'a> {
         // modules' (web.mail's `mail`, web.ws's `send` and `recv`)
         let web = self.v.bare_import_lines.keys().any(|p| p == "web" || p.starts_with("web."));
         if web && WEB_RESERVED.contains(&name) {
-            for r in crate::table::ROWS.iter().filter(|r| r.name == name && r.module.starts_with("web")) {
+            for r in crate::table::runtime_rows(name).filter(|r| r.module.starts_with("web")) {
                 if !providers.iter().any(|m| m == r.module) {
                     providers.push(r.module.to_string());
                 }
@@ -1513,7 +1513,7 @@ impl<'a> Lowerer<'a> {
             // not import: it says that module (`abs` of a column is math's —
             // it had said abs[] takes an int or a number)
             for m in stdlib_providers(name) {
-                let has_rows = crate::table::ROWS.iter().any(|r| r.module == m && r.name == name);
+                let has_rows = crate::table::runtime_rows(name).any(|r| r.module == m);
                 if !providers.contains(&m) && has_rows && crate::table::refusal(&["", m.as_str()], name, &kinds).is_none() {
                     let words: Vec<String> = kinds.iter().map(|k| k.words().to_string()).collect();
                     self.refuse_missing_use(name, &m, &format!(" of {}", listed(&words, "and")));
@@ -1954,8 +1954,8 @@ impl<'a> Lowerer<'a> {
         // refused where it is written, naming the line that brings them
         if !own && !self.declared(name) && !crate::modules::is_crow_fn(&self.current_fn) {
             let imported = |m: &str| self.v.bare_import_lines.keys().any(|p| p == m) || self.ctx.module_aliases.values().any(|a| a == m);
-            let rows_of = |m: &str| crate::table::ROWS.iter().any(|r| r.module == m && r.name == name);
-            let web_module = crate::table::ROWS.iter().find(|r| r.name == name && r.module.starts_with("web.")).map(|r| r.module);
+            let rows_of = |m: &str| crate::table::runtime_rows(name).any(|r| r.module == m);
+            let web_module = crate::table::runtime_rows(name).find(|r| r.module.starts_with("web.")).map(|r| r.module);
             let answered = crate::table::has_core_rows(name) || self.v.bare_import_lines.keys().any(|m| rows_of(m));
             if let Some(m) = web_module.filter(|m| !imported(m)) {
                 if !answered {

@@ -2718,14 +2718,16 @@ fn an_int_read_from_four_bytes_stays_in_64_bits() {
     assert!(rust.contains("fn scaled(b: &crow_runtime::sys::Bytes) -> i64"), "{}", rust);
 }
 
-/// Magpie's bit-packed decoders are 64-bit throughout: each width has a
-/// loop of its own, and the bits held are written so the width pass bounds
-/// them (one function holding both loops had lost the bound, and a
-/// column's decode was three quarters growing-int arithmetic)
+/// Magpie's bit-packed decoders (packages/magpie/bitpack.co) are 64-bit
+/// throughout: each width has a loop of its own, and the bits held are
+/// written so the width pass bounds them (one function holding both loops
+/// had lost the bound, and a column's decode was three quarters
+/// growing-int arithmetic)
 #[test]
 fn magpies_decoders_stay_in_64_bits() {
-    let rust = transpile("use magpie\n\nf = scan['no-such-log']\nlog[f.ok]\n");
-    for name in ["_magpie_packing__unpacked_narrow", "_magpie_packing__unpacked_wide"] {
+    let part = include_str!("../../packages/magpie/bitpack.co");
+    let rust = transpile(&format!("{}\nf = unpacked[bytes[8], 0, 4, 3]\nlog[f.ok]\n", part));
+    for name in ["_unpacked_narrow", "_unpacked_wide"] {
         let start = rust.find(&format!("fn {}(", name)).unwrap_or_else(|| panic!("{} is compiled:\n{}", name, rust));
         let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
         assert!(body.contains("-> Vec<i64>"), "{} answers 64-bit ints:\n{}", name, body);

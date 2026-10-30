@@ -1,4 +1,4 @@
---- `use magpie.tail`: the sequencer, in Crow — a memtable and its
+--- `use magpie.sequencer`: the sequencer, in Crow — a memtable and its
 --- write-ahead log (docs/magpie-in-crow.md, section 2.4). One record per
 --- log directory in the process's memory (`use memory`, named by the
 --- log's canonical path, so `rm` of the directory forgets it) holds the
@@ -19,9 +19,9 @@ use sys
 use bits
 use frame
 use memory
-use magpie.file
-use magpie.manifest
-use magpie.merge
+use fileformat
+use manifest
+use merger
 
 --- a log's tail: its directory (its canonical path, the name it is held
 --- under), its keys, the parts pending (each with `_pos`), the next
@@ -65,7 +65,7 @@ fn _unread[name]
 --- the batch files and segments of the log: the manifest's segments, and
 --- every batch file a segment does not cover
 fn _live_paths[dir]
-    m = listed[dir]
+    m = manifest.listed[dir]
     if not m.ok
         return error[m.reason, 'magpie']
     paths = slice[['x'], 0, 0]
@@ -79,7 +79,7 @@ fn _live_paths[dir]
     if not found.ok
         return error['batch: cannot read \'`dir`\': `found.reason`', 'magpie']
     for name in found
-        n = number_of[name]
+        n = manifest.number_of[name]
         if n gte 0
             covered = false
             for i in range[len[lows]]
@@ -96,7 +96,7 @@ fn _head_of[dir]
         return error[paths.reason, 'magpie']
     top = -1
     for p in paths
-        r = opened[p]
+        r = fileformat.opened[p]
         if not r.ok
             return error[r.reason, 'magpie']
         if r.footer.last gt top
@@ -105,7 +105,7 @@ fn _head_of[dir]
 
 --- the next batch number: past every batch file's and every segment's
 fn _next_number[dir]
-    m = listed[dir]
+    m = manifest.listed[dir]
     if not m.ok
         return error[m.reason, 'magpie']
     top = -1
@@ -117,7 +117,7 @@ fn _next_number[dir]
     if not found.ok
         return error['batch: cannot read \'`dir`\': `found.reason`', 'magpie']
     for name in found
-        n = number_of[name]
+        n = manifest.number_of[name]
         if n gt top
             top = n
     return top + 1
@@ -127,7 +127,7 @@ fn _next_number[dir]
 --- or a log made afresh at the path may have moved the head); the image
 --- and the index let go where the image was built
 fn _reread[t]
-    m = listed[t.dir]
+    m = manifest.listed[t.dir]
     if not m.ok
         return error[m.reason, 'magpie']
     top = _head_of[t.dir]
@@ -182,7 +182,7 @@ fn _cells_of[col]
         for i in range[n]
             stop = cuts[i]
             if _present[present, i]
-                out[i] = Cell[4, 0, 0.0, text[slice[cell_bytes, begin, stop], '']]
+                out[i] = Cell[4, 0, 0.0, sys.text[slice[cell_bytes, begin, stop], '']]
             begin = stop
     return out
 
@@ -249,7 +249,7 @@ fn _parsed[kind, value]
 fn _pending_frame[t]
     if len[t.parts] eq 1
         return t.parts[0]
-    return stack[t.parts]
+    return frame.stack[t.parts]
 
 --- how many rows are pending
 fn _pending_count[t]
@@ -266,7 +266,7 @@ fn _as_image_row[row, template]
     for c in template.columns
         if c not in row.columns
             return row
-    return select[row, template.columns]
+    return frame.select[row, template.columns]
 
 --- the tail as it was, refusing what it was asked for the reason given
 fn _refused[t, why]
@@ -302,7 +302,7 @@ fn _appended[t, f]
     for i in range[n]
         positions = push[positions, first + i]
     numbered = f
-    numbered._pos = ints_column[positions, bytes[0]]
+    numbered._pos = ints_column[positions, sys.bytes[0]]
     if len[held.keys] gt 0
         texts = _keys_of[numbered, held.keys]
         if not texts.ok
@@ -405,7 +405,7 @@ fn _written[t, name, claim]
     first = t.next - len[whole]
     --- (the rows sorted by the keys, arrival order kept among equals, each
     --- with its position)
-    data = numbered_bytes[t.dir, whole, first, t.keys, slice[['x'], 0, 0]]
+    data = merger.numbered_bytes[t.dir, whole, first, t.keys, slice[['x'], 0, 0]]
     if not data.ok
         return error[data.reason, 'magpie']
     part = '`t.dir`/.flush-`claim`.part'
@@ -423,7 +423,7 @@ fn _written[t, name, claim]
         if not number.ok
             gone = rm[part]
             return error[number.reason, 'magpie']
-        c = revise[name, _unread[name], _committed, claim, part, '`t.dir`/`batch_named[number]`']
+        c = revise[name, _unread[name], _committed, claim, part, '`t.dir`/`manifest.batch_named[number]`']
         if c.answer eq 1
             going = false
         else
@@ -447,7 +447,9 @@ fn _written[t, name, claim]
 fn _committed[t, claim, part, path]
     if t.flushing ne claim
         return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, 0, t.flushing, '']
-    linked = link[part, path]
+    --- the sys row, qualified: a package's code shares the program's names,
+    --- and kg's own `link` (an edge) had taken this call
+    linked = sys.link[part, path]
     if linked.ok
         return Tail[t.dir, t.keys, t.parts, t.next, t.has_image, t.template, t.failed, 1, t.flushing, '']
     if exists[path]
@@ -545,12 +547,12 @@ fn pending_rows[dir, first, last]
     if not paths.ok
         return error[paths.reason, 'magpie']
     for p in paths
-        r = opened[p]
+        r = fileformat.opened[p]
         if not r.ok
             return error[r.reason, 'magpie']
         if r.footer.first lte first and first lte r.footer.last
             all_groups = range[len[r.footer.groups]]
-            return groups_of[r, all_groups, wanted[r, slice[['x'], 0, 0]]]
+            return fileformat.groups_of[r, all_groups, fileformat.wanted[r, slice[['x'], 0, 0]]]
     return error['batch: the rows `first`..`last` of \'`dir`\' are neither pending nor in a file', 'magpie']
 
 --- the log's rows in parts — the files' and the pending ones — read for
@@ -561,11 +563,11 @@ fn _table_of[t]
         return error[paths.reason, 'magpie']
     parts = []
     for p in paths
-        r = opened[p]
+        r = fileformat.opened[p]
         if not r.ok
             return error[r.reason, 'magpie']
         all_groups = range[len[r.footer.groups]]
-        rows = groups_of[r, all_groups, wanted[r, slice[['x'], 0, 0]]]
+        rows = fileformat.groups_of[r, all_groups, fileformat.wanted[r, slice[['x'], 0, 0]]]
         if not rows.ok
             return error[rows.reason, 'magpie']
         if len[rows] gt 0
@@ -594,7 +596,7 @@ fn _imaged[t]
         return _refused[t, parts.reason]
     if len[parts] eq 0
         return Tail[held.dir, held.keys, held.parts, held.next, true, frame.new[], held.failed, held.answer, held.flushing, '']
-    table = stack[parts]
+    table = frame.stack[parts]
     if len[table] gt 1
         table = sort[table, '_pos']
     n = len[table]
@@ -683,7 +685,7 @@ fn _scratch[dir]
         rm[dir]
     mkdir[dir]
     none = slice[['x'], 0, 0]
-    declared = declare[dir, ['id'], none, none]
+    declared = manifest.declare[dir, ['id'], none, none]
     return dir
 
 --- a flush claims what is pending, and a second claim waits for it; a
@@ -735,8 +737,8 @@ test a_flush_of_a_removed_log_writes_nothing[]
     assert[flush_rows[dir] eq 0]
     total = 0
     for p in ls[dir]
-        if number_of[p] gte 0
-            total = total + opened['`dir`/`p`'].footer.rows
+        if manifest.number_of[p] gte 0
+            total = total + fileformat.opened['`dir`/`p`'].footer.rows
     assert[total eq 1]
     gone = rm[dir]
 
@@ -763,8 +765,8 @@ test the_tail_numbers_flushes_and_follows[]
     --- the rows are in the batch files now, numbered as they were put
     total = 0
     for p in ls[dir]
-        if number_of[p] gte 0
-            total = total + opened['`dir`/`p`'].footer.rows
+        if manifest.number_of[p] gte 0
+            total = total + fileformat.opened['`dir`/`p`'].footer.rows
     assert[total eq 5]
     --- (a listing that saw the rows pending reads the file they went to)
     assert[len[pending_at['`dir`/.pending@0-4']] gt 0]

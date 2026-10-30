@@ -1,4 +1,4 @@
---- `use redis`: the RESP door of Magpie (spec, redis): a Redis client
+--- `use magpie.redis`: the RESP door of Magpie (REFERENCE.md): a Redis client
 --- speaks to a log. Keys and values live in one log under the door's
 --- root, `<root>/_kv`, keyed by `key`, a row per write with a `dead`
 --- flag for a deleted key; the sequencer's image answers a GET in
@@ -16,26 +16,26 @@ use magpie
 
 --- a RESP simple string, bulk string, nil, int, error and array
 fn _simple[s]
-    return bytes['+`s`\r\n']
+    return sys.bytes['+`s`\r\n']
 
 fn _bulk[s]
     nl = '\r\n'
-    n = len[bytes[s]]
-    return concat[bytes['$`n``nl`'], concat[bytes[s], bytes[nl]]]
+    n = len[sys.bytes[s]]
+    return concat[sys.bytes['$`n``nl`'], concat[sys.bytes[s], sys.bytes[nl]]]
 
 fn _nil[]
-    return bytes['$-1\r\n']
+    return sys.bytes['$-1\r\n']
 
 fn _int[n]
-    return bytes[':`n`\r\n']
+    return sys.bytes[':`n`\r\n']
 
 fn _err[s]
-    return bytes['-ERR `s`\r\n']
+    return sys.bytes['-ERR `s`\r\n']
 
 fn _array[parts]
     nl = '\r\n'
     n = len[parts]
-    out = bytes['*`n``nl`']
+    out = sys.bytes['*`n``nl`']
     for p in parts
         out = concat[out, p]
     return out
@@ -45,7 +45,7 @@ fn _array[parts]
 --- inline command (`PING`) read as its words too
 fn _request[c]
     have = leftover[c]
-    got = recv[stream_of[c], 65536, 0.002]
+    got = sys.recv[stream_of[c], 65536, 0.002]
     if not got.ok
         if not starts[got.reason, 'no data']
             unread[c, have]
@@ -77,14 +77,14 @@ fn _words_of[have]
     nothing_yet = '{"taken": 0, "words": []}'
     if n eq 0
         return json[nothing_yet]
-    lead = text[slice[have, 0, 1], '?']
-    nl = bytes['\r\n']
+    lead = sys.text[slice[have, 0, 1], '?']
+    nl = sys.bytes['\r\n']
     if lead ne '*'
         --- an inline command: one line of words
         at = find[have, nl]
         if at lt 0
             return json[nothing_yet]
-        cmd_line = text[slice[have, 0, at], '?']
+        cmd_line = sys.text[slice[have, 0, at], '?']
         inline_words = split[trim[cmd_line], ' ']
         taken = at + 2
         packed = encode[inline_words]
@@ -92,7 +92,7 @@ fn _words_of[have]
     at = find[have, nl]
     if at lt 0
         return json[nothing_yet]
-    count = int[text[slice[have, 1, at], '?']]
+    count = int[sys.text[slice[have, 1, at], '?']]
     if not count.ok
         return error['a request begins with its word count', 'redis']
     total = count + 0
@@ -103,14 +103,14 @@ fn _words_of[have]
         dollar = find[rest, nl]
         if dollar lt 0
             return json[nothing_yet]
-        sz = int[text[slice[rest, 1, dollar], '?']]
+        sz = int[sys.text[slice[rest, 1, dollar], '?']]
         if not sz.ok
             return error['a word begins with its size', 'redis']
         wlen = sz + 0
         begin = pos + dollar + 2
         if begin + wlen + 2 gt n
             return json[nothing_yet]
-        words = push[words, text[slice[have, begin, begin + wlen], '?']]
+        words = push[words, sys.text[slice[have, begin, begin + wlen], '?']]
         pos = begin + wlen + 2
     taken = pos
     packed = encode[words]
@@ -333,7 +333,7 @@ fn _stream_read[root, command, words]
 --- INCRBY, MGET, MSET, KEYS, DBSIZE, XADD, XLEN, XRANGE, XREAD
 fn serve[root, port = 6379, host = '127.0.0.1', rounds = 0]
     opened = mkdir[root]
-    l = listen[host, port]
+    l = sys.listen[host, port]
     if not l.ok
         return error[l.reason, 'redis']
     conns = []
@@ -343,7 +343,7 @@ fn serve[root, port = 6379, host = '127.0.0.1', rounds = 0]
         turn = turn + 1
         arrived = accept[l, 0.005]
         if arrived.ok
-            conns = push[conns, socket_of[arrived, address[arrived], bytes['']]]
+            conns = push[conns, socket_of[arrived, address[arrived], sys.bytes['']]]
         kept = []
         for c in conns
             words = _request[c]
@@ -352,7 +352,7 @@ fn serve[root, port = 6379, host = '127.0.0.1', rounds = 0]
             else
                 if len[words] gt 0
                     wire = _answer[root, words]
-                    sent = send[stream_of[c], wire]
+                    sent = sys.send[stream_of[c], wire]
                     answered = answered + 1
                 kept = push[kept, c]
         conns = kept
@@ -364,30 +364,30 @@ test the_door_answers_the_commands[]
     root = 'redis-test-root'
     gone = rm[root]
     made = mkdir[root]
-    assert[text[_answer[root, ['PING']], '?'] eq '+PONG\r\n']
-    assert[text[_answer[root, ['GET', 'a']], '?'] eq '$-1\r\n']
-    assert[text[_answer[root, ['SET', 'a', 'hello']], '?'] eq '+OK\r\n']
-    assert[text[_answer[root, ['GET', 'a']], '?'] eq '$5\r\nhello\r\n']
-    assert[text[_answer[root, ['EXISTS', 'a', 'b']], '?'] eq ':1\r\n']
-    assert[text[_answer[root, ['INCR', 'n']], '?'] eq ':1\r\n']
-    assert[text[_answer[root, ['INCRBY', 'n', '5']], '?'] eq ':6\r\n']
-    assert[text[_answer[root, ['INCR', 'a']], '?'] eq '-ERR value is not an integer or out of range\r\n']
-    assert[text[_answer[root, ['MSET', 'x', '1', 'y', '2']], '?'] eq '+OK\r\n']
-    assert[text[_answer[root, ['MSET', 'x', '1', 'y']], '?'] eq '-ERR wrong number of arguments for MSET\r\n']
-    assert[text[_answer[root, ['MGET', 'x', 'z', 'y']], '?'] eq '*3\r\n$1\r\n1\r\n$-1\r\n$1\r\n2\r\n']
-    assert[text[_answer[root, ['DEL', 'x', 'z']], '?'] eq ':1\r\n']
-    assert[text[_answer[root, ['GET', 'x']], '?'] eq '$-1\r\n']
-    assert[text[_answer[root, ['DBSIZE']], '?'] eq ':3\r\n']
-    assert[text[_answer[root, ['KEYS', 'y']], '?'] eq '*1\r\n$1\r\ny\r\n']
-    assert[text[_answer[root, ['XADD', 's', '*', 'f', 'v', 'g', 'w']], '?'] eq '$3\r\n0-0\r\n']
-    assert[text[_answer[root, ['XADD', 's', '*', 'f', 'v2']], '?'] eq '$3\r\n1-0\r\n']
-    assert[text[_answer[root, ['XLEN', 's']], '?'] eq ':2\r\n']
-    assert[text[_answer[root, ['XRANGE', 's', '-', '+']], '?'] eq '*2\r\n*2\r\n$3\r\n0-0\r\n*4\r\n$1\r\nf\r\n$1\r\nv\r\n$1\r\ng\r\n$1\r\nw\r\n*2\r\n$3\r\n1-0\r\n*2\r\n$1\r\nf\r\n$2\r\nv2\r\n']
-    assert[text[_answer[root, ['XREAD', 'COUNT', '10', 'STREAMS', 's', '0']], '?'] eq '*1\r\n*2\r\n$1\r\ns\r\n*1\r\n*2\r\n$3\r\n1-0\r\n*2\r\n$1\r\nf\r\n$2\r\nv2\r\n']
-    assert[text[_answer[root, ['XREAD', 'STREAMS', 's', '1']], '?'] eq '$-1\r\n']
-    assert[text[_answer[root, ['NOPE']], '?'] eq '-ERR unknown command NOPE, or wrong number of arguments\r\n']
-    parsed = _words_of[bytes['*2\r\n$3\r\nGET\r\n$1\r\na\r\n']]
+    assert[sys.text[_answer[root, ['PING']], '?'] eq '+PONG\r\n']
+    assert[sys.text[_answer[root, ['GET', 'a']], '?'] eq '$-1\r\n']
+    assert[sys.text[_answer[root, ['SET', 'a', 'hello']], '?'] eq '+OK\r\n']
+    assert[sys.text[_answer[root, ['GET', 'a']], '?'] eq '$5\r\nhello\r\n']
+    assert[sys.text[_answer[root, ['EXISTS', 'a', 'b']], '?'] eq ':1\r\n']
+    assert[sys.text[_answer[root, ['INCR', 'n']], '?'] eq ':1\r\n']
+    assert[sys.text[_answer[root, ['INCRBY', 'n', '5']], '?'] eq ':6\r\n']
+    assert[sys.text[_answer[root, ['INCR', 'a']], '?'] eq '-ERR value is not an integer or out of range\r\n']
+    assert[sys.text[_answer[root, ['MSET', 'x', '1', 'y', '2']], '?'] eq '+OK\r\n']
+    assert[sys.text[_answer[root, ['MSET', 'x', '1', 'y']], '?'] eq '-ERR wrong number of arguments for MSET\r\n']
+    assert[sys.text[_answer[root, ['MGET', 'x', 'z', 'y']], '?'] eq '*3\r\n$1\r\n1\r\n$-1\r\n$1\r\n2\r\n']
+    assert[sys.text[_answer[root, ['DEL', 'x', 'z']], '?'] eq ':1\r\n']
+    assert[sys.text[_answer[root, ['GET', 'x']], '?'] eq '$-1\r\n']
+    assert[sys.text[_answer[root, ['DBSIZE']], '?'] eq ':3\r\n']
+    assert[sys.text[_answer[root, ['KEYS', 'y']], '?'] eq '*1\r\n$1\r\ny\r\n']
+    assert[sys.text[_answer[root, ['XADD', 's', '*', 'f', 'v', 'g', 'w']], '?'] eq '$3\r\n0-0\r\n']
+    assert[sys.text[_answer[root, ['XADD', 's', '*', 'f', 'v2']], '?'] eq '$3\r\n1-0\r\n']
+    assert[sys.text[_answer[root, ['XLEN', 's']], '?'] eq ':2\r\n']
+    assert[sys.text[_answer[root, ['XRANGE', 's', '-', '+']], '?'] eq '*2\r\n*2\r\n$3\r\n0-0\r\n*4\r\n$1\r\nf\r\n$1\r\nv\r\n$1\r\ng\r\n$1\r\nw\r\n*2\r\n$3\r\n1-0\r\n*2\r\n$1\r\nf\r\n$2\r\nv2\r\n']
+    assert[sys.text[_answer[root, ['XREAD', 'COUNT', '10', 'STREAMS', 's', '0']], '?'] eq '*1\r\n*2\r\n$1\r\ns\r\n*1\r\n*2\r\n$3\r\n1-0\r\n*2\r\n$1\r\nf\r\n$2\r\nv2\r\n']
+    assert[sys.text[_answer[root, ['XREAD', 'STREAMS', 's', '1']], '?'] eq '$-1\r\n']
+    assert[sys.text[_answer[root, ['NOPE']], '?'] eq '-ERR unknown command NOPE, or wrong number of arguments\r\n']
+    parsed = _words_of[sys.bytes['*2\r\n$3\r\nGET\r\n$1\r\na\r\n']]
     assert[int[parsed.taken] eq 20]
-    assert[int[_words_of[bytes['*2\r\n$3\r\nGET\r\n$1\r\n']].taken] eq 0]
-    assert[int[_words_of[bytes['PING\r\n']].taken] eq 6]
+    assert[int[_words_of[sys.bytes['*2\r\n$3\r\nGET\r\n$1\r\n']].taken] eq 0]
+    assert[int[_words_of[sys.bytes['PING\r\n']].taken] eq 6]
     gone = rm[root]

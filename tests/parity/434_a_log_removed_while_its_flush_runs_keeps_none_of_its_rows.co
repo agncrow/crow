@@ -11,16 +11,16 @@ use magpie, frame
 d = 'parity-434'
 gone = rm[d]
 made = mkdir[d]
-p = put[d, frame.new[v = range[50000]]]
+p = magpie.put[d, frame.new[v = range[50000]]]
 --- (a moment for the flush to claim the rows and begin writing them)
 sleep[5]
 gone = rm[d]
 made = mkdir[d]
-q = put[d, frame.new[v = [7]]]
-s = sync[d]
+q = magpie.put[d, frame.new[v = [7]]]
+s = magpie.sync[d]
 --- (and time for a flush still running to write what it would)
 sleep[1000]
-log[len[latest[d]]]
+log[len[magpie.latest[d]]]
 files = 0
 for name in ls[d]
     if ends[name, '.batch']
