@@ -407,16 +407,29 @@ pub fn ieee_at(b: &Bytes, at: i64, width: i64, little: bool) -> Result<f64, Stri
     Ok(if w == 8 { f64::from_be_bytes(bytes.try_into().unwrap_or([0; 8])) } else { f32::from_be_bytes(bytes.try_into().unwrap_or([0; 4])) as f64 })
 }
 
+/// A float as its bits are written: a NaN as the one quiet NaN, whatever
+/// bits the arithmetic left in it — x86's `0.0 / 0.0` sets the sign bit
+/// where ARM's does not, and Magpie's files had differed by it between a
+/// Linux runner and a Mac (`f64::NAN`'s own bits are not promised).
+fn one_nan(x: f64) -> f64 {
+    if x.is_nan() { f64::from_bits(0x7ff8_0000_0000_0000) } else { x }
+}
+
+/// `one_nan` at single precision.
+fn one_nan32(x: f64) -> f32 {
+    if x.is_nan() { f32::from_bits(0x7fc0_0000) } else { x as f32 }
+}
+
 /// `sys.float_bytes[floats, width, little]`: the floats' bits one after
 /// another, 8 bytes each or 4 of single precision — a chunk's worth at
-/// once, where `ieee` writes one.
+/// once, where `ieee` writes one; a NaN as the one quiet NaN (`one_nan`).
 pub fn float_bytes(floats: Vec<f64>, width: i64, little: bool) -> Result<Bytes, String> {
     let mut out = Vec::with_capacity(floats.len() * width.clamp(0, 8) as usize);
     match (width, little) {
-        (8, false) => floats.iter().for_each(|x| out.extend_from_slice(&x.to_be_bytes())),
-        (8, true) => floats.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
-        (4, false) => floats.iter().for_each(|x| out.extend_from_slice(&(*x as f32).to_be_bytes())),
-        (4, true) => floats.iter().for_each(|x| out.extend_from_slice(&(*x as f32).to_le_bytes())),
+        (8, false) => floats.iter().for_each(|x| out.extend_from_slice(&one_nan(*x).to_be_bytes())),
+        (8, true) => floats.iter().for_each(|x| out.extend_from_slice(&one_nan(*x).to_le_bytes())),
+        (4, false) => floats.iter().for_each(|x| out.extend_from_slice(&one_nan32(*x).to_be_bytes())),
+        (4, true) => floats.iter().for_each(|x| out.extend_from_slice(&one_nan32(*x).to_le_bytes())),
         (other, _) => return Err(format!("float_bytes: a float's width is 8 bytes, or 4 for single precision, not {}", other)),
     }
     Ok(Bytes(out))
@@ -1014,11 +1027,11 @@ pub fn pack(n: i64, width: i64, little: bool) -> Result<Bytes, String> {
 
 /// `sys.ieee[x, width = 8, little = false]`: a number as the 8 bytes of
 /// its IEEE 754 double, big-endian (a MessagePack float), or the 4 of its
-/// single precision.
+/// single precision; a NaN as the one quiet NaN (`one_nan`).
 pub fn ieee(x: f64, width: i64, little: bool) -> Result<Bytes, String> {
     let mut out = match width {
-        8 => x.to_be_bytes().to_vec(),
-        4 => (x as f32).to_be_bytes().to_vec(),
+        8 => one_nan(x).to_be_bytes().to_vec(),
+        4 => one_nan32(x).to_be_bytes().to_vec(),
         other => return Err(format!("ieee: a float's width is 8 bytes, or 4 for single precision, not {}", other)),
     };
     if little {
@@ -1812,6 +1825,22 @@ mod file_lines_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A NaN is written as the one quiet NaN whatever bits it holds: the
+    /// NaN x86's `0.0 / 0.0` makes (its sign bit set) is written as ARM's,
+    /// so a file of floats is the same bytes on either machine
+    #[test]
+    fn a_nan_is_written_as_the_one_quiet_nan() {
+        let x86 = f64::from_bits(0xfff8_0000_0000_0000);
+        let payload = f64::from_bits(0x7ff0_0000_0000_0001);
+        assert_eq!(float_bytes(vec![x86, payload, 1.5], 8, true).unwrap().0, [0x7ff8_0000_0000_0000u64.to_le_bytes(), 0x7ff8_0000_0000_0000u64.to_le_bytes(), 1.5f64.to_le_bytes()].concat());
+        assert_eq!(float_bytes(vec![x86], 8, false).unwrap().0, 0x7ff8_0000_0000_0000u64.to_be_bytes().to_vec());
+        assert_eq!(float_bytes(vec![x86], 4, true).unwrap().0, 0x7fc0_0000u32.to_le_bytes().to_vec());
+        assert_eq!(ieee(x86, 8, false).unwrap().0, 0x7ff8_0000_0000_0000u64.to_be_bytes().to_vec());
+        assert_eq!(ieee(x86, 4, true).unwrap().0, 0x7fc0_0000u32.to_le_bytes().to_vec());
+        // (and read back a NaN still)
+        assert!(float_values(&float_bytes(vec![x86], 8, true).unwrap(), 0, 1, 8, true).unwrap()[0].is_nan());
+    }
 
     /// ASCII text read a byte at a time splits into the words Unicode's
     /// letters and lowercase make of it

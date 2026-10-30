@@ -9,6 +9,13 @@ history says the rest.
 
 ### Fixed
 
+- A float's bytes are the same on every machine: `sys.float_bytes` and
+  `sys.ieee` write a NaN as the one quiet NaN (0x7ff8…, 0x7fc0… at single
+  precision), whatever bits the arithmetic left in it. x86's `0.0 / 0.0`
+  sets the sign bit where ARM's does not, so a Magpie file holding a NaN
+  was other bytes on the Linux runner than on a Mac, and the file
+  module's recorded digests failed there (CI's first run of Magpie in
+  Crow). The bytes a Mac wrote are unchanged.
 - A function `any`, `all` and `find` apply to each item of a list takes
   the items as they are in compiled programs too: given a list holding
   growing ints, its parameter grows, and a list of 64-bit ints or a
