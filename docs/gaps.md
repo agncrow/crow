@@ -2,7 +2,7 @@
 
 What Crow does not have yet, gathered on 2026-10-29 so each gap can be
 weighed for the [roadmap](roadmap.md). Most of it was found by writing the
-696 tasks of Rosetta Code in Crow ([rosetta/](../rosetta/README.md)): 6 could
+696 tasks of Rosetta Code in Crow ([rosetta/](../rosetta/README.md)): 5 could
 not be written, 23 were written in part ([REVIEW.md](../rosetta/REVIEW.md)),
 and the notes of many more in `rosetta/tasks.tsv` say what stood in for a
 missing piece. The rest comes from the spec's own "not built" sentences, the

@@ -57,7 +57,7 @@ in. The comparison runs code from the wiki, so it is not part of `run.sh`;
 | Result | Tasks |
 |---|---|
 | agrees | 588: 541 held to Python, 47 to another language |
-| not comparable | 42: random draws, interactive games, another input, a demonstration of the language itself |
+| not comparable | 43: random draws, interactive games, another input, a demonstration of the language itself |
 | Python wrong | 9: the page's Python is wrong and the Crow answer right, the note says how |
 | fixed | 1: Binomial transform's prime flip-flop sequence began at n = 0, the task's at n = 1 |
 | no reference | 51: no Python and no recorded output to hold the program to |
@@ -67,9 +67,9 @@ in. The comparison runs code from the wiki, so it is not part of `run.sh`;
 <!-- status -->
 | Status | Tasks |
 |---|---|
-| done | 666 |
+| done | 667 |
 | partial | 23 |
-| not-possible | 6 |
+| not-possible | 5 |
 | skip | 1 |
 | all | 696 |
 <!-- /status -->

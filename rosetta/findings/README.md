@@ -7,7 +7,7 @@ that hold them (parity and errors programs whose headers cite the task; a fix
 in the runtime may be held by a unit test instead). Run one in both modes with
 `crow run -i <file>` and `crow run <file>`.
 
-open: 1, partly fixed: 3, refused before the program runs, by decision: 2, kept as it is, by decision: 1, moot for programs: 2, fixed: 171 — 180 findings.
+open: 1, partly fixed: 3, refused before the program runs, by decision: 2, kept as it is, by decision: 1, fixed: 173 — 180 findings.
 
 ## Open (1)
 
@@ -28,12 +28,7 @@ open: 1, partly fixed: 3, refused before the program runs, by decision: 2, kept 
 
 - [`associative_array_merging-1.co`](associative_array_merging-1.co) (Associative array/Merging): a parsed value set into an empty map is held as it is (parity 431); one pushed onto an empty list held in a variable is still read as a number — packages/market, kg and features lean on that rule, so it stays (QUESTIONS.md, decided 2026-10-29) — and the stop now says why and how to keep parsed values, `push[[], …]` (parity 457)
 
-## Moot for programs (2)
-
-- [`mutex-1.co`](mutex-1.co) (Mutex): `use memory` is the standard library's own since 2026-10-28: a program cannot reach `revise`; the deadlock of two names revised in opposite orders remains for the library (lock ordering: a design question)
-- [`mutex-2.co`](mutex-2.co) (Mutex): `use memory` is the standard library's own: a function that only fails handed to `revise` is reachable only inside the library
-
-## Fixed (171)
+## Fixed (173)
 
 - [`15_puzzle_game-1.co`](15_puzzle_game-1.co) (15 puzzle game): A bare `return` in a function that answers nothing but can fail does not build compiled. Held by parity 332.
 - [`15_puzzle_game-2.co`](15_puzzle_game-2.co) (15 puzzle game): A function that answers nothing but can fail, whose body ENDS in an `if` or a `while`, does not build compiled. Held by parity 332.
@@ -159,6 +154,8 @@ open: 1, partly fixed: 3, refused before the program runs, by decision: 2, kept 
 - [`monads_maybe_monad-1.co`](monads_maybe_monad-1.co) (Monads/Maybe monad): a list literal holding an int and an error value that is only ever an error (`error[…]` itself, or the answer of a function that only fails) is an internal error in both modes, before the program runs. Held by errors j95, errors k14, errors k32, parity 394, parity 401, parity 430.
 - [`multiple_distinct_objects-1.co`](multiple_distinct_objects-1.co) (Multiple distinct objects): a collecting `for` over `range[n]`, where n can fail (`int['3']`), whose body hands the loop's int to a function whose parameter is a growing int (the function is also called with a growing int, here 3 ^ 40), does not …
 - [`multiple_distinct_objects-2.co`](multiple_distinct_objects-2.co) (Multiple distinct objects): a collecting `for` over `range[n]`, where n can fail (`int['3']`), whose body adds the loop's int to a growing int, is an internal error interpreted and does not build compiled.
+- [`mutex-1.co`](mutex-1.co) (Mutex): two revisions of process memory that each revise the other's name -- one thread revising 'a' then, inside its function, 'b'; another 'b' then 'a' -- deadlock the compiled program: it hangs for good. Held by parity 440, parity 442.
+- [`mutex-2.co`](mutex-2.co) (Mutex): a function that only ever answers an error, handed to `revise` as the revision's function, does not build compiled. Held by parity 440, parity 442.
 - [`nested_function-1.co`](nested_function-1.co) (Nested function): A function (or a struct) declared inside a function's body is refused, as Crow intends (no nested functions or closures), but the refusal reads as an internal step and names no place.
 - [`numbers_with_equal_rises_and_falls-1.co`](numbers_with_equal_rises_and_falls-1.co) (Numbers with equal rises and falls): one list holding a list of vectors (a collect whose items are list literals of numbers, `[d]`, typed List(Tensor(Int, [1]))) and a list of lists (a collect of `range[3]`, typed List(List(Int))) is an internal error in … Held by parity 382.
 - [`palindrome_dates-1.co`](palindrome_dates-1.co) (Palindrome dates): a statement `for` over a list of moments, handing its item to a function of the program, does not build compiled. Held by parity 391.

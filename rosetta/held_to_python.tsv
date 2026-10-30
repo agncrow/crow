@@ -413,6 +413,7 @@ multisplit	agrees	Python
 multiton	agrees	Python	
 munchausen_numbers	agrees	Python	
 musical_scale	no reference		
+mutex	not comparable	Python	the page's Python demonstrates a semaphore over four sleeping threads (Python 2): its lines come in the order the threads run; Crow's program holds one counter to 2 under the lock
 n_queens_problem	agrees	Python	
 narcissist	agrees	Python	
 narcissistic_decimal_number	agrees	Python	

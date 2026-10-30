@@ -1,0 +1,7 @@
+two slow increments under the lock: the counter is 2
+they took turns (200 ms or more in all): true
+a revision that fails answers its failure: only 2 to take, not 10
+the counter is still 2, and the lock is free again:
+  one more increment makes it 3
+within the revision of counter, tally (a name after it) was revised to 3
+a parallel for needs no lock: the squares of 1..100 sum to 338350

@@ -1,0 +1,87 @@
+--- Rosetta Code: Mutex
+--- https://rosettacode.org/wiki/Mutex
+--- Crow has no mutex value and no lock and unlock, by design: a stop between a lock
+--- and its unlock would hold the lock for good. Its one lock is process memory's
+--- revise[name, default, f, ...] (use memory): the name is the mutex; revise seizes
+--- it, runs f on the record held under it, holds what f answers and releases it --
+--- also when f fails, which leaves the record as it was. Inside a revision, names
+--- are taken in name order: a revision of 'counter' may revise 'tally' within it,
+--- and one reaching a name that sorts before its own -- or its own name again -- is
+--- refused, a stop, so two threads can never each hold one name and wait on the
+--- other's (the deadlock of opposite orders cannot be written).
+---
+--- Most of Crow's concurrency needs no lock: a parallel for shares nothing between
+--- its rounds, and its results are combined after it. Threads that do share state
+--- are a served app's handlers and later's background work. Below, as in the Go
+--- entry, two workers started with later -- each on a thread of its own in the
+--- compiled program; the interpreter runs later's work inline, a legal schedule --
+--- increment one counter slowly (read, sleep 100 ms, write) under the lock: the
+--- count is 2 whichever goes first, and the turns take 200 ms, not 100, because the
+--- second waits for the first. (Without the lock -- recall, sleep, remember -- the
+--- compiled program counts 1 in 100 ms: one update lost.) Two worker functions,
+--- since a second later of one function while it runs is coalesced into one more
+--- run after it.
+use memory
+
+struct Counter [value]
+
+fn slow_increment[c, ms]
+    --- runs while the lock is held: read, wait, write back
+    seen = c.value
+    sleep[ms]
+    return Counter[seen + 1]
+
+fn worker_a[]
+    _done = revise['counter', Counter[0], slow_increment, 100]
+
+fn worker_b[]
+    _done = revise['counter', Counter[0], slow_increment, 100]
+
+fn take[c, k]
+    --- a revision that can fail: where it does, the record stays as it was
+    if k gt c.value
+        return error['only `c.value` to take, not `k`', 'counter']
+    return Counter[c.value - k]
+
+fn plus[c, k]
+    return Counter[c.value + k]
+
+fn copy_to_tally[c]
+    --- inside the revision of 'counter', a name after it is revised too
+    _t = revise['tally', Counter[0], plus, c.value]
+    return c
+
+fn square[i]
+    return i * i
+
+remember['counter', Counter[0]]
+start = now[]
+later[worker_a]
+later[worker_b]
+while running[worker_a] or running[worker_b]
+    sleep[5]
+took = now[] - start
+counter = recall['counter', Counter[0]]
+log['two slow increments under the lock: the counter is `counter.value`']
+log['they took turns (200 ms or more in all): `took gte 0.2`']
+
+failed = revise['counter', Counter[0], take, 10]
+log['a revision that fails answers its failure: `failed.reason`']
+counter = recall['counter', Counter[0]]
+log['the counter is still `counter.value`, and the lock is free again:']
+_again = revise['counter', Counter[0], slow_increment, 0]
+counter = recall['counter', Counter[0]]
+log['  one more increment makes it `counter.value`']
+
+_c = revise['counter', Counter[0], copy_to_tally]
+tally = recall['tally', Counter[0]]
+log['within the revision of counter, tally (a name after it) was revised to `tally.value`']
+
+--- no lock at all: each round of a parallel for has its own values, and the
+--- results are combined after it
+squares = for i in range[1, 101]
+    square[i]
+total = 0
+for s in squares
+    total = total + s
+log['a parallel for needs no lock: the squares of 1..100 sum to `total`']
