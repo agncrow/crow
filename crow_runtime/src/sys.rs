@@ -2164,6 +2164,15 @@ mod tests {
         // reading: either way the next read answers nothing)
         let _ = send(&st, &bytes_of_text("x\n"));
         assert!(recv(&st, 64, 5.0).unwrap().is_empty());
+        // (the output closes as the shell exits, a moment before the
+        // process can be reaped, and `start` restarts an ENDED process: a
+        // loaded CI runner had asked inside that moment and been answered
+        // the same one, so the test waits for the end it relies on)
+        let gave_up = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while running(&p) && std::time::Instant::now() < gave_up {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!running(&p), "the process ended");
         let again = start("crow-no-such-command-for-the-sys-tests").unwrap();
         assert!(!Arc::ptr_eq(&p.0, &again.0), "an ended process is started anew");
         assert!(recv(&stream_of(&again), 64, 5.0).unwrap().is_empty());
