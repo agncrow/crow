@@ -770,15 +770,16 @@ history says the rest.
 ### Breaking
 
 - Magpie is a package of its own repository, not the standard library
-  (Vijay, 2026-10-29 and 30): `github.com/agncrow/magpie`, private until
-  its license is decided, holding `packages/magpie` — documented by its
-  README (the tour), REFERENCE.md (every function and part, the design
-  notes) and PARTS.md (each part at work), its `example.co` running all of
-  them in both modes — and `packages/kg` and `packages/features`, which
-  moved with it, beside the magpie example app, Magpie's parity programs,
-  its doors driven from outside (`tests/doors.py`, from the five Rust
-  tests that drove them here), its measures and its design notes. A
-  program installs it as any dependency (`deps = map[magpie =
+  (Vijay, 2026-10-29 and 30): `github.com/agncrow/magpie`, private for
+  now, under the Business Source License 1.1, holding `packages/magpie` —
+  documented by its README (the tour), REFERENCE.md (every function and
+  part, the design notes) and PARTS.md (each part at work), its
+  `example.co` running all of them in both modes — and `packages/kg` and
+  `packages/features`, which moved with it, beside the magpie example app,
+  Magpie's parity programs, its doors driven from outside
+  (`tests/doors.py`, from the five Rust tests that drove them here), its
+  measures and its design notes. A program installs it as any dependency
+  (`deps = map[magpie =
   'github.com/agncrow/magpie/packages/magpie@v0.1.0']`, `crow install`,
   with the credentials git holds for github.com while it is private) and
   calls it qualified, as a package is called: `magpie.put[d, f]`,

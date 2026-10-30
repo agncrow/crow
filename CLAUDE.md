@@ -1572,8 +1572,10 @@ steps on every push and must be green — all but Magpie's suite (the
   (`Row::grows_in_place`; the emitter takes it with `std::mem::take`, so
   `CrowTensor` has a `Default`, an empty vector).
 - Magpie is a package of its own repository (2026-10-29 and 30, Vijay):
-  `github.com/agncrow/magpie`, PRIVATE until its license is decided —
-  never make it public, and never copy its code into this repository —
+  `github.com/agncrow/magpie`, PRIVATE until Vijay publishes it (its
+  license is decided: the Business Source License 1.1, 2026-10-30) —
+  never make it public yourself, and never copy its code into this
+  repository —
   checked out at ~/code/crow_projects/magpie, holding packages/magpie
   (called qualified: `magpie.put`, `use magpie.kafka` then
   `kafka.serve`), packages/kg and packages/features (installed as
