@@ -441,40 +441,48 @@ itself. A form for that, or a fusion of `concat[out, slice[out, …]]` in
 the lowering, is the next optimization, after the file reader shows
 how much of a read it is.
 
-## 4.2 Measured: the port, 2026-10-28
+## 4.2 Measured: the port, 2026-10-28 and 2026-10-29
 
 The programs of `tests/magpie/measure/` built with `crow build` (the
 port is Crow now, so the compiled program is the comparison), each run
 once at the sizes its README names, every number the program's own (the
-median of its warm runs where it takes several). Apple M4 Max, 64 GB;
-other sessions paused, macOS's media analysis running (load 4 to 5).
+median of its warm runs where it takes several). Apple M4 Max, 64 GB.
 The kernel column is docs/magpie-design.md's "Measured 2026-10-27",
 taken interpreted on a quiet machine while the Rust kernels did the
-work. "Before" is the port as committed (49f9ad2); "after" is with the
-fixes below.
+work; the decompressor's is section 4.1's. "Before" is the port as
+committed (49f9ad2). "Round 1" is with the first list of fixes below
+(2026-10-28; other sessions paused, macOS's media analysis running, load
+4 to 5), taken with a binary that also held a fix of the Rosetta round's
+to how a text column's cells are read, since committed (b608fb2) — a
+binary built without it ran the month's copy for hours. "Now" is with
+both lists, on 921dfb7 (2026-10-29; load 3.4 to 3.9, one core held by an
+orphaned probe and one by macOS's file events).
 
-| Measure | Kernel | Before | After | After ÷ kernel |
-|---|---|---|---|---|
-| `put`, 2,000 then `sync` (per put) | 77.5 µs | 36,404 µs | 108 µs | 1.4 |
-| `latest` by key | 13.5 µs | 109.5 µs | 14.0 µs | 1.0 |
-| `batch`, durable | 12.0 ms | 69.4 ms | 13.9 ms | 1.2 |
-| summary of 2 columns by key, 200,000 rows | 2 ms | 18,958 ms | 109 ms | 55 |
-| a common word's top 10, indexed | 7 ms | 204 ms | 21 ms | 3.0 |
-| a rare and a common word, indexed | 8 ms | 208 ms | 26 ms | 3.3 |
-| a common word's top 10, scanned | 11 ms | 133 ms | 105 ms | 9.5 |
-| merge 20,000 / 100,000 vectors of 64 | 74 / 311 ms | 420 / 2,157 ms | 111 / 531 ms | 1.5 / 1.7 |
-| `nearest`, 20,000 / 100,000 | 2.0 / 9.0 ms | 15 / 54 ms | 8 / 22 ms | 4 / 2.4 |
-| 200,000 × 102 written / merged | 2.67 / 2.34 s | 10.5 / 10.9 s | 5.3 / 5.6 s | 2.0 / 2.4 |
-| graph: walk of 3 hops (1,022 nodes) | 222 ms | 1,443 ms | 1,372 ms | 6.2 |
-| graph: a node's neighbors | 3.0 ms | 12 ms | 12 ms | 4 |
-| finch's bars copied / merged | 17 / 14.5 s | 45 / 58 s | 42 / 51 s | 2.5 / 3.5 |
-| finch's NBBO copied / merged | 18.5 / 15 s | 76 / 64 s | 70 / 60 s | 3.8 / 4.0 |
-| finch's five questions, from the files | 9 / 4 / 17 / 73 / 72 ms | 17 / 15 / 43 / 172 / 72 | 16 / 14 / 42 / 174 / 70 | 1.0 to 3.5 |
-| finch's five questions, rows held | 3 / 1 / 3 / 24 / 54 ms | 1 / 1 / 2 / 22 / 18 | 1 / 1 / 2 / 23 / 18 | 0.3 to 1.0 |
+| Measure | Kernel | Before | Round 1 | Now | Now ÷ kernel |
+|---|---|---|---|---|---|
+| `put`, 2,000 then `sync` (per put) | 77.5 µs | 36,404 µs | 108 µs | 88.5 µs | 1.1 |
+| `latest` by key | 13.5 µs | 109.5 µs | 14.0 µs | 13.5 µs | 1.0 |
+| `batch`, durable | 12.0 ms | 69.4 ms | 13.9 ms | 11.9 ms | 1.0 |
+| summary of 2 columns by key, 200,000 rows | 2 ms | 18,958 ms | 109 ms | 6.9 ms | 3.5 |
+| a common word's top 10, indexed | 7 ms | 204 ms | 21 ms | 17 ms | 2.4 |
+| a rare and a common word, indexed | 8 ms | 208 ms | 26 ms | 21 ms | 2.6 |
+| a common word's top 10, scanned | 11 ms | 133 ms | 105 ms | 53 ms | 4.8 |
+| merge 20,000 / 100,000 vectors of 64 | 74 / 311 ms | 420 / 2,157 ms | 111 / 531 ms | 109 / 511 ms | 1.5 / 1.6 |
+| `nearest`, 20,000 / 100,000 | 2.0 / 9.0 ms | 15 / 54 ms | 8 / 22 ms | 8 / 22 ms | 4 / 2.4 |
+| 200,000 × 102 written / merged | 2.67 / 2.34 s | 10.5 / 10.9 s | 5.3 / 5.6 s | 2.83 / 2.95 s | 1.1 / 1.3 |
+| 50 MB decompressed | 9 ms | 34 ms | — | 18 ms | 2.0 |
+| graph: walk of 3 hops (1,022 nodes) | 222 ms | 1,443 ms | 1,372 ms | 25 ms | 0.11 |
+| graph: a node's neighbors | 3.0 ms | 12 ms | 12 ms | 4 ms | 1.3 |
+| finch's bars copied / merged | 17 / 14.5 s | 45 / 58 s | 42 / 51 s | 31 / 46 s | 1.8 / 3.2 |
+| finch's NBBO copied / merged | 18.5 / 15 s | 76 / 64 s | 70 / 60 s | 67 / 54 s | 3.6 / 3.6 |
+| finch's five questions, from the files | 9 / 4 / 17 / 73 / 72 ms | 17 / 15 / 43 / 172 / 72 | 16 / 14 / 42 / 174 / 70 | 10 / 10 / 36 / 107 / 56 | 0.8 to 2.5 |
+| finch's five questions, rows held | 3 / 1 / 3 / 24 / 54 ms | 1 / 1 / 2 / 22 / 18 | 1 / 1 / 2 / 23 / 18 | 1 / 1 / 2 / 21 / 18 | 0.3 to 1.0 |
 
 The answers agree with ClickHouse's in every run; the copies of the
-month met ClickHouse dropping connections and the driver reconnecting,
-which their times include.
+month met ClickHouse dropping connections and the driver reconnecting
+(five times in the last run), which their times include. The walk's
+0.11 is the graph package reading a hop's whole frontier as one range of
+the edges' log (below), where the kernel's version looked each node up.
 
 What the measures found, each fixed with its test:
 
@@ -521,32 +529,87 @@ What the measures found, each fixed with its test:
   `Int::add`. It walks the flat list a width at a time now, within the
   list's length.
 
+The second round (2026-10-28 to 2026-10-29), each fixed with its test:
+
+- **The decoders ran on growing ints.** A bit-packed column's decode
+  read through a cursor and a count the width pass could not bound, and
+  an `unpack` of 1, 2 or 4 bytes was any 64-bit int to it. Each width has
+  a loop of its own now, written so the pass bounds the bits held, and an
+  unpack reads within what its bytes spell (`IntRange::Unpacked`): a
+  column's scan over finch's 11.3 million bars, 224 → 79 ms.
+- **A graph's hop read the log once per node.** A hop of more than four
+  nodes reads its frontier as one range of the edges' log (packages/kg,
+  `_hop`): a walk of 3 hops, 1,372 → 25 ms.
+- **Bytes appended from a range were two copies.** `concat[a, slice[b,
+  i, j]]` made the slice, then appended it; the lowering fuses it
+  (`core.__concat_slice`, and `a = concat[a, slice[a, i, j]]` into
+  `core.__extend_within`), and the decompressor copies an overlapping
+  match as whole repeats, doubling each time: 50 MB decompressed, 34 →
+  18 ms.
+- **A scanned search placed every word of every text** in the text's map
+  of words. It places the words the query asks, unless a prefix or a
+  fuzzy word asks of every word; it reads a field of a hit where it lies
+  (a compiled program had copied a record that can fail out whole at
+  each field read); and `sys.tokens` reads ASCII text a byte at a time:
+  105 → 53 ms.
+- **The summary was a record per cell.** A unit's rows are grouped once,
+  by one int column through a map of ints, a column of numbers keeps its
+  partials per group as numbers, and the groups' counts are added where
+  they are held, so the width pass bounds them (through a local, every
+  row's count had been a growing int): 109 → 6.9 ms, the answers the
+  same to the digit.
+- **A merge skipped a lone batch,** so whether a key's older versions
+  were folded depended on where a flush had cut the rows into files —
+  which a compiled program's flush thread decides by its timing (parity
+  303 counted a summary differently in one run of three). It folds a
+  lone batch too.
+- **The writes looked a map up per cell, and the bloom filter's slots
+  grew.** A number column's distinct values are found by sorting them,
+  and 2^64 modulo the filter's size is computed so the width pass bounds
+  it: 200,000 × 102 written 5.3 → 2.83 s, merged 5.6 → 2.95 s, the files
+  the same byte for byte.
+
 What is left, and why:
 
 - **Every read parses the file's footer again**, and every `entries`
   call its block: the kernel kept both for the process (keyed by path,
-  size and change time). A graph's walk is a `lookup` per node, each
-  reading the manifest, the directory and every footer: that is its
-  6.2. Decided (Vijay, 2026-10-28): nothing is kept between calls —
-  process memory is the standard library's and a program's never, and a
-  form a derivation could call to keep a record was declined — so the
-  reads are made cheap instead: the parsers narrowed to 64 bits, a hop
-  of the graph one call for its whole frontier, a read parsing only the
-  groups and columns it asks.
-- **The encoders and decoders run on growing ints.** Positions count up
-  without a bound the width pass can see, and products of counts read
-  from bytes (`n * width`) pass 64 bits to it; a function has one
-  signature for all its callers, so one such caller makes the whole
-  chain growing — 38 of the modules' functions take a growing int
-  (packing, encode, file, merge, postings). Narrowing them at their
-  sources, as section 2.2 asks of a kernel, is the next step for the
-  writes, the merges and the reads from the files.
-- **The decompressor copies each run twice**: `slice` makes the bytes,
-  then `concat` appends them (section 4.1). A fusion of `concat[out,
-  slice[…]]` in the lowering would make it one copy.
-- **The summary is still per cell in Crow** (a record per cell, a map
-  read and written per row): 55 times the kernel at 200,000 rows, where
-  a grouping that reads the columns as vectors would not be.
+  size and change time). Decided (Vijay, 2026-10-28): nothing is kept
+  between calls — process memory is the standard library's and a
+  program's never, and a form a derivation could call to keep a record
+  was declined — so the reads are made cheap instead (the second round's
+  first two items, and a read parsing only the groups and columns it
+  asks). What keeping nothing still costs: the indexed search
+  decompresses every index block it reads at every call, two fifths of
+  its time in the decompressor's copies (2.4, where the kernel kept the
+  blocks it had read), and `nearest` reads its column of vectors from
+  the file at every call, 51 MB at 100,000 × 64 — two fifths of its time
+  in `read` from the page cache and a quarter making numbers of the
+  bytes (2.4, where the kernel kept them). A read of a region into
+  numbers where they land, or a mapped file, would narrow both without
+  keeping anything.
+- **The summary**, 3.5: each row's group is found through a map (a
+  lookup to ask, another to read), each cell's presence is a call reading
+  the bitmap, and the key column and the positions are decoded whole,
+  where the kernel grouped in Rust over the column's bytes.
+- **The scanned search**, 4.8: each text is split into a list of words,
+  a string allocated per word, and each word is matched against the
+  asked words' map, where the kernel hashed the words where they lay. A
+  row that counts the asked words of a text in the runtime would close
+  most of it; it would be a native kernel, which design rule 20 asks a
+  reason for.
+- **finch's copies and merges**, 1.8 to 3.6: a copy writes through
+  `batch` by the table's keys, so each row's key is made into text and
+  its position kept under a name of its own in process memory
+  (`<dir>/#last/<key>`), behind the registry's lock and hash — 30
+  million names for the month's bars and quotes, where the kernel kept
+  one hash map per log. The newest row of each key is already built when
+  first asked; the index built the same way would take it off a bulk
+  write. A merge's time is mostly the validity bitmaps made again from
+  truths, the encoder and its compression.
+- **Growing ints at the edges.** 41 of the modules' functions still take
+  or answer a growing int — a position, a count, a batch's number — a few
+  operations per call; in the profiles of the measures above they are at
+  most a percent or two of the time.
 
 ## 5. Open for Vijay
 
@@ -554,3 +617,10 @@ What is left, and why:
 - The flush through `later`: a put under `crow run -i` is durable when
   it answers, and slower for it (2.4).
 - `move` for a file's rename, since `rename` is the frame module's.
+- The sequencer's key index built when first asked, as the image is,
+  which would take a name per row off a bulk write (4.2: finch's copies).
+- A native row that counts a text's asked words, for the scanned search
+  (4.2; design rule 20 asks its reason).
+- A read of a file's region into numbers where they land, or a mapped
+  file, for `nearest` and the indexed search under "nothing kept between
+  calls" (4.2).

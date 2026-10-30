@@ -1478,6 +1478,17 @@ steps on every push and must be green.
   in three). And `crow test src/modules/x.co` holds a module's locals
   to the reserved names (`keys`, `read`, an import's export) where the
   module inlined into a program is not held: test the module itself.
+  It also treats the module's functions as a program's, so a helper
+  only handed to `revise` by an untyped caller is refused there: call
+  it directly once in the test. The second round (2026-10-29): the
+  width pass bounds a count kept in a list only where it is added
+  where it lies (`ns[g] = ns[g] + 1`, then `k = ns[g]`; through a local
+  it grew); the emitter reads a field of a checked local that can fail
+  where it lies (`field()`: `(h).value.f`), so a new path printing such
+  a field goes through it; and the sequencer's flush links its file
+  under the tail's lock only while its claim holds (`_committed`) — a
+  flush on a thread outlives an `rm`, and had written a removed log's
+  rows into the log made again at the path (parity 434).
 - The top level is lowered one statement at a time in the scan
   (`provisional(Pass::Scan, None, [stmt])`) and whole in the final pass:
   a rule that reads the block (`grown_by_push`, a literal of whole numbers
