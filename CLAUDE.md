@@ -52,7 +52,7 @@ scripts/coverage.sh
 Use the release binary for the layout and site suites: the debug binary
 overflows its stack there. CI (`.github/workflows/ci.yml`) runs the same
 steps on every push and must be green — all but Magpie's suite (the
-`./test.sh` line), whose repository is private: it runs here only.
+`./test.sh` line), which runs here only.
 
 ## Things that have bitten
 
@@ -1572,20 +1572,20 @@ steps on every push and must be green — all but Magpie's suite (the
   (`Row::grows_in_place`; the emitter takes it with `std::mem::take`, so
   `CrowTensor` has a `Default`, an empty vector).
 - Magpie is a package of its own repository (2026-10-29 and 30, Vijay):
-  `github.com/agncrow/magpie`, PRIVATE until Vijay publishes it (its
-  license is decided: the Business Source License 1.1, 2026-10-30) —
-  never make it public yourself, and never copy its code into this
-  repository —
+  `github.com/agncrow/magpie`, public since 2026-10-30 under the
+  Business Source License 1.1, its site the article introducing it
+  (agncrow.github.io/magpie, `site/index.html` there) — never copy its
+  code into this repository —
   checked out at ~/code/crow_projects/magpie, holding packages/magpie
   (called qualified: `magpie.put`, `use magpie.kafka` then
   `kafka.serve`), packages/kg and packages/features (installed as
-  `github.com/agncrow/magpie/packages/<name>@v0.1.0`), examples/magpie,
+  `github.com/agncrow/magpie/packages/<name>@v0.1.1`), examples/magpie,
   its parity programs, tests/doors.py (the five Rust tests that drove its
   doors here, as Python) and its design notes (magpie-design.md,
   magpie-in-crow.md). Its `./test.sh <crow>` runs `crow test --packages`,
   `--parity` and `--served` from its root and the doors: crow's gate runs
-  it, since CI cannot reach a private repository — a compiler change that
-  breaks Magpie shows only there. What moving it found in the compiler: a
+  it and crow's CI does not, so a compiler change that breaks Magpie
+  shows only there. What moving it found in the compiler: a
   linked package's own imports resolve under the package as the importer
   spelled it (`module_files` roots them at `package_dir`, never where the
   link points — a second-level file had been prefixed as the program's
