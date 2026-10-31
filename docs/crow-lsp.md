@@ -58,8 +58,8 @@ needs neither npm nor `vsce` — nor Node.js, which nothing in Crow installs
 (`vscode-languageclient` had been its one dependency, and with it npm in
 the release; 2026-10-18). From a checkout:
 ```
-python3 editors/vscode/package_vsix.py 0.7.0 crow-lang-0.7.0.vsix
-code --install-extension crow-lang-0.7.0.vsix --force
+python3 editors/vscode/package_vsix.py 0.8.0 crow-lang-0.8.0.vsix
+code --install-extension crow-lang-0.8.0.vsix --force
 ```
 (or open the folder and press F5 for a dev session), then reload the
 window. VS Code runs the copy it installed, not the folder: after any
@@ -117,7 +117,7 @@ generic LSP configuration for the language `crow` on files ending in `.co`.
   when idle, and the editor starts it again on the new binary. In VS Code
   the server's output pane, *Crow Language Server*, shows `the server left
   (exit 0)` and `starting crow lsp`, and each server names its binary, and
-  when it was written, as it starts (`crow lsp: crow 0.7.0 at …/crow,
+  when it was written, as it starts (`crow lsp: crow 0.8.0 at …/crow,
   written Oct 21 14:02`); its `serverInfo` carries the same. The extension
   starts a server that leaves at most five times in three minutes, then
   says so and waits for a reload. (A server that had outlived its install

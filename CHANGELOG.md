@@ -5,10 +5,534 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
-## Unreleased
+## v0.8.0 — 2026-10-30
+
+Agents and the standard library in Crow: the agent loop (`act`), MCP over
+HTTP and stdio, skills and subagents are modules written in Crow, and the
+compiler holds the language alone (design rule 24). A frame's column holds
+vectors, a column is written by the dot, one verb (`query`) runs every
+statement, effects have kinds, and any package may use the sys layer and
+process memory — Magpie, the storage engine built on them during this
+release, is a package of its own repository. Breaking changes first.
+
+### Breaking
+
+- The Rosetta Code run's questions, decided (Vijay, 2026-10-29;
+  rosetta/QUESTIONS.md). A function's local named like a name an import
+  makes — `e` or `mean` under `use math`, `code` under `use bits` — is
+  refused where it is written, as the same name at the top level, a
+  parameter and a loop's variable were (errors k30, k31): it had shadowed
+  the import silently. A computed whole number past 2^53 in a list written
+  down as a vector stops where the list is made, naming `push` (454): it
+  had been rounded silently, `[a, 3]` holding 2^60 for `a = 2 ^ 60 + 1`.
+  `fmt`'s zero fill goes after a number's sign, `-0042` as printf pads,
+  where it had been `00-42` (450). A page's top-level `seed[n]` runs before
+  its declarations are set, so the facts' draws are seeded (452). The
+  axis form of `concat` takes the axis as a number written down or named
+  (`axis = k`): a third piece held in a variable is joined as a piece.
+  The standard library's modules rename the 64 locals the first rule now
+  refuses in their own tests (`start`, `flushed`, `e`, `head`, …).
+- A call of a function that answers nothing, handed a value that can
+  fail, answers that failure (spec, Auto-Propagation): dropped by its
+  line, a function hands it back and the top level halts, `cannot drop
+  an error value`. It had been typed as nothing, so the failure vanished
+  in both modes (parity 370).
+- `input[]` at the end of standard input is an error value, `.ok` false
+  and reason `end of input` (333): it had answered empty text that did
+  not fail, the same as an empty line, so a loop reading lines could not
+  tell the two apart. Read lines with `line = input[]` / `while line.ok`.
+- A variable, a parameter or a loop variable named like one of the
+  program's own functions is refused where it is defined (spec, Names
+  Are Never Ambiguous): `fn first[scores]` beside `fn scores[x]` had read
+  `scores[0]` as the function's call, a silent wrong answer in both
+  modes. A record's name read as a value (`p = Point`) is refused with
+  the fix (it had been an internal error), and a number written with an
+  exponent (`3.301e23`) is refused saying Crow writes none — `3.301 *
+  10.0 ^ 23`, or `float['3.301e23']` — where it had been read as a
+  second statement.
+- One value for several names is refused before the program runs, in
+  both modes (spec, Multiple Assignment; Design Note: No Destructuring):
+  `a, b = xs` and `c, d = pair[]` had run interpreted and not built
+  compiled. The refusal gives the form in the program's names (`r =
+  pair[]`, then `c = r[0]`, `d = r[1]`). Values of another count than
+  the names are refused too: a value past the names had been dropped,
+  and a name past the values left unset.
+- A loaded file's empty cell is missing in a column the program's reads
+  type: read one at a time it is an error value of reason `missing`,
+  `.ok` false, in both modes and for a page's data source too, as the
+  spec says. The reads had typed the cells plain, and a missing cell had
+  read as `''` or NaN with `.ok` true. A program that decides on one now
+  meets the refusal a failed value meets, and a list of such cells used
+  as a mask is refused: fill the column first. On the way, a call
+  answering a list of values that can fail, given an argument that can
+  fail, builds compiled, and an item read from such a list keeps its
+  failure.
+- A module of the program's takes no standard module's name (spec,
+  Importing): `use math` where a `math.co` of the program's lies — or a
+  package `math` under `crow_modules/` — names two modules and is
+  refused at the import, naming the file and how to rename it. The
+  import had reached the standard module silently, and the file's
+  functions failed as the program ran. The standard library's own
+  sources are not the program's.
+- A column is written the way it is read (spec, Frames): `df.name =
+  values` writes a column where the frame lies — a new column, or one
+  replaced; a scalar repeated down the rows — and `with` is gone from
+  the language (an unknown name now). After a dot a column's name reads
+  as text does, a backtick inside it an interpolation: `df.lag_`k` = …`
+  and `df.`name` = …` write a column by a computed name, and read one
+  the same way; a header no dot can write is reached as `df.`'in px'``.
+  `frame.new[a = xs, b = ys]` stays, each column such a write. Values of
+  another length than the rows stop the program where `with` had
+  answered an error value. `crow fix` has no rule: write `x = with[x,
+  'n', v]` as `x.n = v`, a chain over `frame.new[]` as the literal, and
+  a `with` in expression position as a write on the line before.
+- One statement verb (spec, db, Statements): `query` runs every statement
+  and answers a frame — the rows a SELECT answers, the rows a RETURNING
+  clause reads back, an empty frame for a statement that answers none.
+  `exec` is gone: write `query`, and a write that must say what it
+  touched reads it back with `RETURNING`; the count of rows affected is
+  not answered. Whether a call reads or writes is the statement's to say:
+  a literal SELECT, VALUES, SHOW, EXPLAIN, DESCRIBE or PRAGMA asked is a
+  read, anything else a write (RETURNING included), and a statement
+  built as the program runs is a write — a derivation that hands one is
+  refused, the fix being the literal with `?` for its parameters.
+  `migrate[conn, dir]` is gone too: migrations are the tool's, `crow db
+  apply <dir> <url>`, beside `crow db diff`. The db module is `connect`,
+  `query`, `insert`, `transact` and `describe`. On the way: a ClickHouse
+  statement that answers no rows had failed through `query` ("the rows
+  end early"); it answers an empty frame now.
+- Effects have kinds (spec, Effects Have Kinds): each builtin's row says
+  what it reaches — `console`, `files`, `files.write`, `network`,
+  `db.read`, `db.write`, `mail`, `clock`, `random`, `input`, `process`,
+  `exit`, `shell`, `session`, `waits`, `serving` — and every rule about effects
+  is stated by kind, once. What changes for a program: a view may reach
+  nothing but the console, the clock (one moment per event) and a draw,
+  and a derivation only reads (`files`, `network`, `db.read`, `clock`,
+  `process`) —
+  a view reading a file or querying a table (the book had taught "query
+  at render time"; a derivation is where a page reads a table), a
+  derivation sending a notice, had passed and were performed at every
+  render; a call the context cannot hold is refused in one wording
+  whatever the builtin, naming the function it is reached through
+  (`mail`'s own wording goes). In a handler, a failed argument stops the
+  handler only for an effect held to its commit (`session`, `db.write`,
+  `mail`); a read, a request, a query or a command with a failed argument
+  answers the failure, as any call does. `exists` is an effect (`files`),
+  so a loop over it keeps its order and a derivation may read it; `args`
+  and `env` are stamped with their capture moment, as reads of the world
+  are. `crow check`'s reach names a file's effects by kind (`db.read`,
+  `db.write`, `files.write`, `shell`, `input`, `waits` where it said
+  `database`, `files`, `shell`, `process`).
+- `chat`'s and `follow`'s `max` option is `tokens` (`chat[m, talk, tokens
+  = 200]`): the module's options are its functions' defaults now, and a
+  parameter may not be named like a builtin. A conversation's next user
+  turn is `asked[talk, text]`, beside `said[talk, reply]` and `told[talk,
+  call, text]`; `ask[text]` still begins one. A program that bound `asked`
+  as a name of its own under `use llm` is refused, as any clash with an
+  import is: rename it.
+- A tensor compared with a number is a mask of its shape: a matrix's is
+  its rows of bools (`[[1.0, 2.0], [3.0, 4.0]] gt 2.0` is `[[false,
+  false], [true, true]]`), as numpy's is. `where` over it keeps the matrix
+  (it had answered a vector), `not`, `and` and `or` keep its rows, `sum`
+  counts it, and `m[m gt 2.0]` is the matrix's numbers where it is true
+  (it had stopped). A tensor whose rank the program does not show,
+  compared with a number, is refused, naming it.
+- `min` and `max` answer NaN where a NaN is held — of a tensor, along an
+  axis, of two numbers — as numpy's do and as `sum` carries one (a NaN had
+  been passed over), and of no numbers the program stops (`max of
+  nothing: an empty tensor has no largest number`; they had answered
+  `-inf` and `inf`).
+- `split[s, '']` is the text's characters, with no empty piece at either
+  end (`['', 'a', 'b', 'c', '']` is `['a', 'b', 'c']`), and of empty text
+  `[]`. A walk that skipped the ends by position (`slice[cs, 1, len[cs] -
+  1]`) now drops real characters: walk `split[s, '']` as it is.
+- `gamma_dist[α, β, n]`'s β is the rate, the mean α/β — the textbooks',
+  R's, Stan's and PyTorch's (α, β) — so `gamma_dist[1.0, λ, n]` is
+  `exponential[λ, n]`. It had been the scale, the mean α·β.
+- A `later[f]` asked again while `f` is in flight runs `f` once more when
+  it ends, from the state as it then stands, however many arrive
+  meanwhile; it had been skipped, and a page could keep the earlier run's
+  answer where the interpreter, running each inline, showed the latest.
+
+### Added
+
+- Magpie, a storage engine written in Crow — an ordered log kept as a
+  directory of files written once, read as the current state, a change
+  stream, a search, the nearest vectors, an aggregate and an as-of join,
+  with HTTP, Kafka and Redis doors — is a package of its own repository,
+  `github.com/agncrow/magpie`, under the Business Source License 1.1,
+  with a knowledge graph (`packages/kg`) and a feature store
+  (`packages/features`) beside it; its book and the article introducing
+  it are at agncrow.github.io/magpie. Built during this release, it
+  stands on what the release adds to the sys layer and on `use memory`,
+  and needs Crow 0.8.0 or later.
+- `stack[frames]` in `use frame` stacks a list of frames in one pass, as
+  `stack[tensors]` stacks tensors (two at a time had copied the whole at
+  each step).
+- `terms[text]` on the sys layer: the words of a text, split as a search
+  index and a query split them.
+- `concat[a, b, c, …]` joins any number of pieces, as `concat[[a, b,
+  c]]` joins a list written down (453); `sort` orders fractions and
+  decimals by value (456); math's `sum` of a list of ints is an int with
+  every digit, so `sum[xs] % 10` runs (451); and a list of 0s an item of
+  which is written a record holds records or none, its 0s none — the
+  empty buckets of a hash table (455). Vijay, 2026-10-29.
+- `atan2[y, x]` of two numbers is a number, by the tensor's rule (two
+  numbers had been refused, where `sin` of one is its number).
+- `use memory` (`remember`, `recall`, `revise`, `forget`, `canonical`):
+  process memory — a record a program holds for the process under a name,
+  shared by its threads, one kind of record per name, the names a tree (a
+  name forgotten with every name beneath it), a path's records forgotten
+  when `rm` removes the path. `revise` runs a function under the name's
+  lock and hands it the record, copying it only where the function's
+  answer can fail. Reading is the `held` effect, every other call
+  `held.write`; the compiled program holds each record as its own type
+  (`crow_runtime::memory`), alike in both modes.
+- `wrap[x]` in `use bits`: a whole number's low 64 bits as the int of
+  those bits, with a growing form.
+- `wrapmul`, `wrapadd` and `wrapsub` in `use bits`: arithmetic wrapped to
+  64 bits — a hash's multiply per byte, a linear congruence, a checksum,
+  an offset from a base — which ints that grow had no way to say; and
+  `float_bytes`/`float_values` on the sys layer, a chunk's floats as their
+  bits at once.
+- Bytes written in place, on the sys layer (for Magpie's kernels, rewritten in Crow): `bytes[n]` (zero bytes to
+  write into), `set[bytes, i, v]`, `push[bytes, v]`, and `concat[a, b]`
+  appending where `a` lies — each in place where nothing else holds the
+  bytes, in both modes, through the take bridges and the emitter's taken
+  path the tensors and texts already use; the lowering's split of a
+  self-reading write (`taken_in_place`) applies to any module's in-place
+  row now, not the core's alone.
+- Numbers in bytes, files by region and columns as their parts, on the
+  sys layer (for Magpie's kernels): `pack[n, width,
+  little]` and `unpack[bytes, at, width, little, signed]` (an int as its
+  1, 2, 4 or 8 bytes and back), `ieee[x, width, little]` and its reader
+  `ieee[bytes, at, width, little]`, `digest[bytes, 'crc32']` and `hash[…,
+  'crc32']`; `file[path, from, n]` (a region read without the rest),
+  `modified[path]`, `flushed[path]` (written through to the disk),
+  `link[from, to]` (a name claimed once) and `move[from, to]`; and a
+  column as its parts — `cell_kind`, `ints_of`, `floats_of`, `bools_of`,
+  `millis_of`, `zones_of`, `vectors_of`, `vector_width`, `text_bytes_of`,
+  `text_ends_of`, `present_of`, `missing_in` — and back, `ints_column`,
+  `floats_column`, `bools_column`, `moments_column`, `vectors_column`,
+  `text_column`, `text_dict_column`, with no value per cell.
+- A column of vectors (spec, frame: "A `vector` column"; design
+  rule 24's one exception this round, on Vijay's word): a frame's
+  column holds vectors of one width — an embedding per row — written
+  from a matrix or a list of vectors, read one cell at a time as a
+  tensor and whole as its matrix (`tensor[df.e]`), shown as a tensor
+  shows, carried through the verbs that need no order (a mask, `select`,
+  `head`, `stack`, `join`, `group` with `count`/`first`/`last`, `where`,
+  `unique`, `pivot`), refused by the ones that do (`sort`, a `sum` or
+  `mean`, `rank`, `fill`, `unpivot`, a text function) in both modes with
+  one wording, saved as JSON records or Parquet (a fixed-size list of
+  float64) and read back, and refused by CSV. The cell's type is a
+  tensor inside the column's, so the compiler gained no type. Magpie
+  holds such a column as a float chunk of rows × width and finds the rows
+  nearest a query vector. The frame runtime's unit tests, the
+  self-check's `colvec` value and a book block hold the column.
+- `sys.filesize[path]`: a file's bytes from its metadata.
+- MCP over stdio (spec, mcp: The stdio transport): `server[command =
+  'npx -y @modelcontextprotocol/server-filesystem /tmp']` names a server
+  by the command that runs it, as `shell` takes a command; the process
+  starts at the first message, stays while the thread that started it
+  lives — one per command on each thread, so a served program's handlers
+  never share one — and is started again if it ends; each request is one line on its input with
+  the `_meta` every request carries, the response the line carrying the
+  request's id, notifications and late answers passed over, a line that
+  is no message refused with its words; the server's standard error is
+  the program's. `discover`, `catalog`, `tool` and the loop's `servers =
+  [s]` are the same calls over either transport. `listen[tools = [f,
+  g]]` makes a Crow program such a server over its own standard streams,
+  answering as `answer` answers a route — and a legacy client's
+  `initialize` is refused naming the revision spoken, on both transports.
+- A process the program talks to, in the sys layer (spec, sys):
+  `start[command]` runs the command through `sh -c` with its standard
+  input and output piped and answers a socket — `send` and `recv` on its
+  stream, `leftover` and `unread` for what a read took past a message —
+  one process per command on each thread; `close` of its stream ends
+  it as the MCP stdio transport says a client ends its server: the input
+  closed, its exit waited for, then TERM and KILL to its process group.
+  No new handle kind: a process is a socket, as a WebSocket's connection
+  is.
+- The agent loop, `act` (spec, llm: The loop is the module's):
+  `act[m, talk, tools = [f, g]]` runs the model's tools until it answers
+  or a limit stops it — each reply's calls answered by the tool of its
+  name through `apply`, a name no tool has, an argument of the wrong
+  kind and a tool's own failure each told to the model as a failed
+  result that says why, so every call is answered; `rounds` (8) and
+  `budget` (tokens in all) as the limits, stopping after a reply's calls
+  are answered so the conversation stays well-formed. Answers a record:
+  `text`, `stop`, `rounds`, `usage`, `talk` and `steps`, a frame with a
+  row per model call and tool call. `told[…, failed = true]` tells a
+  failure by hand; Anthropic's wire carries it as `is_error`. Written in
+  Crow in the module (docs/agents-design.md).
+- The loop's gate: `allow = [g, h]` names functions of the call, each
+  asked before a tool runs and answering a bool; a call one refuses is
+  told to the model as a failed result (`remove is not allowed by the
+  program`, `how` `refused` in the steps frame) rather than run, and a
+  gate that takes another count of parameters or answers another kind is
+  the call's error before any model is asked.
+- A subagent is a tool that runs the loop (spec, llm): a function the
+  parent model calls, whose body runs `act` with a model and a tool list
+  of its own and answers the inner run's text — nothing new in the
+  language, verified in both modes against a server that scripts a
+  delegating run and against a local model. A run that failed fails the
+  tool, so the parent model hears a failed result that says why; the
+  parent's steps frame shows the delegation as one tool row whose `ms`
+  covers the inner run, and the inner run's steps are the tool's own to
+  read.
+- The loop's context, skills and servers: `keep = n` cuts the tool
+  results of rounds older than the last n to a stub naming their size,
+  `compact = n` asks the model for a summary once a reply has read n
+  tokens and goes on from the summary alone, `skills = folder` reads a
+  folder of skills in the Agent Skills format (agentskills.io: each
+  skill's `SKILL.md` frontmatter held to the standard's rules), names
+  them in the system prompt and lets the model load one, and the files
+  it refers to, through the tools `skill` and `skill_file`; `servers =
+  [s]` adds the tools MCP servers offer, called on the server.
+- `use mcp` (spec, section 13): the Model Context Protocol, revision
+  2026-07-28, over Streamable HTTP — `server[url]` names an endpoint,
+  `discover[s]`, `tools[s]` and `tool[s, name, given]` ask it, and
+  `answer[req, tools = [f, g]]` in a POST route makes a Crow program a
+  server over the functions themselves (`server/discover`, `tools/list`,
+  `tools/call`, the errors the protocol names). Written in Crow on
+  `request`; tests/mcp.rs drives both directions in both modes.
+- An agent with traces, evals and a page, `examples/agent` (the fourth
+  reference app; docs/agents-design.md, Traces, evals and a page): a
+  support agent over a shop's orders in SQLite — three tools, the refund
+  behind the program's gate — every run written to the database as a
+  trace (a row per run with its question, model, answer, stop, rounds,
+  tokens and milliseconds; a row per step, the loop's own frame handed to
+  `insert`) and a page over the traces, the tokens and the latency of
+  each run charted; evals as `test` blocks replayed from recorded
+  fixtures in both modes — exact checks on the steps frame (the tools
+  called in order, the gate's refusal, the stop) and a model-as-judge
+  asked for PASS or FAIL — and a page that asks the agent and shows the
+  run's steps. Nothing new in the module: the judge is a `chat` with a
+  rubric, kept in the example.
+- The package lock holds the bytes (spec, Package Manager): `crow.lock`
+  records the hash of each dependency as installed beside its commit,
+  every command that reads a program refuses a package changed by hand
+  under `crow_modules/` until `crow install` restores it, and an install
+  refuses a fetch of a locked commit that hashes otherwise. A requirer
+  may attest the hash it verified after the version
+  (`…@v0.1.2#sha256:…`), in a program's crowfile or a package's, and the
+  install holds the bytes to every attestation it meets. Two requirements
+  of one package at tags of one major take the higher, saying so, where
+  any two sources had been refused; tags of two majors, branches and
+  commits that differ still are.
+
+### Changed
+
+- A program builds as fast with a package as with a standard module:
+  an imported file's functions that nothing the program reaches names
+  are dropped before it is typed, as the standard modules' inliner keeps
+  only what a program reaches (a program had lowered every function of
+  a package it imported: 424 of Magpie's where its windows reach 239),
+  and the checks read a name's rows from the table's index, where
+  `check_call` had scanned the table once per call and once more per
+  import, and an arity's refusal text twice for every row tried. A
+  program over Magpie lowers in 1.6 s; it took 8.5 s, and 1.5 s when
+  Magpie was a standard module.
+- `sys` and process memory (`use memory`) may be imported by any program
+  or package (Vijay, 2026-10-29: keeping them to the standard library is
+  a suggestion, not a rule). They are meant for library code — the
+  standard library, and a package that needs a kernel's speed, which can
+  now live outside the standard library — and a program still serves and
+  connects with `serve` and `connect`. They had been refused outside the
+  standard library before the program ran; the harnesses' door that let
+  the book, the parity corpus and the errors corpus show them is gone
+  (`CROW_SYS` stays as the self-check's door to a driver's module, which
+  a program reaches through `use db`).
+- `later[f]` in a compiled script coalesces where it had skipped: a
+  schedule of `f` while `f` runs makes it run once more when it ends, so
+  its last run reads every write made before it (spec §15; the sequencer's
+  flush). The interpreter runs the work inline, as before.
+- `crow fmt` indents at four spaces, the unit every document, the book
+  and the standard modules write (it had normalized every file to two),
+  and reads levels from the nesting: a line inside a bracket moves with
+  its statement, keeping its alignment, and the lines a string written
+  across lines runs onto are left as written. One continuation aligned
+  at an odd width had multiplied every level of a file
+  (`tests/layout/conformance.co` came out four times as deep), and a
+  string's lines had been re-indented, changing its text.
+- `crow help` lists every command and flag the binary takes, one line
+  each, on standard output, held by a test to the flags the binary
+  reads; `crow file.co` is documented as the short form of `crow run
+  file.co`.
+- `crow new --db` declares the program's tables as the db section does:
+  `db/schema.co` holds a `setup[conn]` running `CREATE TABLE IF NOT
+  EXISTS users (…)`, and `main.co` opens `sqlite://<name>.db` and hands
+  it to `schema.setup`; `crow db diff` drafts what a database lacks of
+  them. The scaffold lists no migrate job.
+- `crow check`'s rules for a view that queries, reads a file or waits
+  are gone — a remote query in a view, its `--- crow: remote-render`
+  acknowledgment, and blocking rooted at a view — since the compiler
+  refuses such a view first; blocking in a handler stays.
+- A name beginning with `_` is one `crow check` asks nothing of: `_kept
+  = rm[tmp]` keeps a failure it ignores, and the unused-variable advice
+  names that form (it had said "use _", which parses nowhere).
+- `.coc` bytecode is no longer read (nothing wrote it since `crow
+  compile` went): a project's `main.coc` and `crow x.coc` are not Crow
+  files.
+- A call a view may not make is sent where its kind belongs (spec,
+  Effects Have Kinds): a read a derivation may make — a file, the
+  network, a database, the process's environment — to a derivation the
+  view reads (``read it in a derivation the view reads — `derive x`
+  above the view, returning it``), as the book teaches, and a write or
+  any other kind to a handler, as before; a call of several kinds goes
+  where the one a derivation cannot hold says (`recv`, which waits, is a
+  handler's). Every refusal had sent the call to a handler.
+- A method call written as another language writes one is taught the
+  Crow form there is, never a function Crow lacks (spec, Error
+  Messages): `datetime.now()` names `now[]` (it had said `now[datetime,
+  …]`), `xs.includes(1)` and its kin name `1 in xs` (it had said
+  `includes[xs, …]`), a call through an imported module is that call in
+  square brackets, a value's method is the builtin of its name with the
+  value first (`upper[s]`), and anything else is told that a call is
+  `f[x]`.
+- The examples reach `claude-sonnet-5-5` (they had named
+  `claude-sonnet-5`): llm's hint, its tests, the spec, the book and the
+  design notes.
+- The core's names are held, not frozen (spec, Three namespace tiers;
+  the book's chapter 8): until 1.0 a core name is added only as a
+  breaking change the changelog lists first, since a name it reserves
+  may be one a program used, and from 1.0 the core does not grow. The
+  spec had said the core never grows while `occurs`, `translate`,
+  `decimal`, `fraction`, `halt` and `bucket` joined it this month.
+- `packages/models`: `search` answers `Search[best, score, scores]`, the
+  best candidate's mean in `score`; the field had been `scorer`, a slip
+  of the rename of the function parameter beside it.
+- The comparison's ratings follow the measurements of 2026-10-21: Go's
+  performance is 9 beside Crow's (comparable on the seven programs),
+  Crow's parallelism 8 (data-parallel only: requests and queries never
+  overlap) and its data structures 7 (frames, tensors, exact numbers,
+  moments).
+- The documentation no test reads describes the language as it is
+  (2026-10-21): `docs/crow-for-llms.md` (moments as a kind, `in`, ints
+  that grow, and the modules a generator reaches for — frames, db, web,
+  llm, mcp — every block run), the feature map, the by-example index,
+  Appendix B, the comparison (the measurements of 2026-10-21, a section
+  on language models), every command and flag in `docs/usage.md` and the
+  book's toolchain page, `crow check`'s and the language server's notes,
+  the db, frame and math notes, the roadmap's status, and the docs index
+  (ten notes it had not listed). In the spec: the error kinds the
+  modules answer (`'http'`, `'socket'`, `'auth'`, `'mail'`, `'llm'`,
+  `'mcp'`) and what answers `'time'`; a handler's stop by effect kind; a
+  dynamic cell read as its use implies; the project layout as the
+  toolchain reads it (no folder is discovered but `jobs/`, through the
+  crowfile); the note "a moment was a number" marked superseded.
+- A parameter read by its fields, and typed by nothing else, is a parsed
+  value (spec, Tools are the functions): a function called by name —
+  the loop's gate, a tool taking an object, an MCP server's — had been
+  refused as "typed by nothing — read it in the body", which its body
+  did. A parameter any call types keeps that type; the rule only fills
+  the case the compiler refused.
+- The book's standard-library pages (`docs/book/src/stdlib/`) are
+  generated for every module the manifest lists that has a section of
+  its own in the spec, in the manifest's order; a hand-kept list in the
+  docs check had lacked a module's page while the book's index linked it.
+- The shape of the tensor a builtin answers is declared on its row
+  (`table::Shape`, a fixed vocabulary: an argument's own shape, a
+  broadcast, a dimension per size, each dimension stated, a reduction, a
+  join along an axis, a transpose, rows stacked, a decomposition's
+  pieces), read where the call is typed; the compiler's rule by name is
+  gone (docs/extending-crow.md, phase 6). What a program sees: the rank
+  of every builtin's answer as before, and a list handed where a tensor
+  is taken keeps the rank it had as a list. A row that answers a frame
+  declares its columns where its kernel fixes them (doc's `chapters`,
+  chart's `macd`), and `query`'s row names its provider: what a database
+  says a literal statement answers — asked, kept, typed from the
+  statement where SQLite does not say, marked where it can hold NULL —
+  is crow_db's (`crow_db::describe`), handed the connection's literal
+  URL, the statement and the tables the program declares; the form that
+  opens a connection says so on its row (`Prop::Connects`). What a
+  program sees is as before.
+- A handle — a database connection and a transaction's, a socket, a
+  stream, a mailer, a response, the server's app, a test's app session —
+  is one kind to the language (spec, Type System: Handles), declared
+  once beside its module's rows with its name, its word, the type the
+  compiled program holds it as and whether a session may hold it; every
+  rule about handles (moved not copied, not indexed, not JSON, equal to
+  no other, shown as its word, a fact of one the process's) reads the
+  one declaration where it had listed the kinds (docs/extending-crow.md,
+  phase 5). What a program sees: `type[x]` and the words of a refusal are
+  as before.
+- A builtin that takes a function declares it on its row, with its
+  signature (`any`, `all`, `find`, `later`, `running`, `stream`, `route`,
+  `transact`, a chart's `seek`): inference hands the function its
+  parameters from the declaration, the kinds check refuses anything else
+  in the row's words, the width pass and the classification read the
+  same declaration — each had been a list of the builtins' names in the
+  compiler (docs/extending-crow.md, phase 4). A list literal of functions
+  is a group, held by name: a call through one is a dispatch the compiler
+  writes (the members take and answer one kind), and members of several
+  signatures are described and called by name alone (spec,
+  Specialization). The standard modules describe and call functions
+  through sys's `describe[f]` and `apply[f, args]`; llm's tools are
+  described in the module (`chat`'s and `follow`'s schemas were the
+  compiler's), so a tools list may hold functions of several signatures.
+- The compiler holds the language and nothing of any module (design rule
+  24; docs/extending-crow.md): what a builtin is — its options and their
+  defaults, its effects, its in-place and growing forms, the range of the
+  int it answers, the crate feature it needs — is declared on its row, and
+  what a module is on its manifest (`modules::MODULES`); the compiler's
+  hand-kept lists of names, which had disagreed with each other, are
+  gone, and `src/freeze.rs` fails when a compiler file learns a module's
+  or a builtin's name. No program behaves differently, except where a
+  call's options are refused: the wording comes from the rows now
+  (`window[] takes 3 arguments, then n = 0, by = [], span = 0.0, on = ''
+  by name`), and `fmt[t, 'HH:mm']` with the style given by position is
+  the time style's, where it had been refused. `use web.ui` is a ui
+  program to every check, as it was to the lowering.
+- `crow test --modules` runs every standard module written in Crow
+  against its own test blocks, from the manifest.
+- A standard module written in Crow declares its functions by writing
+  them (phase 2 of docs/extending-crow.md): a top-level function with no
+  leading underscore is what a program calls, typed by its use as any
+  function is, its options its defaults — which may now be `[]` or
+  `map[]` — and a helper begins with an underscore. The statistics, the
+  neural-network formulas, the token functions, a socket's `socket` and
+  `close`, the model functions and the protocol's own are such functions
+  now; 45 rows of the builtin table are gone with the JSON text the
+  values had crossed them as. A misuse inside one is refused
+  naming it and the program's line (`in relu: clip[] takes numbers, got
+  an int`). The effects (`read`, `write`, `request`, `mail`, the readers,
+  a socket's `send` and `recv`), the variadics (`randn`, `normal`,
+  `anova`), `msgpack` (a value of any kind, kept as it is) and the
+  database drivers keep their rows until their phases.
+- The VS Code extension depends on no npm package: it speaks LSP to `crow
+  lsp` itself, in one file of plain JavaScript over VS Code's own API, and
+  is packaged by Python's standard library. No workflow runs Node.js: the
+  release, CI and the book's site use git, rustup, `gh`, Python and curl
+  where they used GitHub's JavaScript actions, npm and `vsce`. The
+  extension is published to Open VSX with each release; the Marketplace
+  takes the release's `.vsix` by its web page.
+- `rsi`'s warm-up is the spec's: from the second row, the mean gain and
+  loss of the deltas there are until `n` have come, then Wilder's
+  smoothing — as it was, now written down and held to a reference.
 
 ### Fixed
 
+- A row its children fill exactly fits in the layout engine (`fits`,
+  `box`): sized to its children by the row around it, the row subtracted
+  their widths and gaps in another order than it had added them, and the
+  floats differed in their last bits — `fits` answered false for the
+  Magpie book's top bar at 1280 pixels. A row overflows when it is short
+  by a hundredth of a pixel or more, and a wrapping row breaks before a
+  child only past that.
+- A missing cell reads as one placeholder through the sys layer's column
+  rows in both modes (0, 0.0, false, empty text, zeros), where the
+  interpreter had handed a float back as NaN and the compiled program as
+  what was written.
+- `rm` of a directory removes it where a writer added a file while it
+  was being emptied (a parity program had left its directory behind).
+- An int `unpack` reads from 1, 2 or 4 bytes is known to lie within what
+  those bytes spell, of either sign (`IntRange::Unpacked`), so arithmetic
+  over it stays in 64 bits: it had been any 64-bit int to the width pass,
+  and sums over such fields grew.
+- `hex` writes its digits from a table, where it had formatted each
+  byte.
 - A package linked into `crow_modules` names every file it brings by
   the package, however deep its own imports go. A file its main file's
   import imported had been prefixed as the program's own — the package's
@@ -73,7 +597,6 @@ history says the rest.
   are not seen: its call of one stopped the interpreter, "does not run
   'total' yet" (parity 439). A function is a module's when the module's
   source declares it.
-
 - A float's bytes are the same on every machine: `sys.float_bytes` and
   `sys.ieee` write a NaN as the one quiet NaN (0x7ff8…, 0x7fc0… at single
   precision), whatever bits the arithmetic left in it. x86's `0.0 / 0.0`
@@ -88,17 +611,6 @@ history says the rest.
   no item's range to the parameter, so a list of growing ints was handed,
   item by item, to a parameter held in 64 bits, and the program did not
   build (parity 438; fuzz seed 1793331019).
-- A Magpie log removed while its flush ran keeps none of its rows in
-  compiled programs too. The flush runs on a thread of its own there, and
-  one that had claimed the rows before an `rm` wrote them a moment later
-  into the log made again at the path: 50,000 removed rows read back
-  beside the new log's one, and once its one row was lost, since the old
-  flush's settling trimmed the new log's pending rows (parity 434; the
-  interpreter flushes inline). A flush now writes a file of its own
-  claim's and links it under the tail's lock only while the claim holds,
-  which `rm` lets go with the tail; and `rm` removes a directory again
-  where a writer added a file as it emptied it (parity 302 had left its
-  directory behind).
 - `sys.tokens` reads ASCII text a byte at a time, where Unicode's
   letters and lowercase are ASCII's (the words the same): Magpie's
   scanned search, a quarter of whose time had gone to decoding characters
@@ -108,49 +620,10 @@ history says the rest.
   lies once the line has checked the value, as it reads a record's: the
   record had been copied out whole, its lists and all, at each field read
   (Magpie's scanned search copied every hit at each of its fields).
-- Magpie's summary counts each group's rows in 64 bits: the count was
-  added through a local (`k = ns[g] + 1`, then `ns[g] = k`), which the
-  width pass does not read as a sum bounded by its rounds, so it grew,
-  and every row's mean divided by a growing int made a float. 200,000
-  rows by 100 groups summarised in 7.5 ms, where they had taken 8.6 (the
-  Rust kernel's 2).
-- Magpie's writes: a number column's distinct values for its filter are
-  found by sorting them, where a map had taken a lookup and an insert
-  for every cell (the filter and the count the same, byte for byte), and
-  a bloom filter's slots are computed in 64 bits — 2^64 modulo the
-  filter's size had been any 64-bit int to the width pass, so each slot's
-  sum went growing. 200,000 rows by 102 columns written in 2.9 s and
-  merged in 3.1 s, where they had taken 5.3 and 5.6 (the Rust kernel's
-  2.7 and 2.3).
-- Magpie's `merge` folds a lone batch into a segment too, where it had
-  answered '' for fewer than two live files: whether a key's older
-  versions were folded had depended on whether a flush cut a `put` and
-  the `batch` after it into one file or two — which a compiled program
-  decides by its flush thread's timing, so parity 303 counted a summary
-  differently in one run of three (the interpreter flushes inline). A
-  merge now answers the same however the rows reached files; a time
-  series merged keeps its rows with `every = true`, as the as-of test
-  now says. And the unit test lowering the parity corpus opens the
-  harness's door for its thread alone, as the parity harness opens it
-  for its programs (it had exited the test process on a program that
-  imports process memory).
 - A column read by a computed name of a frame that can fail — `g.`c``
   of a function's frame, as a summary's is — propagates the frame's
   unwrap, as a pick does: compiled, the call had read the frame as it
   was held, and the program did not build (parity 381).
-- Magpie's summary groups each unit's rows once — each row's group as
-  its place among the groups, through a map of ints where the key is one
-  int column — and keeps a column of numbers' partials per group as
-  numbers, made records once the rows are read: a group's record had
-  been read out of a map and written back for every row (a summary of
-  two columns by key over 200,000 rows 96 → 9.8 ms; the answers the
-  same to the digit, held by the kernel's recorded digests and a new
-  test of the int key).
-- A search that scans a batch's texts places only the words the query
-  asks in each text's map of words to positions, unless a prefix or a
-  fuzzy word asks of every word: every word of every text had been
-  placed, a list copied out of the map and back for each (a common
-  word's top 10 over 100,000 batched texts 108 → 70 ms).
 - Bytes appended from a range are one copy: the lowering fuses
   `concat[a, slice[b, i, j]]` into `core.__concat_slice`, and the split
   it makes of `a = concat[a, slice[a, i, j]]` — the slice held, then the
@@ -162,19 +635,6 @@ history says the rest.
   time, where it had been copied a byte at a time. And `unpack` reads its
   bytes where they lie, where a copy reversed had been an allocation at
   every field a decoder read.
-- Magpie's reads made cheap, as Vijay chose over keeping anything
-  between calls. The bit-packed decoders are 64-bit throughout: each
-  width has a loop of its own, the cursor is bounded by the bytes, and
-  the bits held are written so the width pass bounds them — one function
-  holding both loops had lost the bound, and three quarters of a
-  column's decode was growing-int arithmetic (a scan of one column over
-  finch's 11.3 million bars 224 → 83 ms). An int `unpack` reads from 1,
-  2 or 4 bytes is within what those bytes spell, of either sign
-  (`IntRange::Unpacked`): every such field had been any 64-bit int to
-  the pass. And the graph package reads a hop at a time: a frontier of
-  more than four nodes is one range of the edges log, read once, where
-  each node had been a read of the log's files of its own (a walk of
-  three hops over 1,022 nodes read the files 1,022 times).
 - What writing Rosetta Code's tasks in Crow found (rosetta/; each fix
   with its parity program, 331–357). Maps: an empty map written at an
   int key holds ints as keys, and `keys` of a function's int-keyed map
@@ -416,19 +876,6 @@ history says the rest.
   as they would be alone, `a list of lists of fractions that can fail` —
   where its joined type had grown a level each round of inference, 79
   deep in the next message (k15).
-
-- Magpie measured after the port to Crow (docs/magpie-in-crow.md, 4.2),
-  and what the measures found. The sequencer's flush claims the pending
-  rows under the tail's lock and writes them outside it, so a put waits
-  for no disk and the puts that arrive meanwhile join the next flush:
-  each put had waited out the last one's fsync and flushed alone, 2,000
-  puts 72.8 s compiled, now 0.22 s. A put and `latest` revise the tail
-  with a function that cannot fail, so no backup copy is made (`latest`
-  104 → 14 µs). A search opens each file once and reads each group once
-  for the rows it answers (an indexed search 200 → 21 ms). `nearest`
-  walks the flat list a width at a time (51 → 22 ms over 100,000
-  vectors). And `hex` writes its digits from a table, not a `format!` a
-  byte.
 - An item of a list that is itself an item, `cells[k][i]`, is read
   through the inner item where it lies: compiled, the inner list was
   copied whole for each read, and Magpie's summary copied a group's
@@ -524,7 +971,6 @@ history says the rest.
 - `json[…]` of a list of frames answers an array of each frame's records,
   in both modes: compiled it had not built, interpreted the route had
   stopped (served 25).
-
 - A local nothing wrote a kind into, handed back where the function's
   other return answers a map of records, holds what the function
   answers: declared a map of text compiled, the program had not built
@@ -585,8 +1031,6 @@ history says the rest.
   built where the runtime's `Cargo.lock` had moved resolved its
   dependencies afresh, and an Arrow response differed between the modes
   (served 21).
-- The kernel's merge orders a missing key and a NaN last, tied, as a
-  frame's sort does.
 - A list held in a list, under a map's key or in a record's field grows
   where it lies: `xs[i] = push[xs[i], v]`, `m[k] = push[m[k], v]` and
   `r.items = push[r.items, v]` take the value out, push onto it and put
@@ -654,787 +1098,6 @@ history says the rest.
   path for a module row's call as for a core row's — sys's bytes rows had
   copied the buffer at every write, and a codec written in Crow was
   quadratic.
-
-### Added
-
-- `concat[a, b, c, …]` joins any number of pieces, as `concat[[a, b,
-  c]]` joins a list written down (453); `sort` orders fractions and
-  decimals by value (456); math's `sum` of a list of ints is an int with
-  every digit, so `sum[xs] % 10` runs (451); and a list of 0s an item of
-  which is written a record holds records or none, its 0s none — the
-  empty buckets of a hash table (455). Vijay, 2026-10-29.
-
-- `atan2[y, x]` of two numbers is a number, by the tensor's rule (two
-  numbers had been refused, where `sin` of one is its number).
-
-- `use memory` (`remember`, `recall`, `revise`, `forget`, `canonical`):
-  process memory — a record a program holds for the process under a name,
-  shared by its threads, one kind of record per name, the names a tree (a
-  name forgotten with every name beneath it), a path's records forgotten
-  when `rm` removes the path. `revise` runs a function under the name's
-  lock and hands it the record, copying it only where the function's
-  answer can fail. Reading is the `held` effect, every other call
-  `held.write`; the compiled program holds each record as its own type
-  (`crow_runtime::memory`), alike in both modes.
-- `use magpie.tail` (`put_rows`, `flush_rows`, `pending_of`,
-  `pending_rows`, `pending_at`, `newest_row`, `last_position`,
-  `forget_log`): Magpie's sequencer in Crow over process memory — the rows
-  put since the last flush, each key's last position and newest row held
-  key by key, a flush asked for through `later` — on which `put`,
-  `batch`, `sync`, `latest` of one key and the readers' pending rows run;
-  the crash harness's `pending` cut is the module's. And `write_batch`,
-  `numbered_bytes` in `use magpie.merge`: a batch file written in Crow, as
-  the sequencer's flush writes one.
-- `use magpie.exec` (`summary_of`, `asof_rows`), `use magpie.nearest`
-  (`nearest_rows`), `use magpie.search` (`search_rows`, `terms_of`,
-  `snippet_of`), and the Kafka door's bytes — `use magpie.inflate`
-  (`inflated`, `gunzipped`, `gzip_stored`, `crc32`), `use magpie.snappy`
-  (`unsnapped`, `snappy_literal`), `use magpie.records` (`message_rows`,
-  `message_set`): the executor, the nearest rows, BM25 search and the
-  record sets in Crow, held to the kernels' answers in both modes;
-  magpie's `summary`, `prior`, `search` and `nearest` and the Kafka
-  door run on them.
-- `use magpie.merge` (`merge_files`, `merge_into`, `place`,
-  `key_ranges`): the streaming merge in Crow — one row group per input
-  held, the rows decided up to the least of the inputs' last loaded rows,
-  a key's run held back until another key follows, groups and segments
-  cut where the kernel cuts them — the kernel's segments and manifest
-  byte for byte (the ninth kernel); `magpie`'s merge runs on it. And
-  `shape_of` in `use magpie.file`.
-- `use magpie.encode` (`chunk`, `unchunk`, `header`): a column chunk in
-  Crow, every kind the kernel writes — ints by frame of reference or
-  delta, floats at 64 and 32 bits, text plain or as a dictionary, bools,
-  moments, vectors — through the codec where it shrinks, the kernel's
-  bytes byte for byte (docs/magpie-in-crow.md, the third kernel). A
-  missing cell reads as one placeholder through the column rows in both
-  modes (0, 0.0, false, empty text, zeros), where the interpreter had
-  handed a float back as NaN and the compiled program as what was
-  written.
-- `use magpie.manifest` (`listed`, `unlisted`, `note_of`, `with_note`, `with_segments`,
-  `narrow_of`, `stems_of`, `counter`, `listed_bytes`, `write_listed`,
-  `declare`, `catalog_of`, `segment_columns`, `batch_named`,
-  `segment_named`, `number_of`, `counter_of`, `key_words`): a log's
-  manifest in Crow, the kernel's file byte for byte, written beside and
-  moved over the old one (the eighth kernel); and `magic[]` in
-  `use magpie.file`.
-- `use magpie.file` (`file_of`, `rows_per_group`, `columns_of`,
-  `group_bytes`, `finish`, `opened`, `entries`, `wanted`, `groups_of`,
-  `group_of`, `empty_of`, `chunk_of`, `value_filter`, `token_filter`,
-  `index_bytes`, `about`): the Magpie file in Crow — row groups of chunks
-  with their statistics and filters, a block per column, the footer —
-  written as the kernel writes it byte for byte and read back by region,
-  the groups decoded across the cores (the seventh kernel). With it,
-  `stack[frames]` of a list of frames (the form `stack[tensors]` has: a
-  file's groups stacked in one pass, where two at a time copied the
-  whole each time) and `filled[filter, items]` in `use magpie.bloom` (a
-  list added in one pass over the bits).
-- `use magpie.postings` (`built`, `parsed`, `term_of`, `with_prefix`,
-  `within`, `blocks_of`, `levenshtein`): a text column's search index
-  over one row group in Crow, the kernel's bytes byte for byte (the
-  sixth kernel).
-- `use magpie.stem` (`stem`): the Porter stemmer in Crow, the kernel's
-  answer word for word (the fifth kernel); and `terms[text]` on the sys
-  layer, the words of a text as an index and a query split them.
-- `use magpie.bloom` (`sized`, `add`, `admits`, `filter_bytes`,
-  `filter_of`): the bloom filter in Crow, the kernel's bits bit for bit
-  (the fourth kernel).
-- `wrap[x]` in `use bits`: a whole number's low 64 bits as the int of
-  those bits, with a growing form.
-- `wrapmul`, `wrapadd` and `wrapsub` in `use bits`: arithmetic wrapped to
-  64 bits — a hash's multiply per byte, a linear congruence, a checksum,
-  an offset from a base — which ints that grow had no way to say; and
-  `float_bytes`/`float_values` on the sys layer, a chunk's floats as their
-  bits at once.
-- Bytes written in place, on the sys layer (docs/magpie-in-crow.md, the
-  plan to rewrite Magpie's kernels in Crow): `bytes[n]` (zero bytes to
-  write into), `set[bytes, i, v]`, `push[bytes, v]`, and `concat[a, b]`
-  appending where `a` lies — each in place where nothing else holds the
-  bytes, in both modes, through the take bridges and the emitter's taken
-  path the tensors and texts already use; the lowering's split of a
-  self-reading write (`taken_in_place`) applies to any module's in-place
-  row now, not the core's alone.
-- Numbers in bytes, files by region and columns as their parts, on the
-  sys layer (docs/magpie-in-crow.md, 2.2, 2.3 and 2.5): `pack[n, width,
-  little]` and `unpack[bytes, at, width, little, signed]` (an int as its
-  1, 2, 4 or 8 bytes and back), `ieee[x, width, little]` and its reader
-  `ieee[bytes, at, width, little]`, `digest[bytes, 'crc32']` and `hash[…,
-  'crc32']`; `file[path, from, n]` (a region read without the rest),
-  `modified[path]`, `flushed[path]` (written through to the disk),
-  `link[from, to]` (a name claimed once) and `move[from, to]`; and a
-  column as its parts — `cell_kind`, `ints_of`, `floats_of`, `bools_of`,
-  `millis_of`, `zones_of`, `vectors_of`, `vector_width`, `text_bytes_of`,
-  `text_ends_of`, `present_of`, `missing_in` — and back, `ints_column`,
-  `floats_column`, `bools_column`, `moments_column`, `vectors_column`,
-  `text_column`, `text_dict_column`, with no value per cell.
-
-### Breaking
-
-- Magpie is a package of its own repository, not the standard library
-  (Vijay, 2026-10-29 and 30): `github.com/agncrow/magpie`, public under
-  the Business Source License 1.1 (its site: agncrow.github.io/magpie),
-  holding `packages/magpie` —
-  documented by its README (the tour), REFERENCE.md (every function and
-  part, the design notes) and PARTS.md (each part at work), its
-  `example.co` running all of them in both modes — and `packages/kg` and
-  `packages/features`, which moved with it, beside the magpie example app,
-  Magpie's parity programs, its doors driven from outside
-  (`tests/doors.py`, from the five Rust tests that drove them here), its
-  measures and its design notes. A program installs it as any dependency
-  (`deps = map[magpie =
-  'github.com/agncrow/magpie/packages/magpie@v0.1.1']`, `crow install`)
-  and calls it qualified, as a package is called: `magpie.put[d, f]`,
-  `magpie.latest[d]`. The doors are its parts — `use magpie.kafka`, then
-  `kafka.serve[root, port]`; `use magpie.redis`, then `redis.serve[…]` —
-  and the parts take their files' names: `codec` is `lz77`, `packing`
-  `bitpack`, `encode` `columnchunk`, `file` `fileformat`, `tail`
-  `sequencer`, `merge` `merger`, `exec` `executor`, `search` `searcher`,
-  `nearest` `knn`, `stem` `stemmer`, `records` `recordsets` (a part named
-  like a function of the package or a builtin — `merge`, `search`,
-  `encode` — reads as that function where both are reached). The book's
-  three Magpie pages, the sys page's stretch on the parts and the spec's
-  sections went with it; the spec says where it is. Its answers are the
-  module's: the example prints, line for line, what the book's blocks
-  recorded. Crow's gate runs its suite (`./test.sh <crow>` in the
-  repository) before a change lands, since CI cannot reach it; the parity
-  programs that held compiler rules through Magpie — 297, 302, 303, 326,
-  328 — hold them here without it.
-
-- The Rosetta Code run's questions, decided (Vijay, 2026-10-29;
-  rosetta/QUESTIONS.md). A function's local named like a name an import
-  makes — `e` or `mean` under `use math`, `code` under `use bits` — is
-  refused where it is written, as the same name at the top level, a
-  parameter and a loop's variable were (errors k30, k31): it had shadowed
-  the import silently. A computed whole number past 2^53 in a list written
-  down as a vector stops where the list is made, naming `push` (454): it
-  had been rounded silently, `[a, 3]` holding 2^60 for `a = 2 ^ 60 + 1`.
-  `fmt`'s zero fill goes after a number's sign, `-0042` as printf pads,
-  where it had been `00-42` (450). A page's top-level `seed[n]` runs before
-  its declarations are set, so the facts' draws are seeded (452). The
-  axis form of `concat` takes the axis as a number written down or named
-  (`axis = k`): a third piece held in a variable is joined as a piece.
-  The standard library's modules rename the 64 locals the first rule now
-  refuses in their own tests (`start`, `flushed`, `e`, `head`, …), and
-  Magpie's `read_var` answers the list of two ints its row says: written
-  down, its pair had been a vector, which rounded a varint past 2^53 (the
-  second rule's stop found it in the module's own test).
-
-- `use memory` is the standard library's own, as `sys` is (Vijay,
-  2026-10-28): a program's import is refused before it runs (`` `memory`
-  is the standard library's own layer — a program may not import it ``),
-  and process memory is what a module keeps between calls — a program's
-  state is its variables, a page's its facts. The import check reads the
-  module's `internal` flag where it had read the name `sys`, and the
-  parity and errors harnesses open the door the book's pages had, so the
-  programs about memory's rows run there.
-- A call of a function that answers nothing, handed a value that can
-  fail, answers that failure (spec, Auto-Propagation): dropped by its
-  line, a function hands it back and the top level halts, `cannot drop
-  an error value`. It had been typed as nothing, so the failure vanished
-  in both modes (parity 370).
-- `input[]` at the end of standard input is an error value, `.ok` false
-  and reason `end of input` (333): it had answered empty text that did
-  not fail, the same as an empty line, so a loop reading lines could not
-  tell the two apart. Read lines with `line = input[]` / `while line.ok`.
-- A variable, a parameter or a loop variable named like one of the
-  program's own functions is refused where it is defined (spec, Names
-  Are Never Ambiguous): `fn first[scores]` beside `fn scores[x]` had read
-  `scores[0]` as the function's call, a silent wrong answer in both
-  modes. A record's name read as a value (`p = Point`) is refused with
-  the fix (it had been an internal error), and a number written with an
-  exponent (`3.301e23`) is refused saying Crow writes none — `3.301 *
-  10.0 ^ 23`, or `float['3.301e23']` — where it had been read as a
-  second statement.
-- One value for several names is refused before the program runs, in
-  both modes (spec, Multiple Assignment; Design Note: No Destructuring):
-  `a, b = xs` and `c, d = pair[]` had run interpreted and not built
-  compiled. The refusal gives the form in the program's names (`r =
-  pair[]`, then `c = r[0]`, `d = r[1]`). Values of another count than
-  the names are refused too: a value past the names had been dropped,
-  and a name past the values left unset.
-- A loaded file's empty cell is missing in a column the program's reads
-  type: read one at a time it is an error value of reason `missing`,
-  `.ok` false, in both modes and for a page's data source too, as the
-  spec says. The reads had typed the cells plain, and a missing cell had
-  read as `''` or NaN with `.ok` true. A program that decides on one now
-  meets the refusal a failed value meets, and a list of such cells used
-  as a mask is refused: fill the column first. On the way, a call
-  answering a list of values that can fail, given an argument that can
-  fail, builds compiled, and an item read from such a list keeps its
-  failure.
-- A module of the program's takes no standard module's name (spec,
-  Importing): `use math` where a `math.co` of the program's lies — or a
-  package `math` under `crow_modules/` — names two modules and is
-  refused at the import, naming the file and how to rename it. The
-  import had reached the standard module silently, and the file's
-  functions failed as the program ran. The standard library's own
-  sources are not the program's.
-- A column is written the way it is read (spec, Frames): `df.name =
-  values` writes a column where the frame lies — a new column, or one
-  replaced; a scalar repeated down the rows — and `with` is gone from
-  the language (an unknown name now). After a dot a column's name reads
-  as text does, a backtick inside it an interpolation: `df.lag_`k` = …`
-  and `df.`name` = …` write a column by a computed name, and read one
-  the same way; a header no dot can write is reached as `df.`'in px'``.
-  `frame.new[a = xs, b = ys]` stays, each column such a write. Values of
-  another length than the rows stop the program where `with` had
-  answered an error value. `crow fix` has no rule: write `x = with[x,
-  'n', v]` as `x.n = v`, a chain over `frame.new[]` as the literal, and
-  a `with` in expression position as a write on the line before.
-- One statement verb (spec, db, Statements): `query` runs every statement
-  and answers a frame — the rows a SELECT answers, the rows a RETURNING
-  clause reads back, an empty frame for a statement that answers none.
-  `exec` is gone: write `query`, and a write that must say what it
-  touched reads it back with `RETURNING`; the count of rows affected is
-  not answered. Whether a call reads or writes is the statement's to say:
-  a literal SELECT, VALUES, SHOW, EXPLAIN, DESCRIBE or PRAGMA asked is a
-  read, anything else a write (RETURNING included), and a statement
-  built as the program runs is a write — a derivation that hands one is
-  refused, the fix being the literal with `?` for its parameters.
-  `migrate[conn, dir]` is gone too: migrations are the tool's, `crow db
-  apply <dir> <url>`, beside `crow db diff`. The db module is `connect`,
-  `query`, `insert`, `transact` and `describe`. On the way: a ClickHouse
-  statement that answers no rows had failed through `query` ("the rows
-  end early"); it answers an empty frame now.
-
-- Effects have kinds (spec, Effects Have Kinds): each builtin's row says
-  what it reaches — `console`, `files`, `files.write`, `network`,
-  `db.read`, `db.write`, `mail`, `clock`, `random`, `input`, `process`,
-  `exit`, `shell`, `session`, `waits`, `serving` — and every rule about effects
-  is stated by kind, once. What changes for a program: a view may reach
-  nothing but the console, the clock (one moment per event) and a draw,
-  and a derivation only reads (`files`, `network`, `db.read`, `clock`,
-  `process`) —
-  a view reading a file or querying a table (the book had taught "query
-  at render time"; a derivation is where a page reads a table), a
-  derivation sending a notice, had passed and were performed at every
-  render; a call the context cannot hold is refused in one wording
-  whatever the builtin, naming the function it is reached through
-  (`mail`'s own wording goes). In a handler, a failed argument stops the
-  handler only for an effect held to its commit (`session`, `db.write`,
-  `mail`); a read, a request, a query or a command with a failed argument
-  answers the failure, as any call does. `exists` is an effect (`files`),
-  so a loop over it keeps its order and a derivation may read it; `args`
-  and `env` are stamped with their capture moment, as reads of the world
-  are. `crow check`'s reach names a file's effects by kind (`db.read`,
-  `db.write`, `files.write`, `shell`, `input`, `waits` where it said
-  `database`, `files`, `shell`, `process`).
-
-- `chat`'s and `follow`'s `max` option is `tokens` (`chat[m, talk, tokens
-  = 200]`): the module's options are its functions' defaults now, and a
-  parameter may not be named like a builtin. A conversation's next user
-  turn is `asked[talk, text]`, beside `said[talk, reply]` and `told[talk,
-  call, text]`; `ask[text]` still begins one. A program that bound `asked`
-  as a name of its own under `use llm` is refused, as any clash with an
-  import is: rename it.
-- A tensor compared with a number is a mask of its shape: a matrix's is
-  its rows of bools (`[[1.0, 2.0], [3.0, 4.0]] gt 2.0` is `[[false,
-  false], [true, true]]`), as numpy's is. `where` over it keeps the matrix
-  (it had answered a vector), `not`, `and` and `or` keep its rows, `sum`
-  counts it, and `m[m gt 2.0]` is the matrix's numbers where it is true
-  (it had stopped). A tensor whose rank the program does not show,
-  compared with a number, is refused, naming it.
-- `min` and `max` answer NaN where a NaN is held — of a tensor, along an
-  axis, of two numbers — as numpy's do and as `sum` carries one (a NaN had
-  been passed over), and of no numbers the program stops (`max of
-  nothing: an empty tensor has no largest number`; they had answered
-  `-inf` and `inf`).
-- `split[s, '']` is the text's characters, with no empty piece at either
-  end (`['', 'a', 'b', 'c', '']` is `['a', 'b', 'c']`), and of empty text
-  `[]`. A walk that skipped the ends by position (`slice[cs, 1, len[cs] -
-  1]`) now drops real characters: walk `split[s, '']` as it is.
-- `gamma_dist[α, β, n]`'s β is the rate, the mean α/β — the textbooks',
-  R's, Stan's and PyTorch's (α, β) — so `gamma_dist[1.0, λ, n]` is
-  `exponential[λ, n]`. It had been the scale, the mean α·β.
-- A `later[f]` asked again while `f` is in flight runs `f` once more when
-  it ends, from the state as it then stands, however many arrive
-  meanwhile; it had been skipped, and a page could keep the earlier run's
-  answer where the interpreter, running each inline, showed the latest.
-
-### Added
-
-- A column of vectors (spec, frame: "A `vector` column"; design
-  rule 24's one exception this round, on Vijay's word): a frame's
-  column holds vectors of one width — an embedding per row — written
-  from a matrix or a list of vectors, read one cell at a time as a
-  tensor and whole as its matrix (`tensor[df.e]`), shown as a tensor
-  shows, carried through the verbs that need no order (a mask, `select`,
-  `head`, `stack`, `join`, `group` with `count`/`first`/`last`, `where`,
-  `unique`, `pivot`), refused by the ones that do (`sort`, a `sum` or
-  `mean`, `rank`, `fill`, `unpivot`, a text function) in both modes with
-  one wording, saved as JSON records or Parquet (a fixed-size list of
-  float64) and read back, refused by CSV, and held by Magpie as a float
-  chunk of rows × width (`narrow` 32 bits), never a key. The cell's type
-  is a tensor inside the column's, so the compiler gained no type.
-  `nearest[dir, column, vector, k = 10]` (magpie) finds the `k` rows
-  nearest a query vector by the cosine — the vectors package's flat
-  score, exact over every row, the pending rows included — through the
-  door too (`/orders/nearest`); `packages/kg` gained `embed` and
-  `similar` (an entity found by meaning, the stale versions a
-  re-embedding leaves dropped), `packages/features` embeddings as
-  features and `similar`. Parity 303, the module's, the kernel's and
-  the packages' tests, the frame runtime's unit tests, the self-check's
-  `colvec` value, and a book block each.
-
-- Magpie, the data platform (`use magpie`; first built as `lake`, renamed
-  2026-10-26 before any release: a lake is raw files other engines query,
-  and this store holds its state and runs its own engines — the magpie is
-  the corvid that gathers everything into one nest). Its second
-  architecture is docs/magpie-design.md, built phase by phase below.
-- `packages/kg` (phase 10 of the design, without its vector index, which
-  waits on the column of vectors): a knowledge graph over Magpie — nodes
-  and edges as logs under a root, the edges again in reverse so a node's
-  in-edges are one key's run; `node`, `retire`, `link`, `unlink` stamped
-  with their moment, tombstones every read skips; the graph as of a
-  position (`upto` on every read), a node's `history`, `neighbors` and
-  `inbound`, `walk` and `path` (breadth first, a node at a time), `match`
-  (a pattern's triples read as edges and joined on their shared
-  variables), `subgraph` (what `packages/graph`'s `of_edges` takes),
-  `rule` (a function deriving edges, linked back with their provenance),
-  `asof` (Magpie's `prior` over the edges).
-- `packages/features` (phase 11, without embeddings as features, which
-  wait on the column of vectors): a feature store over Magpie — a group is
-  a log keyed by its entity with its time column (`declare`), one `append`
-  is both stores (`online` from the sequencer's image, `history` by
-  windows), one feature function for the `backfill` (windows of a source
-  log) and the `stream` (its tail), `training` as the labels joined
-  against each group as of their moments and of a position (held to
-  pandas's `merge_asof` cell for cell, packages/features/held.co),
-  `freshness`, and a registry log (`define`, `defined`). The design's
-  `group`, `write` and `serve` are not names a program function may have
-  (two core builtins and the web form): `declare`, `append`, `online`.
-- The doors (phase 9 of the design): `magpie.door[root, port]` serves
-  every log under the root over HTTP as JSON, a request's path naming the
-  log and the verb (`/orders/latest`), and every verb given a URL
-  (`since['http://host:9000/orders', 3]`) reaches it, so another process
-  or language reaches a log; `use redis` is the RESP door — SET, GET, INCR, MGET, DEL, KEYS, DBSIZE over
-  a log keyed by the key, XADD, XLEN, XRANGE and XREAD over a stream's
-  log — so Redis clients speak to Magpie, beside the Kafka door.
-- Aggregates pushed below the reader (phase 8 of the design): `summary[dir,
-  by, of, how, on, ops, equal, lo, hi, upto]` runs filter, group and
-  reduce as operators over each row group on its own core and combines
-  the partials, answering what `group` answers over `scan` with the rows
-  never held as one frame; `prior[dir, f, columns, upto]` is the as-of join
-  over the log, each label's newest row at or before its moment (and at
-  or before the position `upto`: the training set a position names), from
-  each key's run. Sys rows `batch_summary`, `batch_asof`.
-- Search's long tail (phase 7 of the design): the merge builds postings
-  with positions and a sorted dictionary per text column per row group
-  beside the token filter; `search` takes Lucene's forms inside the words
-  (a phrase as a word with a space, a prefix `kit*`, a fuzzy word
-  `kitchn~` within two edits), skips the blocks whose bound cannot reach
-  the k-th score, stems where the log declared `stem = true` at its first
-  batch (the Porter stemmer, English), and answers a `snippet` column of
-  `snippet` characters around the first hit when asked. A batch, read
-  whole, ranks and scores exactly as the merged segment does.
-- The sequencer (phase 6 of the design): a memtable and its write-ahead
-  log per log directory in the process (`crow_runtime::magpie::tail`).
-  `put[dir, f]` appends rows visible to the process at once and flushed
-  as a batch file by a thread every ten milliseconds; `batch` is a put
-  and a flush; `latest[dir, equal = …]` answers the newest row of a key from
-  the image in memory; `commit` over the log's keys is validated against
-  the key index in memory; `sync`, `merge`, `backup` and `share` flush
-  first. The pending rows are the catalog's `pending` row, a Magpie file
-  in memory every reader opens as `<dir>/.pending@first-last` (the
-  positions the listing saw; flushed in between, the file they went to is
-  read instead, and a listing reads the pending rows before the files, so
-  a flush between the two hides nothing); `rm` of a log's directory
-  drops the rows pending in its tail with it (the thread had written
-  them into the directory ten milliseconds after the rm). Sys rows `tail_put`,
-  `tail_flush`, `tail_pending`, `tail_get`, `tail_last`, `tail_forget`;
-  a third crash cut, `pending`, after a put.
-- Reads bounded by what a frame holds (phase 5 of the design): `since[dir,
-  from, upto, columns]` and `scan[dir, from, upto, columns]` take a
-  position window, `latest[dir, upto, columns, lo, hi]` a range of the
-  log's first key (through the groups the range covers; sys row
-  `batch_between`), and `batch_since` an upper bound; a read over the
-  whole log is a loop over windows the program writes.
-- Indexes built by the merge (phase 4 of the design): `texts` leaves
-  `batch` and `commit`; the merge indexes every text column of every
-  segment per row group (an identifier-like column given up), and a
-  search reads a batch, or an unindexed group, whole and scores it the
-  same, so any text column is searchable the moment it lands and cheap
-  once merged, and no producer declares what will be asked.
-- The streaming merge with levels (phase 3 of the design): a k-way merge
-  over the inputs, one row group per input in memory, segments cut at a
-  gigabyte and named by a counter (`S000000000017.segment`), the newest
-  version of each key the last of its run; `merge[dir, every]` folds the
-  tail into level 1 and, while a level holds more than eight segments,
-  its oldest eight into the next; a merge of a log larger than memory
-  runs in constant memory. `narrow = [...]` on the first batch keeps the
-  named float columns in 32 bits on disk. `sync` flushes the manifest
-  too. The crash harness (tests/magpie_crash.rs) ends a merge after the
-  segments are placed and after the manifest is switched, and the next
-  read and merge answer whole either way.
-- A manifest, and keys declared once (phase 1 of the design): `dir/manifest`,
-  a Magpie file naming the log's live segments (level, position range,
-  rows, bytes, key ranges) with the log's keys and its time column,
-  replaced whole by a rename, so a merge is one atomic switch and a
-  reader sees the old list or the new; the batches stay the tail the
-  directory lists, and a segment the manifest does not name is a
-  leftover the next merge removes. The first `batch` fixes the log's
-  keys (`by`) and its time column (`time = 'ts'`); a later batch names
-  the same keys or none, another set is refused naming both. `merge[dir,
-  every]`, `latest[dir, upto, columns]` and `commit[dir, f, texts, seen,
-  columns, equal]` take no `by`; `batches` gains `level`; a backup
-  copies the manifest and writes a `listing`; `share` serves the
-  manifest and `follow` takes it every time. New sys rows
-  `batch_declared`, `batch_declare`, `batch_catalog`; `batch_merge[dir,
-  paths, every]`. The Kafka door's group and offset logs declare their
-  keys at their first write.
-- Magpie's own file format (phase 2 of the design): a batch, a segment
-  and, later, the manifest are one format of our own — row groups of
-  about 4 MB, each column chunk encoded by its kind (ints by frame of
-  reference or delta, text by dictionary or lengths and bytes, bools as a
-  bitmap, floats as their bits) and compressed by Magpie's own LZ codec
-  where that pays, the statistics per column per group (min, max,
-  missing, distinct, a bloom filter; a token filter and counts per
-  indexed text column) behind a two-level footer read per column. No
-  Arrow, no Parquet and no conversion between the frame and the disk;
-  `flate2` and `snap` leave the runtime, the Kafka door's gzip and snappy
-  decoding written as our own (`crow_runtime/src/magpie/inflate.rs`,
-  `snappy.rs`). Format 2; format 1 is not read (nothing was released).
-  `batch_stats` answers the footer's facts (rows, positions, keys,
-  groups, each column's kind and whether it is indexed, the token
-  counts), not every column's bounds.
-- The log as batch files, `use magpie` (spec, magpie): each `batch` one file
-  written once by the kernel (sys, `batch_write`) — the log entry, the
-  sorted level-0 segment with its statistics and the word index at once —
-  `head`, `since`, `tail` (a view that follows the log), `scan`, `latest`
-  (the table the log holds), `lookup` (every key at once, so a segment
-  sorted by day then symbol reads one row group for one symbol's day;
-  files pruned by their filters), `columns` on every reader (a segment
-  decodes only the columns asked), `batch[…, flush = false]` and
-  `sync[dir]` (Redis's default durability, when asked for),
-  `commit` (the sequencer: a stale read refused), `merge` (the files
-  folded into one Parquet segment of 8192-row groups, the latest version
-  of each key kept, or every row with `every = true`), `batches` (the
-  catalog's state), `search` (BM25 as Lucene scores it, over the whole
-  log as one corpus, the files whose filters admit no word unread; held
-  to the formula computed apart, parity 296), `metrics`, `backup` and
-  `restore` (a directory or an `s3://` prefix, the manifest written
-  last), `share` and `follow` (replication by log shipping, two
-  processes in tests/magpie_share.rs). Every file's head carries the
-  format's version, so an older Crow refuses a newer file by name. Held
-  to SQLite (parity 294, 295), to a month of finch's ClickHouse and
-  Postgres rows, and to the self-check. The fifth reference app,
-  `examples/magpie`, is a page over a log.
-- The Kafka door, `use kafka` (spec, kafka): `serve[root, port]` answers
-  a 0.10.1 broker's protocol in Crow over the sys layer's listener
-  (`listen`, `accept`, `address`), a topic a log under the root, a
-  producer's set one batch, a consumer's fetch `since` its offset, groups
-  of several members and committed offsets two logs of the door's own,
-  a fetch with nothing to answer waiting up to the client's `max_wait_ms`;
-  legacy message sets with their CRC-32 read and written by a kernel
-  (sys, `records`, `records_of`, `unpack`), gzip and snappy sets decoded.
-  Held to the pure-Python client in both modes (tests/kafka.rs).
-- `sys.filesize[path]`: a file's bytes from its metadata.
-
-- MCP over stdio (spec, mcp: The stdio transport): `server[command =
-  'npx -y @modelcontextprotocol/server-filesystem /tmp']` names a server
-  by the command that runs it, as `shell` takes a command; the process
-  starts at the first message, stays while the thread that started it
-  lives — one per command on each thread, so a served program's handlers
-  never share one — and is started again if it ends; each request is one line on its input with
-  the `_meta` every request carries, the response the line carrying the
-  request's id, notifications and late answers passed over, a line that
-  is no message refused with its words; the server's standard error is
-  the program's. `discover`, `catalog`, `tool` and the loop's `servers =
-  [s]` are the same calls over either transport. `listen[tools = [f,
-  g]]` makes a Crow program such a server over its own standard streams,
-  answering as `answer` answers a route — and a legacy client's
-  `initialize` is refused naming the revision spoken, on both transports.
-- A process the program talks to, in the sys layer (spec, sys):
-  `start[command]` runs the command through `sh -c` with its standard
-  input and output piped and answers a socket — `send` and `recv` on its
-  stream, `leftover` and `unread` for what a read took past a message —
-  one process per command on each thread; `close` of its stream ends
-  it as the MCP stdio transport says a client ends its server: the input
-  closed, its exit waited for, then TERM and KILL to its process group.
-  No new handle kind: a process is a socket, as a WebSocket's connection
-  is.
-- The agent loop, `act` (spec, llm: The loop is the module's):
-  `act[m, talk, tools = [f, g]]` runs the model's tools until it answers
-  or a limit stops it — each reply's calls answered by the tool of its
-  name through `apply`, a name no tool has, an argument of the wrong
-  kind and a tool's own failure each told to the model as a failed
-  result that says why, so every call is answered; `rounds` (8) and
-  `budget` (tokens in all) as the limits, stopping after a reply's calls
-  are answered so the conversation stays well-formed. Answers a record:
-  `text`, `stop`, `rounds`, `usage`, `talk` and `steps`, a frame with a
-  row per model call and tool call. `told[…, failed = true]` tells a
-  failure by hand; Anthropic's wire carries it as `is_error`. Written in
-  Crow in the module (docs/agents-design.md).
-- The loop's gate: `allow = [g, h]` names functions of the call, each
-  asked before a tool runs and answering a bool; a call one refuses is
-  told to the model as a failed result (`remove is not allowed by the
-  program`, `how` `refused` in the steps frame) rather than run, and a
-  gate that takes another count of parameters or answers another kind is
-  the call's error before any model is asked.
-- A subagent is a tool that runs the loop (spec, llm): a function the
-  parent model calls, whose body runs `act` with a model and a tool list
-  of its own and answers the inner run's text — nothing new in the
-  language, verified in both modes against a server that scripts a
-  delegating run and against a local model. A run that failed fails the
-  tool, so the parent model hears a failed result that says why; the
-  parent's steps frame shows the delegation as one tool row whose `ms`
-  covers the inner run, and the inner run's steps are the tool's own to
-  read.
-- The loop's context, skills and servers: `keep = n` cuts the tool
-  results of rounds older than the last n to a stub naming their size,
-  `compact = n` asks the model for a summary once a reply has read n
-  tokens and goes on from the summary alone, `skills = folder` reads a
-  folder of skills in the Agent Skills format (agentskills.io: each
-  skill's `SKILL.md` frontmatter held to the standard's rules), names
-  them in the system prompt and lets the model load one, and the files
-  it refers to, through the tools `skill` and `skill_file`; `servers =
-  [s]` adds the tools MCP servers offer, called on the server.
-- `use mcp` (spec, section 13): the Model Context Protocol, revision
-  2026-07-28, over Streamable HTTP — `server[url]` names an endpoint,
-  `discover[s]`, `tools[s]` and `tool[s, name, given]` ask it, and
-  `answer[req, tools = [f, g]]` in a POST route makes a Crow program a
-  server over the functions themselves (`server/discover`, `tools/list`,
-  `tools/call`, the errors the protocol names). Written in Crow on
-  `request`; tests/mcp.rs drives both directions in both modes.
-- An agent with traces, evals and a page, `examples/agent` (the fourth
-  reference app; docs/agents-design.md, Traces, evals and a page): a
-  support agent over a shop's orders in SQLite — three tools, the refund
-  behind the program's gate — every run written to the database as a
-  trace (a row per run with its question, model, answer, stop, rounds,
-  tokens and milliseconds; a row per step, the loop's own frame handed to
-  `insert`) and a page over the traces, the tokens and the latency of
-  each run charted; evals as `test` blocks replayed from recorded
-  fixtures in both modes — exact checks on the steps frame (the tools
-  called in order, the gate's refusal, the stop) and a model-as-judge
-  asked for PASS or FAIL — and a page that asks the agent and shows the
-  run's steps. Nothing new in the module: the judge is a `chat` with a
-  rubric, kept in the example.
-- The package lock holds the bytes (spec, Package Manager): `crow.lock`
-  records the hash of each dependency as installed beside its commit,
-  every command that reads a program refuses a package changed by hand
-  under `crow_modules/` until `crow install` restores it, and an install
-  refuses a fetch of a locked commit that hashes otherwise. A requirer
-  may attest the hash it verified after the version
-  (`…@v0.1.2#sha256:…`), in a program's crowfile or a package's, and the
-  install holds the bytes to every attestation it meets. Two requirements
-  of one package at tags of one major take the higher, saying so, where
-  any two sources had been refused; tags of two majors, branches and
-  commits that differ still are.
-
-### Changed
-
-- A program builds as fast with a package as with a standard module:
-  an imported file's functions that nothing the program reaches names
-  are dropped before it is typed, as the standard modules' inliner keeps
-  only what a program reaches (a program had lowered every function of
-  a package it imported: 424 of Magpie's where its windows reach 239),
-  and the checks read a name's rows from the table's index, where
-  `check_call` had scanned the table once per call and once more per
-  import, and an arity's refusal text twice for every row tried. A
-  program over Magpie lowers in 1.6 s; it took 8.5 s, and 1.5 s when
-  Magpie was a standard module.
-- `sys` and process memory (`use memory`) may be imported by any program
-  or package (Vijay, 2026-10-29: keeping them to the standard library is
-  a suggestion, not a rule). They are meant for library code — the
-  standard library, and a package that needs a kernel's speed, which can
-  now live outside the standard library — and a program still serves and
-  connects with `serve` and `connect`. They had been refused outside the
-  standard library before the program ran; the harnesses' door that let
-  the book, the parity corpus and the errors corpus show them is gone
-  (`CROW_SYS` stays as the self-check's door to a driver's module, which
-  a program reaches through `use db`).
-- Magpie is Crow: its Rust kernels — the codec, bit packing, chunk
-  encodings, bloom filter, stemmer, postings, file format, manifest,
-  sequencer, merge, executor, search, nearest, inflate, snappy and the
-  Kafka records (`crow_runtime::magpie`, `kafka.rs`, 7,580 lines) — are
-  deleted, with the sys rows that reached them (`batch_*`, `tail_*`,
-  `records`, `records_of`, `stream_rs` and the test-only `*_rs` oracles).
-  The modules' tests hold the Crow port to the bytes, frames and words the
-  kernels answered, recorded before they went (docs/magpie-in-crow.md).
-- `later[f]` in a compiled script coalesces where it had skipped: a
-  schedule of `f` while `f` runs makes it run once more when it ends, so
-  its last run reads every write made before it (spec §15; the sequencer's
-  flush). The interpreter runs the work inline, as before.
-- The merge indexes no category column (magpie): a text column with
-  fewer than one distinct token per 64 documents — a symbol, a day —
-  gets no token index, as an identifier-like column gets none, since
-  every row would be a posting and the group's filter over its values
-  already admits or refuses the group (`lookup` reads the rows); the
-  position column gets no filter, its values all distinct and its
-  bounds pruning by range. Measured 2026-10-27 on finch's month of
-  bars: 187 MB of postings over `symbol` and `day` and 11 MB of filters
-  over `_pos` on a segment whose column chunks are 266 MB, pruning
-  nothing the filters did not.
-
-- `crow fmt` indents at four spaces, the unit every document, the book
-  and the standard modules write (it had normalized every file to two),
-  and reads levels from the nesting: a line inside a bracket moves with
-  its statement, keeping its alignment, and the lines a string written
-  across lines runs onto are left as written. One continuation aligned
-  at an odd width had multiplied every level of a file
-  (`tests/layout/conformance.co` came out four times as deep), and a
-  string's lines had been re-indented, changing its text.
-- `crow help` lists every command and flag the binary takes, one line
-  each, on standard output, held by a test to the flags the binary
-  reads; `crow file.co` is documented as the short form of `crow run
-  file.co`.
-- `crow new --db` declares the program's tables as the db section does:
-  `db/schema.co` holds a `setup[conn]` running `CREATE TABLE IF NOT
-  EXISTS users (…)`, and `main.co` opens `sqlite://<name>.db` and hands
-  it to `schema.setup`; `crow db diff` drafts what a database lacks of
-  them. The scaffold lists no migrate job.
-- `crow check`'s rules for a view that queries, reads a file or waits
-  are gone — a remote query in a view, its `--- crow: remote-render`
-  acknowledgment, and blocking rooted at a view — since the compiler
-  refuses such a view first; blocking in a handler stays.
-- A name beginning with `_` is one `crow check` asks nothing of: `_kept
-  = rm[tmp]` keeps a failure it ignores, and the unused-variable advice
-  names that form (it had said "use _", which parses nowhere).
-- `.coc` bytecode is no longer read (nothing wrote it since `crow
-  compile` went): a project's `main.coc` and `crow x.coc` are not Crow
-  files.
-- A call a view may not make is sent where its kind belongs (spec,
-  Effects Have Kinds): a read a derivation may make — a file, the
-  network, a database, the process's environment — to a derivation the
-  view reads (``read it in a derivation the view reads — `derive x`
-  above the view, returning it``), as the book teaches, and a write or
-  any other kind to a handler, as before; a call of several kinds goes
-  where the one a derivation cannot hold says (`recv`, which waits, is a
-  handler's). Every refusal had sent the call to a handler.
-- A method call written as another language writes one is taught the
-  Crow form there is, never a function Crow lacks (spec, Error
-  Messages): `datetime.now()` names `now[]` (it had said `now[datetime,
-  …]`), `xs.includes(1)` and its kin name `1 in xs` (it had said
-  `includes[xs, …]`), a call through an imported module is that call in
-  square brackets, a value's method is the builtin of its name with the
-  value first (`upper[s]`), and anything else is told that a call is
-  `f[x]`.
-- The examples reach `claude-sonnet-5-5` (they had named
-  `claude-sonnet-5`): llm's hint, its tests, the spec, the book and the
-  design notes.
-- The core's names are held, not frozen (spec, Three namespace tiers;
-  the book's chapter 8): until 1.0 a core name is added only as a
-  breaking change the changelog lists first, since a name it reserves
-  may be one a program used, and from 1.0 the core does not grow. The
-  spec had said the core never grows while `occurs`, `translate`,
-  `decimal`, `fraction`, `halt` and `bucket` joined it this month.
-- `packages/models`: `search` answers `Search[best, score, scores]`, the
-  best candidate's mean in `score`; the field had been `scorer`, a slip
-  of the rename of the function parameter beside it.
-- The comparison's ratings follow the measurements of 2026-10-21: Go's
-  performance is 9 beside Crow's (comparable on the seven programs),
-  Crow's parallelism 8 (data-parallel only: requests and queries never
-  overlap) and its data structures 7 (frames, tensors, exact numbers,
-  moments).
-- The documentation no test reads describes the language as it is
-  (2026-10-21): `docs/crow-for-llms.md` (moments as a kind, `in`, ints
-  that grow, and the modules a generator reaches for — frames, db, web,
-  llm, mcp — every block run), the feature map, the by-example index,
-  Appendix B, the comparison (the measurements of 2026-10-21, a section
-  on language models), every command and flag in `docs/usage.md` and the
-  book's toolchain page, `crow check`'s and the language server's notes,
-  the db, frame and math notes, the roadmap's status, and the docs index
-  (ten notes it had not listed). In the spec: the error kinds the
-  modules answer (`'http'`, `'socket'`, `'auth'`, `'mail'`, `'llm'`,
-  `'mcp'`) and what answers `'time'`; a handler's stop by effect kind; a
-  dynamic cell read as its use implies; the project layout as the
-  toolchain reads it (no folder is discovered but `jobs/`, through the
-  crowfile); the note "a moment was a number" marked superseded.
-- A parameter read by its fields, and typed by nothing else, is a parsed
-  value (spec, Tools are the functions): a function called by name —
-  the loop's gate, a tool taking an object, an MCP server's — had been
-  refused as "typed by nothing — read it in the body", which its body
-  did. A parameter any call types keeps that type; the rule only fills
-  the case the compiler refused.
-- The book's standard-library pages (`docs/book/src/stdlib/`) are
-  generated for every module the manifest lists that has a section of
-  its own in the spec, in the manifest's order; a hand-kept list in the
-  docs check had lacked a module's page while the book's index linked it.
-- The shape of the tensor a builtin answers is declared on its row
-  (`table::Shape`, a fixed vocabulary: an argument's own shape, a
-  broadcast, a dimension per size, each dimension stated, a reduction, a
-  join along an axis, a transpose, rows stacked, a decomposition's
-  pieces), read where the call is typed; the compiler's rule by name is
-  gone (docs/extending-crow.md, phase 6). What a program sees: the rank
-  of every builtin's answer as before, and a list handed where a tensor
-  is taken keeps the rank it had as a list. A row that answers a frame
-  declares its columns where its kernel fixes them (doc's `chapters`,
-  chart's `macd`), and `query`'s row names its provider: what a database
-  says a literal statement answers — asked, kept, typed from the
-  statement where SQLite does not say, marked where it can hold NULL —
-  is crow_db's (`crow_db::describe`), handed the connection's literal
-  URL, the statement and the tables the program declares; the form that
-  opens a connection says so on its row (`Prop::Connects`). What a
-  program sees is as before.
-
-- A handle — a database connection and a transaction's, a socket, a
-  stream, a mailer, a response, the server's app, a test's app session —
-  is one kind to the language (spec, Type System: Handles), declared
-  once beside its module's rows with its name, its word, the type the
-  compiled program holds it as and whether a session may hold it; every
-  rule about handles (moved not copied, not indexed, not JSON, equal to
-  no other, shown as its word, a fact of one the process's) reads the
-  one declaration where it had listed the kinds (docs/extending-crow.md,
-  phase 5). What a program sees: `type[x]` and the words of a refusal are
-  as before.
-
-- A builtin that takes a function declares it on its row, with its
-  signature (`any`, `all`, `find`, `later`, `running`, `stream`, `route`,
-  `transact`, a chart's `seek`): inference hands the function its
-  parameters from the declaration, the kinds check refuses anything else
-  in the row's words, the width pass and the classification read the
-  same declaration — each had been a list of the builtins' names in the
-  compiler (docs/extending-crow.md, phase 4). A list literal of functions
-  is a group, held by name: a call through one is a dispatch the compiler
-  writes (the members take and answer one kind), and members of several
-  signatures are described and called by name alone (spec,
-  Specialization). The standard modules describe and call functions
-  through sys's `describe[f]` and `apply[f, args]`; llm's tools are
-  described in the module (`chat`'s and `follow`'s schemas were the
-  compiler's), so a tools list may hold functions of several signatures.
-
-- The compiler holds the language and nothing of any module (design rule
-  24; docs/extending-crow.md): what a builtin is — its options and their
-  defaults, its effects, its in-place and growing forms, the range of the
-  int it answers, the crate feature it needs — is declared on its row, and
-  what a module is on its manifest (`modules::MODULES`); the compiler's
-  hand-kept lists of names, which had disagreed with each other, are
-  gone, and `src/freeze.rs` fails when a compiler file learns a module's
-  or a builtin's name. No program behaves differently, except where a
-  call's options are refused: the wording comes from the rows now
-  (`window[] takes 3 arguments, then n = 0, by = [], span = 0.0, on = ''
-  by name`), and `fmt[t, 'HH:mm']` with the style given by position is
-  the time style's, where it had been refused. `use web.ui` is a ui
-  program to every check, as it was to the lowering.
-- `crow test --modules` runs every standard module written in Crow
-  against its own test blocks, from the manifest.
-- A standard module written in Crow declares its functions by writing
-  them (phase 2 of docs/extending-crow.md): a top-level function with no
-  leading underscore is what a program calls, typed by its use as any
-  function is, its options its defaults — which may now be `[]` or
-  `map[]` — and a helper begins with an underscore. The statistics, the
-  neural-network formulas, the token functions, a socket's `socket` and
-  `close`, the model functions and the protocol's own are such functions
-  now; 45 rows of the builtin table are gone with the JSON text the
-  values had crossed them as. A misuse inside one is refused
-  naming it and the program's line (`in relu: clip[] takes numbers, got
-  an int`). The effects (`read`, `write`, `request`, `mail`, the readers,
-  a socket's `send` and `recv`), the variadics (`randn`, `normal`,
-  `anova`), `msgpack` (a value of any kind, kept as it is) and the
-  database drivers keep their rows until their phases.
-
-- The VS Code extension depends on no npm package: it speaks LSP to `crow
-  lsp` itself, in one file of plain JavaScript over VS Code's own API, and
-  is packaged by Python's standard library. No workflow runs Node.js: the
-  release, CI and the book's site use git, rustup, `gh`, Python and curl
-  where they used GitHub's JavaScript actions, npm and `vsce`. The
-  extension is published to Open VSX with each release; the Marketplace
-  takes the release's `.vsix` by its web page.
-- `rsi`'s warm-up is the spec's: from the second row, the mean gain and
-  loss of the deltas there are until `n` have come, then Wilder's
-  smoothing — as it was, now written down and held to a reference.
-
-### Fixed
-
 - A refusal inside a standard module's helper two exports share is
   blamed on the export whose call made the refused copy, at that
   call's line (errors j80): `lookup`, valid, had answered for a list
@@ -1457,7 +1120,6 @@ history says the rest.
   = […]]` reads the log's keys and `_pos` beside the columns asked and
   answers with them: a list lacking them had stopped the fold (`sort:
   column '_pos' not found`).
-
 - The left side of an operator runs before the right side's own
   statements: `put[d, f] eq 1 and latest[d].id eq ['a', 'b']` had read
   the log before the put — the read of a value that can fail is hoisted
@@ -1512,7 +1174,6 @@ history says the rest.
   cell: a day's 871,527 timestamps against an instant 12 → 7 ms. A
   column is still read into its cells first (6 ns a row); a column
   value kind in the interpreter is the fix behind this one.
-
 - Ending a process `start` began signals its own group and nothing else
   on Linux: the group had been written `kill -TERM -<pid>`, which
   procps's `kill` (4.0.4, Ubuntu's) reads as a signal to every process
