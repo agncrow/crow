@@ -648,7 +648,10 @@ fn lay_node[node, x, y, width, viewport, path]
         if fills gt 0.0
             fill_w = remaining / fills
         wrapping = lay_attr[node, 'wrap', ''] eq 'true'
-        if fills eq 0.0 and remaining lt 0.0 and not wrapping
+        --- a row short by a hundredth of a pixel or more overflows: a row
+        --- sized to its children subtracts their widths in another order
+        --- than it added them, and the floats differ in their last bits
+        if fills eq 0.0 and remaining lt -0.01 and not wrapping
             overflow = true
         --- each child's width and the line it sits on: a wrapping row
         --- breaks before a child that would cross the right edge
@@ -667,7 +670,7 @@ fn lay_node[node, x, y, width, viewport, path]
             need = kw
             if cnt gt 0
                 need = used + gap + kw
-            if wrapping and cnt gt 0 and need gt inner_w
+            if wrapping and cnt gt 0 and need gt inner_w + 0.01
                 row_lines = concat[row_lines, [LLine[used, float[cnt]]]]
                 li = li + 1
                 used = kw
@@ -816,3 +819,27 @@ test a_card_is_laid_out[]
     boxes = crow_layout[root, 1024.0, false]
     assert[len[boxes] eq 3]
     assert[boxes[0].width eq 820.0]
+
+--- A row its children fill exactly fits (the Magpie book's top bar,
+--- 2026-10-30): sized to its children by the row around it, it subtracts
+--- what it added — 244.145 + 32 - 244.145 - 32 is -2.8e-14 in floating
+--- point — and had been marked as overflowing. A row that is truly too
+--- narrow for its children still overflows.
+test a_row_its_children_fill_exactly_fits[]
+    search = LNode['div', '', '', map[width = '152px'], []]
+    article = LNode['div', '', '', map[width = '44.085px'], []]
+    github = LNode['div', '', '', map[width = '48.06px'], []]
+    links = LNode['div', 'row', '', map[gap = 'm'], [search, article, github]]
+    bar = LNode['div', 'row', '', map[justify = 'between'], [links]]
+    boxes = crow_layout[bar, 1280.0, true]
+    assert[len[boxes] eq 5]
+    assert[boxes[1].width eq 276.145]
+    flags = for b in boxes
+        b.overflow
+    assert[not (true in flags)]
+    one = LNode['div', '', '', map[width = '800px'], []]
+    other = LNode['div', '', '', map[width = '800px'], []]
+    tight = crow_layout[LNode['div', 'row', '', map[gap = 'm'], [one, other]], 1280.0, true]
+    tight_flags = for b in tight
+        b.overflow
+    assert[true in tight_flags]
