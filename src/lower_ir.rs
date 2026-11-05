@@ -5129,7 +5129,13 @@ impl<'a> Lowerer<'a> {
                         if let Ty::Map(crate::ir::Key::Int, _) = base.ty().payload() {
                             self.refuse(format!("a map keyed by ints is read by `m[2]`: `.{}` names a text key", field));
                         }
-                        Expr::Field { base: Box::new(base), name: field.clone(), ty }
+                        // a test's app session reads a part's state by the
+                        // name the part declares (TypeContext::app_state_name)
+                        let name = match base.ty() {
+                            Ty::Handle(h) if h.name == crate::table::APP.name => self.ctx.app_state_name(field).unwrap_or_else(|| field.clone()),
+                            _ => field.clone(),
+                        };
+                        Expr::Field { base: Box::new(base), name, ty }
                     }
                 }
             }
@@ -7620,7 +7626,11 @@ impl<'a> Lowerer<'a> {
         // typed by nothing either, and neither is compiled: a program
         // calling magpie's `backup` alone had been refused for the
         // sequencer's `put_rows`, which hands `revise` its `_appended`)
-        if crate::modules::is_crow_fn(&self.current_fn) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(_, t)| *t == Ty::Unknown)) {
+        // (a dependency's function too — a package's under crow_modules/:
+        // a test file whose one test wrote through magpie and whose other
+        // only read had been refused, in the reading test, for the
+        // sequencer's `put_rows` the writing test reached)
+        if (crate::modules::is_crow_fn(&self.current_fn) || crate::from_dependency(&self.current_fn)) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(_, t)| *t == Ty::Unknown)) {
             return;
         }
         // a function copied per signature has no one type to be held at

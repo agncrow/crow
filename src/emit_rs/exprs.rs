@@ -915,14 +915,17 @@ impl Emitter {
     /// or back, or the program stops on the line where it lies past the
     /// moments one holds (the interpreter's ops call the same function).
     fn moment_op(&self, op: &str, l: &str, lti: &Ty, r: &str, rti: &Ty) -> Option<String> {
-        let secs = |t: &Ty| matches!(t, Ty::Int | Ty::Float);
-        let (t, s, f) = match (op, lti, rti) {
-            ("add", Ty::Moment, s) if secs(s) => (l, r, "plus"),
-            ("add", s, Ty::Moment) if secs(s) => (r, l, "plus"),
-            ("sub", Ty::Moment, s) if secs(s) => (l, r, "less"),
+        let secs = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Big);
+        let (t, s, f, sty) = match (op, lti, rti) {
+            ("add", Ty::Moment, s) if secs(s) => (l, r, "plus", s),
+            ("add", s, Ty::Moment) if secs(s) => (r, l, "plus", s),
+            ("sub", Ty::Moment, s) if secs(s) => (l, r, "less", s),
             _ => return None,
         };
-        Some(format!("crow_runtime::moments::{}(&({}), ({}) as f64){}", f, t, s, self.or_stop()))
+        // (a growing int's seconds as a float, as the interpreter reads them:
+        // `t + int[text]` had not built)
+        let s = if matches!(sty, Ty::Big) { format!("crow_runtime::int::float_of(&({}))", s) } else { format!("({}) as f64", s) };
+        Some(format!("crow_runtime::moments::{}(&({}), {}){}", f, t, s, self.or_stop()))
     }
 
     /// Arithmetic and comparison with a tensor on either side, as the

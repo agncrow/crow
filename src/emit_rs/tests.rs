@@ -2745,3 +2745,13 @@ fn bytes_appended_from_a_range_are_one_copy() {
     assert!(body.contains("crow_runtime::sys::extend_within_taken("), "{}", body);
     assert!(!body.contains("crow_runtime::sys::slice("), "{}", body);
 }
+
+/// An int read from text, its failure and its ends each answered by a
+/// `return`, is narrowed for what follows as an assignment narrows: the
+/// width pass had read `known n lt 0` as no condition on `n`, and the
+/// function answered a growing int (Myna's `rows_asked`)
+#[test]
+fn an_int_read_from_text_narrowed_by_returns_stays_in_64_bits() {
+    let rust = transpile("fn small[c]\n    n = int[c]\n    if not n.ok\n        return 0\n    if n lt 0\n        return 0\n    if n gt 1000000\n        return 0\n    return n\n\nlog[small['42']]\n");
+    assert!(rust.contains("fn small(c: &String) -> i64"), "{}", rust);
+}

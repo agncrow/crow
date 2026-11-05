@@ -267,7 +267,9 @@ pub fn read_set(
     let mut rs = ReadSet { params: params.clone(), ..ReadSet::default() };
     let mut visited: BTreeSet<String> = BTreeSet::new();
     walk_stmts(body, facts, derives, fns, &mut visited, &mut rs);
-    rs.external = rs.tables.iter().any(|t| !owned_tables.contains(t));
+    // (the files are the program's own: what it reads of them moves when
+    // it writes one — noted as it runs — never on a freshness window)
+    rs.external = rs.tables.iter().any(|t| t != crow_runtime::io::FILES && !owned_tables.contains(t));
     rs.aliases.clear();
     rs.params.clear();
     rs.own.clear();
@@ -393,6 +395,14 @@ fn walk_expr(e: &Expr, facts: &BTreeSet<String>, derives: &BTreeSet<String>, fns
                 // the signed-in reader is a fact the runtime keeps: a
                 // derivation over it follows sign-ins, and is the session's
                 if n == "__reader" { rs.facts.insert("reader".to_string()); }
+                // a builtin that reads a file: the files are read as a table
+                // is, so a handler's write to any file moves the derivation
+                // (it had been computed once, and showed a file the program
+                // had since written as it was)
+                if !fns.contains_key(n) && crate::table::effects_of(n).contains(&crate::effects::Effect::Files) {
+                    rs.tables.insert(crow_runtime::io::FILES.to_string());
+                    rs.whole.insert(crow_runtime::io::FILES.to_string());
+                }
                 // query[conn, 'sql', ...]: the tables the literal reads, and
                 // the slice of one it reads when a fact fixes a column of it
                 if n == "query" {
@@ -439,6 +449,13 @@ fn walk_expr(e: &Expr, facts: &BTreeSet<String>, derives: &BTreeSet<String>, fns
                     }
                 }
             } else {
+                // (a module's reader through its name: `frame.load[path]`)
+                if let Expr::FieldAccess { field, .. } = callee.as_ref()
+                    && crate::table::effects_of(field).contains(&crate::effects::Effect::Files)
+                {
+                    rs.tables.insert(crow_runtime::io::FILES.to_string());
+                    rs.whole.insert(crow_runtime::io::FILES.to_string());
+                }
                 walk_expr(callee, facts, derives, fns, visited, rs);
             }
             for a in args { walk_expr(a, facts, derives, fns, visited, rs); }

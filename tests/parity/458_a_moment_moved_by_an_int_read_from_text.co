@@ -1,0 +1,8 @@
+--- A moment moved by an int read from text: `int[…]` answers a whole
+--- number of any size, and a moment moved by one is moved by its seconds
+--- (compiled, `t + n` had not built — E0277, a growing int beside a moment).
+n = int['3600']
+t = moment['2026-11-04T10:00:00Z']
+log[t + n]
+log[t - n]
+log[n + t]

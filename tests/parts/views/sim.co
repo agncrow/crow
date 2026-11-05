@@ -39,3 +39,12 @@ test the_page_composes_its_parts[]
     click[a, tape.note_count]
     assert[clock.note eq '7', 'note is `clock.note`']
     assert['note 7' in html[a], html[a]]
+
+--- a session reads a part's derivation and fact by the names the part
+--- declares (each had been "no reactive state named" in both modes)
+test a_session_reads_its_parts_state_by_their_names[]
+    a = app[render]
+    assert[a.marker eq 1]
+    click[a, clock.faster]
+    assert[a.speed eq 10.0]
+    assert[a.label eq 'at 0 x10 marker 1', a.label]

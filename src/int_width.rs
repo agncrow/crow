@@ -875,7 +875,13 @@ impl Walk {
                     }
                 }
                 for (side, other, op) in [(l, r, op.clone()), (r, l, flip(&op))] {
-                    let (Expr::Local(v, ty) | Expr::Move(v, ty)) = side.as_ref() else { continue };
+                    // (a local that can fail, read where it has not: `known n
+                    // lt 0` after `if not n.ok return` narrows n's value)
+                    let side = match side.as_ref() {
+                        Expr::Convert { how: crate::ir::Convert::Unwrap | crate::ir::Convert::Known, expr, .. } => expr.as_ref(),
+                        s => s,
+                    };
+                    let (Expr::Local(v, ty) | Expr::Move(v, ty)) = side else { continue };
                     if !matches!(ty.payload(), Ty::Int | Ty::Big) {
                         continue;
                     }
@@ -1849,7 +1855,7 @@ fn accumulators(fun: &str, b: &Block) -> HashMap<String, u32> {
 fn local_name(e: &Expr) -> Option<String> {
     match e {
         Expr::Local(n, _) | Expr::Move(n, _) => Some(n.clone()),
-        Expr::Convert { how: crate::ir::Convert::ToBig | crate::ir::Convert::ToSmall(_), expr, .. } => local_name(expr),
+        Expr::Convert { how: crate::ir::Convert::ToBig | crate::ir::Convert::ToSmall(_) | crate::ir::Convert::Unwrap | crate::ir::Convert::Known, expr, .. } => local_name(expr),
         _ => None,
     }
 }

@@ -147,6 +147,16 @@ fn text(body: &serde_json::Value, key: &str) -> Result<String, String> {
 }
 
 async fn answer(c: &Control, op: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
+    // the tables and files the test's own lines wrote, landed for the app
+    if let Some(serde_json::Value::Array(tables)) = body.get("written") {
+        super::publish_writes(
+            tables
+                .iter()
+                .filter_map(|t| t.as_str())
+                .map(|t| crow_runtime::sql::WriteKeys { table: t.to_string(), known: vec![], changed: vec![], exact: false })
+                .collect(),
+        );
+    }
     if op == "open" {
         let view = text(&body, "view")?;
         let mut state = start_session(&c.initial);

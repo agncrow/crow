@@ -499,6 +499,7 @@ pub fn flush(path: &str) -> Result<String, String> {
 /// `sys.link[from, to]`: a hard link, refused where `to` exists (the
 /// system's reason); answers `to`.
 pub fn link(from: &str, to: &str) -> Result<String, String> {
+    crate::io::note_file_write();
     std::fs::hard_link(from, to).map_err(|e| format!("cannot link '{}' as '{}': {}", from, to, e))?;
     Ok(to.to_string())
 }
@@ -506,6 +507,7 @@ pub fn link(from: &str, to: &str) -> Result<String, String> {
 /// `sys.move[from, to]`: renamed over `to`, atomically where the system
 /// renames so; answers `to`.
 pub fn move_path(from: &str, to: &str) -> Result<String, String> {
+    crate::io::note_file_write();
     std::fs::rename(from, to).map_err(|e| format!("cannot move '{}' to '{}': {}", from, to, e))?;
     Ok(to.to_string())
 }
@@ -838,6 +840,7 @@ pub fn tensor_of_frame(f: &crate::frame::CrowFrame) -> Result<crate::tensor::Cro
 
 /// `sys.store[path, bytes]`: the bytes written to a file, as they are.
 pub fn store(path: &str, b: &Bytes) -> Result<(), String> {
+    crate::io::note_file_write();
     std::fs::write(path, &b.0).map_err(|e| format!("cannot write '{}': {}", path, e))
 }
 

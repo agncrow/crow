@@ -860,6 +860,22 @@ impl TypeContext {
 
     /// A field's type (`x.f`) from the object's type; a frame's schema and a
     /// module's variables are looked up by the object's name.
+    /// The fact or derivation a test's app session reads by `a.name`: the
+    /// program's own of the name, or else the one part's that declares it
+    /// (a page's test reading a derivation of a part the page shows —
+    /// `a.label` of `side.co`'s `label` — had found no state of the name in
+    /// either mode, the part's held under its part's prefix).
+    pub(crate) fn app_state_name(&self, field: &str) -> Option<String> {
+        if self.derives.contains(field) || self.facts.contains(field) {
+            return Some(field.to_string());
+        }
+        let mut found = self.derives.iter().chain(self.facts.iter()).filter(|n| {
+            n.strip_suffix(field).is_some_and(|prefix| !prefix.is_empty() && crate::part_prefix_of_declaration(n).as_deref() == Some(prefix))
+        });
+        let one = found.next()?.clone();
+        found.next().is_none().then_some(one)
+    }
+
     pub(crate) fn field_type(&self, object: &Expr, obj_type: Ty, field: &str) -> Ty {
         // Json object field access stays Json (dynamic values)
         {
@@ -897,7 +913,10 @@ impl TypeContext {
         // a test's app session reads its own reactive state: a derivation
         // or a fact of that name, as the harness reads it
         if matches!(&obj_type, Ty::Handle(h) if h.name == crate::table::APP.name) && !matches!(field, "ok" | "reason" | "kind" | "trace") {
-            return if self.derives.contains(field) || self.facts.contains(field) { self.vars.get(field).cloned().unwrap_or(Ty::Unknown) } else { Ty::Unknown };
+            return match self.app_state_name(field) {
+                Some(n) => self.vars.get(&n).cloned().unwrap_or(Ty::Unknown),
+                None => Ty::Unknown,
+            };
         }
         // Error-value metadata fields
         match field {

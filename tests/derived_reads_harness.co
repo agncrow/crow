@@ -1,0 +1,62 @@
+--- Derivations a test reads, in the interpreter and the compiled program:
+--- one of ints that may grow and one of a moment (the compiled harness had
+--- answered "no fact or readable derivation named" for each), and one over
+--- a file, which a handler's write and the test's own move (compiled, it
+--- had kept the file as it first was).
+use web, ui
+
+texts = ['3', '5']
+
+derive ids
+    out = []
+    for t in texts
+        n = int[t]
+        if n.ok
+            out = push[out, n]
+    return out
+
+derive every
+    n = int[texts[0]]
+    if not n.ok
+        return 0
+    return n
+
+derive huge
+    n = int['123456789012345678901234567890']
+    if not n.ok
+        return 0
+    return n
+
+derive when
+    return moment['2026-11-05T10:00:00Z']
+
+derive stamp
+    s = read['.crow_build/derived_reads_stamp.txt']
+    if not s.ok
+        return 'none'
+    return s
+
+fn mark[]
+    w = write['.crow_build/derived_reads_stamp.txt', 'by the handler']
+
+view render[]
+    return stack[p['ids `len[ids]` every `every`'], p['stamp `stamp`'], button['Mark', click = mark]]
+
+test ints_that_may_grow_and_a_moment_are_read[]
+    a = app[render]
+    assert[ids eq [3, 5]]
+    assert[every eq 3]
+    assert[huge eq 123456789012345678901234567890]
+    assert[str[when] eq '2026-11-05T10:00:00Z']
+
+test a_derivation_over_a_file_follows_its_writes[]
+    made = mkdir['.crow_build']
+    w = write['.crow_build/derived_reads_stamp.txt', 'one']
+    a = app[render]
+    assert['stamp one' in html[a]]
+    v = write['.crow_build/derived_reads_stamp.txt', 'two']
+    b = app[render]
+    assert['stamp two' in html[b]]
+    click[b, mark]
+    assert['stamp by the handler' in html[b]]
+    gone = rm['.crow_build/derived_reads_stamp.txt']

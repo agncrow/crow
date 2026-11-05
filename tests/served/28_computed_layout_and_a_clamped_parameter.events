@@ -1,0 +1,8 @@
+[
+  {"expect": "style=\"width:20px\""},
+  {"expect": "style=\"width:60px\""},
+  {"absent": "width=\""},
+  {"expect": "count 0"},
+  {"event": "go"},
+  {"expect": "count 5"}
+]

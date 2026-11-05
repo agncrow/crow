@@ -155,6 +155,11 @@ impl CrowApp {
     /// Start the server (`serve[app, port]` in Crow). It listens on this
     /// machine only, unless `CROW_HOST` names another interface.
     pub async fn serve(self, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+        // what the top level wrote of the files lands for the app before
+        // anything is served: a derivation computed before reads them again
+        // (an app without live pages holds no derivation to tell)
+        #[cfg(feature = "live")]
+        crate::live::publish_writes(crate::live::file_writes());
         // `crow test --compiled` starts the program on a port of its own
         let port = std::env::var("CROW_PORT").ok().and_then(|p| p.trim().parse::<u16>().ok()).unwrap_or(port);
         let host = listen_host(std::env::var("CROW_HOST").ok());
@@ -330,7 +335,16 @@ fn make_axum_handler(
                     Err(why) => route_stopped(&name, &why),
                 }
             } else {
-                match tokio::task::spawn_blocking(move || crow_runtime::stops::guarded(|| answer(crow_req))).await {
+                // (a file the handler wrote lands for the app's derivations
+                // as it ends, as a table it wrote does)
+                match tokio::task::spawn_blocking(move || {
+                    let r = crow_runtime::stops::guarded(|| answer(crow_req));
+                    #[cfg(feature = "live")]
+                    crate::live::publish_writes(crate::live::file_writes());
+                    r
+                })
+                .await
+                {
                     Ok(Ok(resp)) => resp,
                     Ok(Err(why)) => route_stopped(&name, &why),
                     Err(e) => route_stopped(&name, &e.to_string()),

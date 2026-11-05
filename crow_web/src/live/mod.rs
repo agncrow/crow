@@ -472,6 +472,18 @@ pub fn app() -> &'static CrowLiveState {
 /// table they wrote, the app's and every session's, is stale, and every page
 /// that read one is woken to catch up. Each write is logged with what it
 /// says about its rows; each table is published once, at its last write.
+/// The files written on this thread since the last call, as the write
+/// they are to what a derivation reads (`crow_runtime::io::FILES`): a
+/// program that opens no database takes them here, where one that does
+/// takes them with its tables' (`crow_db::take_write_keys`).
+pub fn file_writes() -> Vec<crow_runtime::sql::WriteKeys> {
+    if crow_runtime::io::take_file_write() {
+        vec![crow_runtime::sql::WriteKeys { table: crow_runtime::io::FILES.to_string(), known: vec![], changed: vec![], exact: false }]
+    } else {
+        vec![]
+    }
+}
+
 pub fn publish_writes(writes: Vec<crow_runtime::sql::WriteKeys>) {
     let mut last: Vec<(String, u64)> = Vec::new();
     for keys in writes {
@@ -1530,6 +1542,13 @@ impl CrowLiveState {
             log_write(v, keys);
             publish_table(&table, v, self.session_id);
         }
+    }
+
+    /// The files written on this thread since the last call, noted as the
+    /// write they are to what a derivation reads (`file_writes`): a
+    /// compiled handler's in a program that opens no database.
+    pub fn note_file_writes(&self) {
+        self.note_writes(file_writes());
     }
 
     /// Every write made on this thread since the last call, noted.

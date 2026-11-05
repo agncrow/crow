@@ -1,0 +1,29 @@
+--- A layout attribute computed as the page renders is a style, as a
+--- written one is (compiled, `width = '`w`px'` had been an attribute the
+--- browser ignores, while the interpreter styled it); and a handler that
+--- changes its own parameter — a clamp — builds (it had not, compiled).
+use web, ui
+
+xs = [10, 20, 30]
+count = 0
+
+view bar[v]
+    w = v * 2
+    return div['bar `v`', width = '`w`px', class = 'bar']
+
+fn _bump[by]
+    if by gt 5
+        by = 5
+    count = count + by
+
+fn go[]
+    _bump[7]
+
+view render[]
+    bars = for v in xs
+        bar[v]
+    half = 50
+    return stack[bars, div['half', width = '`half`%', padding = 'md'], p['count `count`'], button['Go', click = go]]
+
+serve[3463]
+page['/', render]

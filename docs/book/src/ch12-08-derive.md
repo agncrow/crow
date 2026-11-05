@@ -139,6 +139,12 @@ derivations over that table: when one reader buys, the blotter of
 another reader watching the same book follows at once — the write wakes
 every page that read the table, with no refresh tick and no code.
 
+The files are read the same way, as one table. A derivation that reads a
+file — a list of the notebooks in a folder, a settings file — is shared
+by the app, and computed again after any handler writes, makes, moves or
+removes a file. A handler that saves a notebook needs no counter to make
+the list follow it.
+
 A derivation that reads only a slice of a table is recomputed only when a
 write may have touched that slice. Every one of its queries of the table
 has to fix one column by a fact, as `WHERE board = ?` with `[board_id]`

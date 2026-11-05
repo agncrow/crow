@@ -1501,6 +1501,11 @@ fn stdlib_names() -> &'static BTreeSet<String> {
     NAMES.get_or_init(|| {
         let mut names: BTreeSet<String> = crate::modules::ModuleRegistry::with_stdlib().all_function_names().into_iter().map(|s| s.to_string()).collect();
         names.extend(crate::modules::every_module_function());
+        // every module's rows, an internal one's included: a package may
+        // import `sys`, which the registry leaves out of what it offers a
+        // program (Magpie's `frame_of_json` and `byte` had been reported as
+        // undefined variables by every `crow check` of a program using it)
+        names.extend(crate::table::ROWS.iter().map(|r| r.name).filter(|n| !n.starts_with("__")).map(str::to_string));
         names
     })
 }
@@ -2150,12 +2155,14 @@ pub fn describe_derivations(stmts: &[Stmt]) -> Vec<String> {
         let mut parts: Vec<String> = Vec::new();
         let mut reads: Vec<String> = rs.facts.iter().chain(rs.derives.iter()).cloned().collect();
         if rs.now { reads.push("now[]".to_string()); }
+        if rs.tables.contains(crow_runtime::io::FILES) { reads.push("files".to_string()); }
         if !reads.is_empty() { parts.push(format!("reads {}", reads.join(", "))); }
-        if !rs.tables.is_empty() {
+        if rs.tables.iter().any(|t| t != crow_runtime::io::FILES) {
             // a table it reads a slice of says which: `cards where board = board_id`
             let tables = rs
                 .tables
                 .iter()
+                .filter(|t| *t != crow_runtime::io::FILES)
                 .map(|t| match rs.keys.get(t) {
                     Some((column, fact)) => format!("{} where {} = {}", t, column, fact),
                     None => t.clone(),

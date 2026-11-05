@@ -1,0 +1,5 @@
+[
+  {"expect": "name first"},
+  {"event": "rename"},
+  {"expect": "name second"}
+]

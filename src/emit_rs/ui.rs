@@ -50,14 +50,32 @@ impl Emitter {
         // interpreter renders them; the rest are attributes and events
         let mut literal_layout: Vec<(String, String)> = Vec::new();
         let mut other: Vec<(String, Expr)> = Vec::new();
+        // (a layout attribute computed as the page renders: the whole
+        // layout goes through the table then, the literals beside it)
+        let mut computed_layout: Vec<(String, Expr)> = Vec::new();
         for (k, v) in attrs {
             // (a class through the table for every element, as the
             // interpreter renders it: joined to the element's own)
             let is_layout = crow_runtime::layout::LAYOUT_ATTRS.contains(&k.as_str()) || k == "class";
             match (is_layout, Self::lit(v)) {
                 (true, Some(s)) => literal_layout.push((k.clone(), s)),
+                (true, None) if k != "class" && k != "active" => computed_layout.push((k.clone(), v.clone())),
                 _ => other.push((k.clone(), v.clone())),
             }
+        }
+        if !computed_layout.is_empty() {
+            let mut pairs: Vec<String> = literal_layout.iter().map(|(k, v)| format!("({:?}.to_string(), {:?}.to_string())", k, v)).collect();
+            for (k, v) in &computed_layout {
+                let x = self.expr(v);
+                pairs.push(format!("({:?}.to_string(), format!(\"{{}}\", {}))", k, x));
+            }
+            let mut result = format!("{}.with_layout({:?}, &[{}]){}", base, element, pairs.join(", "), self.or_stop());
+            if element == "nav" {
+                if let Some((_, a)) = literal_layout.iter().find(|(k, _)| k == "active") {
+                    result = format!("{}.mark_active(\"{}\")", result, a);
+                }
+            }
+            return self.tree_rest(element, result, other);
         }
         let rendered = crow_runtime::layout::render(element, &literal_layout);
         let mut result = base;
@@ -80,6 +98,12 @@ impl Emitter {
                 result = format!("{}.mark_active(\"{}\")", result, a);
             }
         }
+        self.tree_rest(element, result, other)
+    }
+
+    /// An element's attributes and events that are no layout, after its
+    /// layout is placed.
+    fn tree_rest(&mut self, element: &str, mut result: String, other: Vec<(String, Expr)>) -> String {
         let mut confirm: Option<String> = None;
         for (k, v) in &other {
             if k == "confirm" {

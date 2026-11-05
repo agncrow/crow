@@ -1296,7 +1296,12 @@ impl Emitter {
                 Ty::Int | Ty::Float | Ty::Str | Ty::Markup | Ty::Bool | Ty::Json | Ty::Frame(_) => {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
                 }
-                Ty::Tensor(..) => Some(format!("crow_runtime::json::ToJson::to_json(&{})", v)),
+                // (an int that may grow and a moment through the runtime's
+                // JSON: a derivation of either had been unreadable to a
+                // compiled test — Myna's `cell_ids`, `every`)
+                t if matches!(t, Ty::Tensor(..) | Ty::Big | Ty::Moment) || matches!(t, Ty::List(i) | Ty::Map(_, i) if matches!(i.as_ref(), Ty::Big | Ty::Moment)) => {
+                    Some(format!("crow_runtime::json::ToJson::to_json(&{})", v))
+                }
                 Ty::List(i) | Ty::Map(_, i) if matches!(i.as_ref(), Ty::Int | Ty::Float | Ty::Str | Ty::Markup | Ty::Bool | Ty::Json) => {
                     Some(format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", v))
                 }

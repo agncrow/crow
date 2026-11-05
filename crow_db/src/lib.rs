@@ -211,7 +211,12 @@ fn whole_table(table: &str) -> crow_runtime::sql::WriteKeys {
 /// them (`take_written`).
 pub fn take_write_keys() -> Vec<crow_runtime::sql::WriteKeys> {
     WRITTEN.with(|w| w.borrow_mut().clear());
-    WRITE_KEYS.with(|w| std::mem::take(&mut *w.borrow_mut()))
+    let mut keys = WRITE_KEYS.with(|w| std::mem::take(&mut *w.borrow_mut()));
+    // a file written is a write to the files a derivation reads
+    if crow_runtime::io::take_file_write() {
+        keys.push(whole_table(crow_runtime::io::FILES));
+    }
+    keys
 }
 
 /// The tables written on this thread since the last call, each once.

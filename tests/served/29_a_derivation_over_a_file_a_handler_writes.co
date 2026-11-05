@@ -1,0 +1,24 @@
+--- A derivation that reads a file is computed again after a handler
+--- writes a file, as one over a table is after a write to the table (it
+--- had been computed once and shown the file as it first was, compiled,
+--- while the interpreter's pages read it again).
+use web, ui
+
+--- (the file lies in the build's folder, which the repository ignores)
+made = mkdir['.crow_build']
+first = write['.crow_build/served_29_name.txt', 'first']
+
+derive name
+    s = read['.crow_build/served_29_name.txt']
+    if not s.ok
+        return 'none'
+    return s
+
+fn rename[]
+    w = write['.crow_build/served_29_name.txt', 'second']
+
+view render[]
+    return stack[p['name `name`'], button['Rename', click = rename]]
+
+serve[3464]
+page['/', render]

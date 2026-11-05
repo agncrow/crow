@@ -2,6 +2,29 @@
 
 use std::collections::BTreeMap;
 
+/// The name the files take among the tables a derivation reads: a
+/// derivation that reads a file is computed again after a handler writes
+/// one, as one over a table is after a write to the table (spec,
+/// Derivations). No table a statement names can be called so.
+pub const FILES: &str = "(files)";
+
+thread_local! {
+    /// Whether this thread wrote, made, moved or removed a file since the
+    /// last `take_file_write` (crow_db's `take_write_keys` takes it with
+    /// the tables written).
+    static WROTE_FILES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A file was written, made, moved or removed on this thread.
+pub fn note_file_write() {
+    WROTE_FILES.with(|w| w.set(true));
+}
+
+/// Whether a file was written on this thread since the last call.
+pub fn take_file_write() -> bool {
+    WROTE_FILES.with(|w| w.replace(false))
+}
+
 /// Read entire file contents as a string.
 pub fn read_file(path: &str) -> Result<String, String> {
     std::fs::read_to_string(path)
@@ -10,12 +33,14 @@ pub fn read_file(path: &str) -> Result<String, String> {
 
 /// Write string content to a file (creates or overwrites).
 pub fn write_file(path: &str, content: &str) -> Result<(), String> {
+    note_file_write();
     std::fs::write(path, content)
         .map_err(|e| format!("write: {}", e))
 }
 
 /// Append string content to a file (creates if doesn't exist).
 pub fn append_file(path: &str, content: &str) -> Result<(), String> {
+    note_file_write();
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -75,6 +100,7 @@ pub fn fs_read(path: &str) -> Result<String, String> {
 
 /// `write[path, content]`: create or overwrite.
 pub fn fs_write(path: &str, content: &str) -> Result<(), String> {
+    note_file_write();
     std::fs::write(path, content).map_err(|e| format!("cannot write '{}': {}", path, e))
 }
 
@@ -85,6 +111,7 @@ pub fn fs_exists(path: &str) -> bool {
 
 /// `mkdir[path]`: every missing directory on the way; an existing one is fine.
 pub fn fs_mkdir(path: &str) -> Result<(), String> {
+    note_file_write();
     std::fs::create_dir_all(path).map_err(|e| format!("cannot mkdir '{}': {}", path, e))
 }
 
@@ -106,6 +133,7 @@ pub fn fs_ls(path: &str) -> Result<Vec<String>, String> {
 /// end, and the removal is made again (a few times): a log's flush that
 /// placed its file as `rm` ran had kept the directory.
 pub fn fs_rm(path: &str) -> Result<(), String> {
+    note_file_write();
     let p = std::path::Path::new(path);
     let mut r = if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
     for _ in 0..4 {
@@ -119,11 +147,13 @@ pub fn fs_rm(path: &str) -> Result<(), String> {
 
 /// `mv[src, dst]`.
 pub fn fs_mv(src: &str, dst: &str) -> Result<(), String> {
+    note_file_write();
     std::fs::rename(src, dst).map_err(|e| format!("cannot mv '{}' to '{}': {}", src, dst, e))
 }
 
 /// `cp[src, dst]`.
 pub fn fs_cp(src: &str, dst: &str) -> Result<(), String> {
+    note_file_write();
     std::fs::copy(src, dst).map(|_| ()).map_err(|e| format!("cannot cp '{}' to '{}': {}", src, dst, e))
 }
 

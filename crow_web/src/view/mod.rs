@@ -123,6 +123,31 @@ impl CrowVNode {
         self
     }
 
+    /// The element's layout attributes where one of them is computed as the
+    /// page renders (`width = '`px`px'`): every one of them through the
+    /// layout table at once, as the interpreter renders them (the compiled
+    /// page had written a computed width as an attribute the browser
+    /// ignores). A value the table refuses is the render's stop, in the
+    /// interpreter's words.
+    pub fn with_layout(mut self, element: &str, layout: &[(String, String)]) -> Result<Self, String> {
+        let r = crow_runtime::layout::render(element, layout);
+        if let Some(e) = r.errors.first() {
+            return Err(format!("{}: {}", element, e));
+        }
+        if let CrowVNode::Element { ref mut attrs, .. } = self {
+            if !r.class.is_empty() {
+                attrs.insert("class".to_string(), r.class);
+            }
+            if !r.style.is_empty() {
+                attrs.insert("style".to_string(), r.style);
+            }
+            for (k, v) in r.data.into_iter().chain(r.passthrough) {
+                attrs.insert(k, v);
+            }
+        }
+        Ok(self)
+    }
+
     /// `confirm = 'text'`: the click asks first. The element offers the
     /// question instead of its handler (crow_runtime::layout::confirm_wiring).
     pub fn confirm(self, text: &str) -> Self {

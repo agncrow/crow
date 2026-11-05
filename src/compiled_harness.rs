@@ -100,6 +100,17 @@ impl RemoteApp {
 
     /// One verb: the request's answer, or the program's refusal.
     pub fn post(&self, op: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
+        // what the test's own lines wrote since its last request — a file, a
+        // table — lands for the app before the request, as the interpreter's
+        // pages read it: a derivation the compiled app held had kept the
+        // value it had before the test wrote
+        let mut body = body;
+        let written: Vec<String> = crow_db::take_write_keys().into_iter().map(|k| k.table).collect();
+        if !written.is_empty()
+            && let Some(o) = body.as_object_mut()
+        {
+            o.insert("written".to_string(), serde_json::json!(written));
+        }
         let mut s = std::net::TcpStream::connect(("127.0.0.1", self.port)).map_err(|e| format!("the compiled program is gone: {}", e))?;
         let text = body.to_string();
         write!(

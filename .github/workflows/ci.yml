@@ -94,7 +94,7 @@ jobs:
       - name: Layout example
         run: ./target/release/crow test examples/layout_dashboard.co
       - name: Parts (a page composed of modules with facts, derivations and views)
-        run: ./target/release/crow test tests/parts/views/sim.co && ./target/release/crow test tests/parts/sim/clock.co && ./target/release/crow check tests/parts/main.co < /dev/null
+        run: ./target/release/crow test tests/parts/views/sim.co && ./target/release/crow test --compiled tests/parts/views/sim.co && ./target/release/crow test tests/parts/sim/clock.co && ./target/release/crow check tests/parts/main.co < /dev/null
       - name: The task board, the second reference app (its harness tests, then its check against the accepted baseline; `--served` above drives it in both modes)
         run: |
           cd examples/taskboard
@@ -147,6 +147,11 @@ jobs:
         run: |
           ./target/release/crow test tests/derive_harness.co
           ./target/release/crow test --compiled tests/derive_harness.co
+          rm -rf .crow_build && df -h / | tail -1
+      - name: Derivations a test reads — ints that may grow, a moment, a file a handler writes — in the interpreter and the compiled program
+        run: |
+          ./target/release/crow test tests/derived_reads_harness.co
+          ./target/release/crow test --compiled tests/derived_reads_harness.co
           rm -rf .crow_build && df -h / | tail -1
       - name: The app's book (derived from the parts fixture, with wireframes)
         run: cd tests/parts && ../../target/release/crow book --write && test -f .crow/book/site/pages.html && grep -q '<svg' .crow/book/site/pages.html

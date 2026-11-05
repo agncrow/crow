@@ -26,6 +26,11 @@ impl Emitter {
         let is_component_view = self.views.contains(&name);
 
         let param_ty = |t: &Ty| -> Ty { as_inferred(t) };
+        // a parameter the body changes is the body's own copy, in a handler
+        // and a view as in any function (a handler clamping its parameter,
+        // `if by gt 5` / `by = 5`, had not built)
+        let changed = Self::mutated_in(&f.body);
+        let own = |p: &str| if changed.contains(p) { "mut " } else { "" };
         let params: Vec<String> = if is_reactive_render {
             let mut ps = vec!["state: &CrowLiveState".to_string()];
             for (p, t) in &f.params {
@@ -33,7 +38,7 @@ impl Emitter {
                     Ty::Str | Ty::Markup | Ty::Unknown => "String".to_string(),
                     other => other.to_rust_type(),
                 };
-                ps.push(format!("{}: {}", p, rt));
+                ps.push(format!("{}{}: {}", own(p), p, rt));
             }
             ps
         } else if is_reactive_handler {
@@ -46,11 +51,11 @@ impl Emitter {
                     Ty::Str | Ty::Markup | Ty::Unknown => "String".to_string(),
                     other => other.to_rust_type(),
                 };
-                ps.push(format!("{}: {}", p, rt));
+                ps.push(format!("{}{}: {}", own(p), p, rt));
             }
             ps
         } else if is_live_render {
-            f.params.iter().enumerate().map(|(i, (p, _))| if i == 0 { format!("{}: &CrowLiveState", p) } else { format!("{}: String", p) }).collect()
+            f.params.iter().enumerate().map(|(i, (p, _))| if i == 0 { format!("{}: &CrowLiveState", p) } else { format!("{}{}: String", own(p), p) }).collect()
         } else if is_live_handle {
             f.params
                 .iter()
@@ -59,11 +64,10 @@ impl Emitter {
                     0 => format!("{}: &mut CrowLiveState", p),
                     1 => format!("{}: &str", p),
                     2 => format!("{}: Option<&str>", p),
-                    _ => format!("{}: String", p),
+                    _ => format!("{}{}: String", own(p), p),
                 })
                 .collect()
         } else {
-            let changed = Self::mutated_in(&f.body);
             f.params
                 .iter()
                 .map(|(p, t)| {
@@ -229,6 +233,8 @@ impl Emitter {
                 for t in &f.tables_written {
                     lines.push(format!("state.note_table_write(\"{}\");", t));
                 }
+                // (a file it wrote, as it ran)
+                lines.push("state.note_file_writes();".to_string());
             }
             self.reactive_epilogue = Some(lines);
         }
