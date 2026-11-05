@@ -1140,7 +1140,11 @@ impl Emitter {
     fn json_records(&self) -> BTreeSet<String> {
         fn jsonable(t: &Ty, ok: &BTreeSet<String>) -> bool {
             match t {
-                Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) => true,
+                // (a frame and a moment through the runtime's JSON, as a
+                // derivation of either reads: a record holding a tile's
+                // answer frame had been unreadable to a compiled test —
+                // Myna's dashboard)
+                Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Json | Ty::Tensor(..) | Ty::Frame(_) | Ty::Moment => true,
                 Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => jsonable(i, ok),
                 Ty::Record(n) => ok.contains(n),
                 _ => false,

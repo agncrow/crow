@@ -1,0 +1,20 @@
+--- A standard module's function sees none of the program's variables: in
+--- a page with a fact `made`, frame's `save` — whose two branches each hold
+--- a `made` of their own — had bound both to the page's fact, and every
+--- handler that saved a frame was refused, "in save: cannot reassign
+--- 'made' from result[bytes] to result[str]" (Myna's dashboards, whose
+--- query page names a fact `made`).
+use web, ui, frame
+
+made = 'nothing'
+
+fn go[]
+    s = frame.save[frame.new[a = [1, 2]], '.crow_build/served_31.parquet']
+    if s.ok
+        made = 'saved'
+
+view render[]
+    return stack[p['made `made`'], button['Go', click = go]]
+
+serve[3467]
+page['/', render]

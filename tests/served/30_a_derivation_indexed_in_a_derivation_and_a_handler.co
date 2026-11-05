@@ -1,0 +1,23 @@
+--- A derivation is read like a fact and indexed like one wherever it is
+--- read, not only in a view: in another derivation (`names[0]`) and in a
+--- handler (`picked = names[1]`) it had been counted as a call of the
+--- derivation, "'names' expects 0 arguments, got 1", and typed as the whole
+--- list.
+use web, ui
+
+picked = 'none'
+
+derive names
+    return ['north', 'south']
+
+derive first
+    return names[0]
+
+fn pick[]
+    picked = names[1]
+
+view render[]
+    return stack[p['first `first`'], p['picked `picked`'], button['Pick', click = pick]]
+
+serve[3466]
+page['/', render]

@@ -4260,7 +4260,7 @@ ordinary Crow. A block that reaches no truth and no `assert` — in its body
 or in a function it calls — fails with `asserts nothing`: a test that
 cannot fail tests nothing.
 
-A test block sees declarations (functions, views, structs, imports) and two kinds of top-level assignment: literal values — a number, text, a bool, a list or a map of them, a frame built from them, a moment of them (`moment[0.0]`, `moment['2026-01-01']`) — which are reactive-state defaults, and connections (`db.connect[...]`), which are resources the derivations and handlers under test need. Computed top-level values are invisible, as inside any function.
+A test block sees declarations (functions, views, structs, imports) and two kinds of top-level assignment: literal values — a number, text, a bool, a list or a map of them, a frame built from them, a moment of them (`moment[0.0]`, `moment['2026-01-01']`) — which are reactive-state defaults, and connections (`db.connect[...]`), which are resources the derivations and handlers under test need. Computed top-level values are invisible, as inside any function. The app a test opens under `crow test --compiled` is built from the same declarations, so a top-level line that acts — a write, a request — runs in neither mode (built whole, the compiled app had run every top-level line as it started, and a file the interpreted test never saw was there).
 
 Live apps are tested through a headless session — `app[view]` opens one,
 `click[a, handler]` runs a handler on it, `a.name` reads reactive state,

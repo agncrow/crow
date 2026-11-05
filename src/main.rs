@@ -2021,6 +2021,21 @@ pub(crate) fn from_dependency(fn_name: &str) -> bool {
     EXPANSION_PARTS.with(|p| p.borrow().iter().any(|(prefix, rel)| fn_name.starts_with(prefix.as_str()) && rel.split('/').any(|c| c == "crow_modules")))
 }
 
+/// A refusal made inside an imported part's function, placed in the part:
+/// `crow_modules/magpie/manifest.co: line 220: …`, its line refined
+/// against the part's own text, as `attribute_to_parts` places the IR
+/// lowering's. `None` for the entry's own code.
+pub(crate) fn placed_in_part(fn_name: &str, msg: &str) -> Option<String> {
+    let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
+    let prefix = parts.keys().filter(|prefix| !fn_name.is_empty() && fn_name.starts_with(prefix.as_str())).max_by_key(|prefix| prefix.len())?;
+    let refined = EXPANSION_FILES
+        .with(|f| f.borrow().get(prefix).cloned())
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|source| refine_error_lines(&source, msg))
+        .unwrap_or_else(|| msg.to_string());
+    Some(format!("{}: {}", parts[prefix], refined))
+}
+
 /// Transpile a .co file to Rust, compile it, and return the path to the binary.
 /// If `quiet` is true, suppress cargo build output (used for `crow run`).
 /// If `release` is true, compile with --release (optimized). Otherwise, use debug mode (fast compile).
@@ -2047,6 +2062,19 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
         .unwrap_or(std::path::Path::new("."));
     let mut visited = std::collections::HashSet::new();
     let stmts = expand_module_imports(&stmts, source_dir, &mut visited);
+    // The app a test opens runs what the test runs of the top level: its
+    // declarations (checker::declarations) and nothing else (spec,
+    // Testing). Built whole, the harness's program had run every top-level
+    // line as it started — a write the interpreted test never made — and a
+    // file read by a derivation was there compiled and not interpreted.
+    let stmts = if TEST_CONTROL.load(std::sync::atomic::Ordering::SeqCst) {
+        stmts
+            .into_iter()
+            .filter(|s| matches!(s, ast::Stmt::TestBlock { .. }) || !checker::declarations(std::slice::from_ref(s)).is_empty())
+            .collect()
+    } else {
+        stmts
+    };
 
     // Resolve named arguments to positional form (shared with the interpreter)
     let stmts = lower::lower_program(&stmts).unwrap_or_else(|e| refuse(entry, &source, &e));

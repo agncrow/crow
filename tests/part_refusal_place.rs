@@ -1,0 +1,25 @@
+//! A call inside an imported part, refused by the pass that fills in named
+//! arguments, is placed in the part's file at its own line. It had been
+//! placed in the entry at the entry's line of that number: a bare `move`
+//! in Magpie's manifest.co:220, taken by a Myna test file's own `move`,
+//! was shown as that test file's line 220, a line it does not have.
+
+use std::process::Command;
+
+#[test]
+fn a_parts_call_is_refused_in_the_parts_file() {
+    let dir = std::env::temp_dir().join(format!("crow_part_refusal_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    std::fs::write(dir.join("lib/helper.co"), "use sys\n\n--- a helper\nfn shift[p, q]\n    placed = move[p, q]\n    return placed\n").unwrap();
+    std::fs::write(dir.join("main.co"), "use lib.helper\n\nfn move[a, b, c]\n    return a\n\nlog[helper.shift['x', 'y']]\n").unwrap();
+    for mode in [&["run", "-i", "main.co"][..], &["check", "main.co"][..]] {
+        let out = Command::new(env!("CARGO_BIN_EXE_crow")).args(mode).current_dir(&dir).stdin(std::process::Stdio::null()).output().unwrap();
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(!out.status.success(), "{:?}: {}", mode, said);
+        assert!(said.contains("lib/helper.co:5:14: missing argument 'c' in call to 'move'"), "{:?}: {}", mode, said);
+        assert!(said.contains("placed = move[p, q]"), "{:?}: {}", mode, said);
+        assert!(!said.contains("main.co:5"), "{:?}: {}", mode, said);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

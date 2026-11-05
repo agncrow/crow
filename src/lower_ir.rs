@@ -7515,6 +7515,12 @@ impl<'a> Lowerer<'a> {
     /// callee's form, as the walk picks it.
     fn call_type(&self, callee: &A, args: &[A], arg_types: &[Ty], full_types: &[Ty], callee_type: Option<Ty>) -> Ty {
         let t = match callee {
+            // a derivation indexed is an item of its value, as a fact's is
+            // (typed as a call of it, `names[1]` had been the whole list)
+            A::Ident(name) if self.ctx.derives.contains(name) && !crate::modules::is_crow_fn(&self.current_fn) => {
+                let whole = callee_type.unwrap_or_else(|| self.ctx.ident_type(name));
+                self.ctx.index_type(whole, arg_types.first().cloned())
+            }
             A::Ident(name) => self.ctx.named_call_type(name, args, callee, arg_types, full_types),
             _ => {
                 let module = match callee {

@@ -2041,7 +2041,10 @@ impl<'a> Lowerer<'a> {
         // User-defined function? (one the caller can call: inside a
         // standard module's function, inlined, a program's function is
         // invisible — a local of the module's named like one is indexed)
-        if let Some(sig) = self.ctx.functions.get(name).filter(|_| self.calls_fn(name)) {
+        // (a derivation is read like a fact and indexed like one wherever it
+        // is read — `names[0]` in another derivation or a handler had been
+        // counted as a call of the derivation, "expects 0 arguments")
+        if let Some(sig) = self.ctx.functions.get(name).filter(|_| self.calls_fn(name) && !self.ctx.derives.contains(name)) {
             let expected = sig.params.len();
             if argc != expected {
                 self.refuse(format!("'{}' expects {} argument{}, got {}", name, expected, if expected == 1 { "" } else { "s" }, argc));

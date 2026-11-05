@@ -325,8 +325,8 @@ fn scoped(stmts: Vec<Stmt>) -> Result<Vec<Stmt>, String> {
         }
     }
     let stateful = ui || (web && derives);
-    let within = if stateful { globals.clone() } else { fixed };
-    let mut namer = Namer::new(&globals, &within, &[]);
+    let within = if stateful { globals.clone() } else { fixed.clone() };
+    let mut namer = Namer::new(&globals, &within, &fixed, &[]);
     namer.block(stmts, false)
 }
 
@@ -379,6 +379,10 @@ struct Namer<'a> {
     globals: &'a BTreeSet<String>,
     /// the globals a function's body binds as the program's (`scoped`)
     within: &'a BTreeSet<String>,
+    /// the names every body sees as the program's (its functions, records,
+    /// derivations and imports), none of its variables: a standard
+    /// module's function, inlined, binds no fact of the program's
+    fixed: &'a BTreeSet<String>,
     /// per open block: the name written → the variable it is now
     scopes: Vec<BTreeMap<String, String>>,
     /// how many variables of each written name this body has had
@@ -389,14 +393,14 @@ struct Namer<'a> {
 }
 
 impl<'a> Namer<'a> {
-    fn new(globals: &'a BTreeSet<String>, within: &'a BTreeSet<String>, params: &[String]) -> Self {
+    fn new(globals: &'a BTreeSet<String>, within: &'a BTreeSet<String>, fixed: &'a BTreeSet<String>, params: &[String]) -> Self {
         let mut top = BTreeMap::new();
         let mut seen = BTreeMap::new();
         for p in params {
             top.insert(p.clone(), p.clone());
             seen.insert(p.clone(), 1);
         }
-        Namer { globals, within, scopes: vec![top], seen, closed: BTreeSet::new(), line: 0 }
+        Namer { globals, within, fixed, scopes: vec![top], seen, closed: BTreeSet::new(), line: 0 }
     }
 
     fn visible(&self, name: &str) -> Option<&String> {
@@ -476,17 +480,22 @@ impl<'a> Namer<'a> {
                 Stmt::MultiAssign { names: names.iter().map(|n| self.bind(n)).collect(), values }
             }
             // a function, a derivation and a test block are bodies of their own
+            // (a standard module's function sees none of the program's
+            // variables: in a page with a fact `made`, frame's `save` —
+            // whose two branches each hold a `made` of their own — had
+            // bound both to the fact, "cannot reassign 'made'")
             Stmt::FnDecl { name, params, defaults, body, is_view } => {
-                let mut inner = Namer::new(self.within, self.within, &params);
+                let own = if crate::modules::is_crow_fn(&name) { self.fixed } else { self.within };
+                let mut inner = Namer::new(own, own, self.fixed, &params);
                 Stmt::FnDecl { name, params, defaults, body: inner.block(body, false)?, is_view }
             }
             Stmt::Derive { name, fresh, body } => {
-                let mut inner = Namer::new(self.within, self.within, &[]);
+                let mut inner = Namer::new(self.within, self.within, self.fixed, &[]);
                 Stmt::Derive { name, fresh, body: inner.block(body, false)? }
             }
             // (a test block sees the program's values, as a caller does)
             Stmt::TestBlock { name, params, body } => {
-                let mut inner = Namer::new(self.globals, self.within, &params);
+                let mut inner = Namer::new(self.globals, self.within, self.fixed, &params);
                 Stmt::TestBlock { name, params, body: inner.block(body, false)? }
             }
             Stmt::Return(v) => Stmt::Return(v.map(|x| self.expr(x)).transpose()?),
@@ -865,7 +874,11 @@ impl Lowerer {
     fn err(&self, msg: String) -> String {
         let msg = crate::modules::unprefixed(&msg);
         if self.current_line > 0 {
-            format!("line {}: {}", self.current_line, msg)
+            let at = format!("line {}: {}", self.current_line, msg);
+            // a part's function is refused in the part's file at its own
+            // line: placed in the entry, a call in Magpie's manifest.co had
+            // been shown at the entry's line of that number
+            crate::placed_in_part(&self.current_fn, &at).unwrap_or(at)
         } else {
             msg
         }

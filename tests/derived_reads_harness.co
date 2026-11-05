@@ -2,8 +2,11 @@
 --- one of ints that may grow and one of a moment (the compiled harness had
 --- answered "no fact or readable derivation named" for each), and one over
 --- a file, which a handler's write and the test's own move (compiled, it
---- had kept the file as it first was).
-use web, ui
+--- had kept the file as it first was). And a list of records holding a
+--- frame and a moment (compiled, "no fact or readable derivation named").
+use web, ui, frame
+
+struct Shown [title, at, rows]
 
 texts = ['3', '5']
 
@@ -30,6 +33,11 @@ derive huge
 derive when
     return moment['2026-11-05T10:00:00Z']
 
+derive cards
+    found = []
+    found = push[found, Shown['first', moment[0.0], frame.new[a = [1, 2], b = ['x', 'y']]]]
+    return found
+
 derive stamp
     s = read['.crow_build/derived_reads_stamp.txt']
     if not s.ok
@@ -48,6 +56,9 @@ test ints_that_may_grow_and_a_moment_are_read[]
     assert[every eq 3]
     assert[huge eq 123456789012345678901234567890]
     assert[str[when] eq '2026-11-05T10:00:00Z']
+    assert[a.cards[0].title eq 'first']
+    assert[len[a.cards[0].rows] eq 2]
+    assert[a.cards[0].at eq moment[0.0]]
 
 test a_derivation_over_a_file_follows_its_writes[]
     made = mkdir['.crow_build']

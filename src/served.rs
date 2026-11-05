@@ -118,6 +118,18 @@ pub(crate) fn json_to_typed(j: &serde_json::Value, ty: &crate::ir::Ty, template:
             CrowValue::ok(Value::int_map(map))
         }
         (Ty::Json, _) => CrowValue::ok(Value::Json(std::sync::Arc::new(j.clone()))),
+        // a frame inside a record or a list comes as its records (the one
+        // JSON form, crow_runtime::json), alone as its serde form (a
+        // dashboard's tiles, records holding a frame, had been unreadable
+        // to a compiled test)
+        (Ty::Frame(_), serde_json::Value::Array(_)) => match crow_runtime::sys::frame_of_json(&j.to_string()) {
+            Ok(f) => CrowValue::ok(Value::Frame(Box::new(f))),
+            Err(_) => json_to_fact(j, declared),
+        },
+        (Ty::Frame(_), serde_json::Value::Object(_)) => match serde_json::from_value::<crow_runtime::frame::CrowFrame>(j.clone()) {
+            Ok(f) => CrowValue::ok(Value::Frame(Box::new(f))),
+            Err(_) => json_to_fact(j, declared),
+        },
         _ => json_to_fact(j, declared),
     }
 }

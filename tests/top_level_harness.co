@@ -1,0 +1,28 @@
+--- A test runs the program's declarations and nothing else of its top
+--- level (spec, Testing), and so does the compiled app the harness opens:
+--- the compiled harness had run every top-level line as it started, so a
+--- top-level write had made a file the interpreted test never saw (a
+--- dashboard's tile read "gone" interpreted and its table compiled).
+use web, ui
+
+seen = ''
+made = write['.crow_build/top_level_ran.txt', 'yes']
+
+derive marker
+    tick = seen
+    return exists['.crow_build/top_level_ran.txt']
+
+view render[]
+    if marker
+        return p['the top level ran']
+    return p['declarations only']
+
+page['/', render]
+serve[3465]
+
+test a_tests_app_runs_no_top_level_line[]
+    if exists['.crow_build/top_level_ran.txt']
+        gone = rm['.crow_build/top_level_ran.txt']
+    a = app[render]
+    assert['declarations only' in html[a]]
+    assert[not exists['.crow_build/top_level_ran.txt']]

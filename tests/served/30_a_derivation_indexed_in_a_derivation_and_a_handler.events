@@ -1,0 +1,6 @@
+[
+  {"expect": "first north"},
+  {"expect": "picked none"},
+  {"event": "pick"},
+  {"expect": "picked south"}
+]
