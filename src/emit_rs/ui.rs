@@ -29,6 +29,20 @@ impl Emitter {
         let rust_name = if element == "main" { "main_el" } else { crow_runtime::layout::html_tag(element) };
         let is_void = VOID_ELEMENTS.contains(&element);
 
+        // the attributes are computed before the children, as the IR orders
+        // them and the interpreter runs them: where a child moves a local an
+        // attribute reads (`button['`_arrow[key]`', click = sort_by[key]]`,
+        // the last read of `key` inside the text), the element is made with
+        // its attributes first and given its children after — printed in
+        // place, the children had moved the value the attributes then read
+        // (E0382; Myna's sort headers, parity 463)
+        if !is_void && !children.is_empty() && Self::children_move_what_attrs_read(attrs, children) {
+            let empty: Vec<Expr> = Vec::new();
+            let made = self.tree(element, attrs, &empty);
+            let kids = self.children_vec(children);
+            return format!("{{ let _made = {}; let _kids = {}; _made.with_children(_kids) }}", made, kids);
+        }
+
         // children: a list child is spliced, each item a node
         let mut spliced: Vec<bool> = Vec::new();
         let mut child_strs: Vec<String> = Vec::new();
@@ -101,6 +115,37 @@ impl Emitter {
         self.tree_rest(element, result, other)
     }
 
+    /// An element's children as a `Vec<CrowVNode>`, a list child spliced.
+    fn children_vec(&mut self, children: &[Expr]) -> String {
+        let mut pushes: Vec<String> = Vec::new();
+        for c in children {
+            let (s, sp) = self.child(c);
+            pushes.push(if sp { format!("_k.extend({});", s) } else { format!("_k.push({});", s) });
+        }
+        format!("{{ let mut _k: Vec<CrowVNode> = Vec::new(); {} _k }}", pushes.join(" "))
+    }
+
+    /// Whether a child moves a local some attribute reads.
+    fn children_move_what_attrs_read(attrs: &[(String, Expr)], children: &[Expr]) -> bool {
+        let mut read: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (_, v) in attrs {
+            crate::ir::visit_expr(v, &mut |e| {
+                if let Expr::Local(n, _) | Expr::Move(n, _) = e {
+                    read.insert(n.clone());
+                }
+            });
+        }
+        let mut moved = false;
+        for c in children {
+            crate::ir::visit_expr(c, &mut |e| {
+                if let Expr::Move(n, _) = e {
+                    moved |= read.contains(n);
+                }
+            });
+        }
+        moved
+    }
+
     /// An element's attributes and events that are no layout, after its
     /// layout is placed.
     fn tree_rest(&mut self, element: &str, mut result: String, other: Vec<(String, Expr)>) -> String {
@@ -154,7 +199,17 @@ impl Emitter {
                 "submit" => result = if is_fn_ref { format!("{}.on_submit({})", result, event) } else { format!("{}.on_submit(&{})", result, event) },
                 _ => {
                     let x = self.expr(v);
-                    result = format!("{}.attr(&{}, &{})", result, super::exprs::rust_str_lit(k), x);
+                    let key = super::exprs::rust_str_lit(k);
+                    // as the interpreter writes an attribute (ops.rs
+                    // `render_element`): a number or a truth as its text, and
+                    // one whose value failed left out — `rows = 4` had been
+                    // handed as an int, a derivation that can fail as its
+                    // result, and the page did not build (parity 465)
+                    result = match self.tt(v) {
+                        Ty::Result(_) => format!("{{ let _e = {}; let _v = &({}); if _v.ok {{ _e.attr(&{}, &format!(\"{{}}\", _v.value)) }} else {{ _e }} }}", result, x, key),
+                        Ty::Int | Ty::Float | Ty::Bool | Ty::Big => format!("{}.attr(&{}, &format!(\"{{}}\", {}))", result, key, x),
+                        _ => format!("{}.attr(&{}, &{})", result, key, x),
+                    };
                 }
             }
         }

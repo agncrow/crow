@@ -185,16 +185,50 @@ fn is_source(e: &Expr) -> bool {
 }
 
 /// The fact an address names — a part's by its path (`session.day`) or its
-/// last name (`:day`) — as the served page resolves it.
-fn address_fact(name: &str, facts: &BTreeSet<String>) -> Option<String> {
-    let flat = name.replace('.', "_");
-    if facts.contains(&flat) {
-        return Some(flat);
+/// last name (`:day`) — as the served page resolves it: the one rule the
+/// check, both backends and the read sets call. A part's fact is its
+/// prefix and the name, so `:model_name` is `myna_models_model_name` and
+/// never `myna_models_new_model_name`, which ends with the same words: read
+/// by the end alone, the two had been ambiguous and the interpreted page
+/// refused at start, while the compiled one served (Myna's model page,
+/// 2026-11-06). Where no part's prefix is known (a lone file), the one fact
+/// ending in the name is it.
+/// Whether a part's fact (its prefix, then its own name) is the one
+/// written: its own name is the written path's last segment, and the
+/// segments before it, if any, end the part's prefix (`notebooks.current`
+/// is `myna_notebooks_` and `current`).
+fn of_part(prefix: &str, own: &str, written: &str) -> bool {
+    let (lead, last) = written.rsplit_once('.').unwrap_or(("", written));
+    if own != last {
+        return false;
     }
+    let lead = lead.replace('.', "_");
+    let part = prefix.trim_end_matches('_');
+    lead.is_empty() || part == lead || part.ends_with(&format!("_{}", lead))
+}
+
+pub(crate) fn address_fact<'a>(name: &str, facts: impl IntoIterator<Item = &'a String>) -> Option<String> {
+    let flat = name.replace('.', "_");
     let suffix = format!("_{}", flat);
-    let mut found = facts.iter().filter(|f| f.ends_with(&suffix));
-    let first = found.next()?.clone();
-    found.next().is_none().then_some(first)
+    let mut exact = None;
+    let mut by_part = Vec::new();
+    let mut by_end = Vec::new();
+    for f in facts {
+        if *f == flat {
+            exact = Some(f.clone());
+        } else if f.ends_with(&suffix) {
+            match crate::part_prefix_of_declaration(f) {
+                Some(prefix) if of_part(&prefix, &f[prefix.len()..], name) => by_part.push(f.clone()),
+                Some(_) => {}
+                None => by_end.push(f.clone()),
+            }
+        }
+    }
+    if exact.is_some() {
+        return exact;
+    }
+    let found = if by_part.is_empty() { by_end } else { by_part };
+    (found.len() == 1).then(|| found[0].clone())
 }
 
 /// Every derivation's read set, and who holds it: the one analysis the

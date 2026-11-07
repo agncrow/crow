@@ -1,0 +1,3 @@
+k35_a_response_of_a_stream_beside_sys_is_refused.co:11:12: text[] takes text, got a stream: write it into text, text['`…`']
+  11 │     return text[s]
+     │            ^^^^

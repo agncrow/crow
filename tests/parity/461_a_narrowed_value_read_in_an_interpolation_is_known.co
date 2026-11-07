@@ -1,0 +1,42 @@
+--- A value a guard narrowed is known good wherever the block reads it,
+--- inside a string's interpolation too: `'`v`'` after `if not v.ok` had
+--- stayed text that can fail (while `str[v]` was known good), so a list of
+--- such texts was refused as a frame's column, and a parsed value's field
+--- read into text could not be handed on.
+use frame
+
+fn column_of[ks]
+    f = frame.new[k = ks]
+    return f.k
+
+fn shown[a]
+    v = int[a]
+    if not v.ok
+        return 0
+    c = column_of[['`v`', 'n=`v` and `v + 1`', str[v]]]
+    log[c]
+    return len[c]
+
+fn named[body]
+    j = json[body]
+    if not j.ok
+        return 'unreadable'
+    name = j.name
+    if not name.ok
+        return 'unnamed'
+    said = 'hello `name`'
+    return column_of[[said]][0]
+
+fn picked[a]
+    v = int[a]
+    if not v.ok
+        return []
+    f = frame.new[x = [1.5]]
+    f.c_`v` = [2.5]
+    return f.columns
+
+log[shown['3']]
+log[shown['x']]
+log[named['{"name": "crow"}']]
+log[named['{"other": 1}']]
+log[picked['7']]

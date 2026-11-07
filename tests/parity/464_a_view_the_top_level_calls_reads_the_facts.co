@@ -1,0 +1,22 @@
+--- A view the top level calls reads the facts as declared, in both modes:
+--- compiled, a view takes the page's state, and the top level's call had
+--- handed none (E0061), where a derivation read there is handed the state
+--- main holds (found writing parity 463, 2026-11-06).
+use ui
+
+order = 'name'
+count = 2
+
+view head[label, key]
+    mark = ''
+    if key eq order
+        mark = ' ↑'
+    return th[button['`label``mark` `count`', class = 'sorthead']]
+
+view render[]
+    return table[tr[head['Name', 'name'], head['Start', 'start']]]
+
+page['/', render]
+log[head['Name', 'name']]
+shown = head['Start', 'start']
+log[shown]

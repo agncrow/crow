@@ -107,6 +107,16 @@ impl CrowVNode {
         self
     }
 
+    /// The element's children, given after its attributes: where a child
+    /// moves a value an attribute reads, the attributes are computed first,
+    /// in the order the program wrote them (the emitter's `tree`).
+    pub fn with_children(mut self, given: Vec<CrowVNode>) -> Self {
+        if let CrowVNode::Element { ref mut children, .. } = self {
+            *children = given;
+        }
+        self
+    }
+
     /// A class computed as the page renders, joined to the element's own
     /// as the layout table joins them (crow_runtime::layout::render): each
     /// class once, single spaces, an empty one adding nothing.
@@ -571,9 +581,9 @@ impl CrowVNode {
     }
 }
 
-/// Elements a browser builds with no children: their end tag, if written,
-/// is ignored.
-const VOID: &[&str] = &["area", "base", "br", "col", "embed", "hr", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"];
+/// Elements a browser builds with no children (`crow_runtime::layout::VOID`,
+/// the one list both renderers read).
+const VOID: &[&str] = crow_runtime::layout::VOID;
 
 /// Elements whose content a browser reads as text up to their end tag: the
 /// first ones as it stands, the last two with their entities read.

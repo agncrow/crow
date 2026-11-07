@@ -1,0 +1,34 @@
+--- A function copied per kind of argument meets a new kind after its
+--- copies were made: `nums` is first called with an open frame's column
+--- (cells of any kind), then with a column of floats the first call
+--- made. The second call had reached the first call's copy, and the
+--- lowering stopped with an internal error; it gets a copy of its own.
+use frame
+
+fn _num[c]
+    n = float[c]
+    if not n.ok
+        return 0.0
+    return n
+
+fn nums[col]
+    found = for c in col
+        _num[c]
+    return found
+
+fn _word[c]
+    s = str[c]
+    if not s.ok
+        return ''
+    return s
+
+fn words[col]
+    found = for c in col
+        _word[c]
+    return found
+
+kept = write['parity-460.json', '[{"k": "a", "v": 1.5}, {"k": "b", "v": 2.0}]']
+f = frame.load['parity-460.json']
+g = frame.new[k = words[f.k], v = nums[f.v]]
+log[nums[g.v]]
+log[words[g.k]]

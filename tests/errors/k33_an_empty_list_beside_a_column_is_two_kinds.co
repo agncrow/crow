@@ -1,0 +1,14 @@
+--- A function that answers `[]` on one path and a frame's column on
+--- another answers two kinds, refused as any two kinds are: the empty
+--- list's items were not known yet, so it had not been counted, and the
+--- verifier stopped with an internal error in both modes (found writing
+--- Myna's tracking, 2026-11-06)
+use frame
+
+fn shown[a]
+    if a eq 1
+        return []
+    f = frame.new[k = ['x']]
+    return f.k
+
+log[shown[2]]

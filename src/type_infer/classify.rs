@@ -123,6 +123,22 @@ impl TypeContext {
                 _ => {}
             }
         }
+        // a module imported only under an alias is reached by the alias
+        // alone (spec, Aliased Imports): a bare name never resolves to it,
+        // in inference, the lowering or the interpreter (which share this
+        // registry) — unless a bare import names or brings it
+        let bare: std::collections::BTreeSet<String> = self
+            .bare_modules
+            .iter()
+            .flat_map(|p| crate::modules::brought_by(p).into_iter().map(str::to_string).chain(std::iter::once(p.clone())))
+            .collect();
+        let aliased: Vec<String> = self.module_aliases.values().filter(|p| !bare.contains(*p)).cloned().collect();
+        for p in &bare {
+            self.registry.mark_bare(p);
+        }
+        for p in aliased {
+            self.registry.mark_qualified(&p);
+        }
         // a standard module written in Crow, inlined, resolves its names in
         // its own scope: what its `use` lines import, which the program's
         // scope does not see

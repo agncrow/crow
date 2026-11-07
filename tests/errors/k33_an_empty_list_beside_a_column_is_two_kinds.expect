@@ -1,0 +1,3 @@
+k33_an_empty_list_beside_a_column_is_two_kinds.co:12:5: returns a frame's column where the function answers a list — a function answers one kind
+  12 │     return f.k
+     │     ^^^^^^^^^^

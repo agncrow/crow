@@ -2205,7 +2205,7 @@ pub static ROWS: &[Row] = &[
     // forever in both modes)
     Row { props: &[Prop::Does(crate::effects::Effect::Process)], ..row!("core.args", "", "args", crow_runtime::core::args, () -> Strs, never) },
     Row { props: &[Prop::Does(crate::effects::Effect::Process)], ..row!("core.env", "", "env", crow_runtime::core::env, (Str) -> Str, value "env") },
-    Row { props: &[Prop::Does(crate::effects::Effect::Process)], ..row!("core.env_or", "", "env", crow_runtime::core::env_or, (Str, Cell) -> Str, value "env") },
+    Row { props: &[Prop::Does(crate::effects::Effect::Process)], ..row!("core.env_or", "", "env", crow_runtime::core::env_or, (Str, Cell) -> Str, never) },
     Row { props: &[Prop::Does(crate::effects::Effect::Input), Prop::Does(crate::effects::Effect::Waits)], ..row!("core.input", "", "input", crow_runtime::core::input, () -> Str, value "io") },
     Row { props: &[Prop::Does(crate::effects::Effect::Input), Prop::Does(crate::effects::Effect::Waits)], ..row!("core.input_prompt", "", "input", crow_runtime::core::input_prompt, (Str) -> Str, value "io") },
     Row { props: &[Prop::Does(crate::effects::Effect::Exit), Prop::Ends], ..row!("core.exit", "", "exit", crow_runtime::core::exit, () -> Unit, never) },
@@ -3103,13 +3103,18 @@ pub fn stamps(name: &str) -> bool {
     effect_is(name, crate::effects::Effect::stamps)
 }
 
-/// Whether a row's answer is stamped, as its name's is (`stamps`): worked
-/// out once for every row of the table and read by the row's place in it,
-/// since the interpreter asks after every builtin call it makes and a
-/// lookup by name there cost n-body a twelfth of its time.
+/// Whether a row's answer is stamped: its name's kind reads the world
+/// (`stamps`) and the row answers a value that can fail, the one value that
+/// holds a moment in both modes (a compiled `CrowResult`'s `captured`) — so
+/// `exists`, `args` and `env[name, default]`, which never fail, carry none,
+/// in both modes (the interpreter had stamped them and the compiled program
+/// could not: parity 29). Worked out once for every row of the table and
+/// read by the row's place in it, since the interpreter asks after every
+/// builtin call it makes and a lookup by name there cost n-body a twelfth
+/// of its time; the emitter reads the same flag.
 pub fn row_stamps(row: &'static Row) -> bool {
     static FLAGS: std::sync::OnceLock<(Vec<bool>, Vec<bool>)> = std::sync::OnceLock::new();
-    let (rows, forms) = FLAGS.get_or_init(|| (ROWS.iter().map(|r| stamps(r.name)).collect(), FORMS.iter().map(|r| stamps(r.name)).collect()));
+    let (rows, forms) = FLAGS.get_or_init(|| (ROWS.iter().map(answer_stamped).collect(), FORMS.iter().map(answer_stamped).collect()));
     let size = std::mem::size_of::<Row>();
     let at = row as *const Row as usize;
     for (table, flags) in [(ROWS, rows), (FORMS, forms)] {
@@ -3118,7 +3123,11 @@ pub fn row_stamps(row: &'static Row) -> bool {
             return flags[(at - start) / size];
         }
     }
-    stamps(row.name)
+    answer_stamped(row)
+}
+
+fn answer_stamped(row: &Row) -> bool {
+    stamps(row.name) && matches!(row.fails, Fails::Value(_))
 }
 
 /// Waits: a view or a handler reaching it freezes the live loop.
@@ -3257,6 +3266,15 @@ pub fn form_fails(name: &str) -> bool {
 
 /// A form that says what it answers (`Prop::Answers`), for a call with
 /// these arguments: typed by the row as a runtime row's call is.
+/// Whether a module's own form of the name, of a module other than
+/// `module` and in scope (`loaded`), takes these kinds (web's `text` of
+/// text, where sys's row takes bytes). Out of scope, the form is no
+/// candidate: `text['abc']` under `use sys` alone is sys's row's to
+/// refuse, and had printed a bare `text(…)` no crate declares.
+pub fn other_form_takes(module: &str, name: &str, args: &[Arg], loaded: &dyn Fn(&str) -> bool) -> bool {
+    FORMS.iter().any(|r| r.name == name && !r.module.is_empty() && r.module != module && loaded(r.module) && takes(r, args))
+}
+
 pub fn form_answer(name: &str, args: &[Arg]) -> Option<&'static Row> {
     FORMS.iter().filter(|r| r.name == name && r.props.contains(&Prop::Answers)).find(|r| takes(r, args))
 }
@@ -3870,7 +3888,7 @@ fn accepts(row: &Row, k: Kind, x: Arg) -> bool {
 /// whose row takes the kinds, where exactly one does; else, where the
 /// kinds do not settle it, the first argument's class — a frame or its
 /// column the frame's, a tensor or a list math's; else none.
-pub fn module_of_bare(name: &str, providers: &[&str], kinds: &[Arg]) -> Option<String> {
+pub fn module_of_bare(name: &str, providers: &[&str], kinds: &[Arg], loaded: &dyn Fn(&str) -> bool) -> Option<String> {
     if providers.is_empty() {
         return None;
     }
@@ -3888,6 +3906,14 @@ pub fn module_of_bare(name: &str, providers: &[&str], kinds: &[Arg]) -> Option<S
         // inference and the core's of lists in the lowering, and `type` of
         // it was `unknown` compiled — crow check --self's pairs)
         if unknown && row_taking(providers[0], name, kinds).is_none() && (core_row(name, kinds).is_some() || form_answer(name, kinds).is_some_and(|r| r.module.is_empty())) {
+            return None;
+        }
+        // (nor where its rows take none of these known kinds and another
+        // module's own form does: web's `text` response of text beside
+        // sys's `text` of bytes — Magpie's parts import sys, and a page's
+        // part that imported web alone had its `text['3.18.0']` refused as
+        // sys's; a call refused before, never one a row answered)
+        if !unknown && row_taking(providers[0], name, kinds).is_none() && other_form_takes(providers[0], name, kinds, loaded) {
             return None;
         }
         return Some(providers[0].to_string());
@@ -4088,21 +4114,21 @@ mod tests {
     fn a_bare_name_reaches_one_module_by_its_kinds() {
         let both = ["frame", "math"];
         // where of a mask, a column and an int is the frame's; of three tensors math's
-        assert_eq!(module_of_bare("where", &both, &[Arg::Truths, Arg::Column, Arg::Int]), Some("frame".to_string()));
-        assert_eq!(module_of_bare("where", &both, &[Arg::Tensor, Arg::Tensor, Arg::Tensor]), Some("math".to_string()));
+        assert_eq!(module_of_bare("where", &both, &[Arg::Truths, Arg::Column, Arg::Int], &|_| true), Some("frame".to_string()));
+        assert_eq!(module_of_bare("where", &both, &[Arg::Tensor, Arg::Tensor, Arg::Tensor], &|_| true), Some("math".to_string()));
         // sort of a list is the core's (none), of a frame the frame's
-        assert_eq!(module_of_bare("sort", &["frame"], &[Arg::Ints]), None);
-        assert_eq!(module_of_bare("sort", &["frame"], &[Arg::Frame, Arg::Text]), Some("frame".to_string()));
+        assert_eq!(module_of_bare("sort", &["frame"], &[Arg::Ints], &|_| true), None);
+        assert_eq!(module_of_bare("sort", &["frame"], &[Arg::Frame, Arg::Text], &|_| true), Some("frame".to_string()));
         // a kind not known yet is taken by any row, so the count decides:
         // unique of a frame and a name fits the frame's rows, of one value
         // math's; of a list the kinds pick math's (the core's unique is a
         // tensor's)
-        assert_eq!(module_of_bare("unique", &both, &[Arg::Frame, Arg::Unknown]), Some("frame".to_string()));
-        assert_eq!(module_of_bare("unique", &both, &[Arg::Unknown]), Some("math".to_string()));
-        assert_eq!(module_of_bare("stack", &both, &[Arg::Unknown, Arg::Unknown]), None, "two rows take two unknowns and the class of nothing is nothing");
+        assert_eq!(module_of_bare("unique", &both, &[Arg::Frame, Arg::Unknown], &|_| true), Some("frame".to_string()));
+        assert_eq!(module_of_bare("unique", &both, &[Arg::Unknown], &|_| true), Some("math".to_string()));
+        assert_eq!(module_of_bare("stack", &both, &[Arg::Unknown, Arg::Unknown], &|_| true), None, "two rows take two unknowns and the class of nothing is nothing");
         // one provider is reached whatever the kinds say
-        assert_eq!(module_of_bare("rank", &["math"], &[Arg::Unknown]), Some("math".to_string()));
-        assert_eq!(module_of_bare("nope", &[], &[Arg::Int]), None);
+        assert_eq!(module_of_bare("rank", &["math"], &[Arg::Unknown], &|_| true), Some("math".to_string()));
+        assert_eq!(module_of_bare("nope", &[], &[Arg::Int], &|_| true), None);
     }
 
     /// A core builtin is a row, has a form of its own, or is still to move,
@@ -4215,7 +4241,7 @@ mod tests {
         let log = core("log").expect("log's row");
         let printed = print(log, &["a".to_string(), "b".to_string()], "1", None).expect("printed");
         assert!(printed.contains("&(a) as &dyn crow_runtime::display::CrowDisplay"), "{}", printed);
-        assert_eq!(crow_runtime::core::env_or("CROW_TABLE_TEST_NO_SUCH_VARIABLE", &crow_runtime::cell::Cell::Int(3000)), Ok("3000".to_string()));
+        assert_eq!(crow_runtime::core::env_or("CROW_TABLE_TEST_NO_SUCH_VARIABLE", &crow_runtime::cell::Cell::Int(3000)), "3000".to_string());
         assert_eq!(core_row("abs", &[Arg::Int]).map(|r| r.id), Some("core.abs_int"));
         assert_eq!(core_row("abs", &[Arg::Float]).map(|r| r.id), Some("core.abs"));
         assert_eq!(crow_runtime::core::round(2.5), 3);
@@ -4270,8 +4296,13 @@ mod tests {
     /// (`encode` of them had answered null) — crow check --self.
     #[test]
     fn a_list_of_nothing_known_stays_the_cores_and_bytes_are_no_json() {
-        assert_eq!(module_of_bare("slice", &["sys"], &[Arg::AnyList, Arg::Int, Arg::Int]), None);
-        assert_eq!(module_of_bare("slice", &["sys"], &[Arg::Bytes, Arg::Int, Arg::Int]), Some("sys".to_string()));
+        assert_eq!(module_of_bare("slice", &["sys"], &[Arg::AnyList, Arg::Int, Arg::Int], &|_| true), None);
+        assert_eq!(module_of_bare("slice", &["sys"], &[Arg::Bytes, Arg::Int, Arg::Int], &|_| true), Some("sys".to_string()));
+        // (web's `text` of text beside sys's of bytes: web's where web is
+        // in scope, sys's to refuse where it is not — the self-check's
+        // `text['abc']` under `use sys` alone had printed a bare `text(…)`)
+        assert_eq!(module_of_bare("text", &["sys"], &[Arg::Text], &|m| m == "web"), None);
+        assert_eq!(module_of_bare("text", &["sys"], &[Arg::Text], &|_| false), Some("sys".to_string()));
         assert!(core_row("encode", &[Arg::Bytes]).is_none());
         assert!(core_row("encode", &[Arg::Chunks]).is_none());
         assert!(core_row("encode", &[Arg::Map]).is_some());
@@ -4289,9 +4320,9 @@ mod tests {
         for n in names {
             assert_eq!(rows_named(n).map(|r| r.id).collect::<Vec<_>>(), scan(n), "rows named {}", n);
         }
-        // (a row's stamp, read by its place in the table, is its name's)
+        // (a row's stamp, read by its place in the table, is its own)
         for r in ROWS.iter().chain(FORMS.iter()) {
-            assert_eq!(row_stamps(r), stamps(r.name), "the stamp of {}", r.id);
+            assert_eq!(row_stamps(r), answer_stamped(r), "the stamp of {}", r.id);
         }
     }
 

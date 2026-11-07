@@ -1861,7 +1861,7 @@ impl IrInterp {
         if !crate::table::has(name, crate::table::Prop::InPlace) || !matches!(list, Some(Expr::Move(v, _)) if v == var) {
             return Ok(false);
         }
-        if named.is_none() && self.registry.has_function(name) && name != "sort" {
+        if named.is_none() && self.registry.has_bare_function(name) && name != "sort" {
             return Ok(false);
         }
         // (a named row decides before any argument is evaluated: one whose
@@ -2371,7 +2371,7 @@ impl IrInterp {
         if vals.iter().any(|v| matches!(v.value, Value::Dual(..))) {
             return self.bare_call(&name, vals);
         }
-        match Self::core_row(&name, &vals, self.registry.has_function(&name)) {
+        match Self::core_row(&name, &vals, self.registry.has_bare_function(&name)) {
             Some(Ok(row)) => (row.take)(vals, &self.trace_entry()),
             Some(Err(refused)) => Err(refused),
             None => self.bare_call(&name, vals),
@@ -2501,7 +2501,7 @@ impl IrInterp {
         let kinds: Vec<crate::table::Arg> = vals.iter().map(crate::table::Arg::of_value).collect();
         let providers: Vec<String> = self.registry.providers_of(name).into_iter().map(str::to_string).collect();
         let provider_names: Vec<&str> = providers.iter().map(String::as_str).collect();
-        if let Some(m) = crate::table::module_of_bare(name, &provider_names, &kinds) {
+        if let Some(m) = crate::table::module_of_bare(name, &provider_names, &kinds, &|m| self.registry.is_loaded(m)) {
             if let Some(answer) = self.crow_row_call(&m, name, &vals) {
                 return answer;
             }
@@ -3076,7 +3076,7 @@ impl IrInterp {
         // core's row, as the bare call's is (the one rule, table::module_of_bare)
         if module == "math" && crate::table::has_core_rows(name) {
             let kinds: Vec<crate::table::Arg> = vals.iter().map(crate::table::Arg::of_value).collect();
-            if crate::table::module_of_bare(name, &[module], &kinds).is_none() {
+            if crate::table::module_of_bare(name, &[module], &kinds, &|m| self.registry.is_loaded(m)).is_none() {
                 if let Some(row) = crate::table::core_row(name, &kinds) {
                     return (row.call)(&vals, &self.trace_entry());
                 }

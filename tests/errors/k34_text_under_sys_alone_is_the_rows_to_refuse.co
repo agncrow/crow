@@ -1,0 +1,9 @@
+--- Under `use sys` alone, `text` of text is sys's row's to refuse (it
+--- takes bytes): web's response form of the name is no candidate where
+--- web is not imported. A first version of the rule letting web's form
+--- win beside sys's row had printed a bare `text(…)` no crate declares,
+--- and the compiled program did not build (crow check --self's rows,
+--- 2026-11-06)
+use sys
+
+log[text['abc']]

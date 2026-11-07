@@ -3260,13 +3260,22 @@ impl<'a> Lowerer<'a> {
                     // tree. Any other int beside a record is two kinds.)
                     let none = matches!(&x, Expr::Const(Const::Int(0), _));
                     let nones = self.returns_none.contains(&self.current_fn);
-                    if !unsettled(&given) {
+                    // (a list of items not known yet — `return []` — is a
+                    // list all the same: beside a column or a frame it is a
+                    // second kind, which had reached the verifier as "returns
+                    // Column(Str) from a body typed List(?)", in both modes)
+                    if !unsettled(&given) || given == Arg::AnyList {
                         let seen = self.returns_seen.entry(self.current_fn.clone()).or_default();
                         let other = seen
                             .iter()
                             .find(|answer| {
                                 let record_or_none = none && matches!(answer, Arg::Record);
-                                !(**answer == given || (number(answer) && number(&given)) || (listed(answer) && listed(&given)) || record_or_none)
+                                // (a list of items not known yet is any list)
+                                let a_list = |a: &Arg| {
+                                    matches!(a, Arg::Moments | Arg::Fractions | Arg::Decimals | Arg::Chunks | Arg::Frames | Arg::Ints | Arg::Floats | Arg::Tensor | Arg::Tensors | Arg::Rows | Arg::Texts | Arg::Truths | Arg::Records | Arg::Maps | Arg::Items | Arg::Fns | Arg::FallibleNumbers | Arg::Fallible | Arg::AnyList | Arg::Json)
+                                };
+                                let open_list = (matches!(answer, Arg::AnyList) && a_list(&given)) || (given == Arg::AnyList && a_list(answer));
+                                !(**answer == given || (number(answer) && number(&given)) || (listed(answer) && listed(&given)) || record_or_none || open_list)
                             })
                             .cloned()
                             .or_else(|| (nones && !(number(&given) || matches!(given, Arg::Record))).then_some(Arg::Int));
@@ -4390,6 +4399,13 @@ impl<'a> Lowerer<'a> {
         if self.is_fact(v) {
             return;
         }
+        // (a value a guard knows has failed hands back its failure, not
+        // the answer: `if not p.ok return p` had typed `p` — a call's answer
+        // not known yet in that round — as the function's list of records,
+        // and the call that read `p` next was refused; Myna's `evaluate`)
+        if self.failed.contains(v) {
+            return;
+        }
         // (a parameter is typed by its calls and by how the body reads it,
         // never by what the function answers: `return points` beside
         // `return singles[points]` had made the parameter a list of the
@@ -5144,8 +5160,10 @@ impl<'a> Lowerer<'a> {
                 // and called by name (`describe`, `apply`), a positional call
                 // through one a dispatch over them — compiled, each value is
                 // its name (section 7 of docs/extending-crow.md; a list of
-                // function values had needed each one's parameters typed)
-                let written: Vec<String> = items.iter().filter_map(|i| match i { A::Ident(n) if self.calls_fn(n) && !self.declared(n) => Some(n.clone()), _ => None }).collect();
+                // function values had needed each one's parameters typed);
+                // a derivation's name is its value, as `ident` reads it
+                // (`[shown]` had been a group of one function, parity 462)
+                let written: Vec<String> = items.iter().filter_map(|i| match i { A::Ident(n) if self.calls_fn(n) && !self.declared(n) && !self.ctx.derives.contains(n.as_str()) => Some(n.clone()), _ => None }).collect();
                 if !written.is_empty() && written.len() == items.len() {
                     // (a member whose parameter nothing types — not a call of
                     // its own, not its body's read, not a default — cannot be
@@ -5965,14 +5983,32 @@ impl<'a> Lowerer<'a> {
                     (Some(Ty::List(f)), Ty::List(e)) if **f == Ty::Float && **e == Ty::Int => Some(Convert::IntsToFloats),
                     _ => None,
                 };
-                fields.push(match how {
+                // (a list made here holds plain items: where the field holds
+                // items that can fail — a list of them given at another
+                // record — each is the success it is, as `concat` joins them;
+                // `Series['', [0.0]]` beside a list of floats that can fail
+                // had been typed as the field and made plain floats, and the
+                // compiled program did not build: Myna's charts, parity 466)
+                let fallible_item = match declared.get(i).map(|t| t.payload()) {
+                    Some(Ty::List(want)) if want.is_result() => Some(want.as_ref().clone()),
+                    _ => None,
+                };
+                let field = match how {
                     Some(how) => {
-                        let payload = declared[i].payload().clone();
+                        let mut payload = declared[i].payload().clone();
+                        if let (Convert::ToList, Some(want)) = (&how, &fallible_item) {
+                            payload = Ty::List(Box::new(want.payload().clone()));
+                        }
                         let ty = if value.ty().is_result() { Ty::Result(Box::new(payload)) } else { payload };
                         Expr::Convert { how, expr: Box::new(value), ty }
                     }
                     None => value,
-                });
+                };
+                let field = match (&fallible_item, field.ty()) {
+                    (Some(want), Ty::List(have)) if !have.is_result() && have.as_ref() == want.payload() => fallible_items(field, want),
+                    _ => field,
+                };
+                fields.push(field);
             }
             self.check_call(&name, args, &checks);
             self.scan_call(callee, args, &types);
@@ -7216,7 +7252,7 @@ impl<'a> Lowerer<'a> {
     fn module_for(&self, name: &str, lowered: &[Expr]) -> Option<String> {
         let providers = self.ctx.registry.providers_of(name);
         let kinds: Vec<crate::table::Arg> = lowered.iter().map(|x| crate::table::Arg::of_type(&read(x))).collect();
-        crate::table::module_of_bare(name, &providers, &kinds)
+        crate::table::module_of_bare(name, &providers, &kinds, &|m| self.ctx.registry.is_loaded(m))
     }
 
     fn builtin_row(&self, module: Option<&str>, name: &str, lowered: &[Expr]) -> Option<&'static crate::table::Row> {
@@ -7237,7 +7273,7 @@ impl<'a> Lowerer<'a> {
             return Some(row);
         }
         let registry = &self.ctx.registry;
-        if !registry.has_function(name) {
+        if pinned.is_none() && !registry.has_bare_function(name) || !registry.has_function(name) {
             return None;
         }
         // a select in a page is the widget, an element in a view the

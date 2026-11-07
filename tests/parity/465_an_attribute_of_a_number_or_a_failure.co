@@ -1,0 +1,29 @@
+--- An attribute's value is written as the interpreter writes it, in both
+--- modes: a number or a truth as its text (`rows = 4`), and an attribute
+--- whose value failed is left out of the element. Compiled, an int had been
+--- handed where text is taken and a value that can fail as its result, and
+--- the page did not build (E0308: Myna's run comparison, 2026-11-06).
+use ui
+
+name = 'ok'
+
+fn address_of[given]
+    if given eq ''
+        return error['no name', 'missing']
+    return 'data:,`given`'
+
+derive picture
+    return address_of[name]
+
+derive no_picture
+    return address_of['']
+
+view shown[]
+    return stack[
+        img[src = picture, alt = 'a picture'],
+        img[src = no_picture, alt = 'none'],
+        textarea[name, rows = 4],
+        gap = 's']
+
+page['/', shown]
+log[shown[]]

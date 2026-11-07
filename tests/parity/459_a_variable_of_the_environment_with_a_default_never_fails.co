@@ -1,0 +1,17 @@
+--- `env[name, default]` answers text whichever it reads, so it never
+--- fails: a function answering it answers text, and a frame's column made
+--- of it is text (it had been typed as a value that can fail, and the
+--- column was refused: Myna's workspace folder, 2026-11-06)
+use frame
+
+fn home[]
+    return env['CROW_PARITY_459_NO_SUCH_VARIABLE', 'myna_data']
+
+fn made[]
+    h = home[]
+    return frame.new[place = [h, '`h`/runs']]
+
+f = made[]
+log[f.place[1]]
+log[type[env['CROW_PARITY_459_NO_SUCH_VARIABLE', 3000]]]
+log[len[env['CROW_PARITY_459_NO_SUCH_VARIABLE', 'abc']]]

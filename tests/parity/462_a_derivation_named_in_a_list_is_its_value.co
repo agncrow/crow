@@ -1,0 +1,27 @@
+--- A derivation's name written in a list literal is the derivation's value,
+--- as it is anywhere else: `[shown]` had been lowered as a group of one
+--- function (`[fn shown]`), so a list of the experiment shown held no text
+--- and `t.experiment in [shown]` found nothing (Myna's traces tab, which
+--- stayed empty after a trace was logged, 2026-11-06).
+use ui
+
+pick = 'b'
+
+derive shown
+    return pick
+
+derive among
+    ids = [shown, 'c']
+    return 'b' in ids
+
+derive both
+    return [shown, shown]
+
+view render[]
+    return p['`among`']
+
+page['/', render]
+log[among]
+log[both]
+log[len[both]]
+log[type[[shown]]]

@@ -1,0 +1,14 @@
+--- A route's `text` of a stream, with sys imported bare beside web: sys's
+--- row takes bytes, so the call is web's response form, and a response's
+--- body is text — refused as any response of no text is. The check had
+--- read the name as sys's and let it by, and the compiled route did not
+--- build (crow check --self's routes, 2026-11-06)
+use web
+use sys
+
+fn streamed[req]
+    s = open['127.0.0.1', 9, false, 1.0]
+    return text[s]
+
+route['/s', 'GET', streamed]
+serve[3999]

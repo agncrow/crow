@@ -508,6 +508,29 @@ fn rename_in_spans(s: &str, renames: &BTreeMap<String, String>, visible: &BTreeS
     out
 }
 
+/// A string's interpolation spans with each read of a name a guard
+/// narrowed made the narrowed read (`__known[x]`), as `lower::narrowed`
+/// makes it outside strings: `'`v`'` after `if not v.ok` had stayed a
+/// value that can fail, while `str[v]` was known good. A name followed by
+/// `[` is a call or an index, which the narrowing leaves as it is outside
+/// strings too.
+pub(crate) fn known_in_spans(s: &str, known: &BTreeSet<String>, wrapper: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut last = 0;
+    for (a, b) in span_names(&chars) {
+        let word: String = chars[a..b].iter().collect();
+        let called = chars[b..].iter().find(|c| !c.is_whitespace()) == Some(&'[');
+        if known.contains(&word) && !called {
+            out.extend(chars[last..a].iter());
+            out.push_str(&format!("{wrapper}[{word}]"));
+            last = b;
+        }
+    }
+    out.extend(chars[last..].iter());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

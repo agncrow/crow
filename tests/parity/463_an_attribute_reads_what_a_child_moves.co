@@ -1,0 +1,27 @@
+--- An element's attributes are computed before its children, in both
+--- modes: where the last read of a local is inside a child (`key` in the
+--- button's text) and an attribute reads it too (the click's argument),
+--- the compiled element had printed its children first, moving the value
+--- the attribute then read, and the program did not build (E0382: Myna's
+--- sort headers, 2026-11-06).
+use ui
+
+order = 'name'
+
+fn arrow[key, current]
+    if key eq current
+        return ' ↑'
+    return ''
+
+fn sort_by[key]
+    order = key
+
+view head[label, key, current]
+    return th[button['`label``arrow[key, current]`', click = sort_by[key], class = 'sorthead']]
+
+view render[]
+    return table[tr[head['Name', 'name', order], head['Start', 'start', order]]]
+
+page['/', render]
+log[head['Name', 'name', 'name']]
+log[head['Start', 'start', 'name']]

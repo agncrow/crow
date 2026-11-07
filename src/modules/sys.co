@@ -410,10 +410,7 @@ fn _get[url, lines, timeout]
 
 --- a variable of the environment, or empty where it is not set or empty
 fn _setting[name]
-    v = env[name, '']
-    if not v.ok
-        return ''
-    return v
+    return env[name, '']
 
 --- a key as SigV4 reads it in a URI: letters, digits, `-_.~` and `/`
 --- kept, every other byte percent-encoded in upper case

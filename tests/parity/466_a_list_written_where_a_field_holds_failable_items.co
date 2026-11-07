@@ -1,0 +1,28 @@
+--- A list written where a record's field holds items that can fail (the
+--- field given such a list at another record) is that list, each item the
+--- success it is: the literal had been converted to a list of plain floats
+--- but typed as the field, and the compiled program did not build (E0308:
+--- Myna's charts, `Series['', [0.0], [0.0]]` beside a scatter's values
+--- read from text, 2026-11-06).
+struct Series [name, xs]
+
+fn number_of[t]
+    v = float[t]
+    if v.ok
+        return v
+    return 0.0
+
+fn made[]
+    texts = ['1.5', 'x']
+    xs = for t in texts
+        number_of[t]
+    return Series['read', xs]
+
+fn empty[]
+    return Series['', [0.0]]
+
+a = made[]
+b = empty[]
+log[len[a.xs]]
+log[b.xs]
+log[a.xs]

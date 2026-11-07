@@ -1,0 +1,18 @@
+--- A bare name one module's rows answer for other kinds than another
+--- module's own form takes is the form's: web's `text` response of text
+--- beside sys's `text` of bytes, both imported bare. It had been refused
+--- as sys's ("text[] takes bytes, got text") — and so had a part's, when
+--- any other part of the program (Magpie's) imported sys (Myna's MLflow
+--- routes, 2026-11-06). sys's `text` of bytes is still sys's.
+use web
+use sys
+
+fn version[req]
+    return text['3.18.0']
+
+fn decoded[req]
+    return text[text[bytes[req.body]]]
+
+route['/version', 'GET', version]
+route['/decoded', 'POST', decoded]
+serve[3453]

@@ -160,14 +160,7 @@ fn with_session(template: &IrInterp, state: &CrowLiveState) -> IrInterp {
 
 /// The fact a `page[…, url = …]` name means, as the Rust backend resolves it.
 fn url_fact(template: &IrInterp, written: &str) -> Option<String> {
-    let flat = written.replace('.', "_");
-    if template.fact_names.contains(&flat) {
-        return Some(flat);
-    }
-    let suffix = format!("_{}", flat);
-    let mut found = template.fact_names.iter().filter(|k| k.ends_with(&suffix));
-    let first = found.next()?.clone();
-    found.next().is_none().then_some(first)
+    crate::derive::address_fact(written, template.fact_names.iter())
 }
 
 fn int_of(v: Option<&CrowValue>) -> i64 {

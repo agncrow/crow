@@ -1432,6 +1432,11 @@ pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> 
     }
     out_attrs.sort();
     let attr_str: String = out_attrs.iter().map(|(k, v)| format!(" {}=\"{}\"", k, crate::harness::html_escape_attr(v))).collect();
+    // a void element has no end tag, as the compiled page writes it
+    // (`<img …></img>` had been the interpreter's, parity 465)
+    if crow_runtime::layout::VOID.contains(&rendered.tag.to_ascii_lowercase().as_str()) {
+        return Ok(format!("<{}{}>{}", rendered.tag, attr_str, inner));
+    }
     Ok(format!("<{0}{2}>{1}</{0}>", rendered.tag, inner, attr_str))
 }
 

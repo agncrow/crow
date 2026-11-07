@@ -357,7 +357,7 @@ impl Emitter {
             && crate::lower::is_ui_control(name, matches!(in0, Ty::Frame(_)));
         let element_in_view = self.in_view() && crate::lower::UI_ELEMENTS.contains(&name);
         if !frame_select_widget && !element_in_view && name != "mail" {
-            if let Some(m) = crate::table::module_of_bare(name, &providers, &kinds) {
+            if let Some(m) = crate::table::module_of_bare(name, &providers, &kinds, &|m| self.registry.is_loaded(m)) {
                 let saved = self.pinned_module.replace(m);
                 let out = self.registry_call(name, args, a);
                 self.pinned_module = saved;
@@ -836,13 +836,6 @@ impl Emitter {
     /// The fact a `page[…, url = …]` name means: its name, or a part's fact
     /// by its path, however deep the part.
     fn url_fact(&self, written: &str) -> Option<String> {
-        let flat = written.replace('.', "_");
-        if self.reactive_vars.contains_key(&flat) {
-            return Some(flat);
-        }
-        let suffix = format!("_{}", flat);
-        let mut found = self.reactive_vars.keys().filter(|k| k.ends_with(&suffix));
-        let first = found.next()?.clone();
-        found.next().is_none().then_some(first)
+        crate::derive::address_fact(written, self.reactive_vars.keys())
     }
 }

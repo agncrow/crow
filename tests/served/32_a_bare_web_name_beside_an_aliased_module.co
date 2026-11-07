@@ -1,0 +1,17 @@
+--- An aliased import's names are qualified-only (spec, Aliased Imports),
+--- so web's bare `text` response is web's beside `use sys as sx`: it had
+--- been refused as sys's `text` of bytes ("'text' comes from sys which was
+--- imported as 'sx'"), and so had a program whose PART imported sys under
+--- an alias (Myna's MLflow routes, 2026-11-06).
+use web
+use sys as sx
+
+fn version[req]
+    return text['3.18.0']
+
+fn sized[req]
+    return text['`len[sx.bytes[req.body]]` bytes']
+
+route['/version', 'GET', version]
+route['/sized', 'POST', sized]
+serve[3452]

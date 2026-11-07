@@ -18,6 +18,11 @@ pub const CONTAINERS: &[&str] = &["stack", "row", "grid", "overlay", "scroll", "
 /// class: (name, tag).
 pub const ALIASED_ELEMENTS: &[(&str, &str)] = &[("divider", "hr"), ("dropdown", "details")];
 
+/// Elements a browser builds with no children: their end tag, if written,
+/// is ignored, so both renderers write none (crow_web's `CrowVNode::to_html`
+/// and the interpreter's `render_element`, which had written `<img …></img>`).
+pub const VOID: &[&str] = &["area", "base", "br", "col", "embed", "hr", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"];
+
 /// The HTML tag an element renders as.
 pub fn html_tag(name: &str) -> &str {
     if CONTAINERS.contains(&name) { return "div"; }

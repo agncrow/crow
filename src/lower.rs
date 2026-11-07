@@ -762,7 +762,13 @@ fn narrow_expr(e: Expr, known: &BTreeSet<String>) -> Expr {
             let callee = if matches!(callee.as_ref(), Expr::Ident(_)) { callee } else { n(callee) };
             Expr::Call { callee, args: args.into_iter().map(|a| narrow_expr(a, known)).collect() }
         }
-        Expr::FieldAccess { object, field } => Expr::FieldAccess { object: n(object), field },
+        // a column named by a computed name reads its spans as a string does
+        Expr::FieldAccess { object, field } => {
+            let field = if field.contains('`') { crate::rust_names::known_in_spans(&field, known, KNOWN) } else { field };
+            Expr::FieldAccess { object: n(object), field }
+        }
+        // an interpolation's reads are reads: narrowed as any other is
+        Expr::Str(s) if s.contains('`') => Expr::Str(crate::rust_names::known_in_spans(&s, known, KNOWN)),
         Expr::Array(items) => Expr::Array(items.into_iter().map(|a| narrow_expr(a, known)).collect()),
         // a key is a name (an attribute's, a field's), not a read
         Expr::Map(pairs) => Expr::Map(pairs.into_iter().map(|(k, v)| (k, narrow_expr(v, known))).collect()),
@@ -1262,9 +1268,21 @@ impl Lowerer {
         args: Vec<Expr>,
     ) -> Result<Vec<Expr>, String> {
         let positional_count = args.iter().take_while(|a| !matches!(a, Expr::Named { .. })).count();
+        if positional_count > params.len() && self.fns.contains_key(fn_name) && !self.structs.contains_key(fn_name) {
+            // Too many positionals: refused here, in the words the checks
+            // use, since a function a dependency calls is lowered muted
+            // where the checks would have refused it — Magpie's call of
+            // sys's `ints_of` with three arguments, taken by a program's
+            // own `ints_of[col]` (the names a program and its packages
+            // share), had reached the verifier as an internal error.
+            let n = params.len();
+            return Err(self.err(format!(
+                "'{}' expects {} argument{}, got {}",
+                fn_name, n, if n == 1 { "" } else { "s" }, positional_count
+            )));
+        }
         if positional_count > params.len() {
-            // Too many positionals — leave as-is; the validator reports arity
-            // errors with its usual message.
+            // a record's fields, and page's: the checks say how many
             return Ok(args);
         }
         let mut slots: Vec<Option<Expr>> = vec![None; params.len()];

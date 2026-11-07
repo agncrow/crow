@@ -26,7 +26,8 @@ fn html_unescape(s: &str) -> String {
 }
 
 /// Parse the harness's rendered markup into a tree. Handles open/close tags,
-/// self-closing tags (charts' SVG), quoted attributes, and text.
+/// self-closing tags (charts' SVG), void elements (`<input …>`), quoted
+/// attributes, and text.
 pub(crate) fn harness_parse_html(html: &str) -> HNode {
     let mut root = HNode { tag: String::new(), attrs: vec![], children: vec![], text: String::new() };
     let mut stack: Vec<HNode> = vec![];
@@ -81,8 +82,12 @@ pub(crate) fn harness_parse_html(html: &str) -> HNode {
                 }
                 attrs.push((key, html_unescape(&val)));
             }
+            // (a void element has no children, as a browser builds it:
+            // read as open, `<input …>` had held every element after it,
+            // since both renderers write it with no end tag)
+            let void = crow_runtime::layout::VOID.contains(&tag.to_ascii_lowercase().as_str());
             let node = HNode { tag, attrs, children: vec![], text: String::new() };
-            if self_closing { push_child(&mut stack, &mut root, node); } else { stack.push(node); }
+            if self_closing || void { push_child(&mut stack, &mut root, node); } else { stack.push(node); }
         } else {
             let mut j = i;
             while j < chars.len() && chars[j] != '<' { j += 1; }
@@ -289,4 +294,25 @@ pub(crate) fn harness_path_matches(path: &str, steps: &[(String, String)]) -> bo
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::harness_parse_html;
+
+    /// A void element written with no end tag holds nothing: the elements
+    /// after it are its siblings (the layout check had found no `select`
+    /// after an `input`, the book's search box held the page after it).
+    #[test]
+    fn a_void_element_holds_no_children() {
+        let root = harness_parse_html(r#"<div><input type="text" value="a"><select><option>x</option></select></div>"#);
+        let div = &root.children[0];
+        assert_eq!(div.tag, "div");
+        let tags: Vec<&str> = div.children.iter().map(|c| c.tag.as_str()).collect();
+        assert_eq!(tags, ["input", "select"]);
+        assert!(div.children[0].children.is_empty());
+        // an end tag written after one is ignored, as a browser ignores it
+        let root = harness_parse_html("<p><br></br>after</p>");
+        assert_eq!(root.children[0].children.iter().map(|c| c.tag.as_str()).collect::<Vec<_>>(), ["br", ""]);
+    }
 }

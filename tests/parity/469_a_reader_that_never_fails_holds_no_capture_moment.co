@@ -1,0 +1,13 @@
+--- A reader's answer is stamped with the moment it was read only where the
+--- answer is a value that can fail, which holds the moment in both modes:
+--- `exists`, `args` and `env[name, default]` never fail, and their answers
+--- have no capture moment (the interpreter had stamped them and the
+--- compiled program could not, so `captured[…].ok` differed; parity 29).
+e = exists['nothing_here.txt']
+log['exists `e` captured: `captured[e].ok`']
+a = args[]
+log['args captured: `captured[a].ok`']
+d = env['CROW_PARITY_469_UNSET', 'fallback']
+log['env default `d` captured: `captured[d].ok`']
+h = env['HOME']
+log['env captured: `captured[h].ok`']

@@ -1,0 +1,24 @@
+--- A field of a derivation read in a view, handed to two calls, is copied
+--- for each: the view binds the derivation as a local as it begins, and
+--- compiled, the first call had moved the field out of it (E0382: Myna's
+--- stage buttons, `_stage_button['None', opened.stage]` four times,
+--- 2026-11-06).
+use ui
+
+struct Version [number, stage]
+
+picked = 2
+
+derive opened
+    return Version[picked, 'Staging']
+
+view chip[label, now_at]
+    if label eq now_at
+        return p['[`label`]']
+    return p[label]
+
+view stages[]
+    return row[chip['None', opened.stage], chip['Staging', opened.stage], chip['Production', opened.stage], p[opened.stage]]
+
+page['/', stages]
+log[stages[]]

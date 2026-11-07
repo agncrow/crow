@@ -1,0 +1,6 @@
+[
+  {"get": "/version"},
+  {"expect": "200 OK | content-type: text/plain | 3.18.0"},
+  {"post": "/sized", "body": "crow"},
+  {"expect": "200 OK | content-type: text/plain | 4 bytes"}
+]

@@ -725,9 +725,11 @@ pub fn env(name: &str) -> Result<String, String> {
 
 /// `env[name, default]`: the variable's text, or the default as text — a
 /// variable is text whichever answers (the interpreter had answered a
-/// default of another type as that type).
-pub fn env_or(name: &str, default: &crate::cell::Cell) -> Result<String, String> {
-    Ok(std::env::var(name).unwrap_or_else(|_| default.text()))
+/// default of another type as that type). It never fails: its row says so,
+/// or a function answering it answered a value that can fail, and a frame's
+/// column made of it was refused (Myna's workspace folder, 2026-11-06).
+pub fn env_or(name: &str, default: &crate::cell::Cell) -> String {
+    std::env::var(name).unwrap_or_else(|_| default.text())
 }
 
 /// `input[]`: a line from stdin.

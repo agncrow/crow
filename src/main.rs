@@ -3180,6 +3180,30 @@ fn derive_snapshot_rewrite(source: &str, var: &str, line_1based: usize) -> Resul
 mod derive_fix_tests {
     use super::*;
 
+    /// A page's `:name` is the part's fact of that name, never another fact
+    /// of the part whose name ends with the same words: `:model_name` beside
+    /// `new_model_name` had been ambiguous, and the interpreted Myna refused
+    /// its model page at start (2026-11-06). A dotted name's leading
+    /// segments end the part's prefix.
+    #[test]
+    fn a_pages_name_is_the_parts_fact_of_that_name() {
+        EXPANSION_PARTS.with(|p| {
+            let mut p = p.borrow_mut();
+            p.insert("myna_models_".to_string(), "myna/models.co".to_string());
+            p.insert("myna_notebooks_".to_string(), "myna/notebooks.co".to_string());
+        });
+        let facts: std::collections::BTreeSet<String> =
+            ["myna_models_model_name", "myna_models_new_model_name", "myna_notebooks_current", "myna_models_current"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(crate::derive::address_fact("model_name", &facts).as_deref(), Some("myna_models_model_name"));
+        assert_eq!(crate::derive::address_fact("new_model_name", &facts).as_deref(), Some("myna_models_new_model_name"));
+        assert_eq!(crate::derive::address_fact("notebooks.current", &facts).as_deref(), Some("myna_notebooks_current"));
+        assert_eq!(crate::derive::address_fact("models.current", &facts).as_deref(), Some("myna_models_current"));
+        // (two parts' facts of one name are two: the bare name is neither)
+        assert_eq!(crate::derive::address_fact("current", &facts), None);
+        assert_eq!(crate::derive::address_fact("nothing", &facts), None);
+        EXPANSION_PARTS.with(|p| p.borrow_mut().clear());
+    }
+
     #[test]
     fn a_startup_snapshot_becomes_a_derivation() {
         let src = "use web, ui, db\n\nconn = db.connect['sqlite://x.db']\ntrades = query[conn, 'SELECT * FROM trades']\n\nview render[]\n    return div[table[trades]]\n\npage['/', render]\n";

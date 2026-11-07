@@ -442,13 +442,25 @@ impl Emitter {
         }
     }
 
+    /// A place, as `place_read` says, or a field of a derivation a view
+    /// or a handler bound as a local as it began (`opened.stage`): a value
+    /// taken from it copies, or the first call handed it moved it out
+    /// (E0382: Myna's stage buttons, parity 467).
+    pub(crate) fn held_place(&self, e: &Expr) -> bool {
+        match Emitter::raw(e) {
+            Expr::Derived(d, _) => self.declared(d),
+            Expr::Field { base, .. } => self.held_place(base),
+            other => Emitter::place_read(other),
+        }
+    }
+
     pub(crate) fn owned_expr(&mut self, e: &Expr) -> String {
         let s = self.expr(e);
         // a field of a local is copied out of it (`c = g.last`): a struct
         // parameter is borrowed, and a local read again later still owns it;
         // a field that can hold a failed value is never Copy
         if let Expr::Field { base, .. } = e {
-            if Emitter::place_read(base) {
+            if self.held_place(base) {
                 let t = self.tt(e);
                 // (a field of no known kind is held as text, never Copy: a
                 // reader's `path` given the item of an empty list had been
@@ -2230,7 +2242,7 @@ impl Emitter {
                 }
                 let types: Vec<Ty> = raw_args.iter().map(|a| self.tt(a)).collect();
                 let kinds: Vec<crate::table::Arg> = raw_args.iter().map(|a| self.held_kind(a)).collect();
-                if let Some(m) = crate::table::module_of_bare(name, &self.registry.providers_of(name), &kinds) {
+                if let Some(m) = crate::table::module_of_bare(name, &self.registry.providers_of(name), &kinds, &|m| self.registry.is_loaded(m)) {
                     if let Some(t) = self.registry.type_of_in(&m, name, &types) {
                         return matches!(t, Ty::Result(_));
                     }
@@ -2491,7 +2503,7 @@ impl Emitter {
                     Expr::Derived(d, _) => self.declared(d),
                     // a field of a local (a struct parameter is borrowed:
                     // its list is cloned, never moved out of it)
-                    Expr::Field { base, .. } => matches!(Emitter::raw(base), Expr::Local(..) | Expr::Move(..) | Expr::Load(..)),
+                    Expr::Field { base, .. } => matches!(Emitter::raw(base), Expr::Local(..) | Expr::Move(..) | Expr::Load(..)) || self.held_place(base),
                     _ => false,
                 };
                 // (a parsed value, a column and a sparse matrix are no
@@ -2921,7 +2933,7 @@ impl Emitter {
             Target::Row(row) if row.is_crow() && row.id == "web.mail.mail" => self.builtin("mail", args, arg_strs, whole).unwrap_or_default(),
             Target::Row(row) if row.is_crow() => {
                 let call = self.user_call(&crate::table::crow_fn_name(row), args, arg_strs.to_vec());
-                if crate::table::stamps(row.name) && matches!(row.fails, crate::table::Fails::Value(_)) {
+                if crate::table::row_stamps(row) {
                     self.needs_crow_runtime = true;
                     format!("{{ let mut _r = {}; if _r.ok {{ _r.captured = crow_runtime::moments::now(); }} _r }}", call)
                 } else {
@@ -3306,8 +3318,13 @@ impl Emitter {
         let cur = self.cur_fn.clone();
         let helper_call = self.reactive_event_handlers.contains(name) && self.reactive_event_handlers.contains(&cur);
         let threads = helper_call || (self.reactive_render_fns.contains(name) && (self.reactive_render_fns.contains(&cur) || self.reactive_event_handlers.contains(&cur)));
-        let all = if threads {
-            let mut v = vec!["state".to_string()];
+        // a view the top level calls (its markup logged or kept) reads the
+        // facts as declared, through the state main holds — as a derivation
+        // read there does (`__derive_d(&__crow_state)`); handed none, the
+        // program had not built (E0061, parity 463)
+        let from_main = self.in_main && self.reactive_render_fns.contains(name) && (self.has_page_routes || self.app_state);
+        let all = if threads || from_main {
+            let mut v = vec![if from_main { "&__crow_state".to_string() } else { "state".to_string() }];
             v.extend(arg_strs.iter().cloned());
             v
         } else {

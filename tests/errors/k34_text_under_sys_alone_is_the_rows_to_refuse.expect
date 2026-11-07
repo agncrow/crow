@@ -1,0 +1,3 @@
+k34_text_under_sys_alone_is_the_rows_to_refuse.co:9:5: text[] takes bytes, got text
+  9 │ log[text['abc']]
+    │     ^^^^

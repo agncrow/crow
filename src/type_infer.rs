@@ -545,6 +545,9 @@ pub struct TypeContext {
     pub module_aliases: BTreeMap<String, String>,
     /// fn name → [(signature, mangled clone name)] for specialized functions
     pub specializations: BTreeMap<String, Vec<(Vec<Ty>, String)>>,
+    /// Copies made for a signature that arrived after its function was
+    /// copied (`note_signature`), for the next copying round to read
+    pub late_clones: Vec<String>,
     pub structs: BTreeMap<String, StructSig>,
     /// Module registry for generic type dispatch
     pub registry: crate::modules::ModuleRegistry,
@@ -670,6 +673,7 @@ impl TypeContext {
             bare_modules: std::collections::BTreeSet::new(),
             module_aliases: BTreeMap::new(),
             specializations: BTreeMap::new(),
+            late_clones: Vec::new(),
             structs,
             registry: crate::modules::ModuleRegistry::new(),
             conn_urls: Vec::new(),
@@ -1156,6 +1160,14 @@ impl TypeContext {
                     } else if Self::empty_collection(held) && given.is_concrete() {
                         // (an empty collection's items, once a call says them)
                         *held = given.clone();
+                    } else if matches!((held.payload(), given.payload()), (Ty::Column(h), Ty::Column(g)) if matches!(h.payload(), Ty::Unknown) && !matches!(g.payload(), Ty::Unknown)) {
+                        // (a column whose cells nothing said yet — a loaded
+                        // file's, before its reads type it — takes the cells a
+                        // call says: kept open, it had joined a column of
+                        // floats, and once the file's cells read as parsed
+                        // values the one copy disagreed with the float call;
+                        // parity 460)
+                        *held = given.clone();
                     } else if matches!((&*held, given), (Ty::Frame(_), Ty::Frame(_))) {
                         // (a frame's columns, joined: open where the calls differ)
                         *held = held.unify(given);
@@ -1190,7 +1202,35 @@ impl TypeContext {
                     }
                 }
             }
-            None => entry.push(sig),
+            None => {
+                entry.push(sig.clone());
+                let idx = entry.len();
+                // (a signature that arrives after the copies were made — a
+                // call whose argument a later round typed — gets a copy of
+                // its own: it had been sent to the first copy, typed for
+                // another kind, and the lowered program disagreed with
+                // itself: a column of floats handed to the copy made for a
+                // loaded file's parsed cells; parity 460)
+                if self.specializations.contains_key(name)
+                    && !crate::ir::is_copy(name)
+                    && !sig.iter().any(|t| matches!(t, Ty::Fn(_, _)))
+                    && let Some(base) = self.functions.get(name).cloned()
+                {
+                    let mangled = format!("{}__{}", name, idx);
+                    if !self.functions.contains_key(&mangled) {
+                        let params: Vec<(String, Ty)> = base.params.iter().zip(sig.iter()).map(|((pname, _), ty)| (pname.clone(), ty.clone())).collect();
+                        self.functions.insert(mangled.clone(), FnSig { params, return_type: Ty::Unknown, body: base.body.clone() });
+                        self.specializations.entry(name.to_string()).or_default().push((sig, mangled.clone()));
+                        if self.views.contains(name) {
+                            self.views.insert(mangled.clone());
+                        }
+                        if self.view_handlers.contains(name) {
+                            self.view_handlers.insert(mangled.clone());
+                        }
+                        self.late_clones.push(mangled);
+                    }
+                }
+            }
         }
     }
 
@@ -1233,7 +1273,7 @@ impl TypeContext {
     }
 
     pub(crate) fn new_clones(&mut self) -> Vec<String> {
-        let mut new_clones: Vec<String> = Vec::new();
+        let mut new_clones: Vec<String> = std::mem::take(&mut self.late_clones);
         for (name, sigs) in self.call_signatures.clone() {
             if !self.awaits_clones(&name) {
                 continue;
@@ -1599,7 +1639,11 @@ impl TypeContext {
         // parity 305. A column whose cells are not known yet is the other's)
         let cells_alike = |x: &Ty, y: &Ty| match (x.payload(), y.payload()) {
             (Ty::Column(a), Ty::Column(b)) => {
-                let open = |c: &Ty| matches!(c.payload(), Ty::Unknown | Ty::Json);
+                // (parsed values' cells are a kind of their own: a function
+                // given a loaded file's column and a column of floats made of
+                // it had been one copy, typed for parsed values, and the float
+                // call disagreed with itself — parity 460)
+                let open = |c: &Ty| matches!(c.payload(), Ty::Unknown);
                 open(a) || open(b) || a.payload() == b.payload()
             }
             _ => true,
@@ -1665,9 +1709,23 @@ impl TypeContext {
                 other => other.clone(),
             })
             .collect();
+        // (a copy whose columns hold the call's very cells first: a column
+        // of parsed values is alike to any column, so a function copied for
+        // one and for a column of floats had sent the float call to the
+        // first copy, typed for parsed values — "the lowered program
+        // disagrees with itself", Myna's tracking store reading Magpie's
+        // cells and then its own frame's; parity 460)
+        let exact_cells = |csig: &[Ty]| {
+            csig.len() == call_sig.len()
+                && csig.iter().zip(&call_sig).all(|(x, y)| match (x.payload(), y.payload()) {
+                    (Ty::Column(a), Ty::Column(b)) => a.payload() == b.payload() || matches!(a.payload(), Ty::Unknown) || matches!(b.payload(), Ty::Unknown),
+                    _ => true,
+                })
+        };
         clones
             .iter()
-            .find(|(csig, _)| Self::same_signature(csig, &call_sig))
+            .find(|(csig, _)| Self::same_signature(csig, &call_sig) && exact_cells(csig))
+            .or_else(|| clones.iter().find(|(csig, _)| Self::same_signature(csig, &call_sig)))
             .or_else(|| clones.first())
             .map(|(_, m)| m.clone())
     }

@@ -126,7 +126,7 @@ impl TypeContext {
         }
         // Module function dispatch (overlapping builtins: check arg type)
         let is_overlapping = crate::table::CORE_AND_MATH.contains(&name);
-        if is_overlapping && self.registry.has_function(name) {
+        if is_overlapping && self.registry.has_bare_function(name) {
             // (by what each argument holds: one that can fail is handed on
             // as its error before the call, and the call is wrapped as it
             // can fail where it is typed — `max[w]` of a tensor that can
@@ -144,7 +144,7 @@ impl TypeContext {
             }
         }
         // An element-wise math function over a plain number is a number
-        if crate::modules::math::SCALAR_UNARY.contains(&name) && args.len() == 1 && self.registry.has_function(name) {
+        if crate::modules::math::SCALAR_UNARY.contains(&name) && args.len() == 1 && self.registry.has_bare_function(name) {
             let t = arg_ty(&args[0]);
             let t = if let Ty::Result(i) = t { *i } else { t };
             if matches!(t, Ty::Int | Ty::Float) { return Ty::Float; }
@@ -167,7 +167,7 @@ impl TypeContext {
         // of text where a module in scope answers `slice` of bytes)
         let kinds: Vec<crate::table::Arg> = args.iter().map(|a| crate::table::Arg::of_type(&arg_ty(a))).collect();
         let cores = crate::table::has_core_rows(name) && !kinds.iter().any(|k| matches!(k, crate::table::Arg::Unknown | crate::table::Arg::AnyList)) && crate::table::core_row(name, &kinds).is_some();
-        if !is_overlapping && !frame_core_fallback && !cores && self.registry.has_function(name) {
+        if !is_overlapping && !frame_core_fallback && !cores && self.registry.has_bare_function(name) {
             // A name two modules export (stack, unique, load: frame + math)
             // resolves by its first argument's type — the same dispatch the
             // emitters use — so a qualified call that lowering made bare
@@ -176,7 +176,7 @@ impl TypeContext {
             // (crate::table::module_of_bare: one rule for both)
             let providers = self.registry.providers_of(name);
             let full: Vec<Ty> = args.iter().map(|a| arg_ty(a)).collect();
-            match crate::table::module_of_bare(name, &providers, &kinds) {
+            match crate::table::module_of_bare(name, &providers, &kinds, &|m| self.registry.is_loaded(m)) {
                 Some(m) => {
                     if let Some(t) = self.registry.type_of_in(&m, name, &full) {
                         return t;
@@ -187,6 +187,9 @@ impl TypeContext {
                 // sys` typed as the layer's bytes, its `type` `unknown`
                 // compiled where the interpreter said `array`)
                 None if crate::table::core_row(name, &kinds).is_some() => {}
+                // (another module's own form, where the one provider's rows
+                // take none of the kinds: web's `text` of text beside sys's)
+                None if providers.len() == 1 && crate::table::other_form_takes(providers[0], name, &kinds, &|m| self.registry.is_loaded(m)) => {}
                 None => {
                     if let Some(t) = self.registry.type_of(name, &full) {
                         return t;
@@ -199,7 +202,7 @@ impl TypeContext {
         // without `use frame`): the program is refused for the import, and
         // the call is typed as the module's, so what the program does with
         // the value is judged in the same run (spec, Error Messages, rule 3)
-        if !self.registry.has_function(name) && !self.functions.contains_key(name) && !self.vars.contains_key(name) {
+        if !self.registry.has_bare_function(name) && !self.functions.contains_key(name) && !self.vars.contains_key(name) {
             let core_takes = crate::table::ROWS.iter().any(|r| {
                 let fixed = r.params.iter().filter(|k| !k.is_rest()).count();
                 r.module.is_empty() && r.name == name && (r.params.len() == args.len() || (r.params.iter().any(|k| k.is_rest()) && args.len() >= fixed))
@@ -208,7 +211,7 @@ impl TypeContext {
                 let stdlib = crate::modules::ModuleRegistry::with_stdlib();
                 let providers = stdlib.providers_of(name);
                 let full: Vec<Ty> = args.iter().map(arg_ty).collect();
-                if let Some(m) = crate::table::module_of_bare(name, &providers, &kinds)
+                if let Some(m) = crate::table::module_of_bare(name, &providers, &kinds, &|m| self.registry.is_loaded(m))
                     && let Some(t) = stdlib.type_of_in(&m, name, &full)
                 {
                     return t;

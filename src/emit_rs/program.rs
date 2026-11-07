@@ -153,6 +153,19 @@ impl Emitter {
             }
             self.modules.insert(path);
         }
+        // a module imported only under an alias is reached by the alias
+        // alone, as inference's registry holds it (type_infer/classify.rs)
+        let (aliased, bare): (Vec<&String>, Vec<&String>) = self.part.uses.iter().partition(|u| u.contains(" as "));
+        let bare: std::collections::BTreeSet<String> = bare
+            .into_iter()
+            .flat_map(|p| crate::modules::brought_by(p).into_iter().map(str::to_string).chain(std::iter::once(p.trim().to_string())))
+            .collect();
+        for u in aliased {
+            let path = u.split(" as ").next().unwrap_or(u).trim();
+            if !bare.contains(path) {
+                self.registry.mark_qualified(path);
+            }
+        }
         crate::modules::load_crow_scopes(&mut self.registry, self.part.fns.iter().map(|f| f.name.as_str()));
     }
 
@@ -670,7 +683,12 @@ impl Emitter {
             let widened = matches!(vty, Ty::Int) && matches!(ty, Ty::Float);
             let saved_line = self.current_line;
             self.current_line = fact.line;
+            // (printed now, placed in main after its state is made: read
+            // as main reads, a view or a derivation through that state —
+            // `shown = head[…]` had called the view with none, parity 464)
+            let outside = std::mem::replace(&mut self.in_main, self.has_page_routes || self.app_state);
             let text = self.top_level_expr(&value);
+            self.in_main = outside;
             // (a view's node given to a name held as markup is its HTML)
             let text = if self.makes_node(&value) && matches!(ty, Ty::Markup | Ty::Str) { format!("({}).to_html()", text) } else { text };
             let text = Self::refused_fact(&fact, text);
@@ -1547,6 +1565,11 @@ impl Emitter {
                 self.line("let mut __crow_app = CrowApp::new();");
             }
             self.line("let mut __crow_state = CrowLiveState::new();");
+            // (the top level from here: a fact's default, as any line after
+            // the declarations, reads a derivation or calls a view through
+            // the state main holds — a fact made of a view had been handed
+            // no state, parity 464)
+            self.in_main = true;
             // the session's facts in the program's own struct, typed field by
             // field (typed-values-design.md §6)
             if !self.reactive_vars.is_empty() {
@@ -1611,7 +1634,6 @@ impl Emitter {
             if !self.part.derives.is_empty() {
                 self.line("crow_web::live::hold_app(&__crow_state);");
             }
-            self.in_main = true;
             self.emit_block(&other);
             if self.test_control {
                 // the harness's routes beside the pages, on the port the

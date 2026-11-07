@@ -265,6 +265,25 @@ impl<'a> Lowerer<'a> {
         !self.ctx.functions.contains_key(name) && self.web_program() && !self.provided_bare(name)
     }
 
+    /// Whether a bare call of `name` with these kinds is web's own form:
+    /// by `web_form`, or where a module imported bare provides the name
+    /// and the one resolver hands the call to web's form because the
+    /// module's rows take none of the kinds (`text[stream]` beside sys's
+    /// `text` of bytes was web's response, and went unchecked: the compiled
+    /// route did not build — crow check --self's routes).
+    pub(super) fn web_form_reached(&self, name: &str, kinds: &[crate::table::Arg]) -> bool {
+        if self.web_form(name) {
+            return true;
+        }
+        let providers = self.ctx.registry.providers_of(name);
+        let loaded = |m: &str| self.ctx.registry.is_loaded(m);
+        !self.ctx.functions.contains_key(name)
+            && self.web_program()
+            && providers.len() == 1
+            && crate::table::module_of_bare(name, &providers, kinds, &loaded).is_none()
+            && crate::table::other_form_takes(providers[0], name, kinds, &loaded)
+    }
+
     /// What a response form reads a parsed value handed to it as: its body
     /// text, `respond`'s status an int.
     pub(super) fn web_form_reads(name: &str, at: usize) -> Option<Ty> {
@@ -1493,6 +1512,15 @@ impl<'a> Lowerer<'a> {
             return;
         }
         let kinds: Vec<crate::table::Arg> = (0..argc).map(|i| types.get(i).map_or(crate::table::Arg::Unknown, crate::table::Arg::of_type)).collect();
+        // (another module's own form the call reaches, by the one resolver:
+        // web's `text` of text beside sys's `text` of bytes)
+        if let [only] = providers.as_slice()
+            && !crate::table::has_core_rows(name)
+            && crate::table::module_of_bare(name, &[only.as_str()], &kinds, &|m| self.ctx.registry.is_loaded(m)).is_none()
+            && crate::table::other_form_takes(only, name, &kinds, &|m| self.ctx.registry.is_loaded(m))
+        {
+            return;
+        }
         // `json[map]` is web's JSON response (use web), a form of its own, as
         // a record's and a list's are (an object, an array); `json[frame]`
         // answers the frame's records
@@ -1527,14 +1555,7 @@ impl<'a> Lowerer<'a> {
     /// The fact a page's address names, as both backends resolve it: the
     /// fact of that name, or the one fact of a part it is the last name of.
     fn address_fact(&self, written: &str) -> Option<String> {
-        let flat = written.replace('.', "_");
-        if self.ctx.facts.contains(&flat) {
-            return Some(flat);
-        }
-        let suffix = format!("_{}", flat);
-        let mut found = self.ctx.facts.iter().filter(|k| k.ends_with(&suffix));
-        let first = found.next()?.clone();
-        found.next().is_none().then_some(first)
+        crate::derive::address_fact(written, self.ctx.facts.iter())
     }
 
     pub(super) fn check_call(&mut self, name: &str, args: &[A], types: &[Ty]) {
@@ -1613,7 +1634,8 @@ impl<'a> Lowerer<'a> {
         // before either mode runs: the compiled program had not built, and
         // the interpreter had answered a number's text, a status of 1000 as
         // 599 (crow check --self, the routes family)
-        if self.web_form(name) {
+        let kinds: Vec<crate::table::Arg> = (0..argc).map(|i| crate::table::Arg::of_type(&arg_type(self, i))).collect();
+        if self.web_form_reached(name, &kinds) {
             let what = |t: &Ty| crate::table::Arg::of_type(t.payload()).words();
             // (the outer kind decides — a column or a list is no text,
             // whatever its items — and a parsed value a text form reads as
@@ -1886,7 +1908,7 @@ impl<'a> Lowerer<'a> {
                 // kinds are known, or by the values as the program runs)
                 // (the one resolver decides: where it names a module, or the
                 // core's row takes the kinds, nothing is ambiguous)
-                let decided = crate::table::core_row(name, &kinds).is_some() || crate::table::module_of_bare(name, &providers, &kinds).is_some();
+                let decided = crate::table::core_row(name, &kinds).is_some() || crate::table::module_of_bare(name, &providers, &kinds, &|m| self.ctx.registry.is_loaded(m)).is_some();
                 let unknown = kinds.iter().any(|k| matches!(k, crate::table::Arg::Unknown | crate::table::Arg::AnyList));
                 if taking == 1 || decided || unknown {
                     // (decided by the first argument's kind while no row takes
@@ -1937,7 +1959,14 @@ impl<'a> Lowerer<'a> {
                 if self.ctx.functions.contains_key(name) || self.declared(name) || CORE_RESERVED.contains(&name) {
                     return;
                 }
-                let alias = self.ctx.module_aliases.iter().find(|(_, p)| p.as_str() == module).map(|(a, _)| a.clone());
+                // (nor a name a module imported bare answers by a row or a
+                // form: web's `text` response under `use web` beside a part's
+                // `use sys as sx` had been refused as sys's `text` of bytes,
+                // in a file that imported no sys at all)
+                if crate::table::rows_named(name).any(|r| self.ctx.bare_modules.contains(r.module)) {
+                    return;
+                }
+                let alias =self.ctx.module_aliases.iter().find(|(_, p)| p.as_str() == module).map(|(a, _)| a.clone());
                 if let Some(alias) = alias {
                     let module = module.to_string();
                     self.refuse(format!("'{}' comes from {} which was imported as '{}' — call {}.{}[...]", name, module, alias, alias, name));

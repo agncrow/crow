@@ -1,0 +1,32 @@
+--- A value a guard knows has failed, handed back, says nothing of what the
+--- function answers: `if not f.ok return f` had typed `f` — a call whose
+--- answer an early round did not know yet — as the function's other answer,
+--- a list of records, and `pieces[f]` was refused as `split[]` of records
+--- (Myna's `serving.evaluate`, `numbers_of[p]` read as a response,
+--- 2026-11-06).
+struct Scored [key, value]
+
+fn folder_of[name, ref]
+    if name eq ''
+        return error['no name']
+    return '/m/`name`/`ref`'
+
+fn scored[xs]
+    out = for x in xs
+        Scored[x, 1.0]
+    return out
+
+fn pieces[given]
+    return split[given, '/']
+
+fn ev[name, ref]
+    f = folder_of[name, ref]
+    if not f.ok
+        return f
+    return scored[pieces[f]]
+
+r = ev['m', '1']
+for s in r
+    log['`s.key` `s.value`']
+log[folder_of['a', 2]]
+log[ev['', '1']]

@@ -1284,6 +1284,11 @@ pub struct ModuleRegistry {
     /// read in (`enter`), so a program's imports never reach into a
     /// module's formulas, and a module's layer never reaches the program.
     scopes: HashMap<String, Vec<usize>>,
+    /// The modules the program's scope holds only under an alias (`use
+    /// sys as sx`, and nowhere bare): their names are qualified-only (spec,
+    /// Aliased Imports), so a bare name never reaches them — a part's
+    /// alias had made web's bare `text` response sys's `text` of bytes.
+    qualified: Vec<usize>,
 }
 
 /// The program's own scope.
@@ -1312,6 +1317,7 @@ impl ModuleRegistry {
             fn_map: HashMap::new(),
             const_map: HashMap::new(),
             scopes: HashMap::new(),
+            qualified: Vec::new(),
         }
     }
 
@@ -1319,6 +1325,27 @@ impl ModuleRegistry {
     /// functions and constants.
     pub fn load(&mut self, module: Arc<dyn CrowModule>) {
         self.load_for(PROGRAM, module);
+    }
+
+    /// A module the program imports bare: its names are bare names,
+    /// whatever an alias of it said.
+    pub fn mark_bare(&mut self, name: &str) {
+        self.qualified.retain(|&i| self.modules[i].name() != name);
+    }
+
+    /// Mark a module the program's scope holds as reached by its alias
+    /// alone: imported under an alias, and bare nowhere (`mark_bare`).
+    pub fn mark_qualified(&mut self, name: &str) {
+        if let Some(idx) = self.modules.iter().position(|m| m.name() == name)
+            && !self.qualified.contains(&idx)
+        {
+            self.qualified.push(idx);
+        }
+    }
+
+    /// Whether the module of the name is reached by its alias alone.
+    pub fn is_qualified_only(&self, name: &str) -> bool {
+        self.qualified.iter().any(|&i| self.modules[i].name() == name)
     }
 
     /// Load a module into a scope: a module already loaded (by another
@@ -1429,10 +1456,21 @@ impl ModuleRegistry {
         !self.providers(name).is_empty()
     }
 
+    /// Whether a BARE call of the name reaches a module's function here: a
+    /// module reached by its alias alone provides none (`providers_of`).
+    /// `has_function` answers for a qualified call, whose prefix may be an
+    /// alias.
+    pub fn has_bare_function(&self, name: &str) -> bool {
+        !self.providers_of(name).is_empty()
+    }
+
     /// All loaded modules providing this name — >1 means a bare call is
     /// ambiguous (spec: Conflict Resolution).
     pub fn providers_of(&self, name: &str) -> Vec<&str> {
-        self.providers(name).into_iter().map(|i| self.modules[i].name()).collect()
+        // (a bare name: a module reached by its alias alone provides none in
+        // the program's scope; a module's own scope imports every one bare)
+        let program = CURRENT_SCOPE.with(|c| c.get() == PROGRAM);
+        self.providers(name).into_iter().filter(|i| !(program && self.qualified.contains(i))).map(|i| self.modules[i].name()).collect()
     }
 
     /// The functions a loaded module provides, by its name (`math.stats`).
