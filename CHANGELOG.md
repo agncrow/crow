@@ -5,7 +5,11 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
-## v0.8.1 — 2026-11-07
+## v0.8.2 — 2026-11-07
+
+(0.8.1 was tagged and never released: GitHub no longer runs the macOS
+image its build asked for, and the release now builds on `macos-15`, for
+macOS 14 and later.)
 
 Thirty-one bugs that building Myna (a data workbench written in Crow, at
 github.com/agncrow/myna) found, fixed in Crow, each with the test that
