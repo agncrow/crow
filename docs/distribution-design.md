@@ -152,7 +152,7 @@ other home of the files, which the fresh-machine job uses too.
 
 `.github/workflows/release.yml`, on a tag `v*`:
 
-1. Build `crow` on `macos-14` (arm64) and `ubuntu-22.04` (x86_64, so the
+1. Build `crow` on `macos-15` (arm64, for macOS 14 and later) and `ubuntu-22.04` (x86_64, so the
    binary runs on any glibc from 2.35 up), strip it, and package it with a
    `sha256` file. The binary links only system libraries: TLS is rustls,
    the GPU is reached through Metal on macOS and a Vulkan loader opened at

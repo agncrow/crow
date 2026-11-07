@@ -22,6 +22,9 @@ permissions:
   contents: write
 env:
   RUST_VERSION: "1.93.1"
+  # GitHub retired the macos-14 image (2026-11-07: "not supported"); the
+  # binary built on macos-15 still runs on macOS 14
+  MACOSX_DEPLOYMENT_TARGET: "14.0"
   GH_TOKEN: ${{ github.token }}
 jobs:
   draft:
@@ -43,7 +46,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             triple: aarch64-apple-darwin
           - os: ubuntu-22.04
             triple: x86_64-unknown-linux-gnu
@@ -111,7 +114,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             triple: aarch64-apple-darwin
           - os: ubuntu-22.04
             triple: x86_64-unknown-linux-gnu
