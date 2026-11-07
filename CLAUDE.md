@@ -1630,3 +1630,18 @@ steps on every push and must be green — all but Magpie's suite (the
   two later works' results may differ by schedule. A function handed to
   `revise` whose every return is a failure answers the record's kind
   (`hand_to_row`).
+- `crow build --target web` (2026-11-07, src/web_target.rs): the
+  emitter's Rust built as a `cdylib` for `wasm32-unknown-unknown` in
+  `.crow_build/web`, written to `<name>_web/` beside `crow.js` and
+  `index.html` (crow_runtime/web/, embedded by `include_str!`: an edit to
+  either reaches a build only after crow is rebuilt). The runtime builds
+  for wasm through `crow_runtime::host` (console, clock, random numbers,
+  stops) — a new place that writes to stdout, reads the clock or exits
+  goes through it, or the module imports what no page gives. A program's
+  reach is refused by effect kind (`Effect::in_browser`). The page talks
+  to the program through `sys.paint` (a batch: WebGL2 calls, and the
+  page's own `@` calls) and `sys.frames` (the frame as JSON: input, said,
+  controllers); a frame's function answers anything (`page::Done` over
+  `CrowDisplay::failure`). tests/web_target.rs draws a triangle in
+  headless Chrome (`--use-angle=swiftshader`) and reads its pixels; the
+  Lory package (agncrow/lory) is the engine built on it.

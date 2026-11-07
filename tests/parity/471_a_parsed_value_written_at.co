@@ -1,0 +1,28 @@
+--- A parsed value written at is read as the kind the place takes, as one
+--- read at is: a map's key as text, a list's position as an int. `m[j.c] =
+--- 2` had stopped interpreted ("a map's key is text or an int") and keyed
+--- the map by the JSON text `"a"`, quotes and all, compiled (Lory's font
+--- atlas, whose glyphs arrive as parsed objects).
+
+struct Held [glyphs]
+
+fn local[j]
+    m = map['?' = 1]
+    m[j.c] = 2
+    m
+
+fn through_a_field[j]
+    h = Held[map['?' = 1]]
+    for g in j.glyphs
+        h.glyphs[g.char] = 0 + g.advance
+    h.glyphs
+
+fn at_a_position[j]
+    xs = [10, 20, 30]
+    xs[j.i] = 99
+    xs
+
+j = json['{"c": "a", "i": 1, "glyphs": [{"char": "H", "advance": 30}, {"char": "i", "advance": 12}]}']
+log[local[j]]
+log[through_a_field[j]]
+log[at_a_position[j]]

@@ -435,17 +435,20 @@ pub fn component_in(manifest: &str, component: &str, triple: &str) -> Result<(St
 }
 
 /// Rust's toolchain for this host, pinned: rustc, cargo and the standard
-/// library, each archive held to the hash Rust's channel manifest
-/// publishes, installed by its own installer into Crow's home.
+/// library — the host's, and the browser's for `crow build --target web`
+/// (crate::web_target::TRIPLE) — each archive held to the hash Rust's
+/// channel manifest publishes, installed by its own installer into Crow's
+/// home.
 fn fetch_toolchain(home: &Path) -> Result<(), String> {
     let triple = target_triple();
     let prefix = toolchain_dir_in(home);
-    println!("(o.o) fetching the Rust toolchain {} for {} from {} (about 130 MB)", RUST_VERSION, triple, rust_dist());
+    println!("(o.o) fetching the Rust toolchain {} for {} from {} (about 150 MB)", RUST_VERSION, triple, rust_dist());
     let manifest = fetch_text(&format!("{}/channel-rust-{}.toml", rust_dist(), RUST_VERSION))?;
     let tmp = home.join("tmp").join("toolchain");
     let _ = std::fs::remove_dir_all(&tmp);
-    for component in ["rustc", "cargo", "rust-std"] {
-        let (url, hash) = component_in(&manifest, component, &triple)?;
+    let wanted = [("rustc", triple.as_str()), ("cargo", triple.as_str()), ("rust-std", triple.as_str()), ("rust-std", crate::web_target::TRIPLE)];
+    for (component, triple) in wanted {
+        let (url, hash) = component_in(&manifest, component, triple)?;
         let url = match std::env::var("CROW_RUST_DIST") {
             // (a test's local server serves the archives at the manifest's names)
             Ok(local) if !local.is_empty() => format!("{}/{}", local, url.rsplit('/').next().unwrap_or(&url)),

@@ -142,6 +142,7 @@ sys.frame_of_parquet	the standard library's own layer: bytes, streams and protoc
 sys.frame_of_postgres	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.frame_of_rowbinary	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.frame_parquet	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.frames	a page's layer: outside a page there is no frame to call the function with, so both modes answer nothing; tests/web_target.rs drives it in Chrome
 sys.gammainc	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.hash	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.hmac	the standard library's own layer: bytes, streams and protocols no reference models yet
@@ -160,6 +161,7 @@ sys.move	the standard library's own layer: bytes, streams and protocols no refer
 sys.note	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.noted	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.open	the standard library's own layer: bytes, streams and protocols no reference models yet
+sys.paint	a page's layer: outside a page the calls go nowhere, so both modes answer nothing; tests/web_target.rs reads the pixels they draw in Chrome
 sys.present_of	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.process	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.push_byte	the standard library's own layer: bytes, streams and protocols no reference models yet

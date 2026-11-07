@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{name}</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0f1317; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  #vr { position: fixed; right: 16px; bottom: 16px; display: none; font: 600 15px system-ui, sans-serif;
+        padding: 10px 16px; border: 0; border-radius: 10px; background: #f6f7f9; color: #0f1317; cursor: pointer; }
+  #said { position: fixed; left: 0; right: 0; bottom: 0; margin: 0; padding: 10px 14px; display: none;
+          font: 13px ui-monospace, monospace; white-space: pre-wrap; background: #3a1010; color: #ffd9d9; }
+</style>
+</head>
+<body>
+<canvas id="page"></canvas>
+<button id="vr">Enter VR</button>
+<pre id="said"></pre>
+<script src="crow.js"></script>
+<script>
+  const said = document.getElementById('said');
+  Crow.start({
+    canvas: document.getElementById('page'),
+    module: '{name}.wasm',
+    said: (kind, text) => {
+      if (kind === 'error' || kind === 'stopped') {
+        said.style.display = 'block';
+        said.textContent = kind === 'stopped' ? 'the program stopped: ' + text : text;
+      }
+    },
+  }).then(async (page) => {
+    window.crow = page;
+    if (await page.vr_supported()) {
+      const vr = document.getElementById('vr');
+      vr.style.display = 'block';
+      vr.onclick = () => page.enter_vr();
+    }
+  }).catch((e) => {
+    said.style.display = 'block';
+    said.textContent = String(e.message || e);
+  });
+</script>
+</body>
+</html>

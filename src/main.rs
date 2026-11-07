@@ -49,6 +49,7 @@ mod effects;
 mod token;
 mod type_infer;
 mod wireframe;
+mod web_target;
 mod formatter;
 mod freeze;
 mod modules;
@@ -470,6 +471,7 @@ const USAGE: &[(&str, &str)] = &[
     ("crow run -i [file.co | job]", "the same, interpreted: instant start, the same output"),
     ("crow run --opt N file.co", "the program optimized at level N, 0 to 3 (0 unless said)"),
     ("crow build [file.co]", "compile a release binary into this directory (the project's entry without a file)"),
+    ("crow build --target web file.co", "the program as a page: a WebAssembly module, crow.js and index.html in <name>_web/ (spec, Building for the web)"),
     ("crow build --ir file.co", "print the program's IR, the typed form both modes run; nothing is compiled"),
     ("crow build --rs file.co", "print the Rust the program compiles to; nothing is compiled"),
     ("crow build --types file.co", "print every type inference settled; nothing is compiled"),
@@ -2033,7 +2035,7 @@ pub(crate) fn placed_in_part(fn_name: &str, msg: &str) -> Option<String> {
         .and_then(|path| std::fs::read_to_string(path).ok())
         .map(|source| refine_error_lines(&source, msg))
         .unwrap_or_else(|| msg.to_string());
-    Some(format!("{}: {}", parts[prefix], refined))
+    Some(format!("{}: {}", parts[prefix], as_the_part_writes(&refined, prefix)))
 }
 
 /// Transpile a .co file to Rust, compile it, and return the path to the binary.
@@ -2106,6 +2108,14 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
     };
     // the crowfile's cpu and gpu, as the interpreter takes them
     resources.apply(&mut program);
+    let web = emit_rs::WEB.load(std::sync::atomic::Ordering::SeqCst);
+    if web {
+        let refused = web_target::unreachable_in_browser(&program);
+        if !refused.is_empty() {
+            eprintln!("{}", web_target::refusal(&refused));
+            process::exit(1);
+        }
+    }
     for note in &ctx.describe_notes {
         eprintln!("{}", note);
     }
@@ -2123,7 +2133,9 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
     }
 
     // Create build directory
-    let build_dir = std::path::PathBuf::from(".crow_build");
+    // (a program built for the web in a directory of its own: its manifest
+    // and configuration are not the native build's)
+    let build_dir = if web { std::path::PathBuf::from(".crow_build").join("web") } else { std::path::PathBuf::from(".crow_build") };
     let src_dir = build_dir.join("src");
     std::fs::create_dir_all(&src_dir).unwrap_or_else(|e| {
         eprintln!("error creating build dir: {}", e);
@@ -2147,7 +2159,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
         process::exit(1);
     });
     let rt_dir = rt.dir().display().to_string();
-    let mut dep_list: Vec<String> = vec!["mimalloc = { version = \"0.1\", default-features = false }".to_string()];
+    let mut dep_list: Vec<String> = if web { Vec::new() } else { vec!["mimalloc = { version = \"0.1\", default-features = false }".to_string()] };
     if emitted.needs_rayon {
         dep_list.push("rayon = \"1.11\"".to_string());
     }
@@ -2204,14 +2216,17 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
         format!("\n[dependencies]\n{}\n", dep_list.join("\n"))
     };
     let cargo_toml = generated_cargo_toml(&project_name, &deps, opt);
+    let cargo_toml = if web { web_target::cargo_toml(&cargo_toml) } else { cargo_toml };
     std::fs::write(build_dir.join("Cargo.toml"), &cargo_toml).unwrap_or_else(|e| {
         eprintln!("error writing Cargo.toml: {}", e);
         process::exit(1);
     });
-    if rt.vendored() {
+    if rt.vendored() || web {
         let cargo_dir = build_dir.join(".cargo");
         let _ = std::fs::create_dir_all(&cargo_dir);
-        std::fs::write(cargo_dir.join("config.toml"), home::vendored_config(&rt.dir().join("vendor"))).unwrap_or_else(|e| {
+        let vendored = rt.vendored().then(|| home::vendored_config(&rt.dir().join("vendor")));
+        let config = if web { web_target::cargo_config(vendored) } else { vendored.unwrap_or_default() };
+        std::fs::write(cargo_dir.join("config.toml"), config).unwrap_or_else(|e| {
             eprintln!("error writing .cargo/config.toml: {}", e);
             process::exit(1);
         });
@@ -2232,7 +2247,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
 
     // Check if source has changed — skip compilation if binary is up-to-date
     let main_rs_path = src_dir.join("main.rs");
-    let binary_path = build_dir.join("target").join(profile_dir).join(&project_name);
+    let binary_path = if web { web_target::module_path(&build_dir.join("target"), profile_dir, &project_name) } else { build_dir.join("target").join(profile_dir).join(&project_name) };
 
     let existing_source = std::fs::read_to_string(&main_rs_path).unwrap_or_default();
     let source_changed = existing_source != rust_source;
@@ -2259,6 +2274,11 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
     // projects had sent it elsewhere, and `crow run` found nothing to run)
     // (absolute: cargo runs inside the build directory)
     cmd.env("CARGO_TARGET_DIR", std::env::current_dir().unwrap_or_default().join(&build_dir).join("target"));
+    if web {
+        for var in web_target::left_out(|v| std::env::var(v).ok()) {
+            cmd.env_remove(var);
+        }
+    }
     if quiet {
         cmd.stdout(std::process::Stdio::null())
            .stderr(std::process::Stdio::piped());
@@ -2275,6 +2295,10 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
         if !output.status.success() {
             stopped_build(&output.status);
             let stderr = String::from_utf8_lossy(&output.stderr);
+            if let Some(said) = web_target::missing_target(&stderr) {
+                eprintln!("{}", said);
+                process::exit(1);
+            }
             let translated = translate_rust_compile_error(&stderr);
             eprintln!("{}", translated);
             process::exit(1);
@@ -2483,6 +2507,23 @@ fn cmd_build() {
         }
         return;
     }
+    // `crow build --target web file.co`: the program as a page — a
+    // WebAssembly module and the page that runs it (spec, Building for the
+    // web; web_target.rs)
+    let mut args = args;
+    if let Some(at) = args.iter().position(|a| a == "--target") {
+        match args.get(at + 1).map(|s| s.as_str()) {
+            Some("web") => {
+                emit_rs::WEB.store(true, std::sync::atomic::Ordering::SeqCst);
+                args.drain(at..at + 2);
+            }
+            other => {
+                eprintln!("crow build --target takes `web` — `crow build --target web file.co` (got {})", other.map(|o| format!("`{}`", o)).unwrap_or_else(|| "nothing".to_string()));
+                process::exit(1);
+            }
+        }
+    }
+    let web = emit_rs::WEB.load(std::sync::atomic::Ordering::SeqCst);
     let (entry, resources) = if args.len() > 2 {
         (args[2].clone(), Resources::default())
     } else if std::path::Path::new("crowfile").exists() {
@@ -2494,6 +2535,16 @@ fn cmd_build() {
     };
 
     let binary = transpile_and_compile(&entry, false, resources, true, 0);
+    if web {
+        let name = package_name(&entry);
+        let dir = std::path::PathBuf::from(format!("{}_web", name));
+        web_target::write_page(&binary, &name, &dir).unwrap_or_else(|e| {
+            eprintln!("error: {}", e);
+            process::exit(1);
+        });
+        println!("build ok -> ./{}/ (index.html, crow.js, {}.wasm: serve the directory over HTTP and open it)", dir.display(), name);
+        return;
+    }
 
     // Copy binary to current directory
     let binary_name = binary.file_name().unwrap().to_string_lossy().to_string();
@@ -3704,6 +3755,17 @@ fn infer_and_validate(lowered: &[ast::Stmt], describe: bool) -> Result<type_infe
 /// the part's file and its line refined against the part's own text. The
 /// entry's errors are left as they are, for the caller to refine against
 /// the entry.
+/// A part's refusal names its functions as the part's file writes them: a
+/// part's names are prefixed where they are inlined, and a count's refusal
+/// had said `'lory_space__modes' expects 0 arguments` of Lory's `_modes`.
+fn as_the_part_writes(msg: &str, prefix: &str) -> String {
+    let mut out = msg.to_string();
+    for quote in ['\'', '`'] {
+        out = out.replace(&format!("{}{}", quote, prefix), &quote.to_string());
+    }
+    out
+}
+
 fn attribute_to_parts(errors: &[(String, Option<String>)]) -> String {
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
     let files = EXPANSION_FILES.with(|f| f.borrow().clone());
@@ -3720,7 +3782,7 @@ fn attribute_to_parts(errors: &[(String, Option<String>)]) -> String {
                         .and_then(|path| std::fs::read_to_string(path).ok())
                         .map(|source| refine_error_lines(&source, msg))
                         .unwrap_or_else(|| msg.clone());
-                    format!("{}: {}", parts[prefix], refined)
+                    format!("{}: {}", parts[prefix], as_the_part_writes(&refined, prefix))
                 }
                 None => msg.clone(),
             }
@@ -6020,8 +6082,18 @@ fn expand_into(
             }
         }
         let none = std::collections::HashSet::new();
+        // (a declaration keeps its own line, the part's, and then no line:
+        // dropped, a refusal of a parameter's name had been placed at the
+        // line lowered last — another function's body — or at line 0, where
+        // the printer panicked; Lory's gui)
+        let mut at = 0usize;
         for mod_stmt in &mod_stmts {
+            if at > 0 && matches!(mod_stmt, ast::Stmt::FnDecl { .. } | ast::Stmt::StructDecl { .. } | ast::Stmt::Derive { .. }) {
+                ex.hoisted.push(ast::Stmt::Line(at));
+            }
+            let placed = at > 0 && matches!(mod_stmt, ast::Stmt::FnDecl { .. } | ast::Stmt::StructDecl { .. } | ast::Stmt::Derive { .. });
             match mod_stmt {
+                ast::Stmt::Line(n) => at = *n,
                 ast::Stmt::FnDecl { name, params, defaults, body, is_view } => {
                     let mut body = body.clone();
                     // Params shadow module names inside the body
@@ -6083,6 +6155,9 @@ fn expand_into(
                     ex.hoisted.push(mod_stmt.clone());
                 }
                 _ => {}
+            }
+            if placed {
+                ex.hoisted.push(ast::Stmt::Line(0));
             }
         }
         ex.written.insert(canon.clone(), mod_dir.to_path_buf());

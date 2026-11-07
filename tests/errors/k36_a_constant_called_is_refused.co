@@ -1,0 +1,9 @@
+--- A math constant called with brackets is no call: `pi[]` had passed
+--- every check, and the interpreter stopped as it ran, "does not run 'pi'
+--- yet" (Lory's sphere, 2026-11-07)
+use math
+
+fn half[]
+    pi[] / 2.0
+
+log[half[]]

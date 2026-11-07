@@ -203,7 +203,7 @@ pub fn worth_sharing(each: std::time::Duration, rest: usize) -> bool {
 pub fn collect_ref<T: Sync, R: Send, I: IntoIterator<Item = R>>(items: &[T], f: impl Fn(&T) -> I + Sync + Send) -> Vec<R> {
     use rayon::prelude::*;
     let Some((head, rest)) = items.split_first() else { return Vec::new() };
-    let start = std::time::Instant::now();
+    let start = crate::host::Started::now();
     let mut out: Vec<R> = f(head).into_iter().collect();
     if worth_sharing(start.elapsed(), rest.len()) {
         out.extend(run(|| rest.par_iter().flat_map_iter(&f).collect::<Vec<R>>()));
@@ -230,7 +230,7 @@ pub fn collect_owned<T: Send, R: Send, I: IntoIterator<Item = R>>(items: Vec<T>,
     let mut items = items.into_iter();
     let Some(head) = items.next() else { return Vec::new() };
     let rest: Vec<T> = items.collect();
-    let start = std::time::Instant::now();
+    let start = crate::host::Started::now();
     let mut out: Vec<R> = f(head).into_iter().collect();
     if worth_sharing(start.elapsed(), rest.len()) {
         out.extend(run(|| rest.into_par_iter().flat_map_iter(&f).collect::<Vec<R>>()));

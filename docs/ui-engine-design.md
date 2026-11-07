@@ -58,7 +58,7 @@ surface is open. That asymmetry is the whole opportunity.
 | Same engine compiled to WebAssembly for local resize | Removes the round trip with no new compiler (Crow → Rust → wasm32). Rejected by ruling as an unwanted second build of the engine; recorded as the fallback if constraint 2 ever bites after the chosen design ships. Note: the roadmap's "client-side WASM: rejected" was about a client *framework*; a stateless layout function is a different thing. |
 | A JavaScript backend for the engine | A second code generator whose agreement with the Rust one needs a JS runtime to test. Contradicts constraint 3. |
 | Precomputed layouts at breakpoints | Instant and dependency-free, but approximate between breakpoints. Acceptable only as a transient, never as the answer. |
-| Canvas rendering (Flutter-Web model) | Exact but discards the DOM: selection, accessibility, find-in-page, native inputs. Rejected. |
+| Canvas rendering (Flutter-Web model) | Exact but discards the DOM: selection, accessibility, find-in-page, native inputs. Rejected for a served page. (2026-11-07, Vijay: a program built for the web, `crow build --target web`, draws its whole page in WebGL2 through the Lory package, which answers each loss in its own design; a served page stays HTML.) |
 | External layout crates (taffy, yoga, Blitz/stylo) | taffy is a good CSS-subset engine and Blitz a real browser-less renderer; both are external dependencies and neither is Crow. Kept as reference implementations to *test against*, not to ship. |
 
 ## The design: CSS as the wire format, one algorithm in two places

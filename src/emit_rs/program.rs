@@ -944,6 +944,8 @@ impl Emitter {
                 "impl<T: Clone + crow_runtime::display::CrowDisplay> crow_runtime::display::CrowDisplay for CrowResult<T> {",
                 "    fn crow_repr(&self) -> String { if !self.ok { crow_runtime::display::failed(&self.reason, &self.trace) } else { self.value.crow_repr() } }",
                 "    fn crow_fmt(&self) -> String { if !self.ok { crow_runtime::display::failed(&self.reason, &self.trace) } else { self.value.crow_fmt() } }",
+                // (a frame's work that failed stops with this: crow_runtime::page::Done)
+                "    fn failure(&self) -> Option<String> { if !self.ok { Some(crow_runtime::display::failed(&self.reason, &self.trace)) } else { self.value.failure() } }",
                 "}",
                 // a value that failed encodes as `null`
                 "impl<T: Clone + crow_runtime::json::ToJson> crow_runtime::json::ToJson for CrowResult<T> {",
@@ -1499,8 +1501,18 @@ impl Emitter {
         // a stop carried back from another thread (a parallel loop's) is the
         // program's stop, printed once; any other panic names itself in
         // Crow's words (crow_runtime::stops)
-        self.line("#[global_allocator]");
-        self.line("static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;");
+        // a program built for the web is a module the page starts: its
+        // allocator Rust's own (mimalloc's C builds for no browser), and
+        // `crow_start` the page's door to `main` (crow_runtime::host)
+        if super::WEB.load(std::sync::atomic::Ordering::SeqCst) {
+            self.line("#[no_mangle]");
+            self.line("pub extern \"C\" fn crow_start() {");
+            self.line("    main()");
+            self.line("}");
+        } else {
+            self.line("#[global_allocator]");
+            self.line("static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;");
+        }
         self.line("");
         self.line("fn main() {");
         self.line("    crow_runtime::stops::install_hook();");

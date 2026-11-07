@@ -52,10 +52,14 @@ pub enum Effect {
     /// Writes what the process holds under a name (`remember`, `revise`,
     /// `forget`).
     MemoryWrite,
+    /// Draws on the page a program built for the web runs in, or asks it
+    /// for frames (`sys.paint`, `sys.frames`); outside a browser there is
+    /// no page, and it does nothing.
+    Page,
 }
 
 impl Effect {
-    pub const ALL: [Effect; 18] = [
+    pub const ALL: [Effect; 19] = [
         Effect::Console,
         Effect::Files,
         Effect::FilesWrite,
@@ -74,6 +78,7 @@ impl Effect {
         Effect::Serving,
         Effect::Memory,
         Effect::MemoryWrite,
+        Effect::Page,
     ];
 
     /// The kind's word, as `crow check`'s reach and the spec name it.
@@ -97,6 +102,7 @@ impl Effect {
             Effect::Serving => "serving",
             Effect::Memory => "held",
             Effect::MemoryWrite => "held.write",
+            Effect::Page => "drawing",
         }
     }
 
@@ -122,6 +128,7 @@ impl Effect {
             Effect::Serving => "declares what the server serves",
             Effect::Memory => "reads what the process holds",
             Effect::MemoryWrite => "changes what the process holds",
+            Effect::Page => "draws on the page",
         }
     }
 
@@ -153,6 +160,15 @@ impl Effect {
     /// fixtures; a database write is the rehearsal database's).
     pub fn recorded(self) -> bool {
         matches!(self, Effect::FilesWrite | Effect::Shell)
+    }
+
+    /// What a program built for the web may reach (spec, "Building for
+    /// the web"): a page in a browser writes to its console, reads its
+    /// clock, draws, holds what the program holds, and draws on itself —
+    /// no file, socket, process, database, mail, wait or server, which
+    /// `crow build --target web` refuses before it builds.
+    pub fn in_browser(self) -> bool {
+        matches!(self, Effect::Console | Effect::Clock | Effect::Random | Effect::Memory | Effect::MemoryWrite | Effect::Page)
     }
 
     /// A function calling it acts for the session, and joins the handler

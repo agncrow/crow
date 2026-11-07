@@ -34,7 +34,7 @@ jobs:
           git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
           git checkout -q --detach FETCH_HEAD
       - name: Rust (the runner's rustup)
-        run: rustup toolchain install stable --profile minimal -c clippy && rustup default stable
+        run: rustup toolchain install stable --profile minimal -c clippy -t wasm32-unknown-unknown && rustup default stable
       - name: Postgres's own tools on the PATH (the driver's tests start a scratch cluster of their own; the image ships PostgreSQL with initdb and pg_ctl off the PATH)
         run: ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1 | tee -a "$GITHUB_PATH"
       - name: A GPU on the CPU (Mesa's lavapipe, a Vulkan device), so the GPU tests run on a runner that has no GPU
@@ -190,7 +190,7 @@ jobs:
           git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
           git checkout -q --detach FETCH_HEAD
       - name: Rust and its coverage tools (the runner's rustup)
-        run: rustup toolchain install stable --profile minimal -c llvm-tools-preview && rustup default stable
+        run: rustup toolchain install stable --profile minimal -c llvm-tools-preview -t wasm32-unknown-unknown && rustup default stable
       - name: The coverage tool
         run: cargo install cargo-llvm-cov --locked
       - name: Postgres's own tools on the PATH (the driver's tests start a scratch cluster of their own; the image ships PostgreSQL with initdb and pg_ctl off the PATH)
@@ -229,7 +229,7 @@ jobs:
           git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')" fetch -q --depth 1 --no-tags origin "$GITHUB_SHA"
           git checkout -q --detach FETCH_HEAD
       - name: Rust (the runner's rustup)
-        run: rustup toolchain install stable --profile minimal -c clippy && rustup default stable
+        run: rustup toolchain install stable --profile minimal -c clippy -t wasm32-unknown-unknown && rustup default stable
       - name: Build crow
         run: cargo build --release
       # the reference's libraries, for the self-check's right answers, in a

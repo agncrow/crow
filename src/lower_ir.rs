@@ -890,6 +890,11 @@ struct Lowerer<'a> {
     /// known yet, by the function it is of: the holder's items are what
     /// the local settles on (`settled`).
     items_of: Vec<(String, String, String)>,
+    /// The loops under way whose variable walks a record's field of a list
+    /// of nothing known yet (`for a in b.asks` while `asks` was given `[]`):
+    /// the variable, the record and the field. An item pushed onto a list
+    /// whose items are known types the field (`refine_pushed`).
+    walking_fields: Vec<(String, String, String)>,
     /// Lowering `grad`'s arguments: the function it differentiates is typed
     /// by the run that traces it, as the verifier reads it.
     differentiating: bool,
@@ -1088,6 +1093,7 @@ impl<'a> Lowerer<'a> {
             yields: HashSet::new(),
             grad_of: HashMap::new(),
             items_of: Vec::new(),
+            walking_fields: Vec::new(),
             differentiating: false,
             handed_to_row: None,
             grown: Vec::new(),
@@ -1537,7 +1543,14 @@ impl<'a> Lowerer<'a> {
             // marker belongs to the statement after it, and an attached test
             // (`test[p]` after a fn) to the fn it follows
             match s {
-                S::Line(_) | S::TestBlock { name: None, .. } => {}
+                // (a declaration's refusals are placed at the line its
+                // marker gives: a dependency's part lowers no top-level
+                // statement that would have set it, and a refusal of a
+                // parameter's name had been placed at the line lowered last
+                // — another function's body — or at line 0, which the
+                // printer could not show; Lory's `measure[c, text, size]`)
+                S::Line(n) => self.v.line = *n,
+                S::TestBlock { name: None, .. } => {}
                 _ => self.v.decl = checks::declared_name(s),
             }
             if let S::StructDecl { name, .. } | S::FnDecl { name, .. } | S::Derive { name, .. } = s
@@ -2295,6 +2308,60 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The item a loop walks out of a record's field of a list of nothing
+    /// known, pushed onto a list whose items are known, is of that kind, and
+    /// so are the field's items: `for a in c.asks` with `calls = push[calls,
+    /// a]` onto a list of lists of text, `asks` given only `[]`, had been
+    /// compiled a list of text, and the push did not build (Lory's `_made`;
+    /// parity 473).
+    fn type_walked_field(&mut self, name: &str, lowered: &[Expr]) {
+        if self.pass == Pass::Final || name != "push" {
+            return;
+        }
+        if let (Some(holder), Some(Expr::Local(item, t) | Expr::Move(item, t))) = (lowered.first(), lowered.get(1))
+            && matches!(t, Ty::Unknown)
+            && let Ty::List(items) = full(holder).payload()
+            && items.is_concrete()
+            && let Some((_, rec, field)) = self.walking_fields.iter().rev().find(|(v, _, _)| v == item).cloned()
+            && let Some(sig) = self.ctx.structs.get_mut(&rec)
+            && let Some((_, held)) = sig.fields.iter_mut().find(|(n, _)| *n == field)
+            && matches!(held, Ty::List(i) if matches!(i.as_ref(), Ty::Unknown))
+        {
+            *held = Ty::List(items.clone());
+        }
+        // (and a record's field of a list of nothing known, pushed a known
+        // item where it is read — `todo = push[c.deep, ['disable', …]]`,
+        // `deep` given only `[]` — holds items of that kind: compiled as a
+        // list of text, the push had not built; Lory's `_deep`)
+        if let (Some(Expr::Field { base, name: field, ty: Ty::List(i) }), Some(item)) = (lowered.first(), lowered.get(1))
+            && matches!(i.as_ref(), Ty::Unknown)
+            && let item_ty = full(item).payload().clone()
+            && item_ty.is_concrete()
+            && let Ty::Record(rec) | Ty::OptRecord(rec) = base.ty().payload().clone()
+            && let Some(sig) = self.ctx.structs.get_mut(&rec)
+            && let Some((_, held)) = sig.fields.iter_mut().find(|(n, _)| n == field)
+            && matches!(held, Ty::List(i) if matches!(i.as_ref(), Ty::Unknown))
+        {
+            *held = Ty::List(Box::new(item_ty));
+        }
+    }
+
+    /// Notes a loop whose variable walks a record's field of a list of
+    /// nothing known (`walking_fields`); whether it did, for the loop to
+    /// let it go at its end.
+    fn walk_field(&mut self, var: &str, it: &Expr) -> bool {
+        if self.pass == Pass::Final {
+            return false;
+        }
+        let Expr::Field { base, name, ty } = it else { return false };
+        if !matches!(ty, Ty::List(i) if matches!(i.as_ref(), Ty::Unknown)) {
+            return false;
+        }
+        let (Ty::Record(rec) | Ty::OptRecord(rec)) = base.ty().payload().clone() else { return false };
+        self.walking_fields.push((var.to_string(), rec, name.clone()));
+        true
+    }
+
     fn calls_fn(&self, name: &str) -> bool {
         self.ctx.functions.contains_key(name) && (crate::modules::is_crow_fn(name) || !crate::modules::is_crow_fn(&self.current_fn) || self.ctx.applying.iter().any(|f| f == name))
     }
@@ -2471,6 +2538,12 @@ impl<'a> Lowerer<'a> {
                 vec![Stmt::Line(*n)]
             }
             S::Assign { name, value } => {
+                if let A::Call { callee, .. } = value
+                    && let A::Ident(f) = callee.as_ref()
+                    && self.calls_fn(f)
+                {
+                    self.v.call_answered.insert((self.current_fn.clone(), name.clone()));
+                }
                 // (a standard module's function, inlined, has locals of its
                 // own: one named like a derivation of the program's is still
                 // its local — the ClickHouse driver's `found`, which finch
@@ -2728,6 +2801,15 @@ impl<'a> Lowerer<'a> {
                     (Some(Ty::List(item)), Ty::Tensor(e, d)) if matches!(*item, Ty::Int | Ty::Float) && (*e == *item || *item == Ty::Float) && d.as_ref().is_none_or(|d| d.len() <= 1) => {
                         listed(expr, *item)
                     }
+                    // (and a list of numbers a function built with `push`,
+                    // written down for a field a literal made a tensor, is
+                    // that tensor: `c.eye = mul[a, b]` beside `Canvas[…,
+                    // [1.0, 0.0, …]]` ran interpreted and had not built
+                    // compiled; Lory's camera)
+                    (Some(Ty::Tensor(fe, fd)), Ty::List(item)) if *fe == Ty::Float && fd.as_ref().is_none_or(|d| d.len() <= 1) && matches!(*item, Ty::Int | Ty::Float) => {
+                        let ty = Ty::Tensor(Box::new(Ty::Float), fd.clone());
+                        Expr::Convert { how: Convert::ToTensor, expr: Box::new(expr), ty }
+                    }
                     _ => expr,
                 };
                 let (var, mut path, _) = self.muted_target(object)?;
@@ -2760,6 +2842,17 @@ impl<'a> Lowerer<'a> {
                     self.settled_entry(object, &expr, &idx);
                 }
                 let (var, mut path, held) = self.muted_target(object)?;
+                // a parsed value written at is read as the kind the place
+                // takes, as one read at is (`m[j.k]`): `m[j.c] = 2` had
+                // stopped interpreted ("a map's key is text or an int") and
+                // keyed the map by the JSON text `"a"` compiled (Lory's atlas)
+                let idx = if matches!(idx.ty().payload(), Ty::Json) && !matches!(held.payload(), Ty::Json) {
+                    let shown = crate::lower::shown(&var);
+                    let (kind, how) = if let Ty::Map(key, _) = held.payload() { (key.ty(), format!("a key of {}", shown)) } else { (Ty::Int, format!("a position in {}", shown)) };
+                    self.read_json(idx, &kind, &how)
+                } else {
+                    idx
+                };
                 // a map is written at a key of its keys' kind (text or an int),
                 // a list, text or a tensor at an int: `m[2.5] = 3` into a map
                 // of text keys had stopped interpreted and written the key
@@ -3129,6 +3222,7 @@ impl<'a> Lowerer<'a> {
                 let walks = walked(&it);
                 let it = self.decided(it, Decision::Loop);
                 let mut prelude = std::mem::take(&mut self.pre);
+                let walking = self.walk_field(var, &it);
                 self.scopes.push([var.clone()].into_iter().collect());
                 let b = if self.pass != Pass::Final {
                     // inference binds the variable to an item of what the
@@ -3194,6 +3288,9 @@ impl<'a> Lowerer<'a> {
                     b
                 };
                 self.scopes.pop();
+                if walking {
+                    self.walking_fields.pop();
+                }
                 // in parallel or in order: decided once every function is
                 // known (decide_loops)
                 prelude.push(Stmt::For { var: var.clone(), iter: it, body: b, parallel: false });
@@ -3722,7 +3819,13 @@ impl<'a> Lowerer<'a> {
         // secs]` had stopped every program importing the part)
         let grown = self.grown.iter().any(|g| g.contains(&name));
         let untyped = self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(_, t)| t.has_unknown()));
-        if grown || untyped {
+        // (nor a list a function answered: its items are that function's
+        // to type, and one no call has typed answers a list of nothing known
+        // — `m = _floats[v.camera]` in a function reached from the program's
+        // top level, judged in a test that reaches it by no call; Lory's
+        // `walk`)
+        let answered = self.v.call_answered.contains(&(self.current_fn.clone(), name.clone()));
+        if grown || untyped || answered {
             return;
         }
         self.refuse(format!("'{}' is never given an item, so its items have no kind to compute with", crate::lower::shown(&name)));
@@ -4281,6 +4384,13 @@ impl<'a> Lowerer<'a> {
                 let typed = match &*held {
                     Ty::List(item) if item.has_unknown() && item.compatible(&given) => Some(Ty::List(Box::new(item.unify(&given)))),
                     Ty::Map(k, item) if item.has_unknown() && item.compatible(&given) => Some(Ty::Map(*k, Box::new(item.unify(&given)))),
+                    // (and a field's whole numbers an item of which is
+                    // written a float hold floats, as a local's do: the
+                    // record had stayed a map of ints, and the compiled
+                    // program did not build; Lory's glyph advances)
+                    Ty::List(item) if **item == Ty::Int && given == Ty::Float => Some(Ty::List(Box::new(Ty::Float))),
+                    Ty::Map(k, item) if **item == Ty::Int && given == Ty::Float => Some(Ty::Map(*k, Box::new(Ty::Float))),
+                    Ty::Tensor(e, d) if **e == Ty::Int && d.as_ref().is_none_or(|d| d.len() <= 1) && given == Ty::Float => Some(Ty::Tensor(Box::new(Ty::Float), d.clone())),
                     _ => None,
                 };
                 if let Some(t) = typed {
@@ -4372,6 +4482,25 @@ impl<'a> Lowerer<'a> {
             let joined = held.unify(&given);
             if joined != *held {
                 *held = joined;
+            }
+        }
+        // (a field of whole numbers written a float holds floats from then
+        // on, as a variable does (spec §1), and so do a field's whole
+        // numbers written a collection of floats: `h.n = 2.5` after
+        // `Held[1]` had run interpreted and not built compiled)
+        if let Some(sig) = self.ctx.structs.get_mut(&rec)
+            && let Some((_, held)) = sig.fields.iter_mut().find(|(n, _)| n == field)
+        {
+            let floats = |t: &Ty| matches!(t, Ty::Float) || matches!(t, Ty::List(i) | Ty::Map(_, i) | Ty::Tensor(i, _) if **i == Ty::Float);
+            let widened = match (&*held, &given) {
+                (Ty::Int, Ty::Float) => Some(Ty::Float),
+                (Ty::List(i), g) if **i == Ty::Int && floats(g) && !matches!(g, Ty::Float | Ty::Map(..)) => Some(Ty::List(Box::new(Ty::Float))),
+                (Ty::Tensor(i, d), g) if **i == Ty::Int && floats(g) && !matches!(g, Ty::Float | Ty::Map(..)) => Some(Ty::Tensor(Box::new(Ty::Float), d.clone())),
+                (Ty::Map(k, i), Ty::Map(_, g)) if **i == Ty::Int && **g == Ty::Float => Some(Ty::Map(*k, Box::new(Ty::Float))),
+                _ => None,
+            };
+            if let Some(t) = widened {
+                *held = t;
             }
         }
         // (a field holds what it is given, a failed value included (spec,
@@ -5331,6 +5460,7 @@ impl<'a> Lowerer<'a> {
                     self.saw_refusal(&Decision::Loop);
                 }
                 let before = std::mem::take(&mut self.pre);
+                let walking = self.walk_field(var, &it);
                 self.scopes.push([var.clone()].into_iter().collect());
                 // inference's walk reads a collecting loop's yield, never its
                 // body: a provisional lowering's body leaves nothing behind
@@ -5366,6 +5496,9 @@ impl<'a> Lowerer<'a> {
                 let lowered = self.lower_block(body);
                 if unknown_items {
                     self.v.unknown_items.remove(var.as_str());
+                }
+                if walking {
+                    self.walking_fields.pop();
                 }
                 let mut b = lowered?;
                 self.collecting -= 1;
@@ -5981,6 +6114,9 @@ impl<'a> Lowerer<'a> {
                     // (a list of ints where the field holds floats — a vector
                     // given at another record — is a list of floats)
                     (Some(Ty::List(f)), Ty::List(e)) if **f == Ty::Float && **e == Ty::Int => Some(Convert::IntsToFloats),
+                    // (and a map of ints where it holds floats — one written
+                    // a float after the record was made)
+                    (Some(Ty::Map(_, f)), Ty::Map(_, e)) if **f == Ty::Float && **e == Ty::Int => Some(Convert::IntsToFloats),
                     _ => None,
                 };
                 // (a list made here holds plain items: where the field holds
@@ -6737,6 +6873,7 @@ impl<'a> Lowerer<'a> {
                         .collect();
                 }
             }
+            self.type_walked_field(&name, &lowered);
             let lowered = self.core_row_arguments(&name, lowered);
             // the collection's form is the answer's (`held_as` converted the
             // item or the value to it): a tensor set into a map of lists

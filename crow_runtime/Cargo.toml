@@ -14,7 +14,9 @@ bytemuck = { version = "1.25.0", features = ["derive"], optional = true }
 # zone, whose lookup (iana-time-zone) links CoreFoundation into every program
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 chrono-tz = "0.10.4"
-faer = "0.24.0"
+# (its threads, rayon, only off the web target: spindle's waits build for no
+# browser — the rest of its default features on both)
+faer = { version = "0.24.0", default-features = false, features = ["std", "sparse-linalg", "rand", "npy"] }
 # whole numbers of any size, decimals to any digits, fractions (spec,
 # Numbers That Keep Every Digit)
 dashu-int = "0.6"
@@ -40,8 +42,6 @@ triomphe = { version = "0.1", features = ["serde"] }
 # `sys`: the standard library's own layer — a TCP connection, plain or
 # behind TLS, for the modules written in Crow (spec, The standard library's
 # layer)
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-webpki-roots = "1.0"
 ryu = "1.0.23"
 sprs = "0.11.4"
 # the GPU, linked only by a program that asks for one (feature `gpu`)
@@ -61,6 +61,14 @@ bytes = { version = "1", optional = true }
 # async runtime of its own, and S3's request signing
 # `sys`: an HMAC for the modules written in Crow (S3's signature)
 hmac = "0.12"
+
+# a TCP connection behind TLS (`sys`'s connect): a browser opens none
+# itself, and ring's C does not build for wasm32 (the web target, spec
+# "Building for the web")
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1.0"
+faer = { version = "0.24.0", features = ["rayon"] }
 
 [features]
 arrow = ["dep:arrow"]

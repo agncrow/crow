@@ -19,6 +19,7 @@
 //! - UI elements (`use ui`): named args become the attribute map:
 //!   `button['+', click = inc]` → `button[[click = inc], '+']`.
 
+use std::sync::Arc;
 use crate::ast::{Expr, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -188,10 +189,16 @@ struct FnSig {
     defaults: Vec<Option<Expr>>,
 }
 
+/// The program's signatures and imports are shared (`Arc`), never copied:
+/// every interpolation of every string is lowered by a `Lowerer` of its
+/// own, which had copied all of them — Myna's start spent most of its two
+/// minutes copying and dropping the signatures of its and Magpie's
+/// functions, once per interpolation per pass. A fragment that declares a
+/// function of its own writes through `Arc::make_mut`.
 #[derive(Clone)]
 pub struct Lowerer {
-    fns: BTreeMap<String, FnSig>,
-    structs: BTreeMap<String, Vec<String>>,
+    fns: Arc<BTreeMap<String, FnSig>>,
+    structs: Arc<BTreeMap<String, Vec<String>>>,
     current_line: usize,
     /// Lowering inside a `view` body — ui element named-args resolve here
     in_view: bool,
@@ -206,7 +213,7 @@ pub struct Lowerer {
     /// or `f` for `use frame as f`): a module's forms are rewritten only
     /// when the program has the module, and a call into one it lacks is
     /// left for the checks to say the import
-    imports: BTreeMap<String, String>,
+    imports: Arc<BTreeMap<String, String>>,
     /// Each statement's refusal, so one mistake does not hide the next
     /// statement's (spec, Error Messages)
     errors: Vec<String>,
@@ -219,7 +226,7 @@ thread_local! {
     /// The functions and structs of the program lowered last on this
     /// thread: a call in one of its interpolations takes its named
     /// arguments and defaults as a call outside the string does.
-    static PROGRAM_SIGS: std::cell::RefCell<(BTreeMap<String, FnSig>, BTreeMap<String, Vec<String>>)> = const { std::cell::RefCell::new((BTreeMap::new(), BTreeMap::new())) };
+    static PROGRAM_SIGS: std::cell::RefCell<(Arc<BTreeMap<String, FnSig>>, Arc<BTreeMap<String, Vec<String>>>)> = std::cell::RefCell::new((Arc::new(BTreeMap::new()), Arc::new(BTreeMap::new())));
 }
 
 pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
@@ -234,7 +241,7 @@ pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
     let mut l = Lowerer::new(web);
     for s in stmts {
         if let Stmt::Use { path, alias } = s {
-            l.imports.insert(alias.clone().unwrap_or_else(|| path.clone()), path.clone());
+            Arc::make_mut(&mut l.imports).insert(alias.clone().unwrap_or_else(|| path.clone()), path.clone());
         }
     }
     l.collect_sigs(stmts);
@@ -248,20 +255,27 @@ pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
 /// uses web, as it is outside the string, and its calls know the
 /// program's functions.
 pub fn lower_fragment(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
-    let mut l = Lowerer::new(PROGRAM_WEB.with(|w| w.get()));
-    PROGRAM_SIGS.with(|p| {
-        let (fns, structs) = &*p.borrow();
-        l.fns = fns.clone();
-        l.structs = structs.clone();
-    });
-    l.imports = PROGRAM_IMPORTS.with(|p| p.borrow().clone());
+    let mut l = fragment_lowerer();
     l.collect_sigs(stmts);
     l.finish(stmts)
 }
 
+/// A `Lowerer` for a fragment of the program lowered last on this thread,
+/// holding the program's signatures and imports (shared, not copied)
+fn fragment_lowerer() -> Lowerer {
+    let mut l = Lowerer::new(PROGRAM_WEB.with(|w| w.get()));
+    PROGRAM_SIGS.with(|p| {
+        let (fns, structs) = &*p.borrow();
+        l.fns = Arc::clone(fns);
+        l.structs = Arc::clone(structs);
+    });
+    l.imports = PROGRAM_IMPORTS.with(|p| Arc::clone(&p.borrow()));
+    l
+}
+
 impl Lowerer {
     fn new(web: bool) -> Self {
-        Lowerer { fns: BTreeMap::new(), structs: BTreeMap::new(), current_line: 0, in_view: false, web, current_fn: String::new(), imports: BTreeMap::new(), errors: Vec::new() }
+        Lowerer { fns: Arc::new(BTreeMap::new()), structs: Arc::new(BTreeMap::new()), current_line: 0, in_view: false, web, current_fn: String::new(), imports: Arc::new(BTreeMap::new()), errors: Vec::new() }
     }
 
     fn finish(mut self, stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
@@ -338,7 +352,7 @@ fn is_function_name(name: &str) -> bool {
 
 thread_local! {
     /// The modules the program being lowered imports, for its fragments.
-    static PROGRAM_IMPORTS: std::cell::RefCell<BTreeMap<String, String>> = const { std::cell::RefCell::new(BTreeMap::new()) };
+    static PROGRAM_IMPORTS: std::cell::RefCell<Arc<BTreeMap<String, String>>> = std::cell::RefCell::new(Arc::new(BTreeMap::new()));
 }
 
 /// The suffix a renamed binding carries, and the name a message prints.
@@ -852,14 +866,14 @@ impl Lowerer {
         for s in stmts {
             match s {
                 Stmt::FnDecl { name, params, defaults, body, .. } => {
-                    self.fns.insert(
+                    Arc::make_mut(&mut self.fns).insert(
                         name.clone(),
                         FnSig { params: params.clone(), defaults: defaults.clone() },
                     );
                     self.collect_sigs(body);
                 }
                 Stmt::StructDecl { name, fields } => {
-                    self.structs.insert(name.clone(), fields.clone());
+                    Arc::make_mut(&mut self.structs).insert(name.clone(), fields.clone());
                 }
                 Stmt::If { then_body, else_body, .. } => {
                     self.collect_sigs(then_body);
@@ -1568,6 +1582,27 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().expect("parse failed");
         lower_program(&stmts)
+    }
+
+    /// A string's interpolation is lowered with the program's signatures
+    /// and imports shared, never copied (Myna's start had spent most of its
+    /// two minutes copying them once per interpolation per pass), and a
+    /// call in it still takes the program's defaults.
+    #[test]
+    fn an_interpolation_shares_the_programs_signatures_and_still_reads_them() {
+        lower_src("use web\nfn f[a, b = 2]\n    a + b\nx = 1\n").expect("lowers");
+        let l = fragment_lowerer();
+        PROGRAM_SIGS.with(|p| {
+            let (fns, structs) = &*p.borrow();
+            assert!(Arc::ptr_eq(fns, &l.fns), "the fragment holds a copy of the signatures");
+            assert!(Arc::ptr_eq(structs, &l.structs));
+        });
+        PROGRAM_IMPORTS.with(|p| assert!(Arc::ptr_eq(&p.borrow(), &l.imports)));
+        assert!(l.fns.contains_key("f"));
+        let mut lexer = Lexer::new("f[1]\n");
+        let stmts = Parser::new(lexer.tokenize().expect("lex")).parse().expect("parse");
+        let out = format!("{:?}", lower_fragment(&stmts).expect("lowers"));
+        assert!(out.contains("Int(2)"), "the default is filled: {}", out);
     }
 
     /// `frame.new[k = v, …]` is the `with` chain over the empty frame, in

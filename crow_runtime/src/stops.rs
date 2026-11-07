@@ -236,8 +236,13 @@ pub fn prod(xs: &[i64]) -> Result<i64, String> {
 /// holds (512 GB of numbers). A size past it is refused in the same words
 /// on every machine, before anything is made — a constructor given one
 /// had panicked in Rust's words, with no line compiled, or grown until the
-/// machine's memory ran out (crow check --self).
+/// machine's memory ran out (crow check --self). In a browser (the web
+/// target, 32-bit WebAssembly, whose memory ends at 4 GB) it is 2^28: 2 GB
+/// of numbers, refused in the same words.
+#[cfg(target_pointer_width = "64")]
 pub const MOST: usize = 1 << 36;
+#[cfg(not(target_pointer_width = "64"))]
+pub const MOST: usize = 1 << 28;
 
 /// A size the program gives a constructor (`zeros[n]`, `eye[n]`,
 /// `repeat[s, n]`): a count, never negative, never past [`MOST`].
@@ -322,10 +327,9 @@ pub struct Stop(pub String);
 #[allow(clippy::panic, reason = "a stop off the main thread travels as a panic to the thread that joins it")]
 pub fn halt(line: usize, why: &str) -> ! {
     let text = if line > 0 { format!("line {}: {}", line, why) } else { why.to_string() };
-    if std::thread::current().name() == Some("main") {
-        crate::display::flush_output();
-        eprintln!("runtime error: {}", text);
-        std::process::exit(1);
+    // (a page's program has one thread, and no unwinding to carry a stop)
+    if cfg!(target_arch = "wasm32") || std::thread::current().name() == Some("main") {
+        crate::host::stopped(&text);
     }
     std::panic::panic_any(Stop(text))
 }
@@ -334,6 +338,13 @@ pub fn halt(line: usize, why: &str) -> ! {
 /// thread is the program's stop, printed once. A panic that is not a stop
 /// printed itself where it happened, through [`install_hook`].
 pub fn main_guard(f: impl FnOnce() + Send + 'static) {
+    // a page's program runs on the page's one thread: a stop ends it in
+    // `host::stopped`, and a panic in the hook (a browser does not unwind)
+    if cfg!(target_arch = "wasm32") {
+        f();
+        crate::display::flush_output();
+        return;
+    }
     // on a thread of its own, named for the main thread (so a stop on it
     // exits as the main thread's does), with a stack deep enough for the
     // recursion limit
@@ -381,15 +392,23 @@ pub fn guarded<T>(f: impl FnOnce() -> T) -> Result<T, String> {
 /// `RUST_BACKTRACE` asks for detail.
 pub fn install_hook() {
     std::panic::set_hook(Box::new(|info| {
-        if GUARDS.load(Ordering::SeqCst) > 0 || info.payload().downcast_ref::<Stop>().is_some() {
+        // (in a browser nothing catches a panic — the program ends after
+        // the hook — so the hook says every one, a stop as its own words)
+        if cfg!(target_arch = "wasm32") {
+            if let Some(Stop(text)) = info.payload().downcast_ref::<Stop>() {
+                crate::host::write_err(format!("runtime error: {}\n", text).as_bytes());
+                return;
+            }
+        } else if GUARDS.load(Ordering::SeqCst) > 0 || info.payload().downcast_ref::<Stop>().is_some() {
             return;
         }
         crate::display::flush_output();
         let words = panic_words(info.payload());
-        match (std::env::var_os("RUST_BACKTRACE"), info.location()) {
-            (Some(_), Some(at)) => eprintln!("runtime error: {} (at {}:{})", words, at.file(), at.line()),
-            _ => eprintln!("runtime error: {}", words),
-        }
+        let line = match (std::env::var_os("RUST_BACKTRACE"), info.location()) {
+            (Some(_), Some(at)) => format!("runtime error: {} (at {}:{})\n", words, at.file(), at.line()),
+            _ => format!("runtime error: {}\n", words),
+        };
+        crate::host::write_err(line.as_bytes());
     }));
 }
 

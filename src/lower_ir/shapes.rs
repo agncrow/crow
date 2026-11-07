@@ -177,13 +177,16 @@ pub(super) fn shaped(ty: Ty, dims: Option<Dims>) -> Ty {
     }
 }
 
-/// A list literal's shape: its length, then its first item's (a nested
-/// literal is rectangular — a ragged one is refused — so its first row
-/// stands for every row). Unknown where the first item's is.
+/// A list literal's shape: its length, then its items' (a nested literal
+/// is rectangular — a ragged one is refused — so any item whose shape is
+/// known stands for every item). Unknown where no item's is. (Read off the
+/// first item alone, `[2.0 / w, 0.0]` of a parameter nothing typed yet had
+/// been a tensor of no known rank, and a loop over it was refused in a
+/// function no test called; Lory's `_pixels`.)
 pub(super) fn literal_dims(items: &[Expr]) -> Option<Dims> {
     let mut dims = vec![Some(items.len())];
-    if let Some(first) = items.first() {
-        dims.extend(item_dims(first)?);
+    if !items.is_empty() {
+        dims.extend(items.iter().find_map(item_dims)?);
     }
     Some(dims)
 }

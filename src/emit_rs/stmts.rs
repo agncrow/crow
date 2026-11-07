@@ -529,7 +529,7 @@ impl Emitter {
     /// The program stops on a refused error, naming the line and the reason.
     fn halt_at(&self, v: &str, at: &Decision) -> String {
         format!(
-            "{{ crow_runtime::display::flush_output(); eprintln!(\"runtime error: line {}: {} — {{}}\", {v}.reason); std::process::exit(1); }}",
+            "{{ crow_runtime::host::stopped(&format!(\"line {}: {} — {{}}\", {v}.reason)); }}",
             self.line_now(),
             at.refusal(),
             v = v

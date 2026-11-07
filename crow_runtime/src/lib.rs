@@ -5,6 +5,8 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unreachable, clippy::todo, clippy::unimplemented))]
 
 pub mod display;
+pub mod host;
+pub mod page;
 pub mod distributed;
 pub mod frame;
 pub mod fixtures;

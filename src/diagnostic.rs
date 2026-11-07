@@ -298,7 +298,7 @@ pub fn render(file: &str, source: &str, text: &str, read: &dyn Fn(&str) -> Optio
     let opens = openings(source);
     let place = |d: &Diagnostic| -> (bool, String, usize, usize) {
         let col = match (&d.file, d.line) {
-            (None, Some(l)) => source.lines().nth(l - 1).and_then(|t| underline(t, opens.get(l - 1).copied().unwrap_or_default(), d).first().map(|m| m.0)).unwrap_or(0),
+            (None, Some(l)) => l.checked_sub(1).and_then(|i| source.lines().nth(i).and_then(|t| underline(t, opens.get(i).copied().unwrap_or_default(), d).first().map(|m| m.0))).unwrap_or(0),
             _ => d.col.unwrap_or(0),
         };
         (d.file.is_some(), d.file.clone().unwrap_or_default(), d.line.unwrap_or(0), col)
@@ -316,7 +316,8 @@ pub fn render(file: &str, source: &str, text: &str, read: &dyn Fn(&str) -> Optio
             out.push_str(&format!("{}: {}\n", name, d.message));
             continue;
         };
-        let line_text = text.as_deref().and_then(|t| t.lines().nth(line - 1));
+        // (a line 0 — no line on record — is shown as a place without its text)
+        let line_text = line.checked_sub(1).and_then(|i| text.as_deref().and_then(|t| t.lines().nth(i)));
         let Some(line_text) = line_text else {
             out.push_str(&format!("{}:{}: {}\n", name, line, d.message));
             continue;

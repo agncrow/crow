@@ -100,9 +100,10 @@ fn setup_fetches_and_verifies_the_toolchain_and_the_runtime() {
     let dist = root.join("dist");
     std::fs::create_dir_all(&dist).unwrap();
     let t = triple();
-    // Rust's side: the channel manifest and the three archives it names
+    // Rust's side: the channel manifest and the four archives it names
     let mut manifest = String::from("manifest-version = \"2\"\n");
-    for (comp, tools) in [("rustc", &["rustc"][..]), ("cargo", &["cargo"][..]), ("rust-std", &[][..])] {
+    // (the browser's standard library too, for `crow build --target web`)
+    for (comp, tools, t) in [("rustc", &["rustc"][..], t.as_str()), ("cargo", &["cargo"][..], t.as_str()), ("rust-std", &[][..], t.as_str()), ("rust-std", &[][..], "wasm32-unknown-unknown")] {
         let (name, hash) = component(&dist, &format!("{}-1.93.1-{}", comp, t), tools);
         manifest.push_str(&format!("[pkg.{}.target.{}]\navailable = true\nurl = \"http://x.test/dist/{}\"\nhash = \"{}\"\n", comp, t, name, hash));
     }

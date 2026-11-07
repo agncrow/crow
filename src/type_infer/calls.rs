@@ -40,7 +40,9 @@ impl TypeContext {
             Expr::FieldAccess { object, field } => match object.as_ref() {
                 Expr::Ident(m) => {
                     let prefixed = format!("{}_{}", m, field);
-                    self.functions.contains_key(&prefixed) || self.structs.contains_key(&prefixed) || self.field_fn(m, field)
+                    // (or a module's row that takes a function: `sys.frames[draw]`
+                    // types `draw` as `frames[draw]` does)
+                    self.functions.contains_key(&prefixed) || self.structs.contains_key(&prefixed) || self.field_fn(m, field) || self.module_row_takes_a_function(m, field)
                 }
                 _ => false,
             },
@@ -49,6 +51,14 @@ impl TypeContext {
             Expr::Call { callee, args } if args.len() == 1 => matches!(callee.as_ref(), Expr::Ident(v) if matches!(self.vars.get(v).map(|t| t.payload().clone()), Some(Ty::List(item)) if matches!(item.as_ref(), Ty::Fn(..)))),
             _ => false,
         }
+    }
+
+    /// Whether `m.f` names a standard module's row that takes a function
+    /// (`sys.frames`, `memory.revise`): its call says what the function
+    /// takes, as the bare call does.
+    fn module_row_takes_a_function(&self, m: &str, field: &str) -> bool {
+        let real = self.module_aliases.get(m).map(|s| s.as_str()).unwrap_or(m);
+        crate::modules::by_path(real).is_some() && !self.vars.contains_key(m) && crate::table::rows_named(field).any(|r| r.params.iter().any(|k| matches!(k, crate::table::Kind::FnOf(_))))
     }
 
     /// The record a local holds, where its field holds a function.
@@ -337,6 +347,14 @@ impl TypeContext {
         if let Some((m, f)) = Self::module_path(callee) {
             let real = self.module_aliases.get(&m).cloned().unwrap_or(m);
             self.note_crow_row(&real, &f, arg_types);
+            // a row taking a function, called through its module's name
+            // (`sys.frames[draw]`, `memory.revise[…]`): its functions are
+            // handed what the row's signature says, as the bare call's are
+            // (typed only bare, `sys.frames[draw]` had been refused as a
+            // function nothing types)
+            if crate::modules::by_path(&real).is_some() {
+                self.hand_to_row(&f, args, arg_types);
+            }
         }
         // Module function/struct call: module.func[args] or module.Struct[args]
         if let Expr::FieldAccess { object, field } = callee {

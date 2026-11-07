@@ -1,0 +1,27 @@
+--- A record's field of whole numbers written a float holds floats from
+--- then on, as a variable does — the number itself, a list's item and a
+--- map's value: `h.n = 2.5` after `Held[1, …]` had run interpreted and not
+--- built compiled, as had `h.glyphs['a'] = 2.5` into a field made a map of
+--- ints (Lory's glyph metrics).
+
+struct Held [n, xs, glyphs]
+
+fn number[]
+    h = Held[1, [1, 2], map['?' = 1]]
+    h.n = 2.5
+    h
+
+fn item[]
+    h = Held[1, [1, 2], map['?' = 1]]
+    h.xs[0] = 2.5
+    h
+
+fn value[]
+    h = Held[1, [1, 2], map['?' = 1]]
+    h.glyphs['a'] = 2.5
+    h
+
+log[number[]]
+log[item[]]
+log[value[]]
+log[number[].n + 1]

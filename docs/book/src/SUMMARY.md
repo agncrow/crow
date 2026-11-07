@@ -60,6 +60,7 @@
   - [Charts and Styling](ch12-06-charts-and-style.md)
   - [The Element Vocabulary](ch12-07-vocabulary.md)
   - [Derivations](ch12-08-derive.md)
+  - [Drawing in a Browser](ch12-09-drawing-in-a-browser.md)
 
 - [Final Project: A Live Dashboard](ch13-00-final-project.md)
   - [Loading and Shaping the Data](ch13-01-data.md)

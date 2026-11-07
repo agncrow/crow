@@ -1447,6 +1447,64 @@ impl CrowStream {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+fn tls_config() -> Arc<rustls::ClientConfig> {
+    Arc::new(rustls::ClientConfig)
+}
+
+/// A page in a browser (the web target) opens no TLS connection itself,
+/// and ring's C does not build for wasm32: the shape the paths here name,
+/// refusing at the handshake in words, as `gpu_off` stands in for the GPU.
+#[cfg(target_arch = "wasm32")]
+mod rustls {
+    use std::sync::Arc;
+    pub mod pki_types {
+        pub struct ServerName;
+        impl TryFrom<String> for ServerName {
+            type Error = ();
+            fn try_from(_: String) -> Result<Self, ()> {
+                Ok(ServerName)
+            }
+        }
+    }
+    pub struct ClientConfig;
+    pub struct ClientConnection;
+    impl ClientConnection {
+        pub fn new(_: Arc<ClientConfig>, _: pki_types::ServerName) -> Result<Self, &'static str> {
+            Err("a page in a browser opens no TLS connection itself")
+        }
+    }
+    pub struct StreamOwned<C, T> {
+        _conn: C,
+        sock: T,
+    }
+    impl<C, T> StreamOwned<C, T> {
+        pub fn new(conn: C, sock: T) -> Self {
+            StreamOwned { _conn: conn, sock }
+        }
+        pub fn get_ref(&self) -> &T {
+            &self.sock
+        }
+    }
+    fn refused() -> std::io::Error {
+        std::io::Error::new(std::io::ErrorKind::Unsupported, "a page in a browser opens no TLS connection itself")
+    }
+    impl<C, T> std::io::Read for StreamOwned<C, T> {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(refused())
+        }
+    }
+    impl<C, T> std::io::Write for StreamOwned<C, T> {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(refused())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(refused())
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn tls_config() -> Arc<rustls::ClientConfig> {
     static CONFIG: std::sync::OnceLock<Arc<rustls::ClientConfig>> = std::sync::OnceLock::new();
     CONFIG

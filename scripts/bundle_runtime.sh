@@ -11,9 +11,10 @@
 #         → <out dir>/crow-runtime-<version>.tar.gz and its .sha256
 set -euo pipefail
 VERSION="${1:?version}"; OUT="${2:?out dir}"
-# the targets a release supports (docs/distribution-design.md): another is
+# the targets a release supports (docs/distribution-design.md; the last is
+# a page's, for `crow build --target web`): another is
 # one more word here
-TARGETS="aarch64-apple-darwin x86_64-unknown-linux-gnu"
+TARGETS="aarch64-apple-darwin x86_64-unknown-linux-gnu wasm32-unknown-unknown"
 command -v jq >/dev/null || { echo "bundle_runtime.sh needs jq, to read cargo metadata" >&2; exit 1; }
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/crow-bundle.XXXXXX")"

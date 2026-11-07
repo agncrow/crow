@@ -1,0 +1,19 @@
+--- A list of numbers a function built with `push`, written down for a
+--- record's field a literal made a tensor, is that tensor: interpreted it
+--- ran, and compiled it had not built (Lory's camera matrix)
+struct Cam [eye, n]
+
+fn doubled[xs]
+    out = []
+    for x in xs
+        out = push[out, x * 2.0]
+    out
+
+fn made[]
+    Cam[[1.0, 0.0, 0.0, 1.0], 1]
+
+c = made[]
+c.eye = doubled[[1.0, 2.5]]
+log[c.eye]
+log[len[c.eye]]
+log[c.eye[1] * 2.0]

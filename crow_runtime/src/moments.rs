@@ -35,10 +35,7 @@ pub fn clock() -> f64 {
     if let Some(at) = *HELD.get_or_init(|| std::env::var("CROW_CLOCK").ok().and_then(|s| s.trim().parse::<f64>().ok())) {
         return at;
     }
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
+    crate::host::clock()
 }
 
 /// Current moment: inside an event of a live program (a click, a render, a

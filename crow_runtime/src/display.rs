@@ -28,6 +28,12 @@ pub trait CrowDisplay {
     fn crow_write(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.crow_fmt().as_bytes());
     }
+    /// The failure the value is, shown as the program shows it, where it
+    /// is one (the program's `CrowResult` says): what a frame's work that
+    /// failed stops with (`crow_runtime::page::Done`).
+    fn failure(&self) -> Option<String> {
+        None
+    }
     /// The value itself when it is text, which `log` hands to the output
     /// where it lies when it is long, rather than copying it first.
     fn as_text(&self) -> Option<&str> {
@@ -142,7 +148,6 @@ pub fn failed(reason: &str, trace: &[String]) -> String {
 /// `log[a, b, …]`: the values as they show, between spaces, a value that
 /// failed as its reason — one line, in both modes.
 pub fn log(items: &[&dyn CrowDisplay]) {
-    use std::io::Write;
     let mut held = OUT.lock().unwrap_or_else(|e| e.into_inner());
     for (i, x) in items.iter().enumerate() {
         if i > 0 {
@@ -153,11 +158,9 @@ pub fn log(items: &[&dyn CrowDisplay]) {
             // into the buffer first, fasta's 125 MB section had been held
             // twice, and the buffer kept that size to the end of the run
             Some(t) if t.len() >= BLOCK => {
-                let mut out = std::io::stdout().lock();
-                let _ = out.write_all(&held);
+                crate::host::write_out(&held);
                 held.clear();
-                let _ = out.write_all(t.as_bytes());
-                let _ = out.flush();
+                crate::host::write_out(t.as_bytes());
             }
             _ => x.crow_write(&mut held),
         }
@@ -166,9 +169,7 @@ pub fn log(items: &[&dyn CrowDisplay]) {
     // a line at a time, unless a script's output goes to a file or a pipe
     // (`buffer_output`): then a block at a time
     if !BLOCKS.load(Ordering::Relaxed) || held.len() >= BLOCK {
-        let mut out = std::io::stdout().lock();
-        let _ = out.write_all(&held);
-        let _ = out.flush();
+        crate::host::write_out(&held);
         held.clear();
         // (a buffer one long value grew is let go: it is a block's room)
         if held.capacity() > 4 * BLOCK {
@@ -199,6 +200,11 @@ const BLOCK: usize = 64 * 1024;
 /// served program — which does not ask for this — each line as it happens.
 pub fn buffer_output() {
     use std::io::IsTerminal;
+    // (a page's console takes each line as it is logged: a browser has no
+    // thread to write the blocks)
+    if cfg!(target_arch = "wasm32") {
+        return;
+    }
     if !std::io::stdout().is_terminal() && !BLOCKS.swap(true, Ordering::Relaxed) {
         let _ = std::thread::Builder::new().name("crow-output".to_string()).spawn(|| {
             loop {
@@ -211,7 +217,6 @@ pub fn buffer_output() {
 
 /// What `log` holds, written out now.
 pub fn flush_output() {
-    use std::io::Write;
     // (a stop inside `log` leaves its lock to this thread: none is taken
     // twice)
     let mut held = match OUT.try_lock() {
@@ -230,9 +235,7 @@ pub fn flush_output() {
         Err(std::sync::TryLockError::WouldBlock) => return,
     };
     if !held.is_empty() {
-        let mut out = std::io::stdout().lock();
-        let _ = out.write_all(&held);
-        let _ = out.flush();
+        crate::host::write_out(&held);
         held.clear();
     }
 }

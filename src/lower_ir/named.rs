@@ -34,7 +34,7 @@ const SYS: &str = "sys";
 /// (`agent_support_order_status`) when an entry imported the part, and
 /// the written one when the part was the entry: a trace and a recorded
 /// fixture differed by which file was run.
-fn own_name(f: &str) -> String {
+pub(super) fn own_name(f: &str) -> String {
     let own = match crate::part_prefix_of_declaration(f) {
         Some(prefix) => f[prefix.len()..].to_string(),
         None => f.to_string(),

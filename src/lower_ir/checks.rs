@@ -223,6 +223,11 @@ pub(super) struct Checks {
     /// The loop variables bound over a list whose items no type says: what
     /// a call hands of them is held as text (`TypeContext::text_items`).
     pub unknown_items: BTreeSet<String>,
+    /// The locals, by function, given a call of one of the program's
+    /// functions: such a list's items are that function's to type, and a
+    /// function no call has typed yet answers a list of nothing known
+    /// (`kindless_item`).
+    pub call_answered: BTreeSet<(String, String)>,
     /// Inside a test attached to a function (`test[p]` after it), which
     /// sees what a caller of that function sees.
     pub attached_test: bool,
@@ -801,7 +806,10 @@ impl<'a> Lowerer<'a> {
         if crate::modules::is_crow_fn(&self.current_fn) || !self.ctx.functions.contains_key(name) || self.ctx.derives.contains(name) || self.ctx.bare_modules.contains("sys") {
             return;
         }
-        self.refuse(format!("'{}' is a function of this program — pick another name for this {}: `{}[…]` would call the function", name, what, name));
+        // (named as its file writes it: a part's function is prefixed where
+        // it is inlined, and the refusal had said `pk_row` of `row`)
+        let shown = super::named::own_name(name);
+        self.refuse(format!("'{}' is a function of this program — pick another name for this {}: `{}[…]` would call the function", shown, what, shown));
     }
 
     /// An assignment: a derivation is not assigned, and a variable keeps the
@@ -1590,6 +1598,13 @@ impl<'a> Lowerer<'a> {
         }
         let argc = args.len();
         let own = self.ctx.functions.contains_key(name);
+        // (a constant called — `pi[]` — is no call: it had passed every
+        // check, and the interpreter stopped as it ran, "does not run 'pi'
+        // yet"; Lory's sphere)
+        if !own && !self.declared(name) && self.ctx.registry.has_constant(name) {
+            self.refuse(format!("'{}' is a constant, not a function — write it without brackets: {}", name, name));
+            return;
+        }
 
         // db's own forms — connect, query, exec — are db's: without a `use
         // db` of the file's own, neither mode has them (the interpreter had

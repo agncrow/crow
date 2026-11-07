@@ -47,6 +47,10 @@ pub struct Emitted {
 
 /// Emit a lowered program as `main.rs`; for `crow test --compiled`
 /// (`test_control`) a program that also answers the test harness.
+/// The program is built for the web (`crow build --target web`): a
+/// module a page starts, not a process (spec, "Building for the web").
+pub static WEB: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn emit_with(
     program: &Program,
     registry: crate::modules::ModuleRegistry,

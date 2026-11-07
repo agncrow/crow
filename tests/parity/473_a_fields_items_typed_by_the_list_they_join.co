@@ -1,0 +1,15 @@
+--- A record's field given only `[]`, its items walked by a loop and
+--- pushed onto a list of lists of text, holds lists of text: compiled as
+--- a list of text, the push had not built (Lory's frame, whose asks a
+--- chart never made)
+struct Box [asks, n]
+
+fn calls_of[b]
+    calls = [['a', 'b']]
+    for a in b.asks
+        calls = push[calls, a]
+    calls
+
+b = Box[[], 1]
+log[len[calls_of[b]]]
+log[calls_of[b]]

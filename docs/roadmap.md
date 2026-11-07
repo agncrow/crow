@@ -200,8 +200,8 @@ All 17 server-side modules implemented with 119 tests passing:
 - [x] **`stream[feed, a, …]`** — A text response sent as `feed[put, a, …]` puts it: `CrowResponse::stream` holds the feed, and the server runs it on a blocking thread when the response is sent, each `put` a chunk down a channel into `Body::from_stream` (crow_web's `http` feature). `put` answers whether the reader still listens.
 - [x] **Both modes** (Sept 30 2026) — the interpreter answers all four through the same crow_web functions (it had stopped on `msgpack`, `arrow` and `stream`, and before that answered them with a map that only looked like a response); the compiled `stream` had not built; a feed's loop calling `put` had been marked parallel; a compiled route whose handler's value can fail had not built. `tests/served/21_formats` holds both modes to the same bytes.
 
-#### Client-side WASM — rejected
-Rejected in favor of the Crow UI framework (see below). Building a WASM frontend pipeline would require `wasm-bindgen`, `web-sys`, and a reactive runtime — essentially building React/Svelte from scratch. The UI framework approach achieves the same goal (one-language full-stack) with pure Crow libraries and server-rendered HTML.
+#### Client-side WASM — rejected (for the UI framework; a page that draws is built for the web since 2026-11-07)
+Rejected in favor of the Crow UI framework (see below). Still rejected as a client framework: a page's state stays on the server. A program that draws — Lory's charts, scenes and games — is compiled to WebAssembly by `crow build --target web` and meets its page at two rows, `paint` and `frames` (spec, Building for the web, and the Design Note "A Page Built for the Web Draws Through One Door"). Building a WASM frontend pipeline would require `wasm-bindgen`, `web-sys`, and a reactive runtime — essentially building React/Svelte from scratch. The UI framework approach achieves the same goal (one-language full-stack) with pure Crow libraries and server-rendered HTML.
 
 #### P8 — UI Framework ✅ (Phases 1–5 done; `view` blocks, `later`, style and chart modules shipped since — see the status table above)
 

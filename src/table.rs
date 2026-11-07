@@ -94,6 +94,10 @@ pub const PRED: Sig = Sig { params: &[Kind::Item], ret: Kind::Bool, rest: false,
 pub const DEFERRED: Sig = Sig { params: &[], ret: Kind::Unit, rest: true, deferred: true };
 /// A revision of what process memory holds: handed the record held, then
 /// the row's remaining arguments; answers the record to hold.
+/// A frame's work: handed what the page says of the frame (a parsed
+/// value: its time, its size and, in a headset, each eye's view), answers
+/// nothing (`sys.frames`).
+pub const FRAME: Sig = Sig { params: &[Kind::Json], ret: Kind::Unit, rest: false, deferred: false };
 pub const REVISE: Sig = Sig { params: &[Kind::Record], ret: Kind::Record, rest: true, deferred: false };
 /// A stream's `put`: sends one chunk of text, and answers whether the
 /// reader still listens.
@@ -2558,6 +2562,19 @@ pub static ROWS: &[Row] = &[
     Row { shape: Shape::Dims(&[Dim::Open]), ..row!("chart.cvd", "chart", "cvd", crow_runtime::indicators::cvd, (Tensor, Tensor) -> Tensor, stops) },
     // `use sys`: the standard library's own layer (crow_runtime::sys) — a
     // program may not import it (spec, The standard library's layer)
+    // the page a program built for the web draws on (spec, "Building for
+    // the web"): a batch of WebGL2 calls handed to it, and the function it
+    // calls before each frame; outside a browser, no page — nothing drawn
+    // and no frame, in both modes (crow_runtime::page)
+    Row { props: &[Prop::Does(crate::effects::Effect::Page)], ..row!("sys.paint", "sys", "paint", crow_runtime::page::paint, (Str) -> Unit, never) },
+    Row {
+        id: "sys.frames", name: "frames", module: "sys", path: "crow_runtime::page::frames",
+        params: &[Kind::FnOf(&FRAME)], ret: Kind::Unit, fails: Fails::Never, options: &[], written: "", form: "", props: &[Prop::Does(crate::effects::Effect::Page)], taken: None, big: None, exact: None, range: IntRange::I64, shape: Shape::Open, columns: &[], provider: None, feature: None, cells: None,
+        // (the interpreter runs no page: no frame comes, as compiled
+        // outside a browser)
+        call: |_args: &[CrowValue], _trace: &str| Ok(write_unit(())),
+        take: |_args: Vec<CrowValue>, _trace: &str| Ok(write_unit(())),
+    },
     row!("sys.open", "sys", "open", crow_runtime::sys::open, (Str, Int, Bool, Float) -> Stream, value "sys"),
     Row { props: &[Prop::Does(crate::effects::Effect::Network)], ..row!("sys.listen", "sys", "listen", crow_runtime::sys::listen, (Str, Int) -> Stream, value "sys") },
     Row { props: &[Prop::Does(crate::effects::Effect::Network), Prop::Does(crate::effects::Effect::Waits)], ..row!("sys.accept", "sys", "accept", crow_runtime::sys::accept, (Stream, Float) -> Stream, value "sys") },

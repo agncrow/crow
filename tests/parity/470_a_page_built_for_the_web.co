@@ -1,0 +1,28 @@
+--- A program built for the web draws through sys.paint and sys.frames
+--- (spec, Building for the web). Outside a browser no page draws and no
+--- frame comes, in both modes alike: what it draws is the batches it
+--- builds. And a row taking a function, called through its module's name
+--- (`sys.frames[draw]`), types the function as the bare call does: it had
+--- been refused, "`draw` is handed as a value, and nothing types its
+--- parameters" (2026-11-07).
+use sys
+
+fn viewport[v]
+    return ['viewport', str[v.x], str[v.y], str[v.width], str[v.height]]
+
+fn batch[frame]
+    v = frame.views[0]
+    shade = frame.t / 1000.0 - floor[frame.t / 1000.0]
+    return [viewport[v], ['clearColor', str[shade], '0.2', '0.3', '1'], ['clear', 'COLOR_BUFFER_BIT']]
+
+fn draw[frame]
+    sys.paint[encode[batch[frame]]]
+
+made = [['#1', 'createBuffer'], ['bindBuffer', 'ARRAY_BUFFER', '#1'], ['bufferData', 'ARRAY_BUFFER', 'f32:0 0.7 -0.6 -0.6 0.6 -0.6', 'STATIC_DRAW']]
+sys.paint[encode[made]]
+sys.frames[draw]
+log['asked for frames']
+
+screen = json['{"t": 1250.0, "width": 640, "height": 480, "xr": false, "views": [{"eye": "none", "x": 0, "y": 0, "width": 640, "height": 480, "projection": [], "camera": []}]}']
+log[encode[batch[screen]]]
+log['no frame comes outside a browser']

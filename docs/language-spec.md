@@ -2658,6 +2658,8 @@ Import with `use sys` — **meant for library code**: the layer the standard lib
 | `store[path, bytes]` | The bytes written to a file, as they are; an error value of kind `'sys'` where it cannot be written |
 | `random[n]` | `n` bytes from the operating system's randomness |
 | `hex[bytes]` | The bytes as lowercase hex, two digits each |
+| `paint[batch]` | A batch of WebGL2 calls handed to the page a program built for the web runs in (Building for the web, section 18), which runs them now: JSON text of a list of calls, each a list of text — a WebGL2 function's name and its arguments, each read by its form (a number, a `CONSTANT`, `#3` for the object a call kept as 3, `=text`, `f32:0 0.5 1` and the other typed arrays, `base64f32:…` for a large one (the bytes `sys.float_bytes[xs, 4, true]` makes, as `sys.base64` writes them), `true`, `false`, `null`, `@framebuffer`); a call whose first item is `#N` keeps its answer as object N. Outside a browser there is no page, and nothing is drawn, in both modes |
+| `frames[f]` | The page calls `f[frame]` before each frame it shows, from when the top level has run; `frame` is a parsed value — `t` (milliseconds), `width` and `height` (pixels), `ratio` (pixels per point), `xr` (a headset shows it), `vr` (one can be entered) and `views`, one per eye in a headset (each `eye`, `x`, `y`, `width`, `height`, and the eye's `projection` and `camera`, column-major), one on a screen, then what happened since the last frame (`input`, `pointers`, `controllers`, `said`: Building for the web, section 18). A later `frames[g]` replaces `f`, from the next frame. What `f` answers is not read, as `later`'s work's is not, but a failure stops the program, naming its line. Outside a browser no frame comes, in both modes |
 | `text[bytes, fill]` | The text the bytes spell, each run that spells none replaced by `fill` (`'�'`, as a browser shows one) — never an error |
 | `hash[bytes, algo]` | The digest as lowercase hex: `'sha256'`, `'sha512'`, `'crc32'` (eight digits, the checksum gzip and Kafka carry), `'sha1'` or `'md5'` |
 | `digest[bytes, algo]` | The digest as bytes: `'crc32'` (four bytes), `'sha1'` (a socket's accept key), `'sha256'`, `'sha512'` or `'md5'` |
@@ -3901,6 +3903,7 @@ program. The kinds:
 | `session` | acts for the session | `notice`, `sign_in`, `sign_out`, `download`, `later` |
 | `waits` | waits: on the reader, a socket, the clock, a command | `input`, `sleep`, `shell`, `recv` |
 | `serving` | declares what the server serves | `route`, `page`, `serve` |
+| `drawing` | draws on the page a program built for the web runs in (Building for the web) | `paint` |
 
 A builtin may have several: `shell` runs a command and waits, `input`
 reads and waits. Every rule the language states about effects is stated
@@ -4593,6 +4596,7 @@ crow setup                  --- fetch the pinned Rust toolchain and this release
 crow upgrade                --- replace the binary the install line put in ~/.crow/bin with the latest release, held to its published hash (--version X: that release, a downgrade too; --check: whether a newer one is out); a crow installed otherwise is left as it is and told how it upgrades
 crow build                  --- transpile to Rust and compile to native binary
 crow build file.co        --- transpile a specific file
+crow build --target web file.co --- the program as a page: <name>_web/ holds its WebAssembly module, crow.js and index.html (Building for the web, below)
 crow build --ir file.co   --- print the program's one typed form, the IR (docs/ir-design.md); nothing is compiled
 crow build --rs file.co   --- print the Rust the program compiles to, printed from the IR; nothing is compiled
 crow build --types file.co --- print every type inference settled, each body's locals included; nothing is compiled
@@ -4661,6 +4665,68 @@ crow launch 4 file.co     --- build + run on 4 distributed processes
 The formatter validates syntax before formatting. It works at the source level (not AST), so comments, `then` chains, and all syntax are preserved exactly. `crow fmt --check` exits with code 1 if any file needs formatting (useful for CI).
 
 
+### Building for the web
+
+`crow build --target web file.co` compiles the program to WebAssembly and
+writes the page that runs it: `<name>_web/` holds `<name>.wasm`, `crow.js`
+and `index.html`. Served over HTTP and opened in a browser — on a desktop, a
+phone or a headset — the page loads the module, runs the program's top level
+once and then calls the function the program handed `frames` before each
+frame (sys, section 13). The program draws by handing `paint` batches of
+WebGL2 calls; `crow.js` runs them on the page's WebGL2 context and holds no
+logic of its own. In a headset — entered by the page's Enter VR button, or
+by the program's own `@vr` (below) — each frame has a view per eye, drawn into the headset's framebuffer (`@framebuffer`).
+
+A page in a browser writes to its console (`log`), reads its clock, draws
+random numbers (the page's `crypto`), holds what the program holds, and
+draws on itself — and nothing else: a program that reaches a builtin whose
+effect a browser lacks (a file, a socket, a process or a command, a
+database, mail, a wait, a server) is refused by the build, each builtin
+named with what it does. `log` writes to the page's console, a stop's reason
+too, and the page shows a stop over the drawing. The module is 32-bit: a
+value holds at most 2^28 items there. It runs on one thread: a parallel loop
+runs its rounds in order, with the same answers.
+
+The frame `f` is handed is a parsed value: `t`, its time in
+milliseconds; `width` and `height`, the drawing's size in pixels; `ratio`,
+the device's pixels per CSS pixel; `xr`, whether a headset shows it; `vr`, whether one can be entered;
+`views`, the views to draw — one on a screen, one per eye in a headset,
+each with its viewport (`x`, `y`, `width`, `height`) and, in a headset, the
+eye's `projection` and `camera` matrices (16 numbers, column by column,
+as WebGL2 takes them; the camera's carries the world into the eye's view); `input`, what happened since the last frame, in order —
+each event a `type` (`down`, `move`, `up`, `leave`, `wheel`, `key`,
+`keyup`, `text`, `blur`, and in a headset `squeeze`, `unsqueeze`) with what
+it says (`x`, `y` in the drawing's pixels from its top left, `id`, the pointer's
+`device` (`mouse`, `touch`, `pen`, `ray`), `button`, `dx`/`dy` of a wheel, `key` and `code` of a key, the
+`text` typed, and `shift`, `ctrl`, `alt`, `meta`); `pointers`, where each
+pointer is now; `controllers`, a headset's controllers and hands, each a
+ray (`origin`, `direction`, its `matrix`) with its `buttons` and `axes`;
+and `said`, what the page answered since the last frame (below), each
+answer naming `what` it answers and the `id` its call kept.
+
+A call in a batch whose name begins with `@` is the page's rather than
+WebGL2's — what a page can do that a program cannot do itself: `@atlas`
+(a font's glyphs as a texture of distance fields, sharp at any scale, its
+metrics in `said`), `@image` (a texture of an image at a URL, its size in
+`said`), `@buffer` (a buffer object holding a URL's bytes, or a span of
+them — a model's geometry, which never passes through the program — its
+size in `said` once they are in), `@request` (an HTTP request, its status
+and body in `said` when they arrive), `@tone` (a sound), `@keyboard` (`=open` brings up a phone's
+keyboard, and what is typed arrives as `text` events), `@cursor`, `@copy`
+(to the clipboard), `@title` and `@vr` (into the headset, where a frame's
+`vr` says one can be entered: a browser enters only on the reader's press,
+so a program asks in the frame its button is pressed, and a failure is
+said as `what` `vr` with its `failed` reason). `crow.js` lists each call's
+arguments.
+
+Outside a browser the same program runs in both modes and draws nothing:
+`paint` hands its batch to no page and no frame comes, so what a program
+draws is tested as the batches it builds.
+
+Building for the web needs Rust's standard library for
+`wasm32-unknown-unknown` (`rustup target add wasm32-unknown-unknown`, or
+`crow setup`, which fetches it with Crow's own toolchain).
+
 ### REPL
 
 Running `crow` with no arguments starts an interactive REPL. Variables and functions persist between lines. Expression results are printed automatically.
@@ -4710,6 +4776,26 @@ A repository on a forge (`github.com`, `gitlab.com`, `codeberg.org`, `bitbucket.
 
 The language-wide rejections, each with what was considered and why it lost. Notes about a single feature sit beside that feature (search this document for "Design Note").
 
+
+### A Page Built for the Web Draws Through One Door
+
+Considered (2026-11-07, with Vijay, for Lory — the graphics, plotting and
+game engine written in Crow, agncrow/lory): a JavaScript backend (rejected:
+a third backend held to parity, and Crow's ints that grow past 64 bits would
+be slow BigInts or wrong in JavaScript); WebGL bound call by call as rows
+(rejected: hundreds of rows, a crossing between the module and the page per
+call, and every addition to WebGL a change to Crow); drawing with Canvas 2D
+or SVG (rejected: neither reaches a headset, and neither draws a million
+points a frame); a client framework in the browser — the roadmap's
+"client-side WASM", rejected for the UI framework and still rejected for it
+(a page's state stays on the server). Decided: Crow's own compiler builds
+the program for `wasm32-unknown-unknown`; the page meets it at two rows —
+`paint`, a batch of WebGL2 calls as text, one crossing per batch, read by
+`crow.js` without a list of calls of its own, and `frames`, the function the
+page calls before each frame — plus what any program writes, reads of the
+clock and draws; every other effect is refused at the build, by its kind.
+An engine, its scenes, its charts and its controls are written in Crow over
+the two rows (Lory), not in the compiler.
 
 ### Names Are Never Ambiguous
 

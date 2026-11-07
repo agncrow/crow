@@ -1,0 +1,13 @@
+--- A record's field given only `[]`, pushed a list of text where it is
+--- read, holds lists of text: compiled as a list of text, the push had
+--- not built (Lory's scene calls, in a program that draws no scene)
+struct Canvas [deep, n]
+
+fn closed[c]
+    todo = push[c.deep, ['disable', 'DEPTH_TEST']]
+    out = []
+    for d in todo
+        out = push[out, len[d]]
+    out
+
+log[closed[Canvas[[], 1]]]

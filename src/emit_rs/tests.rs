@@ -207,7 +207,7 @@ fn a_loop_over_a_list_that_can_fail_returns_the_error_first() {
 #[test]
 fn a_top_level_loop_over_an_error_halts_with_the_loop_message() {
     let rust = transpile("for i in range[int['x']]\n    log[i]\n");
-    assert!(rust.contains("runtime error: line 1: cannot loop over an error value — {}"), "{}", rust);
+    assert!(rust.contains("host::stopped(&format!(\"line 1: cannot loop over an error value — {}"), "{}", rust);
 }
 
 /// A parallel collecting loop that yields on some paths only, after
@@ -250,7 +250,7 @@ fn an_error_without_a_value_meets_a_number() {
 #[test]
 fn a_top_level_branch_on_an_error_halts_with_the_line() {
     let rust = transpile("z = int['f']\nif z gt 1\n    log['never']\n");
-    assert!(rust.contains("runtime error: line 2: cannot branch on an error value — {}"), "{}", rust);
+    assert!(rust.contains("host::stopped(&format!(\"line 2: cannot branch on an error value — {}"), "{}", rust);
 }
 
 /// A failed value assigned to a variable whose first value could not fail
@@ -264,7 +264,7 @@ fn a_plain_variable_refuses_a_failed_value() {
     let rest = &rust[start..];
     let body = &rest[..rest.find("\n}\n").unwrap()];
     assert!(body.contains("-> CrowResult<i64>"), "{}", body);
-    assert!(rust.contains("runtime error: line 7: cannot assign an error value to 'y' — {}"), "{}", rust);
+    assert!(rust.contains("host::stopped(&format!(\"line 7: cannot assign an error value to 'y' — {}"), "{}", rust);
 }
 
 /// A function that writes a fact but that nothing calls or wires (the
