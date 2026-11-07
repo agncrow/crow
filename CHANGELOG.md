@@ -5,6 +5,47 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
+## v0.8.1 — 2026-11-07
+
+Thirty-one bugs that building Myna (a data workbench written in Crow, at
+github.com/agncrow/myna) found, fixed in Crow, each with the test that
+reproduces it. Nothing breaks: a program 0.8.0 ran the same way in both
+modes runs the same way here.
+
+### Fixed
+
+- Pages and apps. A computed layout width (`width = '`share`%'`) reaches
+  the compiled page through the layout engine. A handler's parameter the
+  body changes is `mut`. A session's `a.name` reaches a part's state. A
+  page's path fact is the part's fact of that name, one rule in the four
+  places that had each matched by suffix (`:model_name` had met
+  `new_model_name`). An attribute is computed before a child that moves
+  what it reads. Void elements have no end tag in both renderers, from
+  one list, and the test harness reads them as a browser does.
+- Derivations. A derivation over files is computed again after any
+  handler, route, test line or the top level writes a file, in both
+  modes. A derivation indexed (`names[0]`) in another derivation or a
+  handler is typed as its item. The compiled harness reads a derivation
+  of big ints, moments or frames.
+- Tests. The compiled app a test opens is built from the program's
+  declarations alone, as the interpreted one is (its top-level effects
+  had run). A dependency's helper handed as a value is not refused in a
+  test that only reads. A refusal inside an imported part is placed in
+  the part's file at its own line.
+- Types and values. A value a guard knows has failed hands back its
+  failure, not the function's answer type (`json[p]` had become a
+  response). A moment moved by an int read from text builds. An early
+  return narrows an int read from text, which stays 64-bit. A standard
+  module's local named like a page's fact is the module's own.
+- Effects. Only a reader whose answer can fail is stamped: `exists`,
+  `args` and `env` with a default had a moment interpreted and none
+  compiled (the spec says so now).
+- Names. Web's `text` of text beside sys's `text` of bytes is web's where
+  web is imported, and the response check reads the same resolver.
+  `crow check` knows sys rows as defined names.
+- The rest are held by parity programs 458–469, errors k33–k35 and served
+  pages 28–33.
+
 ## v0.8.0 — 2026-10-30
 
 Agents and the standard library in Crow: the agent loop (`act`), MCP over
