@@ -230,6 +230,12 @@ thread_local! {
 }
 
 pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
+    // (a refusal names a part's declaration as the program writes it:
+    // `'greet.loud' expects 1 argument`, never the inlined `greet·loud`)
+    lower_inlined(stmts).map_err(|e| crate::as_the_program_writes(&e))
+}
+
+fn lower_inlined(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
     // a standard module written in Crow is inlined where it is imported
     // (crate::modules::inline_crow_modules), so every pipeline — a run, a
     // build, a test, the language server — sees its functions as the
@@ -257,7 +263,7 @@ pub fn lower_program(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
 pub fn lower_fragment(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
     let mut l = fragment_lowerer();
     l.collect_sigs(stmts);
-    l.finish(stmts)
+    l.finish(stmts).map_err(|e| crate::as_the_program_writes(&e))
 }
 
 /// A `Lowerer` for a fragment of the program lowered last on this thread,
@@ -366,11 +372,13 @@ pub fn written(name: &str) -> &str {
     }
 }
 
-/// A name as the program wrote it: `x__s2` is `x`, and a standard module's
+/// A name as the program wrote it: `x__s2` is `x`, a standard module's
 /// function inlined behind its prefix is its own name (`_llm_chat` is
-/// `chat`: crate::modules::unprefixed), in every message.
+/// `chat`: crate::modules::unprefixed), and a part's declaration is the
+/// program's spelling of it (`greet·loud` is `greet.loud`:
+/// crate::as_the_program_writes), in every message.
 pub fn shown(msg: &str) -> String {
-    let msg = &crate::modules::unprefixed(msg);
+    let msg = &crate::as_the_program_writes(&crate::modules::unprefixed(msg));
     let mut out = String::with_capacity(msg.len());
     let mut rest: &str = msg;
     while let Some(i) = rest.find(SCOPED) {
@@ -635,7 +643,7 @@ impl<'a> Namer<'a> {
     }
 
     fn span(&self, span: &str) -> Result<String, String> {
-        let tokens = match crate::lexer::Lexer::new(span).tokenize() {
+        let tokens = match crate::lexer::Lexer::joined(span).tokenize() {
             Ok(t) => t,
             Err(_) => return Ok(span.to_string()),
         };
@@ -898,8 +906,8 @@ impl Lowerer {
             // a part's function is refused in the part's file at its own
             // line: placed in the entry, a call in Magpie's manifest.co had
             // been shown at the entry's line of that number
-            // (the entry's names a part's function as the entry writes it)
-            crate::placed_in_part(&self.current_fn, &at).unwrap_or_else(|| crate::as_the_entry_writes(&at))
+            // (the entry's names a part's function as the program writes it)
+            crate::placed_in_part(&self.current_fn, &at).unwrap_or_else(|| crate::as_the_program_writes(&at))
         } else {
             msg
         }
@@ -1055,33 +1063,6 @@ impl Lowerer {
                     }
                     _ => None,
                 };
-
-                // Qualified user-module call (scene.mesh[...]): the import
-                // expander registered the prefixed fn/struct — resolve named
-                // args against it and canonicalize the callee to the prefixed
-                // name so both modes see an ordinary call
-                if let Expr::FieldAccess { object, field } = &callee {
-                    if let Expr::Ident(m) = object.as_ref() {
-                        let prefixed = format!("{}_{}", m, field);
-                        if let Some(sig) = self.fns.get(&prefixed).cloned() {
-                            let resolved =
-                                self.resolve_args(&prefixed, &sig.params, &sig.defaults, args)?;
-                            return Ok(Expr::Call {
-                                callee: Box::new(Expr::Ident(prefixed)),
-                                args: resolved,
-                            });
-                        }
-                        if let Some(fields) = self.structs.get(&prefixed).cloned() {
-                            let no_defaults = vec![None; fields.len()];
-                            let resolved =
-                                self.resolve_args(&prefixed, &fields, &no_defaults, args)?;
-                            return Ok(Expr::Call {
-                                callee: Box::new(Expr::Ident(prefixed)),
-                                args: resolved,
-                            });
-                        }
-                    }
-                }
 
                 match callee_name.as_deref() {
                     Some("map") => self.lower_map_call(args)?,

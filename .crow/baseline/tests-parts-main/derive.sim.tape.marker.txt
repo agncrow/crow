@@ -1,0 +1,3 @@
+derive sim·tape·marker (sim/tape.co)
+  reads: sim·clock·head
+  read by: views·sim·label

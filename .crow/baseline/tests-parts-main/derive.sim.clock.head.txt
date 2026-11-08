@@ -1,0 +1,3 @@
+derive sim·clock·head (sim/clock.co)
+  reads: sim·clock·anchor, sim·clock·base, sim·clock·playing, sim·clock·speed, now[]
+  read by: sim·clock·faster, sim·tape·marker, views·sim·label

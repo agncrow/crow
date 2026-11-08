@@ -176,7 +176,7 @@ fn idents(t: &str) -> BTreeSet<String> {
         if c == '\'' {
             in_str = !in_str;
         }
-        if !in_str && (c.is_alphanumeric() || c == '_') {
+        if !in_str && crate::name_char(c) {
             word.push(c);
         } else {
             if !word.is_empty() && !word.chars().next().unwrap().is_ascii_digit() {
@@ -217,7 +217,7 @@ fn element_line(line: &str) -> Option<(String, Vec<String>, String)> {
     let l = line.trim();
     let open = l.find('[')?;
     let name = &l[..open];
-    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+    if name.is_empty() || !name.chars().all(crate::name_char) {
         return None;
     }
     let mut depth = 0i32;
@@ -263,7 +263,7 @@ impl<'a> Machine<'a> {
             let digits: String = src[i + 1..].chars().take_while(|c| c.is_ascii_digit()).collect();
             src.replace_range(i..i + 1 + digits.len(), &format!("__param_{}", digits));
         }
-        let parsed = crate::build(&format!("__value = {}\n", src)).ok().and_then(|stmts| {
+        let parsed = crate::build_joined(&format!("__value = {}\n", src)).ok().and_then(|stmts| {
             stmts.into_iter().find_map(|s| match s {
                 Stmt::Assign { value, .. } => Some(value),
                 _ => None,

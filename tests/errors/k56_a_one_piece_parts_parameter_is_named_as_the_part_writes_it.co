@@ -1,0 +1,8 @@
+--- a function of a part of one piece — a file beside the entry, a package — given an option it does not have: its parameters are named as the part writes them, where the entry's own `m` renames the part's `m` apart (`m__kit·`); the suffix cut at the part's mark had left `m__kit`, a name a program may write, and the refusal said `(parameters: m__kit, name)` (Raven's j50: `m__llm`)
+--- mistakes: 2
+use kit
+use greet
+
+m = 'hello'
+log[kit.greet[m, nam = 'ada']]
+log[greet.loud[m, max = 2]]

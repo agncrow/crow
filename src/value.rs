@@ -393,7 +393,7 @@ pub struct Layout {
     /// prefixed with the module's path)
     pub name: String,
     /// The name it was declared by, which it shows (`Day`, not
-    /// `sessions_Day`)
+    /// `sessions·Day`)
     pub shown: String,
     pub fields: Vec<String>,
 }

@@ -1,0 +1,4 @@
+handler sim·tape·note_plain (sim/tape.co)
+  wired: sim·tape·notes button 'plain'
+  always:
+    sim·clock·note := str['plain']

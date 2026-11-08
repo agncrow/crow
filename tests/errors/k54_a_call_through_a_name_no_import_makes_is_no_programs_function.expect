@@ -1,0 +1,3 @@
+k54_a_call_through_a_name_no_import_makes_is_no_programs_function.co:5:5: undefined module or variable 'greet'
+  5 │ log[greet.loud[5]]
+    │     ^^^^^

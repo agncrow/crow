@@ -5606,12 +5606,9 @@ impl<'a> Lowerer<'a> {
                 {
                     return Ok(Expr::Const(Const::Int(0), Ty::Unknown));
                 }
-                // `m.x` where `m` is no variable names what a part declares:
-                // `m` is not read as one
-                let member = matches!(object.as_ref(), A::Ident(m) if self.names_module_member(m, field));
                 match field.as_str() {
                     "ok" | "reason" | "kind" | "trace" => {
-                        let base = if member { self.muted(|l| l.lower_expr(object))? } else { self.lower_expr(object)? };
+                        let base = self.lower_expr(object)?;
                         // a frame that holds a column of the name: the dot is
                         // the frame's status, never the column — a misread
                         // refused where it is written (a chart's `kind`, a
@@ -5652,7 +5649,7 @@ impl<'a> Lowerer<'a> {
                         // its bytes in both modes and a matrix's every
                         // number.) A record's field, a map's key and a
                         // frame's column named `len` stay what they are.
-                        if field == "len" && !member {
+                        if field == "len" {
                             // (typed without lowering it twice: `f[x].len`
                             // calls `f` once)
                             let measured = match self.target_type(object) {
@@ -5663,7 +5660,7 @@ impl<'a> Lowerer<'a> {
                                 return self.call(&A::Ident("len".to_string()), std::slice::from_ref(object.as_ref()));
                             }
                         }
-                        let base = if member { self.muted(|l| l.lower_expr(object))? } else { self.lower_expr(object)? };
+                        let base = self.lower_expr(object)?;
                         // a parameter read by its fields, and typed by nothing
                         // else, is a parsed value (spec, Tools are the
                         // functions): what a call by name hands a function
@@ -5687,12 +5684,12 @@ impl<'a> Lowerer<'a> {
                         // (a fact's declared value has no statement to stand
                         // in front of: the read itself refuses the value, in
                         // both backends, with the same reason)
-                        let base = if !member && !self.in_fact_default && base.ty().is_result() && matches!(base.ty().payload(), Ty::Frame(_) | Ty::Record(_) | Ty::Map(..) | Ty::Json) {
+                        let base = if !self.in_fact_default && base.ty().is_result() && matches!(base.ty().payload(), Ty::Frame(_) | Ty::Record(_) | Ty::Map(..) | Ty::Json) {
                             self.decided(base, Decision::Read(field.clone()))
                         } else {
                             base
                         };
-                        if !member && !self.contested(&base) {
+                        if !self.contested(&base) {
                             self.check_field(&read(&base), field);
                         }
                         let ty = self.ctx.field_type(object, read(&base), field);
@@ -8683,7 +8680,7 @@ impl<'a> Lowerer<'a> {
                 if !text.is_empty() {
                     pieces.push(Piece::Text(std::mem::take(&mut text)));
                 }
-                let mut lexer = crate::lexer::Lexer::new(&src);
+                let mut lexer = crate::lexer::Lexer::joined(&src);
                 let tokens = lexer.tokenize().map_err(placed)?;
                 let mut parser = crate::parser::Parser::for_fragment(tokens);
                 let stmts = parser.parse().map_err(placed)?;

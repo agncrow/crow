@@ -1,0 +1,5 @@
+fact board·door·name (board/door.co)
+  type: str
+  written by: nobody
+  bound by: board·door·door
+  read by: board·door·door, board·door·log_in, board·page·render

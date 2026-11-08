@@ -1,4 +1,0 @@
-fact sim_clock_base (sim/clock.co)
-  type: float
-  written by: sim_clock_faster
-  read by: sim_clock_head

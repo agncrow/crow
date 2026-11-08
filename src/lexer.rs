@@ -23,6 +23,8 @@ pub struct Lexer {
     pending_tokens: Vec<SpannedToken>,
     at_line_start: bool,
     bracket_depth: usize,
+    /// whether a name may hold `PART_JOIN` (`Lexer::joined`)
+    joined: bool,
 }
 
 impl Lexer {
@@ -36,7 +38,17 @@ impl Lexer {
             pending_tokens: Vec::new(),
             at_line_start: true,
             bracket_depth: 0,
+            joined: false,
         }
+    }
+
+    /// A lexer of code the expansion wrote, whose names may be a part's as
+    /// they are inlined (`sim·clock·head`, `crate::PART_JOIN`): an
+    /// interpolation's text, read again where a string is lowered. A
+    /// program's own text is read by `new`, which refuses the mark — in an
+    /// interpolation too, so no program names an inlined name.
+    pub fn joined(source: &str) -> Self {
+        Lexer { joined: true, ..Lexer::new(source) }
     }
 
     pub fn tokenize(&mut self) -> Result<Vec<SpannedToken>, String> {
@@ -458,6 +470,9 @@ impl Lexer {
         self.advance(); // skip opening '
 
         let mut s = String::new();
+        // (an interpolation is code: the mark that joins a part's inlined
+        // names is no more a program's there than outside a string)
+        let mut in_span = false;
         loop {
             match self.peek() {
                 None => {
@@ -510,6 +525,11 @@ impl Lexer {
                     }
                 }
                 Some(ch) => {
+                    if ch == '`' {
+                        in_span = !in_span;
+                    } else if in_span && ch == crate::PART_JOIN && !self.joined {
+                        return Err(format!("line {}, col {}: '{}' is not a character Crow writes code with", self.line, self.col, ch));
+                    }
                     s.push(ch);
                     self.advance();
                     self.held_line_break(ch);
@@ -673,7 +693,7 @@ impl Lexer {
         let mut ident = String::new();
 
         while let Some(ch) = self.peek() {
-            if ch.is_ascii_alphanumeric() || ch == '_' {
+            if ch.is_ascii_alphanumeric() || ch == '_' || (self.joined && ch == crate::PART_JOIN) {
                 ident.push(ch);
                 self.advance();
             } else {

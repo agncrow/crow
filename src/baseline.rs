@@ -49,7 +49,7 @@ const OPENERS: &[&str] = &["modal", "drawer", "toast", "details"];
 const INLINE_DEPTH: usize = 4;
 
 /// The derived artifacts: one canonical text per declaration, keyed
-/// `kind name` (`handler sim_session_start_session`).
+/// `kind name` (`handler sim·session·start_session`).
 #[derive(Debug, Default, Clone)]
 pub struct Artifacts {
     pub entries: BTreeMap<String, String>,
@@ -218,7 +218,7 @@ fn canon_span(span: &str, env: &Env) -> String {
         word.clear();
     };
     for c in span.chars() {
-        if c.is_alphanumeric() || c == '_' { word.push(c); } else { flush(&mut word, &mut out); out.push(c); }
+        if crate::name_char(c) { word.push(c); } else { flush(&mut word, &mut out); out.push(c); }
     }
     flush(&mut word, &mut out);
     out
@@ -613,14 +613,14 @@ struct Wiring {
 }
 
 /// A value's short name for a placeholder: the last identifier of the
-/// expression with any part prefix removed — `sim_session_status` reads
+/// expression with any part prefix removed — `sim·session·status` reads
 /// as ‹status›, `v1.symbol[0]` as ‹symbol›.
 fn short_name(expr: &str, m: &Model) -> String {
     let mut best = String::new();
     let mut word = String::new();
     let mut words: Vec<String> = Vec::new();
     for c in expr.chars() {
-        if c.is_alphanumeric() || c == '_' { word.push(c); } else if !word.is_empty() { words.push(std::mem::take(&mut word)); }
+        if crate::name_char(c) { word.push(c); } else if !word.is_empty() { words.push(std::mem::take(&mut word)); }
     }
     if !word.is_empty() { words.push(word); }
     for w in words.iter().rev() {
@@ -828,7 +828,7 @@ fn record_composition(w: &mut Wiring, view: &str, conds: &[String], tree_text: &
     for line in tree_text.lines() {
         let l = line.trim_start();
         if let Some(rest) = l.strip_prefix('@') {
-            let child: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            let child: String = rest.chars().take_while(|c| crate::name_char(*c)).collect();
             if child.is_empty() { continue; }
             let pair = (guard.clone(), child);
             let under = w.composed_under.entry(view.to_string()).or_default();

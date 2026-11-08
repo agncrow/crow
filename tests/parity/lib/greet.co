@@ -1,0 +1,12 @@
+--- module: a function, a value and a record, each spelled inside the
+--- program as its importer spells the part (imported by
+--- 526_a_programs_names_spelled_like_a_parts_are_its_own)
+struct Greeting [words]
+
+count = 2
+
+fn loud[s]
+    return '`upper[s]`!'
+
+fn make[s]
+    return Greeting[s]

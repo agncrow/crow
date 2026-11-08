@@ -32,18 +32,17 @@ impl TypeContext {
     }
 
     /// Whether a call's arguments' types say anything of its callee: a call
-    /// by name, a call of a function or record a module prefixes, or one
-    /// through a record's field holding a function (`c.f[c.x]`).
+    /// by name (a part's function among them, called by the name the
+    /// expansion wrote for it), one of a module's row that takes a
+    /// function, or one through a record's field holding a function
+    /// (`c.f[c.x]`).
     pub(crate) fn call_says_of_callee(&self, callee: &Expr) -> bool {
         match callee {
             Expr::Ident(_) => true,
             Expr::FieldAccess { object, field } => match object.as_ref() {
-                Expr::Ident(m) => {
-                    let prefixed = format!("{}_{}", m, field);
-                    // (or a module's row that takes a function: `sys.frames[draw]`
-                    // types `draw` as `frames[draw]` does)
-                    self.functions.contains_key(&prefixed) || self.structs.contains_key(&prefixed) || self.field_fn(m, field) || self.module_row_takes_a_function(m, field)
-                }
+                // (or a module's row that takes a function: `sys.frames[draw]`
+                // types `draw` as `frames[draw]` does)
+                Expr::Ident(m) => self.field_fn(m, field) || self.module_row_takes_a_function(m, field),
                 _ => false,
             },
             // (an item of a local list of functions, called where it is read:
@@ -394,35 +393,6 @@ impl TypeContext {
             // function nothing types)
             if crate::modules::by_path(&real).is_some() {
                 self.hand_to_row(&f, args, arg_types);
-            }
-        }
-        // Module function/struct call: module.func[args] or module.Struct[args]
-        if let Expr::FieldAccess { object, field } = callee {
-            if let Expr::Ident(mod_name) = object.as_ref() {
-                let prefixed = format!("{}_{}", mod_name, field);
-                let text: Vec<Ty> = arg_types.iter().map(|t| t.text()).collect();
-                if self.functions.contains_key(&prefixed) {
-                    let sig = self.functions.get(&prefixed).unwrap().clone();
-                    let mut new_params = sig.params.clone();
-                    for (i, at) in text.iter().enumerate() {
-                        if i < new_params.len() {
-                            new_params[i].1 = new_params[i].1.unify(at);
-                        }
-                    }
-                    self.functions.get_mut(&prefixed).unwrap().params = new_params;
-                    self.hand_functions(&prefixed, args);
-                }
-                // Module struct constructor: update field types from args
-                if self.structs.contains_key(&prefixed) {
-                    let sig = self.structs.get(&prefixed).unwrap().clone();
-                    let mut new_fields = sig.fields.clone();
-                    for (i, at) in text.iter().enumerate() {
-                        if i < new_fields.len() {
-                            new_fields[i].1 = new_fields[i].1.unify(at);
-                        }
-                    }
-                    self.structs.get_mut(&prefixed).unwrap().fields = new_fields;
-                }
             }
         }
     }

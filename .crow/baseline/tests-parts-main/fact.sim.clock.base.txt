@@ -1,0 +1,4 @@
+fact sim·clock·base (sim/clock.co)
+  type: float
+  written by: sim·clock·faster
+  read by: sim·clock·head

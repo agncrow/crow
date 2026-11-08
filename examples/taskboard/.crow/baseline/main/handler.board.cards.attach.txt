@@ -1,0 +1,12 @@
+handler board·cards·attach (board/cards.co)
+  wired: board·cards·card_view button 'Attach'
+  when (not contains[board·cards·upload, 'path']):
+    effect notice 'pick a file first'
+  when contains[board·cards·upload, 'path']:
+    reads v1 = query[board·cards·book, 'INSERT INTO attachments (card, name, path) VALUES (?, ?, ?) RETURNING id', [board·cards·card_id, board·cards·upload.name, '']]
+    board·cards·upload := map[]
+    effect query board·cards·book 'INSERT INTO attachments (card, name, path) VALUES (?, ?, ?) RETURNING id' [board·cards·card_id, board·cards·upload.name, '']
+    effect mkdir 'files'
+    effect cp board·cards·upload.path 'files/attachment-`v1.id[0]`'
+    effect query board·cards·book 'UPDATE attachments SET path = ? WHERE id = ?' ['files/attachment-`v1.id[0]`', v1.id[0]]
+    calls board·store·note[board·cards·book, __reader[].name, 'attached `board·cards·upload.name` to card `board·cards·card_id`']

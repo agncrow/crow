@@ -1,0 +1,4 @@
+handler views·sim·twice (views/sim.co)
+  wired: views·sim·render button '2x'
+  always:
+    sim·clock·speed := 2

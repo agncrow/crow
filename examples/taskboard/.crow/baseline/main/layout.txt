@@ -1,4 +1,4 @@
-layout / (board_page_render)
+layout / (board·page·render)
   when contains[__reader[], 'name']:
     1280: 1555 high
     390: 1555 high

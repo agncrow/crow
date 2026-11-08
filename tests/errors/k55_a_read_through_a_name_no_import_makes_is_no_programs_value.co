@@ -1,0 +1,4 @@
+--- a read through a module's name the program never imports is refused as a name nothing declares: `greet.count` beside the program's `greet_count = 7` had been taken for a part's value, and stopped the run as a bug in Crow ("the lowered program disagrees with itself … reads 'greet', which is not bound")
+greet_count = 7
+
+log[greet.count]

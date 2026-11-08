@@ -1,0 +1,3 @@
+k51_a_packages_function_by_its_inlined_spelling_is_no_name.co:5:5: undefined function 'greet_loud' — did you mean 'greet.loud'?
+  5 │ log[greet_loud['a']]
+    │     ^^^^^^^^^^

@@ -55,7 +55,7 @@ fn options_of(v: &str, n: usize) -> Vec<String> {
         let items: Vec<String> = inner.split(',').filter_map(|i| literal(i.trim())).collect();
         if !items.is_empty() { return items; }
     }
-    let name = t.rsplit('_').next().unwrap_or("option").trim_matches(|c: char| !c.is_alphanumeric());
+    let name = t.rsplit(['_', crate::PART_JOIN]).next().unwrap_or("option").trim_matches(|c: char| !c.is_alphanumeric());
     (1..=n).map(|i| format!("{} {}", name, i)).collect()
 }
 
@@ -147,7 +147,7 @@ impl<'a> Wire<'a> {
                     "field" | "slider" => {
                         let kind = attr_of("type").and_then(|v| literal(&v)).unwrap_or_else(|| if tag == "slider" { "range".into() } else { "text".into() });
                         let fact = attr_of("binds").unwrap_or_default();
-                        let value = format!("‹{}›", fact.rsplit('_').next().unwrap_or("value"));
+                        let value = format!("‹{}›", fact.rsplit(['_', crate::PART_JOIN]).next().unwrap_or("value"));
                         out.push_str("<div class=\"crow-field\">");
                         let p_label = format!("{}/label.", format!("{}/div.crow-field", parent));
                         let p_input = format!("{}/input.", format!("{}/div.crow-field", parent));

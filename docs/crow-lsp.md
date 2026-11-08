@@ -32,7 +32,9 @@ with the compiler.
   check` / `crow fix`.
 - **Completions** — your functions, structs and variables, plus builtins
   and keywords, with inferred signatures as detail; a function completes
-  as its whole call, each parameter a placeholder to tab through.
+  as its whole call, each parameter a placeholder to tab through. A
+  part's function is offered as the program calls it (`calc.total[x]`),
+  never by the name it is inlined under (`lib·calc·total`).
 - **Hover** — inferred types (`name: str`, `fn add[a: int, b: int] -> int`),
   struct fields.
 - **Signature help** inside a call's brackets, the active parameter marked.
@@ -42,7 +44,8 @@ with the compiler.
 - **Find references** — every read and write of the name in the file, its
   declaration included; a part's name only where the part qualifies it,
   and never a record's field of the same name (`p.f` is not `f`).
-- **Document outline.**
+- **Document outline** — the file's own functions, records and
+  variables; a part's are its own file's outline.
 
 ## Editor setup
 

@@ -1,0 +1,5 @@
+--- a package's function is reached through the package, never by its inlined name: `greet_loud` had been the package's `loud`, and a program's own `fn greet_loud` beside `use greet` was refused in crow_modules/greet/main.co ("'loud' is declared twice"); the name is the program's to define, and undefined here, the refusal offering the package's spelling
+use greet
+
+log[greet.loud['a']]
+log[greet_loud['a']]

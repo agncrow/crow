@@ -468,7 +468,7 @@ the order it surfaced:
   module reached through two importers was expanded twice under stacked
   prefixes; module paths resolved from the importing file's directory,
   not the project's. Now a module file is expanded once under its path
-  (`sim_clock_`), rooted at the crowfile, and `session.day = d` in another
+  (`sim_clock_`; `sim·clock·` since 2026-11-07), rooted at the crowfile, and `session.day = d` in another
   part's handler writes the session's fact. `crow test sim/clock.co`
   runs a part's tests with its imports inlined; `crow check main.co`
   checks the whole app.

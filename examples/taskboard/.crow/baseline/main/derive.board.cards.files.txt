@@ -1,0 +1,4 @@
+derive board·cards·files (board/cards.co)
+  reads: board·cards·card_id
+  tables: attachments
+  read by: board·cards·card_view, board·page·render

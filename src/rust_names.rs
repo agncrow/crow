@@ -472,11 +472,12 @@ fn span_names(chars: &[char]) -> Vec<(usize, usize)> {
         }
         if c.is_alphabetic() || c == '_' {
             let start = i;
-            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+            // (a part's inlined name is one name: `greet·move` holds no `move`)
+            while i < chars.len() && crate::name_char(chars[i]) {
                 i += 1;
             }
             let after_dot = start > 0 && chars[start - 1] == '.';
-            let after_word = start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_');
+            let after_word = start > 0 && crate::name_char(chars[start - 1]);
             if !after_dot && !after_word {
                 out.push((start, i));
             }

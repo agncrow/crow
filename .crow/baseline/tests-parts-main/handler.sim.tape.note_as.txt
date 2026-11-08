@@ -1,0 +1,5 @@
+handler sim·tape·note_as (sim/tape.co)
+  inputs: $1
+  called by: sim·tape·note_count, sim·tape·note_plain
+  always:
+    sim·clock·note := str[$1]

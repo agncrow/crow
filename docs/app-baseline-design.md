@@ -75,9 +75,9 @@ in a handler is a read whose result is a symbol, so a later `r.id[0]`
 prints as the query's cell.
 
 ```text
-handler sim_session_start_session (sim/session.co)
-  wired: sim_session_scanner_setup button 'Start' · sim_session_practice_setup button 'Start'
-  reaches: views_sim_render · page /
+handler sim·session·start_session (sim/session.co)
+  wired: sim·session·scanner_setup button 'Start' · sim·session·practice_setup button 'Start'
+  reaches: views·sim·render · page /
   when not at_time[day, win_from].ok:
     noticed_at := now[] · status := 'bad date or time: `day` `win_from`'
   when at_time[day, win_to] lte at_time[day, win_from]:

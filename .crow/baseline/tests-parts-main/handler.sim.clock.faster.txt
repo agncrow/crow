@@ -1,0 +1,4 @@
+handler sim·clock·faster (sim/clock.co)
+  wired: sim·clock·transport button '10x'
+  always:
+    sim·clock·anchor := float[now[]] · sim·clock·base := sim·clock·head · sim·clock·speed := 10.0

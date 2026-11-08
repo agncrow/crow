@@ -1,0 +1,3 @@
+k55_a_read_through_a_name_no_import_makes_is_no_programs_value.co:4:5: undefined variable 'greet'
+  4 │ log[greet.count]
+    │     ^^^^^

@@ -1,0 +1,4 @@
+fact sim·clock·anchor (sim/clock.co)
+  type: float
+  written by: sim·clock·faster, sim·clock·play
+  read by: sim·clock·head

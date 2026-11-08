@@ -1,0 +1,8 @@
+handler board·cards·post (board/cards.co)
+  wired: board·cards·card_view button 'Post'
+  when (board·cards·comment eq ''):
+    nothing
+  when (not (board·cards·comment eq '')):
+    board·cards·comment := ''
+    effect query board·cards·book 'INSERT INTO comments (card, author, body) VALUES (?, ?, ?)' [board·cards·card_id, __reader[].name, board·cards·comment]
+    calls board·store·note[board·cards·book, __reader[].name, 'commented on card `board·cards·card_id`']

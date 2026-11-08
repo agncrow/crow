@@ -1,0 +1,4 @@
+--- module: a count named like lib/shop/cart.co's total (imported by
+--- 526_a_programs_names_spelled_like_a_parts_are_its_own)
+fn total[xs]
+    return len[xs]

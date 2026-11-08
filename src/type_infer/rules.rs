@@ -829,13 +829,10 @@ impl TypeContext {
                 }
             }
         }
-        let prefixed = format!("{}_{}", module, field);
-        // Module struct constructor
-        if self.structs.contains_key(&prefixed) {
-            return Some(Ty::Record(prefixed));
-        }
-        // Module function call
-        self.functions.get(&prefixed).map(|sig| sig.return_type.clone())
+        // (a part's function or record is called by the name the expansion
+        // wrote, `greet·loud`, never through a module's name: `greet.loud`
+        // is a module's row or nothing)
+        None
     }
 
     /// An index's type (`xs[i]`, `m[k]`, `s[i]`, a function value applied)
@@ -1023,18 +1020,6 @@ impl TypeContext {
             && let Some(t) = self.module_constant_type(mod_name, field)
         {
             return t;
-        }
-        // Module variable access: module.var → look up module_var
-        if let Expr::Ident(mod_name) = object {
-            let prefixed = format!("{}_{}", mod_name, field);
-            if let Some(t) = self.vars.get(&prefixed) {
-                return t.clone();
-            }
-            // Also check if it's a module function reference
-            if let Some(sig) = self.functions.get(&prefixed) {
-                let param_types: Vec<Ty> = sig.params.iter().map(|(_, t)| t.clone()).collect();
-                return Ty::Fn(param_types, Box::new(sig.return_type.clone()));
-            }
         }
         Ty::Unknown
     }

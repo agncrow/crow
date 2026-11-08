@@ -1,0 +1,4 @@
+handler views·sim·quick (views/sim.co)
+  wired: views·sim·render button '20.5x'
+  always:
+    sim·clock·speed := 20.5

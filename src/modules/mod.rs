@@ -442,7 +442,7 @@ fn parse_source(source: &str) -> Result<Vec<crate::ast::Stmt>, String> {
 pub fn unprefixed(msg: &str) -> String {
     let mut prefixes: Vec<&'static str> = crow_modules().map(|(_, p)| p).collect();
     prefixes.sort_by_key(|p| std::cmp::Reverse(p.len()));
-    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let is_word = crate::name_char;
     let chars: Vec<char> = msg.chars().collect();
     let mut out = String::with_capacity(msg.len());
     let mut i = 0;
@@ -693,7 +693,7 @@ impl Rewrite {
     /// bare name; the fields after a chain's head are fields.
     fn interpolated(&self, s: &str, shadowed: &std::collections::HashSet<String>) -> String {
         let chars: Vec<char> = s.chars().collect();
-        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+        let is_word = crate::name_char;
         let mut out = String::with_capacity(s.len());
         let mut in_span = false;
         let mut i = 0;
@@ -1142,7 +1142,7 @@ fn called_in_expr(e: &crate::ast::Expr, out: &mut std::collections::BTreeSet<Str
             let mut inside = false;
             let mut word = String::new();
             for c in s.chars().chain(std::iter::once('`')) {
-                if inside && (c.is_alphanumeric() || c == '_') {
+                if inside && crate::name_char(c) {
                     word.push(c);
                     continue;
                 }

@@ -38,7 +38,7 @@ pub fn str_interpolation_spans(s: &str) -> Vec<Expr> {
             }
             let expr_str: String = chars[start..i.min(chars.len())].iter().collect();
             i += 1;
-            if let Ok(tokens) = crate::lexer::Lexer::new(&expr_str).tokenize() {
+            if let Ok(tokens) = crate::lexer::Lexer::joined(&expr_str).tokenize() {
                 if let Ok(stmts) = crate::parser::Parser::new(tokens).parse() {
                     if let Some(Stmt::ExprStmt(expr)) = stmts.into_iter().find(|s| !matches!(s, Stmt::Line(_))) {
                         spans.push(expr);

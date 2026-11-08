@@ -1,0 +1,8 @@
+handler board·cards·add_card (board/cards.co)
+  wired: board·cards·board_view button 'Add'
+  when (board·cards·new_card eq ''):
+    nothing
+  when (not (board·cards·new_card eq '')):
+    board·cards·new_card := ''
+    effect query board·cards·book 'INSERT INTO cards (board, title, status, owner, stars) VALUES (?, ?, ?, ?, 0)' [board·cards·board_id, board·cards·new_card, 'todo', __reader[].name]
+    calls board·store·note[board·cards·book, __reader[].name, 'added `board·cards·new_card`']

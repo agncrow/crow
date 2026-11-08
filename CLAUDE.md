@@ -1318,7 +1318,7 @@ which run here only.
   verifier's `fits` lets a plain value into a Result slot by design, so it
   did not catch it.
 - `describe[f].name` is `own_name` in lower_ir/named.rs: a part's prefix
-  (`agent_support_`, `crate::part_prefix_of_declaration`) stripped as a
+  (`agent·support·`, `crate::part_prefix_of_declaration`) stripped as a
   standard module's is by `lower::shown`. The model had been told
   `agent_support_order_status` from an entry importing the part and
   `order_status` from the part itself, and the two entries recorded
@@ -1794,3 +1794,46 @@ which run here only.
   one would reach the line: both modes stop, naming a bug in Crow — so a
   row or a form answering a list of nothing known that holds items is a
   hole in the rule: type its items, or keep it to tests, as `box` is.
+- A part's declarations are inlined as its path and the name joined by
+  `PART_JOIN`, `·` (2026-11-07, Vijay's choice; spec, Importing):
+  `greet·loud`, `sim·clock·head`, a package's own import `pk·b·`. Joined
+  by an underscore, a program's own `fn greet_loud` beside `use greet` had
+  been the package's `loud` too ("'loud' is declared twice", placed in
+  the package's file), and `views/home.co` beside `views_home.co` one
+  prefix (parity 526). The source lexer refuses the mark, inside an
+  interpolation too (errors k53); text the expansion wrote is read back
+  with `Lexer::joined` (an interpolation's span in both lowerings, the
+  read sets, parallel.rs) or `build_joined` (the states' guards: read
+  with `build`, every guard naming a part's fact had dropped out of the
+  task board's states), and a scanner that picks names out of such text
+  reads by `name_char` — split at the mark, `greet·loud` was `greet` and
+  `loud`, and `unreached_parts_dropped` dropped the package's function. A
+  message shows the program's spelling (`as_the_program_writes`, in
+  `lower::shown` and `lower_program`'s errors: `'g.loud' expects 1
+  argument` under `use greet as g`, errors k51, k52), from the spellings
+  the expansion records (`ModuleExpansion::spelled`, set as
+  `PART_SPELLINGS` as the expansion ends, after each part validated
+  alone set its own: the entry's spelling over a part's); `called_as`
+  (`in greet.loud: …`) reads through it, and the editor's completions,
+  details and signature help do too (a part's parameters are renamed
+  locals, `x__lib·calc·` — the whole prefix, so `m` in a one-piece
+  part `greet.co` is `m__greet·`, never `m__greet`, a name a program
+  may write, which no message had read back: Raven's j50), its outline
+  skipping a name holding the mark.
+  A qualified `m.f` never reaches a function, record or value named
+  `m_f`: the lowering, inference and the reads pass had each looked one
+  up (from before the expansion rewrote an importer's qualified names),
+  which once parts were joined by the mark only a program's own name
+  could be — `greet.loud[5]` with no `use greet` called the program's
+  `fn greet_loud`, and `greet.count` beside `greet_count` was an internal
+  error (errors k54, k55). A
+  baseline keys by the inlined name (`derive sim·clock·head`, in the file
+  `derive.sim.clock.head.txt`), and a served app's `.events` names its
+  handlers and fields so (`board·door·log_in`, `__field:board·door·name`):
+  a baseline of another repository's app (finch, Raven, Pie) is accepted
+  again after this change. Still joined by an underscore and open: a
+  standard module's inlined function (a program's `fn _io_lines` beside
+  `use io` is refused as `in lines: undefined variable 'path'`),
+  a copy per signature (a program's `fn f__2` beside a twice-typed `f`
+  takes the copy's place) and a scenario's key (`views/sim.co`'s test `t`
+  and `views_sim.co`'s are one `views_sim_t`).

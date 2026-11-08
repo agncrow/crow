@@ -141,8 +141,8 @@ pub(super) fn without_echoes(errors: Vec<(String, Option<String>)>) -> Vec<(Stri
 }
 
 /// A name as the program wrote it: a part's function without the prefix
-/// the expansion gave it (`helpers_spread` is `spread`), a part's local
-/// without its suffix (`df__helpers` is `df`).
+/// the expansion gave it (`helpers·spread` is `spread`), a part's local
+/// without its suffix (`df__helpers·` is `df`).
 pub(crate) fn plain_name(name: &str) -> String {
     let unprefixed = match crate::part_prefix_of_declaration(name) {
         Some(prefix) => name[prefix.len()..].to_string(),
@@ -1481,13 +1481,6 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// Whether `m.x` names something a module (or a part) declares, where
-    /// `m` is not a variable: then `m` is not read as one.
-    pub(super) fn names_module_member(&self, module: &str, field: &str) -> bool {
-        let prefixed = format!("{}_{}", module, field);
-        !self.defined(module) && (self.defined(&prefixed) || self.ctx.vars.contains_key(&prefixed) || self.ctx.functions.contains_key(&prefixed))
-    }
-
     /// A package's helper named from a file outside the package: a name
     /// that begins with an underscore is its package's own, reached from
     /// the package's own files alone (spec, Importing), and the expansion
@@ -1513,7 +1506,11 @@ impl<'a> Lowerer<'a> {
         if self.refuse_package_helper(module, field) {
             return;
         }
-        let prefixed = format!("{}_{}", module, field);
+        // (`m.f` is a module's row or a value's field: a part's declaration
+        // is called by the name the expansion wrote for it, `greet·loud`,
+        // so no function of the program's is `m_f` — looked up so,
+        // `greet.loud[5]` with no `use greet` had called the program's own
+        // `fn greet_loud`)
         let real = self.ctx.module_aliases.get(module).cloned().unwrap_or_else(|| module.to_string());
         // the app is implicit (an app value, and the calls that took one,
         // had built compiled only, and the interpreter read it as a path)
@@ -1523,7 +1520,7 @@ impl<'a> Lowerer<'a> {
         }
         let registry_module = known_module(&real) && self.ctx.registry.has_function(field);
         // the module's names reach the entry only through a part's import
-        if registry_module && !self.ctx.functions.contains_key(&prefixed) && self.only_a_part_imports(&real) {
+        if registry_module && self.only_a_part_imports(&real) {
             self.refuse_missing_use(&format!("{}.{}", module, field), &real, "");
             return;
         }
@@ -1533,7 +1530,7 @@ impl<'a> Lowerer<'a> {
         // typed as nothing known and failed only as the program ran)
         let known = known_module(&real);
         let a_value = self.defined(module) && (!known || self.declared(module));
-        if registry_module || self.ctx.functions.contains_key(&prefixed) || self.ctx.structs.contains_key(&prefixed) || a_value {
+        if registry_module || a_value {
             return;
         }
         // (an import refused as naming two modules: what is called through

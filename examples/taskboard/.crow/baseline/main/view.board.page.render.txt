@@ -1,0 +1,16 @@
+view board·page·render (board/page.co)
+  composed on: page /
+  reads: board·audit·entries, board·cards·boards, board·cards·card, board·cards·card_id, board·cards·cards, board·cards·comment, board·cards·files, board·cards·new_board, board·cards·new_card, board·cards·talk, board·cards·upload, board·door·name, board·door·password, reader
+  when (not contains[__reader[], 'name']):
+    stack[gap = 'l', pad = 'l']
+      h1[] 'Task board'
+      @board·door·door[]
+  when contains[__reader[], 'name']:
+    stack[gap = 'l', pad = 'l']
+      h1[] 'Task board'
+      stack[gap = 'l']
+        @board·door·door[]
+        @board·cards·boards_view[]
+        @board·cards·board_view[]
+        @board·cards·card_view[]
+        @board·audit·log_view[]

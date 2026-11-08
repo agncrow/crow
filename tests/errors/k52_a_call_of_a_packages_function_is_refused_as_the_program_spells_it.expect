@@ -1,0 +1,7 @@
+k52_a_call_of_a_packages_function_is_refused_as_the_program_spells_it.co:5:5: 'g.loud' expects 1 argument, got 2
+  5 │ log[g.loud['a', 'b']]
+    │     ^^^^^^
+k52_a_call_of_a_packages_function_is_refused_as_the_program_spells_it.co:6:5: 'g.hello' expects 1 argument, got 2
+  6 │ log[g.hello['ada', 'bob']]
+    │     ^^^^^^^
+2 mistakes

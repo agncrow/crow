@@ -1,0 +1,4 @@
+handler sim·clock·play (sim/clock.co)
+  wired: sim·clock·transport button 'Play'
+  always:
+    sim·clock·anchor := float[now[]] · sim·clock·playing := true

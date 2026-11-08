@@ -1,0 +1,6 @@
+handler board·cards·set_stars (board/cards.co)
+  inputs: $1
+  called by: nobody
+  always:
+    effect query board·cards·book 'UPDATE cards SET stars = ? WHERE id = ?' [int[$1], board·cards·card_id]
+    calls board·store·note[board·cards·book, __reader[].name, 'gave card `board·cards·card_id` `int[$1]` stars']

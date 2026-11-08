@@ -3245,27 +3245,85 @@ mod derive_fix_tests {
     fn a_pages_name_is_the_parts_fact_of_that_name() {
         EXPANSION_PARTS.with(|p| {
             let mut p = p.borrow_mut();
-            p.insert("myna_models_".to_string(), "myna/models.co".to_string());
-            p.insert("myna_notebooks_".to_string(), "myna/notebooks.co".to_string());
+            p.insert(part_prefix(None, "myna/models"), "myna/models.co".to_string());
+            p.insert(part_prefix(None, "myna/notebooks"), "myna/notebooks.co".to_string());
         });
         let facts: std::collections::BTreeSet<String> =
-            ["myna_models_model_name", "myna_models_new_model_name", "myna_notebooks_current", "myna_models_current"].iter().map(|s| s.to_string()).collect();
+            ["myna·models·model_name", "myna·models·new_model_name", "myna·notebooks·current", "myna·models·current", "the_current"].iter().map(|s| s.to_string()).collect();
+        // (what each part declares, as the expansion records it: the
+        // entry's `the_current` is no part's)
         PART_DECLS.with(|d| {
             let mut d = d.borrow_mut();
-            for f in &facts {
-                let prefix = if f.starts_with("myna_models_") { "myna_models_" } else { "myna_notebooks_" };
+            for f in facts.iter().filter(|f| f.contains(PART_JOIN)) {
+                let prefix = if f.starts_with("myna·models·") { "myna·models·" } else { "myna·notebooks·" };
                 d.insert(f.clone(), prefix.to_string());
             }
         });
-        assert_eq!(crate::derive::address_fact("model_name", &facts).as_deref(), Some("myna_models_model_name"));
-        assert_eq!(crate::derive::address_fact("new_model_name", &facts).as_deref(), Some("myna_models_new_model_name"));
-        assert_eq!(crate::derive::address_fact("notebooks.current", &facts).as_deref(), Some("myna_notebooks_current"));
-        assert_eq!(crate::derive::address_fact("models.current", &facts).as_deref(), Some("myna_models_current"));
-        // (two parts' facts of one name are two: the bare name is neither)
+        assert_eq!(crate::derive::address_fact("model_name", &facts).as_deref(), Some("myna·models·model_name"));
+        assert_eq!(crate::derive::address_fact("new_model_name", &facts).as_deref(), Some("myna·models·new_model_name"));
+        assert_eq!(crate::derive::address_fact("notebooks.current", &facts).as_deref(), Some("myna·notebooks·current"));
+        assert_eq!(crate::derive::address_fact("models.current", &facts).as_deref(), Some("myna·models·current"));
+        // (two parts' facts of one name are two: the bare name is neither,
+        // and the entry's `the_current` is no fact named `current`)
         assert_eq!(crate::derive::address_fact("current", &facts), None);
         assert_eq!(crate::derive::address_fact("nothing", &facts), None);
         EXPANSION_PARTS.with(|p| p.borrow_mut().clear());
         PART_DECLS.with(|d| d.borrow_mut().clear());
+        // where no part's prefix is known on the thread, the end of a name
+        // past the joiner is the name: `model_name` is one fact, not two
+        assert_eq!(crate::derive::address_fact("model_name", &facts).as_deref(), Some("myna·models·model_name"));
+    }
+
+    /// A part's declarations take its path joined with `PART_JOIN`, which
+    /// no name a program writes holds: two files whose paths joined with an
+    /// underscore read alike (`views/home.co`, `views_home.co`) are two
+    /// prefixes, and a package's own import carries the package's name.
+    #[test]
+    fn a_parts_prefix_is_its_path_joined_by_a_mark_no_name_holds() {
+        assert_eq!(part_prefix(None, "greet"), "greet·");
+        assert_eq!(part_prefix(None, "views/home"), "views·home·");
+        assert_eq!(part_prefix(Some("pk"), "b"), "pk·b·");
+        assert_ne!(part_prefix(None, "views/home"), part_prefix(None, "views_home"));
+        // (a program cannot write the mark: the lexer refuses it)
+        assert!(Lexer::new("greet·loud = 1\n").tokenize().is_err());
+    }
+
+    /// A message names a part's declaration as the program spells the part:
+    /// the entry's alias over a part's, whichever is noted first, a part
+    /// the entry does not import as its first importer spells it, a part's
+    /// own local renamed apart as the local, and a part no expansion named
+    /// by its file's name.
+    #[test]
+    fn a_message_names_a_parts_declaration_as_the_program_spells_it() {
+        let (parts, spellings) = (EXPANSION_PARTS.with(|p| p.borrow().clone()), PART_SPELLINGS.with(|s| s.borrow().clone()));
+        EXPANSION_PARTS.with(|p| {
+            let mut p = p.borrow_mut();
+            p.insert("greet·".into(), "crow_modules/greet/main.co".into());
+            p.insert("sim·clock·".into(), "sim/clock.co".into());
+            p.insert("sim·session·".into(), "sim/session.co".into());
+            p.insert("lib·calc·".into(), "lib/calc.co".into());
+        });
+        let mut ex = ModuleExpansion { depth: 1, ..Default::default() };
+        note_spelling(&mut ex, "greet·", "greet");
+        note_spelling(&mut ex, "sim·clock·", "clock");
+        note_spelling(&mut ex, "sim·clock·", "c");
+        ex.depth = 0;
+        note_spelling(&mut ex, "greet·", "g");
+        note_spelling(&mut ex, "lib·calc·", "k");
+        ex.depth = 1;
+        note_spelling(&mut ex, "lib·calc·", "calc");
+        PART_SPELLINGS.with(|s| *s.borrow_mut() = ex.spelled);
+        assert_eq!(as_the_program_writes("'lib·calc·total' expects 1 argument"), "'k.total' expects 1 argument");
+        assert_eq!(as_the_program_writes("'greet·loud' expects 1 argument"), "'g.loud' expects 1 argument");
+        assert_eq!(as_the_program_writes("in sim·clock·head: x"), "in clock.head: x");
+        assert_eq!(as_the_program_writes("undefined variable 'c__sim·session·'"), "undefined variable 'c'");
+        assert_eq!(as_the_program_writes("(parameters: m__greet·, times)"), "(parameters: m, times)");
+        assert_eq!(as_the_program_writes("undefined variable 'x__pk·b·'"), "undefined variable 'x'");
+        assert_eq!(as_the_program_writes("a sim·session·Day and a lib·tools·f"), "a session.Day and a tools.f");
+        assert_eq!(as_the_program_writes("'greet_loud' is the program's"), "'greet_loud' is the program's");
+        assert_eq!(as_the_program_writes("'m__greet' and greet·loud"), "'m__greet' and g.loud");
+        EXPANSION_PARTS.with(|p| *p.borrow_mut() = parts);
+        PART_SPELLINGS.with(|s| *s.borrow_mut() = spellings);
     }
 
     #[test]
@@ -3802,7 +3860,7 @@ fn attribute_to_parts(errors: &[(String, Option<String>)]) -> String {
                         .unwrap_or_else(|| msg.clone());
                     format!("{}: {}", parts[prefix], as_the_part_writes(&refined, prefix))
                 }
-                None => as_the_entry_writes(msg),
+                None => as_the_program_writes(msg),
             }
         })
         .collect::<Vec<_>>()
@@ -3970,14 +4028,108 @@ fn format_location(filename: &str, issue: &checker::Issue, fn_lines: &std::colle
     filename.to_string()
 }
 
+/// What joins a part's path and the names it declares inside the program:
+/// `greet.loud` is `greet·loud`, `views/home.co`'s `render` is
+/// `views·home·render` (spec, Importing). No name a program writes holds
+/// it — a name is letters, digits and underscores — so a part's
+/// declaration is never one of the program's own names, and two files'
+/// prefixes are two. Joined with an underscore, `greet_loud` had been the
+/// program's own function and the package's `loud` at once ("'loud' is
+/// declared twice", in the package's file), and `views/home.co` beside
+/// `views_home.co` one prefix. Rust takes the middle dot in a name, so the
+/// compiled program declares the name as it is.
+pub(crate) const PART_JOIN: char = '·';
+
+/// Whether a character is a name's, as the compiler holds names: a letter,
+/// a digit, an underscore or `PART_JOIN`. A reader that picks names out of
+/// text the expansion wrote — a statement's words, an interpolation's
+/// code, a canonical text — reads by it: split at the mark, `greet·loud`
+/// had read as `greet` and `loud`, and the package's function was dropped
+/// as one nothing reaches.
+pub(crate) fn name_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == PART_JOIN
+}
+
+/// The prefix a part's declarations take inside the program: its path's
+/// pieces, a package's name first where the file is a package's own import
+/// (`use b` in package `pk` is `pk·b·`), each followed by `PART_JOIN`.
+pub(crate) fn part_prefix(package: Option<&str>, file_rel: &str) -> String {
+    let mut prefix = String::new();
+    for piece in package.into_iter().chain(file_rel.split('/')) {
+        prefix.push_str(piece);
+        prefix.push(PART_JOIN);
+    }
+    prefix
+}
+
+/// How a file importing a part spells it: the entry's spelling is the one
+/// a message uses, a part's only where the entry does not import that part
+/// (its first importer's). Kept by the expansion and set for the thread as
+/// it ends (`PART_SPELLINGS`), after each part validated alone set its own.
+fn note_spelling(ex: &mut ModuleExpansion, prefix: &str, spelling: &str) {
+    if ex.depth == 0 || !ex.spelled.contains_key(prefix) {
+        ex.spelled.insert(prefix.to_string(), spelling.to_string());
+    }
+}
+
+/// A message's inlined names as the program writes them (`lower::shown`
+/// reads every refusal through it, the terminal's and the editor's): a
+/// part's declaration is its importer's spelling of the part and the name
+/// (`sim·clock·head` is `clock.head`, `greet·loud` is `greet.loud`), and a
+/// part's local renamed apart from the entry's (`c__sim·session·`,
+/// `m__greet·`) is the local. No name a program writes holds `PART_JOIN`, so nothing else in a
+/// message changes. A part no expansion names is spelled by its file's
+/// name, as an import without `as` spells it.
+pub(crate) fn as_the_program_writes(msg: &str) -> String {
+    if !msg.contains(PART_JOIN) {
+        return msg.to_string();
+    }
+    let parts: Vec<String> = EXPANSION_PARTS.with(|p| p.borrow().keys().cloned().collect());
+    let spellings = PART_SPELLINGS.with(|s| s.borrow().clone());
+    let written = |word: &str| -> String {
+        if !word.contains(PART_JOIN) {
+            return word.to_string();
+        }
+        if let Some((local, part)) = word.rsplit_once("__")
+            && !local.is_empty()
+            && part.ends_with(PART_JOIN)
+        {
+            return local.to_string();
+        }
+        let prefix = parts
+            .iter()
+            .filter(|p| word.starts_with(p.as_str()) && word.len() > p.len())
+            .max_by_key(|p| p.len())
+            .cloned()
+            .unwrap_or_else(|| word[..word.rfind(PART_JOIN).map_or(0, |i| i + PART_JOIN.len_utf8())].to_string());
+        let spelled = spellings.get(&prefix).cloned().unwrap_or_else(|| {
+            prefix.trim_end_matches(PART_JOIN).rsplit(PART_JOIN).next().unwrap_or_default().to_string()
+        });
+        let name = &word[prefix.len()..];
+        if spelled.is_empty() { name.to_string() } else { format!("{}.{}", spelled, name) }
+    };
+    let mut out = String::with_capacity(msg.len());
+    let mut word = String::new();
+    for c in msg.chars() {
+        if name_char(c) {
+            word.push(c);
+        } else {
+            out.push_str(&written(&std::mem::take(&mut word)));
+            out.push(c);
+        }
+    }
+    out.push_str(&written(&word));
+    out
+}
+
 /// The module prefix of the part a declaration came from; none for the
 /// entry file's own. Inside that part's functions its own facts and
 /// derivations carry the prefix, so a name without it is never the part's
 /// own. Read from what each part declares, as the expansion brought it — a
-/// copy's by the function it copies — never from a prefix alone, which a
-/// program's own name can begin with: the program's `greet_twice` beside
-/// the package greet had been taken for the package's, and its refusal
-/// placed in the package's file.
+/// copy's by the function it copies (`greet·loud__2`) — never from a
+/// prefix alone: joined by an underscore, the program's `greet_twice`
+/// beside the package greet had begun with the package's prefix, been
+/// taken for the package's, and its refusal placed in the package's file.
 pub(crate) fn part_prefix_of_declaration(name: &str) -> Option<String> {
     let base = crate::modules::inlined_base(name);
     PART_DECLS.with(|d| d.borrow().get(base).cloned()).filter(|prefix| name.starts_with(prefix.as_str()))
@@ -4001,7 +4153,8 @@ fn file_of_declaration(name: &str) -> Option<String> {
 }
 
 /// `crow check --show`: the app as a tree; `--show name`: one declaration's
-/// artifact, matched by the end of its name (`buy` finds `sim_trading_buy`).
+/// artifact, matched by the end of its name (`buy` and `trading.buy` find
+/// `sim·trading·buy`).
 fn cmd_show(filename: &str, name: Option<&str>) {
     let result = run_check_pipeline(filename);
     let Some(art) = &result.artifacts else { println!("  nothing to show"); return; };
@@ -4009,9 +4162,10 @@ fn cmd_show(filename: &str, name: Option<&str>) {
         None => print!("{}", baseline::render_structure(art, filename)),
         Some(n) => {
             let n = n.trim();
+            let joined = format!("{}{}", PART_JOIN, n.replace('.', &PART_JOIN.to_string()));
             let mut hits: Vec<(&String, &String)> = art.entries.iter().filter(|(k, _)| {
                 let decl = k.split(' ').nth(1).unwrap_or("");
-                decl == n || decl.ends_with(&format!("_{}", n)) || k.as_str() == n
+                decl == n || decl.ends_with(&joined) || k.as_str() == n
             }).collect();
             if hits.is_empty() {
                 hits = art.entries.iter().filter(|(k, _)| k.contains(n)).collect();
@@ -4058,7 +4212,7 @@ fn db_programs(filename: &str, files: &[(String, String)]) -> std::collections::
         if let Ok(stmts) = build(source) {
             for st in &stmts {
                 if let ast::Stmt::Use { path, alias } = st {
-                    let prefix = format!("{}_", path.replace(['.', '/'], "_"));
+                    let prefix = part_prefix(None, &path.replace('.', "/"));
                     let spelled = alias.clone().unwrap_or_else(|| path.rsplit(['.', '/']).next().unwrap_or(path).to_string());
                     for (conn, url) in &ctx.conn_urls {
                         if prefix_of(conn) == prefix {
@@ -4865,6 +5019,15 @@ pub(crate) fn build(source: &str) -> Result<Vec<ast::Stmt>, String> {
     parser.parse()
 }
 
+/// The statements of text the compiler wrote itself (a guard's canonical
+/// text in the states table), whose names may hold `PART_JOIN`: read with
+/// the source lexer, a guard naming a part's fact did not parse, and the
+/// states lost it.
+pub(crate) fn build_joined(source: &str) -> Result<Vec<ast::Stmt>, String> {
+    let tokens = Lexer::joined(source).tokenize()?;
+    Parser::new(tokens).parse()
+}
+
 
 /// Statement-granular line markers make errors inside a multi-line
 /// expression report the statement's first line — a 30-line view tree
@@ -5097,7 +5260,7 @@ mod refine_tests {
 }
 
 /// Expand `use` imports: every module file is parsed once, its
-/// declarations prefixed with its path (`sim/clock.co` → `sim_clock_`) and
+/// declarations prefixed with its path (`sim/clock.co` → `sim·clock·`) and
 /// hoisted ahead of the program, and every importer's qualified references
 /// (`clock.head`, or the alias's) are rewritten to the prefixed names. A
 /// module reached through two importers — the tape and the trading parts
@@ -5284,7 +5447,7 @@ pub(crate) fn expand_module_imports_checked(
     // (set last, after each part validated alone set its own)
     UNRESOLVED_USES.with(|u| *u.borrow_mut() = ex.unresolved);
     AMBIGUOUS_USES.with(|u| *u.borrow_mut() = ex.ambiguous);
-    ENTRY_SPELLED.with(|s| *s.borrow_mut() = ex.spelled);
+    PART_SPELLINGS.with(|s| *s.borrow_mut() = ex.spelled);
     HIDDEN_HELPERS.with(|h| *h.borrow_mut() = ex.hidden);
     DEPENDENCY_DECLS.with(|d| *d.borrow_mut() = ex.dependency_decls);
     PART_DECLS.with(|d| *d.borrow_mut() = ex.part_decls);
@@ -5347,9 +5510,13 @@ pub(crate) fn plain_entry_name(name: &str) -> bool {
 /// Each part is validated alone, so nothing in a part's bodies can mean a
 /// name the entry binds at its top level. A local, loop variable or
 /// parameter that a part's function, view or derivation binds under such a
-/// name is renamed with the part's prefix as a suffix (`c` in
-/// `sim/session.co` becomes `c__sim_session`), so no later stage — the
-/// types, the facts, the runtime's scopes — takes the one for the other.
+/// name is renamed with the part's prefix, whole, as a suffix (`c` in
+/// `sim/session.co` becomes `c__sim·session·`, `m` in `greet.co`
+/// `m__greet·`), so no later stage — the types, the facts, the runtime's
+/// scopes — takes the one for the other, and the new name holds the mark
+/// as every name the expansion writes does: a prefix of one piece cut at
+/// its mark had left `m__greet`, a name a program may write, and the
+/// message that read the parameters back showed it as written.
 /// A keyword argument naming a renamed parameter follows it.
 fn separate_part_locals(entry: &mut [ast::Stmt], hoisted: &mut [ast::Stmt]) {
     use std::collections::{BTreeMap, BTreeSet};
@@ -5377,12 +5544,11 @@ fn separate_part_locals(entry: &mut [ast::Stmt], hoisted: &mut [ast::Stmt]) {
             ast::Stmt::MultiAssign { values, .. } => values.iter().for_each(|v| bound_names_expr(v, &mut bound)),
             _ => {}
         }
-        let suffix = prefix.trim_end_matches('_').to_string();
         let map: BTreeMap<String, String> = bound
             .into_iter()
             .filter(|n| top.contains(n))
             .map(|n| {
-                let new = format!("{}__{}", n, suffix);
+                let new = format!("{}__{}", n, prefix);
                 (n, new)
             })
             .collect();
@@ -5680,9 +5846,17 @@ thread_local! {
     /// is validated again only once one of them changes (a language
     /// server's parts change under it; a run's never do).
     static VALIDATED_PARTS: std::cell::RefCell<PartValidations> = std::cell::RefCell::new(std::collections::HashMap::new());
-    /// module prefix (`sim_session_`) → the part's project-relative file
+    /// module prefix (`sim·session·`) → the part's project-relative file
     static EXPANSION_PARTS: std::cell::RefCell<std::collections::BTreeMap<String, String>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
+    /// module prefix → how the program spells the part (`use sim/clock`
+    /// spells `sim·clock·` `clock`, `use greet as g` spells `greet·` `g`):
+    /// the entry's spelling where the entry imports the part, else its
+    /// first importer's (`ModuleExpansion::spelled`). A message names a
+    /// part's declaration by it (`as_the_program_writes`). Set when a
+    /// program is expanded.
+    pub(crate) static PART_SPELLINGS: std::cell::RefCell<std::collections::BTreeMap<String, String>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     /// the module prefixes of the parts whose own files import ui (`use
     /// ui`, `use web.ui`): in the others an element's name is any name
     static PARTS_WITH_UI: std::cell::RefCell<std::collections::BTreeSet<String>> =
@@ -5698,14 +5872,14 @@ thread_local! {
     /// The same for every part of the entry expanded last, spelled as the
     /// entry spells each part
     static TESTED_BY_PARTS: std::cell::RefCell<TestedCalls> = const { std::cell::RefCell::new(Vec::new()) };
-    /// a module's record, prefixed (`sessions_Day`) → the name it was
+    /// a module's record, prefixed (`sessions·Day`) → the name it was
     /// declared by (`Day`), which a value of it shows
     static DECLARED_RECORDS: std::cell::RefCell<std::collections::BTreeMap<String, String>> =
         const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
 }
 
 /// The name a record was declared by: a module's `Day`, not the
-/// `sessions_Day` its expansion made of it.
+/// `sessions·Day` its expansion made of it.
 pub(crate) fn declared_record_name(name: &str) -> String {
     DECLARED_RECORDS.with(|d| d.borrow().get(name).cloned()).unwrap_or_else(|| name.to_string())
 }
@@ -5827,7 +6001,7 @@ fn unreached_parts_dropped(
     fn words(v: &serde_json::Value, into: &mut std::collections::BTreeSet<String>) {
         match v {
             serde_json::Value::String(s) => {
-                into.extend(s.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).map(str::to_string));
+                into.extend(s.split(|c: char| !name_char(c)).filter(|w| !w.is_empty()).map(str::to_string));
             }
             serde_json::Value::Array(items) => items.iter().for_each(|i| words(i, into)),
             serde_json::Value::Object(fields) => fields.values().for_each(|f| words(f, into)),
@@ -5887,8 +6061,10 @@ struct ModuleExpansion {
     /// part dropped silently had left its names undefined in the entry:
     /// "undefined variable 'sim'" for a `contains[…]` in views/sim.co)
     refused: Vec<String>,
-    /// how the entry writes each declaration of a part it imports, by its
-    /// prefixed name (`lib_tools_greet` is `tools.greet`), for its refusals
+    /// how the program spells each part, by its prefix (`lib·tools·` is
+    /// `tools`, `t` under `use lib.tools as t`): the entry's spelling where
+    /// the entry imports the part, else its first importer's
+    /// (`note_spelling`), for its refusals
     spelled: std::collections::BTreeMap<String, String>,
     /// a package's helpers an import from outside the package does not
     /// bring, by the importer's spelling and the helper's name: the package
@@ -5897,7 +6073,7 @@ struct ModuleExpansion {
     /// crow_modules/), by its prefixed name
     dependency_decls: std::collections::HashSet<String>,
     /// every declaration of a part, by its prefixed name: the part's
-    /// prefix (`lib_tools_greet` is `lib_tools_`'s)
+    /// prefix (`lib·tools·greet` is `lib·tools·`'s)
     part_decls: std::collections::BTreeMap<String, String>,
 }
 
@@ -5906,9 +6082,7 @@ struct ModuleExpansion {
 /// the package — a name that begins with an underscore is its package's
 /// own, reached from the package's own files alone (spec, Importing), so a
 /// program's `llm._talk_of` is refused for that and not rewritten to the
-/// helper (it had run). The entry's spelling of each declaration is noted
-/// for its refusals (a part's own imports are spelled in the part,
-/// validated alone).
+/// helper (it had run).
 fn brought(
     ex: &mut ModuleExpansion,
     source_dir: &std::path::Path,
@@ -5916,11 +6090,6 @@ fn brought(
     spelling: &str,
     names: &std::collections::BTreeMap<String, String>,
 ) -> std::collections::BTreeMap<String, String> {
-    if ex.depth == 0 {
-        for (name, prefixed) in names {
-            ex.spelled.insert(prefixed.clone(), format!("{}.{}", spelling, name));
-        }
-    }
     // (by the directories as the paths reach them, a link followed: a
     // package's own files reach each other through its link or its own path)
     let canon = |p: std::path::PathBuf| std::fs::canonicalize(&p).unwrap_or(p);
@@ -5959,9 +6128,6 @@ thread_local! {
     /// import, as it would be with no import at all. Set when a program is
     /// expanded (the program still links every module its parts import).
     pub(crate) static PART_ONLY_IMPORTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// How the entry writes each declaration of a part it imports
-    /// (`ModuleExpansion::spelled`). Set when a program is expanded.
-    pub(crate) static ENTRY_SPELLED: std::cell::RefCell<std::collections::BTreeMap<String, String>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     /// A package's helpers a file outside the package names, by its
     /// spelling and the helper's name: the package (`ModuleExpansion::
     /// hidden`). Set when a program is expanded.
@@ -5985,52 +6151,10 @@ pub(crate) fn foreign_code(name: &str) -> bool {
 }
 
 /// The function the program called, as it writes it: a standard module's
-/// by its own name (`chat`), a part's or a package's by the entry's
-/// spelling (`llm.chat`), a copy by the function it copies.
+/// by its own name (`chat`), a part's or a package's by the program's
+/// spelling (`greet.loud`), a copy by the function it copies.
 pub(crate) fn called_as(name: &str) -> String {
-    let base = crate::modules::written_as(name);
-    if let Some(spelled) = ENTRY_SPELLED.with(|s| s.borrow().get(&base).cloned()) {
-        return spelled;
-    }
-    match part_prefix_of_declaration(&base) {
-        Some(prefix) => base[prefix.len()..].to_string(),
-        None => base,
-    }
-}
-
-/// The entry's refusal names a part's declaration as the entry writes it
-/// (`'tools.greet'`, not the inlined `'lib_tools_greet'`) and a part's local
-/// as the part does (`m`, not `m__lib_tools`, the name that keeps it apart
-/// from the entry's own `m`): an option's refusal had listed a part
-/// function's parameters as `m__lib_tools, name`.
-pub(crate) fn as_the_entry_writes(msg: &str) -> String {
-    let mut out = msg.to_string();
-    ENTRY_SPELLED.with(|s| {
-        for (prefixed, written) in s.borrow().iter() {
-            for quote in ['\'', '`'] {
-                out = out.replace(&format!("{q}{}{q}", prefixed, q = quote), &format!("{q}{}{q}", written, q = quote));
-            }
-        }
-    });
-    let word = |c: char| c.is_alphanumeric() || c == '_';
-    for prefix in EXPANSION_PARTS.with(|p| p.borrow().keys().cloned().collect::<Vec<_>>()) {
-        // (separate_part_locals' suffix, ended where the name ends)
-        let suffix = format!("__{}", prefix.trim_end_matches('_'));
-        let mut kept = String::with_capacity(out.len());
-        let mut rest = out.as_str();
-        while let Some(i) = rest.find(&suffix) {
-            let after = &rest[i + suffix.len()..];
-            let named = i > 0 && rest[..i].chars().last().is_some_and(word);
-            kept.push_str(&rest[..i]);
-            if !(named && !after.starts_with(word)) {
-                kept.push_str(&suffix);
-            }
-            rest = after;
-        }
-        kept.push_str(rest);
-        out = kept;
-    }
-    out
+    as_the_program_writes(&crate::modules::written_as(name))
 }
 
 /// The standard modules an import makes names from: its own, and `math`
@@ -6108,6 +6232,10 @@ fn expand_into(
         // Expanded already, through another importer: one copy, this
         // file's spelling of it
         if let Some(names) = ex.done.get(&canon).cloned() {
+            // (the part's prefix is what each of its names begins with)
+            if let Some(prefix) = names.iter().find_map(|(local, inlined)| inlined.strip_suffix(local.as_str())) {
+                note_spelling(ex, prefix, &spelling);
+            }
             let names = brought(ex, source_dir, &file_path, &spelling, &names);
             imported.push((spelling, names));
             expanded.push(stmt.clone());
@@ -6172,11 +6300,9 @@ fn expand_into(
         // (read from the path as spelled, before a link is followed: a
         // package linked into crow_modules is a package all the same)
         let package = package_dir(source_dir).or_else(|| package_dir(&root)).and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()));
-        let prefix = match &package {
-            Some(pk) => format!("{}_{}", pk, file_rel.replace('/', "_")),
-            None => file_rel.replace('/', "_"),
-        };
-        note_fn_docs(&format!("{}_", prefix), &source);
+        let prefix = part_prefix(package.as_deref(), &file_rel);
+        note_fn_docs(&prefix, &source);
+        note_spelling(ex, &prefix, &spelling);
         // the baseline attributes each declaration to its part's file
         EXPANSION_PARTS.with(|p| {
             let root = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
@@ -6192,17 +6318,17 @@ fn expand_into(
                 Some(pk) => format!("crow_modules/{}/{}", pk, rel),
                 None => rel,
             };
-            p.borrow_mut().insert(format!("{}_", prefix), rel);
+            p.borrow_mut().insert(prefix.clone(), rel);
         });
         EXPANSION_FILES.with(|f| {
-            f.borrow_mut().insert(format!("{}_", prefix), canon.clone());
+            f.borrow_mut().insert(prefix.clone(), canon.clone());
         });
         PARTS_WITH_UI.with(|u| {
             let mut u = u.borrow_mut();
             if imports_ui {
-                u.insert(format!("{}_", prefix));
+                u.insert(prefix.clone());
             } else {
-                u.remove(&format!("{}_", prefix));
+                u.remove(&prefix);
             }
         });
         // Collect the module's own top-level names, then rewrite both the
@@ -6216,11 +6342,11 @@ fn expand_into(
                 | ast::Stmt::StructDecl { name, .. }
                 | ast::Stmt::Assign { name, .. }
                 | ast::Stmt::Derive { name, .. } => {
-                    local_names.insert(name.clone(), format!("{}_{}", prefix, name));
+                    local_names.insert(name.clone(), format!("{}{}", prefix, name));
                 }
                 ast::Stmt::MultiAssign { names, .. } => {
                     for name in names {
-                        local_names.insert(name.clone(), format!("{}_{}", prefix, name));
+                        local_names.insert(name.clone(), format!("{}{}", prefix, name));
                     }
                 }
                 _ => {}
@@ -6248,7 +6374,7 @@ fn expand_into(
                         rewrite_refs_stmt(st, &local_names, &shadowed);
                     }
                     ex.hoisted.push(ast::Stmt::FnDecl {
-                        name: format!("{}_{}", prefix, name),
+                        name: format!("{}{}", prefix, name),
                         params: params.clone(),
                         defaults: defaults.clone(),
                         body,
@@ -6256,9 +6382,9 @@ fn expand_into(
                     });
                 }
                 ast::Stmt::StructDecl { name, fields } => {
-                    DECLARED_RECORDS.with(|d| d.borrow_mut().insert(format!("{}_{}", prefix, name), name.clone()));
+                    DECLARED_RECORDS.with(|d| d.borrow_mut().insert(format!("{}{}", prefix, name), name.clone()));
                     ex.hoisted.push(ast::Stmt::StructDecl {
-                        name: format!("{}_{}", prefix, name),
+                        name: format!("{}{}", prefix, name),
                         fields: fields.clone(),
                     });
                 }
@@ -6267,7 +6393,7 @@ fn expand_into(
                     let mut value = value.clone();
                     rewrite_refs_expr(&mut value, &local_names, &none);
                     ex.hoisted.push(ast::Stmt::Assign {
-                        name: format!("{}_{}", prefix, name),
+                        name: format!("{}{}", prefix, name),
                         value,
                     });
                 }
@@ -6277,7 +6403,7 @@ fn expand_into(
                         rewrite_refs_expr(v, &local_names, &none);
                     }
                     ex.hoisted.push(ast::Stmt::MultiAssign {
-                        names: names.iter().map(|n| format!("{}_{}", prefix, n)).collect(),
+                        names: names.iter().map(|n| format!("{}{}", prefix, n)).collect(),
                         values,
                     });
                 }
@@ -6289,7 +6415,7 @@ fn expand_into(
                         rewrite_refs_stmt(st, &local_names, &none);
                     }
                     ex.hoisted.push(ast::Stmt::Derive {
-                        name: format!("{}_{}", prefix, name),
+                        name: format!("{}{}", prefix, name),
                         fresh: *fresh,
                         body,
                     });
@@ -6308,11 +6434,11 @@ fn expand_into(
         ex.written.insert(canon.clone(), mod_dir.to_path_buf());
         // (a dependency's file is one the program reaches through
         // crow_modules/, at any depth)
-        if EXPANSION_PARTS.with(|p| p.borrow().get(&format!("{}_", prefix)).is_some_and(|rel| rel.split('/').any(|c| c == "crow_modules"))) {
+        if EXPANSION_PARTS.with(|p| p.borrow().get(&prefix).is_some_and(|rel| rel.split('/').any(|c| c == "crow_modules"))) {
             ex.dependency_decls.extend(local_names.values().cloned());
         }
         for prefixed in local_names.values() {
-            ex.part_decls.insert(prefixed.clone(), format!("{}_", prefix));
+            ex.part_decls.insert(prefixed.clone(), prefix.clone());
         }
         ex.done.insert(canon, local_names.clone());
         let local_names = brought(ex, source_dir, &file_path, &spelling, &local_names);
@@ -6560,7 +6686,7 @@ fn rewrite_qualified_refs_expr(
                 while i < chars.len() {
                     let c = chars[i];
                     if c == '`' { in_span = !in_span; out.push(c); i += 1; continue; }
-                    if in_span && (c.is_alphabetic() || c == '_') && (i == 0 || !(chars[i - 1].is_alphanumeric() || chars[i - 1] == '_' || chars[i - 1] == '.')) {
+                    if in_span && (c.is_alphabetic() || c == '_') && (i == 0 || !(name_char(chars[i - 1]) || chars[i - 1] == '.')) {
                         let rest: String = chars[i..].iter().collect();
                         if rest.starts_with(&needle) {
                             let after = &rest[needle.len()..];
@@ -6873,9 +6999,10 @@ mod module_parts_tests {
     /// The entry's refusal of its call of a part's function names the
     /// function as the entry writes it (`tools.greet`, `t.greet` through an
     /// alias) and its parameters as the part does: `m`, where the entry's
-    /// own `m` had renamed the part's `m__lib_tools` (an option's refusal
+    /// own `m` had renamed the part's `m__lib·tools·` (an option's refusal
     /// had said `'lib_tools_greet' has no parameter named 'nam'
-    /// (parameters: m__lib_tools, name)`).
+    /// (parameters: m__lib_tools, name)`, when a part's names were joined
+    /// by an underscore).
     #[test]
     fn a_call_of_a_parts_function_is_refused_as_the_entry_writes_it() {
         let dir = std::env::temp_dir().join(format!("crow_parts_written_{}", std::process::id()));
@@ -6985,10 +7112,10 @@ mod module_parts_tests {
         let mut visited = std::collections::HashSet::new();
         let stmts = expand_module_imports_checked(&stmts, &dir, &mut visited).unwrap();
         let fns: Vec<&str> = stmts.iter().filter_map(|s| if let ast::Stmt::FnDecl { name, .. } = s { Some(name.as_str()) } else { None }).collect();
-        for f in ["lib_tools_called", "lib_tools_helper", "lib_tools_positive", "lib_tools_shown", "mine"] {
+        for f in ["lib·tools·called", "lib·tools·helper", "lib·tools·positive", "lib·tools·shown", "mine"] {
             assert!(fns.contains(&f), "{} kept, among {:?}", f, fns);
         }
-        assert!(!fns.contains(&"lib_tools_never"), "{:?}", fns);
+        assert!(!fns.contains(&"lib·tools·never"), "{:?}", fns);
         let lowered = lower::lower_program(&stmts).unwrap();
         assert!(infer_and_validate(&lowered, false).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
@@ -7020,7 +7147,7 @@ mod module_parts_tests {
         let mut visited = std::collections::HashSet::new();
         let stmts = expand_module_imports_checked(&stmts, &app, &mut visited).unwrap();
         let fns: Vec<&str> = stmts.iter().filter_map(|s| if let ast::Stmt::FnDecl { name, .. } = s { Some(name.as_str()) } else { None }).collect();
-        for f in ["pk_hello", "pk_mid_twice", "pk_deep_scale", "deep_scale"] {
+        for f in ["pk·hello", "pk·mid·twice", "pk·deep·scale", "deep·scale"] {
             assert!(fns.contains(&f), "{} among {:?}", f, fns);
         }
         let lowered = lower::lower_program(&stmts).unwrap();
@@ -7227,9 +7354,9 @@ mod module_parts_tests {
         let mut ctx = checked.unwrap();
         let program = lower_ir::lower(&lowered, &mut ctx, "parts").unwrap();
         let text = ir::print(&program);
-        assert!(text.contains("pure lib_calc_spread("), "a plain function, not a handler:\n{}", text);
-        assert!(text.contains("let ch__lib_calc: List(Float) = []"), "{}", text);
-        assert!(text.contains("secs__lib_calc: Float"), "{}", text);
+        assert!(text.contains("pure lib·calc·spread("), "a plain function, not a handler:\n{}", text);
+        assert!(text.contains("let ch__lib·calc·: List(Float) = []"), "{}", text);
+        assert!(text.contains("secs__lib·calc·: Float"), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -7259,9 +7386,9 @@ mod module_parts_tests {
             ir::print(&lower_ir::lower(&lowered, &mut ctx, "parts").unwrap())
         };
         let text = ir_of("use lib.tape\ng = tape.cut\nlog['ready']\n");
-        assert!(text.contains("lib_tape_cut(tape: Record(lib_tape_Tape), upto: Float)"), "{}", text);
+        assert!(text.contains("lib·tape·cut(tape: Record(lib·tape·Tape), upto: Float)"), "{}", text);
         let text = ir_of("use lib.tape\nlog['ready']\n");
-        assert!(!text.contains("lib_tape_cut("), "{}", text);
+        assert!(!text.contains("lib·tape·cut("), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -7285,7 +7412,7 @@ mod module_parts_tests {
         let mut ctx = checked.unwrap();
         let program = lower_ir::lower(&lowered, &mut ctx, "parts").unwrap();
         let text = ir::print(&program);
-        assert!(text.contains("let fills__lib_walk: List(Float) = []"), "{}", text);
+        assert!(text.contains("let fills__lib·walk·: List(Float) = []"), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -7315,9 +7442,9 @@ mod module_parts_tests {
         let mut ctx = checked.unwrap();
         let program = lower_ir::lower(&lowered, &mut ctx, "parts").unwrap();
         let text = ir::print(&program);
-        assert!(text.contains("let c__lib_state: Int"), "{}", text);
-        assert!(text.contains("let r__lib_state: Int"), "{}", text);
-        assert!(text.contains("s__lib_state: Int"), "{}", text);
+        assert!(text.contains("let c__lib·state·: Int"), "{}", text);
+        assert!(text.contains("let r__lib·state·: Int"), "{}", text);
+        assert!(text.contains("s__lib·state·: Int"), "{}", text);
         assert!(text.contains("fact c: Int") && text.contains("fact r: Str") && text.contains("fact s: Str"), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -7498,7 +7625,7 @@ mod module_parts_tests {
         let mut visited = std::collections::HashSet::new();
         let stmts = expand_module_imports(&stmts, &dir, &mut visited);
         let text = format!("{:?}", stmts);
-        assert!(text.contains("Str(\"lib_calc_rate\")"), "{}", text);
+        assert!(text.contains("Str(\"lib·calc·rate\")"), "{}", text);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -7559,7 +7686,7 @@ mod module_parts_tests {
         let mut visited = std::collections::HashSet::new();
         let _ = expand_module_imports(&stmts, &dir, &mut visited);
         let text = attribute_to_parts(&[
-            ("line 6: boom".to_string(), Some("sim_part_d".to_string())),
+            ("line 6: boom".to_string(), Some("sim·part·d".to_string())),
             ("line 4: bang".to_string(), Some("render".to_string())),
         ]);
         assert_eq!(text, "sim/part.co: line 6: boom\nline 4: bang");
@@ -7612,17 +7739,17 @@ mod module_parts_tests {
         let mut visited = std::collections::HashSet::new();
         let expanded = expand_module_imports(&stmts, &dir, &mut visited);
         let text = format!("{:?}", expanded);
-        assert_eq!(text.matches("Derive { name: \"sim_clock_head\"").count(), 1, "one copy of the clock, whichever path reached it: {}", text);
-        assert!(text.contains("Derive { name: \"sim_tape_marker\""), "the tape's derivation reads the clock's: {}", text);
-        assert!(text.contains("BinOp { left: Ident(\"sim_clock_head\")"), "the tape's qualified read is rewritten");
-        assert!(text.contains("Derive { name: \"views_sim_label\""), "the page's derivation is prefixed by its path");
-        assert!(text.contains("at `sim_clock_head` x`sim_clock_speed` marker `sim_tape_marker`"), "qualified reads inside interpolation spans are rewritten: {}", text);
-        assert!(text.contains("Ident(\"sim_clock_transport\")"), "a qualified view call is rewritten");
-        assert!(text.contains("names: [\"sim_clock_base\", \"sim_clock_speed\"]"), "a multi-assign in a handler takes the prefix");
-        assert!(text.contains("args: [Str(\"/\"), Ident(\"views_sim_render\")]"), "the entry's page view is rewritten");
-        assert!(text.contains("args: [Ident(\"sim_clock_speed\")]"), "the entry's own direct import reads the same copy: {}", text);
-        assert!(text.contains("Assign { name: \"sim_clock_speed\", value: Float(1.0) }"), "a qualified assignment in another part's handler writes the fact: {}", text);
-        assert!(!text.contains("Ident(\"clock_speed\")") && !text.contains("clock_clock"), "no second prefix, no second copy");
+        assert_eq!(text.matches("Derive { name: \"sim·clock·head\"").count(), 1, "one copy of the clock, whichever path reached it: {}", text);
+        assert!(text.contains("Derive { name: \"sim·tape·marker\""), "the tape's derivation reads the clock's: {}", text);
+        assert!(text.contains("BinOp { left: Ident(\"sim·clock·head\")"), "the tape's qualified read is rewritten");
+        assert!(text.contains("Derive { name: \"views·sim·label\""), "the page's derivation is prefixed by its path");
+        assert!(text.contains("at `sim·clock·head` x`sim·clock·speed` marker `sim·tape·marker`"), "qualified reads inside interpolation spans are rewritten: {}", text);
+        assert!(text.contains("Ident(\"sim·clock·transport\")"), "a qualified view call is rewritten");
+        assert!(text.contains("names: [\"sim·clock·base\", \"sim·clock·speed\"]"), "a multi-assign in a handler takes the prefix");
+        assert!(text.contains("args: [Str(\"/\"), Ident(\"views·sim·render\")]"), "the entry's page view is rewritten");
+        assert!(text.contains("args: [Ident(\"sim·clock·speed\")]"), "the entry's own direct import reads the same copy: {}", text);
+        assert!(text.contains("Assign { name: \"sim·clock·speed\", value: Float(1.0) }"), "a qualified assignment in another part's handler writes the fact: {}", text);
+        assert!(!text.contains("Ident(\"clock·speed\")") && !text.contains("clock·clock"), "no second prefix, no second copy");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -7648,7 +7775,9 @@ fn renamed_spans(s: &str, map: &std::collections::BTreeMap<String, String>, shad
         }
         if in_span && (c.is_alphabetic() || c == '_') && (i == 0 || chars[i - 1] != '.') {
             let start = i;
-            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+            // (an inlined name an inner part's expansion wrote is one name:
+            // `sim·clock·head`'s `clock` is no name of this part's)
+            while i < chars.len() && name_char(chars[i]) {
                 i += 1;
             }
             let word: String = chars[start..i].iter().collect();

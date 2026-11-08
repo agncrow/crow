@@ -1,0 +1,4 @@
+derive board·cards·cards (board/cards.co)
+  reads: board·cards·board_id
+  tables: cards
+  read by: board·cards·board_view, board·page·render

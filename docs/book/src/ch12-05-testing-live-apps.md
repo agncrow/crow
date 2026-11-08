@@ -357,9 +357,9 @@ to, from the declared facts, with each control said once with when it is
 offered.
 
 ```text
-states / (board_page_render)
-  button 'Sign in' → board_door_log_in: when reader = 'nobody'
-  button 'Attach' → board_cards_attach: when board_cards_card_id = * · reader = 'someone'
+states / (board·page·render)
+  button 'Sign in' → board·door·log_in: when reader = 'nobody'
+  button 'Attach' → board·cards·attach: when board·cards·card_id = * · reader = 'someone'
   ...
 ```
 

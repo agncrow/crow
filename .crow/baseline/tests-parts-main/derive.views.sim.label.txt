@@ -1,0 +1,3 @@
+derive views·sim·label (views/sim.co)
+  reads: sim·clock·speed, sim·clock·head, sim·tape·marker
+  read by: views·sim·render

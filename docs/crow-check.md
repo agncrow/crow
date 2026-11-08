@@ -58,9 +58,9 @@ is declared with, written with or offered by an input, or `*`, some other
 value (a number whose only literal is 0 holds a positive one: zero or a
 session), and the signed-in reader is `reader`, which `sign_in` and
 `sign_out` write. The file says each control once, with when it is
-offered — `button 'Buy' → sim_trading_buy: when sim_session_session_id =
-*`, `button '10x' → sim_clock_set_speed[10.0]: when … session_id = *,
-except when sim_clock_speed = 10.0` — so a control that becomes
+offered — `button 'Buy' → sim·trading·buy: when sim·session·session_id =
+*`, `button '10x' → sim·clock·set_speed[10.0]: when … session_id = *,
+except when sim·clock·speed = 10.0` — so a control that becomes
 reachable where it was not ("Buy with no session") is its line changing.
 A closed modal or drawer and a hidden element offer nothing; a guard the
 search cannot judge (a query's cell, a derivation) keeps both ways. The

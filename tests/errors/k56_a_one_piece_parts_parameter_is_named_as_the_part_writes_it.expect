@@ -1,0 +1,7 @@
+k56_a_one_piece_parts_parameter_is_named_as_the_part_writes_it.co:7:18: 'kit.greet' has no parameter named 'nam' (parameters: m, name)
+  7 │ log[kit.greet[m, nam = 'ada']]
+    │                  ^^^
+k56_a_one_piece_parts_parameter_is_named_as_the_part_writes_it.co:8:19: 'greet.loud' has no parameter named 'max' (parameters: m, times)
+  8 │ log[greet.loud[m, max = 2]]
+    │                   ^^^
+2 mistakes

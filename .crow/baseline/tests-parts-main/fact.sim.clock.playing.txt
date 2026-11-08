@@ -1,0 +1,4 @@
+fact sim·clock·playing (sim/clock.co)
+  type: bool
+  written by: sim·clock·play
+  read by: sim·clock·head

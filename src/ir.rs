@@ -348,7 +348,7 @@ pub fn yields_derivative(block: &[Stmt], names: &std::collections::BTreeSet<Stri
 pub struct StructDef {
     pub name: String,
     /// The name the program declared it by, as a value shows it: a
-    /// module's `Day`, which the expansion prefixed `sessions_Day`.
+    /// module's `Day`, which the expansion prefixed `sessions·Day`.
     pub shown: String,
     pub fields: Vec<(String, Ty)>,
 }

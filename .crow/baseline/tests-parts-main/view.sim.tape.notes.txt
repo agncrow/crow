@@ -1,0 +1,8 @@
+view sim·tape·notes (sim/tape.co)
+  composed on: page /
+  reads: sim·clock·note
+  always:
+    row[]
+      p[] 'note `sim·clock·note`'
+      button[click → sim·tape·note_plain] 'plain'
+      button[click → sim·tape·note_count] '7'

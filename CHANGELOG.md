@@ -7,6 +7,19 @@ history says the rest.
 
 ## Unreleased
 
+### Breaking
+
+- A part's declarations are inlined under its path and the name joined
+  by `·` (`sim·clock·head`, `greet·loud`), never by an underscore, a mark
+  no name a program writes holds. An app with parts reports its parts'
+  baseline entries as removed and new until they are accepted once
+  (`crow check`, then `a`), a served app's `.events` script names its
+  handlers and fields so (`board·door·log_in`), as an app's book does
+  (`crow book`: `sim·clock·play`), and a failure's trace names a part's
+  function so (`main.shapes·picky:3`). A program that reached a part's
+  declaration by the spelling it had been inlined as (`greet_loud[…]`
+  for `greet.loud[…]`) is refused, and offered the qualified name.
+
 ### Fixed
 
 - What `crow setup` fetches is said at its size: about 270 MB, the
@@ -15,6 +28,21 @@ history says the rest.
   the getting-started chapter had said 175, 150 and 43. 0.9.0's toolchain
   holds the browser's standard library too (33 MB), and its runtime grew
   by a sixth.
+- A program's own name spelled as a part's was once inlined is the
+  program's: `fn greet_loud` beside `use greet` had been refused in the
+  package's file ("'loud' is declared twice", then "undefined variable
+  'n'"), a record `lib_greet_Greeting` had taken the place of
+  `lib/greet.co`'s `Greeting`, and `views/home.co` beside `views_home.co`
+  had been one prefix. A qualified name reaches a part only through the
+  file's own import: `greet.loud[5]` with no `use greet` had called the
+  program's `fn greet_loud`, and `greet.count` beside `greet_count = 7`
+  stopped as a bug in Crow; both are refused as names nothing declares.
+  A message names a part's declaration as the program spells it
+  (`'g.loud' expects 1 argument, got 2` under `use greet as g`),
+  underlining the call where it had underlined the line.
+  The editor completes a part's function as the program calls it
+  (`calc.total[x]`, where it had offered `lib_calc_total[x__lib_calc]`),
+  and its outline is the document's own declarations.
 
 ## v0.9.0 — 2026-11-08
 

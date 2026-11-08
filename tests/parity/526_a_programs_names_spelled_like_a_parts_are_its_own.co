@@ -1,0 +1,27 @@
+--- A program's own names spelled as a part's declarations were once
+--- inlined are the program's own (spec, Importing): `lib/greet.co`'s
+--- `loud` had been `lib_greet_loud` inside the program, so the program's
+--- own `fn lib_greet_loud` was refused in the part's file ("'loud' is
+--- declared twice") and its `lib_greet_count` was the part's `count`
+--- given again; and `lib/shop/cart.co` beside `lib/shop_cart.co` had
+--- been one prefix, their `total`s one name. A part's declaration is its
+--- path and its name joined by a mark no name holds (`lib·greet·loud`),
+--- in both modes.
+use lib/greet
+use lib/shop/cart
+use lib/shop_cart
+
+struct lib_greet_Greeting [words, times]
+
+fn lib_greet_loud[n]
+    return n * 10
+
+lib_greet_count = 7
+
+log[greet.loud['a']]
+log[lib_greet_loud[5]]
+log[greet.count + lib_greet_count]
+log[greet.make['hi'].words]
+log[lib_greet_Greeting['ho', 3].times]
+log[cart.total[[1, 2, 3]]]
+log[shop_cart.total[[1, 2, 3]]]

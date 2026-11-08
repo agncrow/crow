@@ -1,0 +1,5 @@
+handler board·door·log_out (board/door.co)
+  wired: board·door·door button 'Sign out'
+  always:
+    effect sign_out 
+    calls board·store·note[board·door·book, __reader[].name, 'signed out']

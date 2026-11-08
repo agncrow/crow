@@ -1,0 +1,10 @@
+handler board·cards·make_board (board/cards.co)
+  wired: board·cards·boards_view button 'Make'
+  when (__reader[].role neq 'admin'):
+    effect notice 'only an admin makes boards'
+  when (board·cards·new_board eq '') and (not (__reader[].role neq 'admin')):
+    nothing
+  when (not (__reader[].role neq 'admin')) and (not (board·cards·new_board eq '')):
+    board·cards·new_board := ''
+    effect query board·cards·book 'INSERT INTO boards (name) VALUES (?)' [board·cards·new_board]
+    calls board·store·note[board·cards·book, __reader[].name, 'made the board `board·cards·new_board`']

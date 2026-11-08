@@ -404,12 +404,11 @@ impl<'c> Uses<'c> {
                         }
                     }
                     // a frame handed to a function: the function's body reads
-                    // the caller's frame through its parameter
-                    let key = match module.as_deref() {
-                        Some(m) => format!("{}_{}", m, name),
-                        None => name.clone(),
-                    };
-                    if self.ctx.functions.contains_key(&key) {
+                    // the caller's frame through its parameter (a function
+                    // of the program's is called by its name: a part's as the
+                    // expansion wrote it)
+                    let key = name.clone();
+                    if module.is_none() && self.ctx.functions.contains_key(&key) {
                         for (i, a) in positional.iter().enumerate() {
                             if let Some(frame) = frame_of(a, env) {
                                 // (with the columns the caller wrote on it)
@@ -530,12 +529,9 @@ impl<'c> Uses<'c> {
     /// own body reads the parameter as; a builtin's row where every row
     /// agrees.
     fn handed_says(&mut self, module: Option<&str>, name: &str, at: usize, argc: usize) -> Vec<(Ty, bool)> {
-        let key = match module {
-            Some(m) => format!("{}_{}", m, name),
-            None => name.to_string(),
-        };
+        let key = name.to_string();
         let ctx: &'c TypeContext = self.ctx;
-        if let Some(sig) = ctx.functions.get(&key) {
+        if let Some(sig) = ctx.functions.get(&key).filter(|_| module.is_none()) {
             if let Some((_, t)) = sig.params.get(at) {
                 if definite(t) {
                     // (an int the signature says is asked of the file only

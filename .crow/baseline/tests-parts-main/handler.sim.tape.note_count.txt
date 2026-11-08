@@ -1,0 +1,4 @@
+handler sim·tape·note_count (sim/tape.co)
+  wired: sim·tape·notes button '7'
+  always:
+    sim·clock·note := str[7]

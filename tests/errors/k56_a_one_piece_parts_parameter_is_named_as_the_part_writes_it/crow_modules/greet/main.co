@@ -1,0 +1,3 @@
+--- a package of one file: a function whose parameter the entry also names
+fn loud[m, times = 1]
+    return upper[m]

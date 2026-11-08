@@ -1,0 +1,5 @@
+--- a call through a module's name the program never imports is refused, whatever the program declares: `greet.loud[5]` with no `use greet` had called the program's own `fn greet_loud`, the spelling a part's declaration was once inlined under (a part's names are joined by `·` now, and the lowering looked `m.f` up as `m_f`)
+fn greet_loud[n]
+    return n * 10
+
+log[greet.loud[5]]

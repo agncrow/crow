@@ -1,0 +1,5 @@
+fact board·cards·comment (board/cards.co)
+  type: str
+  written by: board·cards·post
+  bound by: board·cards·card_view
+  read by: board·cards·card_view, board·cards·post, board·page·render

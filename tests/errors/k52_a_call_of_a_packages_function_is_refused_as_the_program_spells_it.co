@@ -1,0 +1,6 @@
+--- a call of a package's function given more arguments than it takes is refused by the name the program wrote, the import's alias and the function (`g.loud`) — it had named the inlined `greet_loud`, which the program never wrote, and underlined the whole line
+--- mistakes: 2
+use greet as g
+
+log[g.loud['a', 'b']]
+log[g.hello['ada', 'bob']]

@@ -187,29 +187,32 @@ fn is_source(e: &Expr) -> bool {
 /// The fact an address names — a part's by its path (`session.day`) or its
 /// last name (`:day`) — as the served page resolves it: the one rule the
 /// check, both backends and the read sets call. A part's fact is its
-/// prefix and the name, so `:model_name` is `myna_models_model_name` and
-/// never `myna_models_new_model_name`, which ends with the same words: read
-/// by the end alone, the two had been ambiguous and the interpreted page
-/// refused at start, while the compiled one served (Myna's model page,
-/// 2026-11-06). Where no part's prefix is known (a lone file), the one fact
-/// ending in the name is it.
+/// prefix and the name, so `:model_name` is `myna·models·model_name` and
+/// never `myna·models·new_model_name`, which ends with the same words (read
+/// by the end alone when the prefix joined with an underscore, the two had
+/// been ambiguous and the interpreted page refused at start, while the
+/// compiled one served: Myna's model page, 2026-11-06). Where no part's
+/// prefix is known (a lone file), the one fact ending in the joiner and
+/// the name is it.
 /// Whether a part's fact (its prefix, then its own name) is the one
 /// written: its own name is the written path's last segment, and the
 /// segments before it, if any, end the part's prefix (`notebooks.current`
-/// is `myna_notebooks_` and `current`).
+/// is `myna·notebooks·` and `current`).
 fn of_part(prefix: &str, own: &str, written: &str) -> bool {
     let (lead, last) = written.rsplit_once('.').unwrap_or(("", written));
     if own != last {
         return false;
     }
-    let lead = lead.replace('.', "_");
-    let part = prefix.trim_end_matches('_');
-    lead.is_empty() || part == lead || part.ends_with(&format!("_{}", lead))
+    let join = crate::PART_JOIN.to_string();
+    let lead = lead.replace('.', &join);
+    let part = prefix.trim_end_matches(crate::PART_JOIN);
+    lead.is_empty() || part == lead || part.ends_with(&format!("{}{}", join, lead))
 }
 
 pub(crate) fn address_fact<'a>(name: &str, facts: impl IntoIterator<Item = &'a String>) -> Option<String> {
-    let flat = name.replace('.', "_");
-    let suffix = format!("_{}", flat);
+    let join = crate::PART_JOIN.to_string();
+    let flat = name.replace('.', &join);
+    let suffix = format!("{}{}", join, flat);
     let mut exact = None;
     let mut by_part = Vec::new();
     let mut by_end = Vec::new();
@@ -398,7 +401,7 @@ pub fn interpolation_exprs(s: &str) -> Vec<Expr> {
             if j >= chars.len() { break; }
             i = j + 1;
             if span.trim().is_empty() { continue; }
-            if let Ok(tokens) = crate::lexer::Lexer::new(&span).tokenize() {
+            if let Ok(tokens) = crate::lexer::Lexer::joined(&span).tokenize() {
                 if let Ok(stmts) = crate::parser::Parser::for_fragment(tokens).parse() {
                     let stmts = crate::lower::lower_fragment(&stmts).unwrap_or(stmts);
                     for st in stmts {

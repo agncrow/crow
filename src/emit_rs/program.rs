@@ -1012,7 +1012,7 @@ impl Emitter {
         }
     }
 
-    /// A user module's top-level values (`mymath_pi`), printed as consts.
+    /// A user module's top-level values (`mymath·pi`), printed as consts.
     /// A standard module hoists no value (the inliner carries its functions
     /// and records alone), so its prefix names none: a program's own
     /// `mcp_s = server[…]` had been printed as a const and the compiled
@@ -1025,7 +1025,7 @@ impl Emitter {
         let mut any = false;
         for s in &main {
             if let Stmt::Let { var, expr, .. } = s {
-                let prefixed = self.modules.iter().filter(|m| crate::modules::module_by_path(m).is_none()).any(|m| var.starts_with(&format!("{}_", m)));
+                let prefixed = self.modules.iter().filter(|m| crate::modules::module_by_path(m).is_none()).any(|m| var.starts_with(&crate::part_prefix(None, &m.replace('.', "/"))));
                 // (a constant holds a literal alone: a module's value that is
                 // a call or a list — `four = double[2]`, `primes = [2, 3, 5]`
                 // — stays the program's first lines, computed as it starts,

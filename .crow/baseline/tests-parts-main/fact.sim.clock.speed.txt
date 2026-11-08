@@ -1,0 +1,4 @@
+fact sim·clock·speed (sim/clock.co)
+  type: float
+  written by: sim·clock·faster, views·sim·quick, views·sim·set_speed, views·sim·slow, views·sim·twice
+  read by: sim·clock·head, views·sim·label

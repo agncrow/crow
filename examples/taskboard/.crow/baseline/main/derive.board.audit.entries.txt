@@ -1,0 +1,4 @@
+derive board·audit·entries (board/audit.co)
+  reads: nothing
+  tables: audit
+  read by: board·audit·log_view, board·page·render

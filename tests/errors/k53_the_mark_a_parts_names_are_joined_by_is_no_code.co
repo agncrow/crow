@@ -1,0 +1,3 @@
+--- the mark that joins a part's path and its names inside the program (`greet·loud`) is no character a program writes, inside an interpolation as outside one: a program reaches a part's names through the part (`greet.loud`)
+x = 'a'
+log['`greet·loud[x]`']

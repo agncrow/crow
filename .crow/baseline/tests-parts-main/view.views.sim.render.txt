@@ -1,0 +1,11 @@
+view views·sim·render (views/sim.co)
+  composed on: page /
+  reads: sim·clock·note, views·sim·label
+  always:
+    stack[]
+      p[class = 'h'] views·sim·label
+      @sim·clock·transport[]
+      button[click → views·sim·slow] '1x'
+      button[click → views·sim·twice] '2x'
+      button[click → views·sim·quick] '20.5x'
+      @sim·tape·notes[]

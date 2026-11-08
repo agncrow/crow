@@ -18,12 +18,16 @@ pub fn completions(a: &Analysis) -> Vec<CompletionItem> {
     let mut items: Vec<CompletionItem> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
-    for (name, sig) in &a.ctx.functions {
+    for (inlined, sig) in &a.ctx.functions {
         // Function completion inserts the full call with every parameter as
         // a tab-stopped placeholder — tab through to accept the names
         // (which resolve when same-named facts are in scope: the threading
         // idiom typed for you), or type over any slot. The committed code
-        // is always the fully explicit call.
+        // is always the fully explicit call. A part's function is offered
+        // as the program calls it (`greet.loud`), never as it is inlined
+        // (`greet·loud`, which no program can write), and its parameters
+        // by their names in the part (`x`, not the renamed `x__greet·`).
+        let name = &crate::as_the_program_writes(inlined);
         if seen.insert(name.to_string()) {
             let insert = if sig.params.is_empty() {
                 format!("{}[]", name)
@@ -32,7 +36,7 @@ pub fn completions(a: &Analysis) -> Vec<CompletionItem> {
                     .params
                     .iter()
                     .enumerate()
-                    .map(|(i, (p, _))| format!("${{{}:{}}}", i + 1, p))
+                    .map(|(i, (p, _))| format!("${{{}:{}}}", i + 1, crate::as_the_program_writes(p)))
                     .collect();
                 format!("{}[{}]", name, slots.join(", "))
             };
@@ -58,17 +62,13 @@ pub fn completions(a: &Analysis) -> Vec<CompletionItem> {
         }
     };
 
-    for (name, s) in &a.ctx.structs {
-        push(
-            name,
-            CompletionItemKind::STRUCT,
-            Some(struct_detail(name, s)),
-            &mut items,
-        );
+    for (inlined, s) in &a.ctx.structs {
+        let name = &crate::as_the_program_writes(inlined);
+        push(name, CompletionItemKind::STRUCT, Some(struct_detail(name, s)), &mut items);
     }
     for (name, ty) in &a.ctx.vars {
         push(
-            name,
+            &crate::as_the_program_writes(name),
             CompletionItemKind::VARIABLE,
             Some(type_name(ty)),
             &mut items,
@@ -217,8 +217,12 @@ pub fn document_symbols(a: &Analysis) -> Vec<DocumentSymbol> {
     for stmt in &a.stmts {
         match stmt {
             Stmt::Line(n) => line = *n,
-            // (a standard module's functions, inlined, are not the document's)
+            // (a standard module's functions, inlined, are not the document's,
+            // nor a part's declarations, inlined as `calc·total`: their lines
+            // are the part's file's)
             Stmt::FnDecl { name, .. } if crate::modules::is_crow_fn(name) => {}
+            Stmt::FnDecl { name, .. } | Stmt::StructDecl { name, .. } | Stmt::Assign { name, .. }
+                if name.contains(crate::PART_JOIN) => {}
             Stmt::FnDecl { name, is_view, .. } => {
                 out.push(symbol(
                     name,
@@ -298,7 +302,7 @@ fn fn_signature(name: &str, sig: &crate::type_infer::FnSig) -> String {
     let params: Vec<String> = sig
         .params
         .iter()
-        .map(|(p, t)| format!("{}: {}", p, type_name(t)))
+        .map(|(p, t)| format!("{}: {}", crate::as_the_program_writes(p), type_name(t)))
         .collect();
     format!(
         "fn {}[{}] -> {}",
@@ -452,7 +456,7 @@ pub fn signature_help(a: &Analysis, line: u32, character: u32) -> Option<lsp_typ
         .params
         .iter()
         .map(|(p, ty)| lsp_types::ParameterInformation {
-            label: lsp_types::ParameterLabel::Simple(format!("{}: {}", p, type_name(ty))),
+            label: lsp_types::ParameterLabel::Simple(format!("{}: {}", crate::as_the_program_writes(p), type_name(ty))),
             documentation: None,
         })
         .collect();
@@ -493,6 +497,40 @@ mod param_fill_tests {
         // on `calc`: the part's file itself
         let loc = definition(&a, Position { line: 1, character: 5 }, &here).expect("found");
         assert!(loc.uri.as_str().ends_with("lib/calc.co") && loc.range.start.line == 0, "{:?}", loc);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A part's function is offered as the program calls it, never as it
+    /// is inlined (`calc·total`, which no program can write).
+    #[test]
+    fn a_parts_function_is_completed_as_the_program_calls_it() {
+        let dir = std::env::temp_dir().join(format!("crow_lsp_part_completion_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/calc.co"), "fn total[x]\n    return x * 2.0\n").unwrap();
+        let a = crate::lsp::analysis::analyze("use lib.calc\nx = calc.total[2.0]\n", Some(&dir), None, "main.co");
+        let items = completions(&a);
+        let item = items.iter().find(|i| i.label == "calc.total").expect("offered");
+        assert_eq!(item.insert_text.as_deref(), Some("calc.total[${1:x}]"));
+        let detail = item.detail.as_deref().unwrap_or_default();
+        assert!(detail.starts_with("fn calc.total[x: "), "{}", detail);
+        assert!(!items.iter().any(|i| i.label.contains(crate::PART_JOIN)), "{:?}", items.iter().map(|i| &i.label).collect::<Vec<_>>());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The outline is the document's own declarations: a part's, inlined
+    /// into the analysed program, are its file's.
+    #[test]
+    fn a_parts_declarations_are_not_in_the_documents_outline() {
+        let dir = std::env::temp_dir().join(format!("crow_lsp_part_outline_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/calc.co"), "struct Pair [a, b]\n\nrate = 2.0\n\nfn total[x]\n    return x * rate\n").unwrap();
+        let a = crate::lsp::analysis::analyze("use lib.calc\n\nfn mine[y]\n    return y\n\nx = calc.total[mine[2.0]]\n", Some(&dir), None, "main.co");
+        let names: Vec<String> = document_symbols(&a).into_iter().map(|s| s.name).collect();
+        assert_eq!(names, vec!["mine".to_string(), "x".to_string()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
