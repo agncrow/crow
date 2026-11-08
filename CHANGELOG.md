@@ -5,7 +5,15 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
-## Unreleased
+## v0.9.0 — 2026-11-08
+
+The numbers beyond the language, and what calls a language model, leave
+Crow for repositories of their own. Pie (github.com/agncrow/pie) holds the
+networks, the statistics and the models, each held to the library it
+follows: PyTorch in float64, scipy, scikit-learn. Raven
+(github.com/agncrow/raven) holds llm, mcp and the agents. Crow keeps the
+tensor and the frame, their kernels, the GPU and `grad`. A program builds
+for the browser, and a network trained under `gpu[]` stays on the GPU.
 
 ### Breaking
 
@@ -28,6 +36,47 @@ history says the rest.
   package's own, as a standard module's helper is: a file outside the
   package that names it is refused, and told to call what the package
   exports.
+- `qr[a]` of a tall matrix answers the reduced Q, as numpy's does by
+  default: an m × n Q beside an n × n R, whose product is the matrix. The
+  full m × m Q had not multiplied with R.
+- Under `gpu[]`, more runs on the GPU, in f32. A tensor made of a list or
+  of a frame's columns had stayed on the CPU, and so had every operation
+  meeting a view or two shapes that broadcast, so their answers had been
+  f64's. A program that writes no `gpu[]` answers the CPU's digits as
+  before.
+
+### Added
+
+- `crow build --target web` builds a program for the browser: wasm32,
+  with `crow.js` and `index.html` beside it. The page draws with WebGL2
+  through `sys.paint`, and `sys.frames` hands the program each frame's
+  input, text and controllers, and whether a headset can be entered (Lory,
+  a graphics engine written in Crow, stands on it).
+- Under `gpu[]`, what is computed from a tensor on the GPU stays there:
+  - every element-wise operator and function, over two shapes that
+    broadcast;
+  - a view, read through its strides;
+  - the matrix product, which reads a transposed weight where it lies;
+  - the reductions along an axis, a gather by positions, an extreme's
+    places;
+  - `grad`'s backward pass.
+
+  So a network trained under `gpu[]` stays on the GPU from its parameters
+  to its optimizer's step. Kernels compile once, up to 64 operations go
+  in one pass, and a buffer let go is kept for the next tensor of its
+  size. The specification says when the GPU pays: a small model trains
+  faster on the CPU.
+- `grad` differentiates what a network written in Crow reads:
+  - a tensor's numbers at a tensor of positions, summed where a position
+    is read twice;
+  - a collecting loop, run in order;
+  - a mask and `where`'s two sides, `stack`, `log1p` and `expm1`;
+  - a list of traced values made a tensor;
+  - a list or a record that holds traced tensors;
+  - a draw inside the function.
+
+  What carries no derivative (sizes, positions, constants) meets any
+  builtin there, and `log` inside the function prints.
 
 ### Fixed
 
@@ -49,6 +98,43 @@ history says the rest.
 - `args[]` answers the words after the source file whatever crow's
   binary is named. A crow under another name had answered its own
   arguments too, interpreted.
+- Records. A field a function keeps, with its answer written back, is
+  taken where it lies rather than copied: `c.verts = quad[c.verts, …]`
+  had copied every vertex drawn before each box, a frame a second
+  compiled. A record handed whole to a function that keeps it is handed,
+  and a lent record kept in a field is copied there. A field or an item
+  given the answer of a function that answers nothing is refused.
+- Values that can fail. One lands as its payload in a parameter, and in
+  a top-level variable whose first value could not fail. An int that can
+  fail widens to a float.
+- Numbers.
+  - A JSON number reads as the float its digits name.
+  - A sine and a cosine are each their own libm call, so no build fuses
+    them into one that rounds differently.
+  - A NaN survives `max` and `min` along an axis on the GPU.
+- Types.
+  - A tensor whose rank no type states reaches the copy of a function of
+    its own rank, or stops naming the ranks the copies hold.
+  - A list made as `[]` takes the kind its items are later met or pushed
+    with, in a local, a field, or the parameter of the function that
+    makes the record.
+  - A list no line of the program ever gives an item holds no value ever,
+    in both modes: a loop over it runs no rounds, a collecting loop over
+    it is the list of no items, an index into it stops past its end, and
+    code that would read an item never runs, so it is held to no kind. A
+    chart given no overlays had been refused (`text has no field
+    'styles'`), a record's list field filled only by code no call reaches
+    had not built compiled, and a loop over an item of such a list had
+    been refused (`… has no kind to walk`).
+  - A value walked by reference is encoded as itself.
+  - A part's alias is the part's alone, and a module's constant read
+    through the module is the number it holds.
+- Speed. Every interpolation's lowering shares the program's signatures
+  (Myna starts in 55 s, from 134), and a pattern compiles once per
+  thread.
+- The rest are held by parity programs 470–487 and 490–525, errors j80,
+  k36–k37 and k40–k50, and the tests web_target, sine_alone, program_args
+  and uncalled_literal_rank.
 
 ## v0.8.2 — 2026-11-07
 
