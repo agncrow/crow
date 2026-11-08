@@ -2577,6 +2577,20 @@ impl<'a> Lowerer<'a> {
                 {
                     self.v.call_answered.insert((self.current_fn.clone(), name.clone()));
                 }
+                if reads_a_field(value) {
+                    self.v.call_answered.insert((self.current_fn.clone(), name.clone()));
+                }
+                if self.pass != Pass::Final {
+                    let key = (self.current_fn.clone(), name.clone());
+                    match field_read(value) {
+                        Some(place) => {
+                            self.v.list_from.insert(key, place);
+                        }
+                        None => {
+                            self.v.list_from.remove(&key);
+                        }
+                    }
+                }
                 // (a standard module's function, inlined, has locals of its
                 // own: one named like a derivation of the program's is still
                 // its local — the ClickHouse driver's `found`, which finch
@@ -3270,6 +3284,9 @@ impl<'a> Lowerer<'a> {
                     let unknown_items = matches!(it.ty().payload(), Ty::List(e) if **e == Ty::Unknown);
                     if unknown_items {
                         self.v.unknown_items.insert(var.clone());
+                        if let Some(place) = walked_place(iter) {
+                            self.v.item_of.insert(var.clone(), place);
+                        }
                     }
                     let before = self.detailed_in_view();
                     if self.reads_ahead(&before, body) {
@@ -3296,6 +3313,7 @@ impl<'a> Lowerer<'a> {
                     }
                     if unknown_items {
                         self.v.unknown_items.remove(var.as_str());
+                        self.v.item_of.remove(var.as_str());
                     }
                     let b = b?;
                     let end = self.detailed_now(&before);
@@ -3857,7 +3875,11 @@ impl<'a> Lowerer<'a> {
         // to type, and one no call has typed answers a list of nothing known
         // — `m = _floats[v.camera]` in a function reached from the program's
         // top level, judged in a test that reaches it by no call; Lory's
-        // `walk`)
+        // `walk` — nor one read from a record's field: its items are what
+        // the record's makers give it, and a maker no call types gives a
+        // list of nothing known — `tops = s.lists['max_lrs']` in pie's
+        // lr_scheduler checked alone, the field given by `cyclic_lr`, which
+        // nothing in the part calls)
         let answered = self.v.call_answered.contains(&(self.current_fn.clone(), name.clone()));
         if grown || untyped || answered {
             return;
@@ -3908,6 +3930,40 @@ impl<'a> Lowerer<'a> {
     /// A parsed value handed to a parameter, or a parameter typed by
     /// nothing, read in the body as a kind: noted for the function's tool
     /// schema (`tool_schema`).
+    /// The items of a list never given one are of the kind an operator met
+    /// one with (`k lte epoch`): the list's place takes a list of them — the
+    /// function's parameter, a local, a record's field. What a caller hands
+    /// that parameter takes it in turn (`TypeContext::note_call`).
+    fn items_are(&mut self, place: &(String, Option<String>), kind: Ty) {
+        let list = Ty::List(Box::new(kind));
+        let kindless = |t: &Ty| matches!(t, Ty::List(e) if **e == Ty::Unknown);
+        let (name, field) = place;
+        match field {
+            None => {
+                if let Some(sig) = self.ctx.functions.get_mut(&self.current_fn)
+                    && let Some((_, t)) = sig.params.iter_mut().find(|(p, _)| p == name)
+                {
+                    if kindless(t) {
+                        *t = list.clone();
+                    }
+                    if self.ctx.vars.get(name).is_some_and(kindless) {
+                        self.ctx.vars.insert(name.clone(), list);
+                    }
+                } else if self.ctx.vars.get(name).is_some_and(kindless) {
+                    self.ctx.vars.insert(name.clone(), list);
+                }
+            }
+            Some(field) => {
+                if let Some(Ty::Record(r) | Ty::OptRecord(r)) = self.ctx.vars.get(name).map(|t| t.payload().clone())
+                    && let Some(slot) = self.ctx.structs.get_mut(&r).and_then(|s| s.fields.iter_mut().find(|(f, _)| f == field))
+                    && kindless(&slot.1)
+                {
+                    slot.1 = list;
+                }
+            }
+        }
+    }
+
     fn note_param_read(&mut self, expr: &Expr, kind: &Ty) {
         let local = match expr {
             Expr::Convert { expr: inner, .. } => inner.as_ref(),
@@ -4767,6 +4823,105 @@ impl<'a> Lowerer<'a> {
         out
     }
 
+    /// A call handing a tensor whose rank nothing states to a function
+    /// copied per rank, where the copies differ in that argument's rank
+    /// alone and answer one kind: the copy of the value's rank, chosen as
+    /// the program runs (`__has_rank`), in both modes — and where none has
+    /// it, the check that stops naming the function (`__of_rank`, which the
+    /// call hands the argument through). The copy inference met first had
+    /// been the one, and a value another copy takes stopped: pie's
+    /// `nll_loss_each` handed a matrix of unknown rank to `_rows`, whose
+    /// first copy holds a vector (parity 505).
+    fn by_rank(&mut self, name: &str, resolved: &str, sig: &crate::type_infer::FnSig, lowered: &[Expr], ty: &Ty, propagates: bool) -> Option<Expr> {
+        let checked: Vec<usize> = lowered.iter().enumerate().filter(|(_, x)| matches!(x, Expr::Call { target: Target::Row(r), .. } if std::ptr::eq(*r, crate::table::rank_held()))).map(|(i, _)| i).collect();
+        let [i] = checked[..] else { return None };
+        // (an argument that can fail is the call's value where it fails, and
+        // an answer that can fail has no placeholder: both keep the check)
+        if ty.is_result() || lowered.iter().any(|x| x.ty().is_result()) {
+            return None;
+        }
+        let zero = match ty {
+            Ty::Tensor(..) => Expr::Call { target: Target::Row(crate::table::no_numbers()), args: Vec::new(), ty: ty.clone(), propagates: false },
+            other => Self::zero_of(other)?,
+        };
+        let rank_of = |t: &Ty| match t {
+            Ty::Tensor(item, Some(dims)) if **item == Ty::Float => Some(dims.len()),
+            _ => None,
+        };
+        let own = sig.params.iter().map(|(_, t)| t.clone()).collect::<Vec<Ty>>();
+        let mut copies: Vec<(String, usize)> = Vec::new();
+        for (_, copy) in self.ctx.specializations.get(name)? {
+            let Some(other) = self.ctx.functions.get(copy) else { continue };
+            let theirs: Vec<Ty> = other.params.iter().map(|(_, t)| t.clone()).collect();
+            let alike = theirs.len() == own.len() && theirs.iter().zip(&own).enumerate().all(|(k, (a, b))| k == i || a == b);
+            if !alike || other.return_type != *ty {
+                continue;
+            }
+            if let Some(r) = rank_of(&theirs[i])
+                && !copies.iter().any(|(_, s)| *s == r)
+            {
+                copies.push((copy.clone(), r));
+            }
+        }
+        if copies.len() < 2 {
+            return None;
+        }
+        // (each argument once, in the program's order)
+        let mut held = Vec::with_capacity(lowered.len());
+        let mut raw = None;
+        for (k, x) in lowered.iter().enumerate() {
+            let value = match x {
+                Expr::Call { args, .. } if k == i => args[0].clone(),
+                other => other.clone(),
+            };
+            let t = self.fresh();
+            let vty = value.ty();
+            self.pre.push(Stmt::Let { var: t.clone(), ty: vty.clone(), expr: value });
+            self.scopes.last_mut().unwrap().insert(t.clone());
+            self.ctx.vars.insert(t.clone(), vty.clone());
+            if k == i {
+                raw = Some((t.clone(), vty.clone()));
+            }
+            held.push(Expr::Local(t, vty));
+        }
+        let (s, sty) = raw?;
+        let out = self.fresh();
+        self.pre.push(Stmt::Let { var: out.clone(), ty: ty.clone(), expr: zero });
+        self.scopes.last_mut().unwrap().insert(out.clone());
+        self.ctx.vars.insert(out.clone(), ty.clone());
+        // (where no copy has the value's rank: the one the call resolved to,
+        // through the check, which names every rank the copies hold)
+        let ranks = copies.iter().fold(0i64, |m, (_, r)| m | 1i64.checked_shl(u32::try_from(*r).unwrap_or(u32::MAX)).unwrap_or(0));
+        let mut checked_args = held.clone();
+        checked_args[i] = match &lowered[i] {
+            Expr::Call { target, args, ty: cty, propagates } => {
+                let mut args = args.clone();
+                args[0] = Expr::Local(s.clone(), sty.clone());
+                args[1] = Expr::Const(Const::Int(ranks), Ty::Int);
+                Expr::Call { target: target.clone(), args, ty: cty.clone(), propagates: *propagates }
+            }
+            other => other.clone(),
+        };
+        let mut chain = vec![Stmt::Set { var: out.clone(), expr: Expr::Call { target: Target::User(resolved.to_string()), args: checked_args, ty: ty.clone(), propagates } }];
+        for (copy, r) in copies.iter().rev() {
+            let mut args = held.clone();
+            let Some(p) = self.ctx.functions.get(copy).map(|f| f.params[i].1.clone()) else { continue };
+            args[i] = Expr::Local(s.clone(), p);
+            let cond = Expr::Call { target: Target::Row(crate::table::rank_is()), args: vec![Expr::Local(s.clone(), sty.clone()), Expr::Const(Const::Int(i64::try_from(*r).unwrap_or(i64::MAX)), Ty::Int)], ty: Ty::Bool, propagates: false };
+            let then = vec![Stmt::Set { var: out.clone(), expr: Expr::Call { target: Target::User(copy.clone()), args, ty: ty.clone(), propagates } }];
+            chain = vec![Stmt::If { cond, then, els: Some(chain) }];
+        }
+        self.pre.extend(chain);
+        let current = self.current_fn.clone();
+        for (copy, _) in &copies {
+            self.call_lines.entry((current.clone(), copy.clone())).or_insert(self.v.line);
+            self.calls.entry(current.clone()).or_default().insert(copy.clone());
+        }
+        self.call_lines.entry((current.clone(), resolved.to_string())).or_insert(self.v.line);
+        self.calls.entry(current).or_default().insert(resolved.to_string());
+        Some(Expr::Local(out, ty.clone()))
+    }
+
     /// An int handed where a record or none is held — a field only ever
     /// given 0 (`t.right` of `Node[5, leaf, 0]`) handed to a function whose
     /// parameter holds a record or none: checked first, 0 being none and
@@ -4954,6 +5109,53 @@ impl<'a> Lowerer<'a> {
                     r = self.lower_expr(&as_mask(right))?;
                 }
                 let right_pre = std::mem::replace(&mut self.pre, outer);
+                // an item of a list never given one, met by an operator with
+                // a number, is that number's kind, and the list it is walked
+                // from holds them: its place takes the list — a parameter, a
+                // local, a record's field (parity 502: held as text, `k lte
+                // epoch` over a record's milestones no schedule had given one
+                // had not built compiled — pie's lr_scheduler)
+                if self.pass != Pass::Final && !joins {
+                    for (side, other) in [(left.as_ref(), &r), (right.as_ref(), &l)] {
+                        let kind = match other.ty().payload() {
+                            kind @ (Ty::Int | Ty::Float) => kind.clone(),
+                            _ => continue,
+                        };
+                        if let A::Ident(k) = side
+                            && self.v.unknown_items.contains(k)
+                            && let Some(place) = self.v.item_of.get(k).cloned()
+                        {
+                            self.items_are(&place, kind.clone());
+                        }
+                        // (and an item read by its position out of a list a
+                        // local read from a record's field holds, or out of
+                        // a parameter's: the field, or the parameter, takes
+                        // the kind — `tops[i] * 2.0` of `tops =
+                        // s.lists['max_lrs']`, the field given by a maker no
+                        // call types; parity 508: the compiled program had
+                        // held the item as nothing, `() * f64`)
+                        if let A::Call { callee, args } = side
+                            && args.len() == 1
+                            && let A::Ident(xs) = callee.as_ref()
+                            && !self.calls_fn(xs)
+                        {
+                            let held = self.ctx.vars.get(xs).map(|t| t.payload().clone());
+                            let kindless = matches!(&held, Some(Ty::List(e)) if **e == Ty::Unknown);
+                            let param = self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(p, _)| p == xs));
+                            if let Some((holder, field, depth)) = self.v.list_from.get(&(self.current_fn.clone(), xs.clone())).cloned()
+                                && (kindless || held == Some(Ty::Unknown))
+                                && let Some(Ty::Record(rec) | Ty::OptRecord(rec)) = self.ctx.vars.get(&holder).map(|t| t.payload().clone())
+                            {
+                                let wished = self.ctx.field_wishes.entry((rec, field)).or_insert((depth, Ty::List(Box::new(kind.clone()))));
+                                if wished.0 == depth && kind == Ty::Float {
+                                    wished.1 = Ty::List(Box::new(Ty::Float));
+                                }
+                            } else if param && kindless {
+                                self.items_are(&(xs.clone(), None), kind);
+                            }
+                        }
+                    }
+                }
                 // `[]` compared is a list of the other side's kind, or of ints
                 // where nothing says (`[] eq []` had left the compiled program
                 // no type to give it — crow check --self)
@@ -5582,6 +5784,9 @@ impl<'a> Lowerer<'a> {
                 let unknown_items = self.pass == Pass::Scan && matches!(it.ty().payload(), Ty::List(e) if **e == Ty::Unknown);
                 if unknown_items {
                     self.v.unknown_items.insert(var.clone());
+                    if let Some(place) = walked_place(iter) {
+                        self.v.item_of.insert(var.clone(), place);
+                    }
                 }
                 let saved = if self.pass == Pass::Scan {
                     self.ctx.scan_loop_var(var, walked(&it));
@@ -5600,6 +5805,7 @@ impl<'a> Lowerer<'a> {
                 let lowered = self.lower_block(body);
                 if unknown_items {
                     self.v.unknown_items.remove(var.as_str());
+                    self.v.item_of.remove(var.as_str());
                 }
                 if walking {
                     self.walking_fields.pop();
@@ -6222,6 +6428,32 @@ impl<'a> Lowerer<'a> {
                     // the int, and the compiled program did not build; Rosetta
                     // Code, Rational calculator)
                     (Some(slot @ Ty::OptRecord(_)), Ty::Int) if matches!(value, Expr::Const(Const::Int(0), _)) => Expr::Const(Const::Int(0), slot),
+                    _ => value,
+                };
+                // (a map made here whose values hold their numbers the other
+                // way — vectors where the field's map holds lists of floats —
+                // has each value converted where it is set; a map held
+                // elsewhere cannot be, and is refused as one kind for
+                // another: the interpreter had stored the vector and stopped
+                // at its `len`, and the compiled program had not built —
+                // pie's lr_scheduler, `map[ends = [a, b]]` beside
+                // `lists['base'] = rates`; parity 503)
+                let value = match (declared.get(i).map(|t| t.payload().clone()), value.ty().payload().clone()) {
+                    (Some(Ty::Map(_, want)), Ty::Map(_, have)) if forms_differ(&want, &have) => {
+                        let held = held_map_as(value, &want);
+                        if matches!(held.ty().payload(), Ty::Map(_, now) if forms_differ(&want, now)) {
+                            let fname = self.ctx.structs.get(&name).and_then(|s| s.fields.get(i)).map(|(f, _)| f.clone()).unwrap_or_default();
+                            let words = |t: &Ty| crate::table::Arg::of_type(t).said(t);
+                            self.refuse(format!(
+                                "{}'s field '{}' holds {}, and this is {}: a field holds one kind, as a variable does",
+                                crate::lower::shown(&name),
+                                fname,
+                                words(&declared[i]),
+                                words(&held.ty())
+                            ));
+                        }
+                        held
+                    }
                     _ => value,
                 };
                 let how = match (declared.get(i).map(|t| t.payload()), value.ty().payload()) {
@@ -6848,10 +7080,37 @@ impl<'a> Lowerer<'a> {
                         // a list of 0s the function writes records into — is
                         // a list of nones, each int checked so)
                         (Some(p @ Ty::List(pe)), Ty::List(e)) if matches!(pe.as_ref(), Ty::OptRecord(_)) && *e == Ty::Int => nones_of(x, p),
+                        // (a tensor whose rank nothing states, handed where
+                        // this copy holds a tensor of a known rank — another
+                        // call's: its rank is checked where it is handed, in
+                        // both modes, and the copy reads it by the rank its
+                        // type says (Design Note "rank is in the type"). A
+                        // picture of three axes had reached a copy holding a
+                        // matrix, and the compiled mask over it was a
+                        // matrix's: pie's held models, parity 504)
+                        (Some(p @ Ty::Tensor(pi, Some(dims))), Ty::Tensor(xi, None)) if self.pass == Pass::Final && **pi == Ty::Float && *xi == Ty::Float => {
+                            // (the ranks its copies hold, a bit each)
+                            let ranks = 1i64.checked_shl(u32::try_from(dims.len()).unwrap_or(u32::MAX)).unwrap_or(0);
+                            let who = named::own_name(&name);
+                            Expr::Call {
+                                target: Target::Row(crate::table::rank_held()),
+                                args: vec![x, Expr::Const(Const::Int(ranks), Ty::Int), Expr::Const(Const::Str(who), Ty::Str)],
+                                ty: p.clone(),
+                                propagates: false,
+                            }
+                        }
                         _ => x,
                     });
                 }
                 lowered = handed;
+                if self.pass == Pass::Final
+                    && let Some(chosen) = self.by_rank(&name, &resolved, &sig, &lowered, &ty, propagates)
+                {
+                    if self.v.line > 0 {
+                        self.ctx.module_calls.entry((current.clone(), resolved.clone())).or_insert(self.v.line);
+                    }
+                    return Ok(chosen);
+                }
             }
             // (every pass records the call under the names it resolved, so a
             // refusal in a copy lowered before its caller's body in the
@@ -7814,7 +8073,11 @@ impl<'a> Lowerer<'a> {
             _ => {
                 let module = match callee {
                     A::FieldAccess { object, field } => match object.as_ref() {
-                        A::Ident(m) => self.ctx.module_call_type(m, field, arg_types),
+                        // (a name the program declares is its value, never
+                        // a module's alias of that name a part made: the
+                        // lowering's own rule, `is_module(m) &&
+                        // !self.declared(m)`)
+                        A::Ident(m) if !self.declared(m) => self.ctx.module_call_type(m, field, arg_types),
                         _ => None,
                     },
                     _ => None,
@@ -8381,6 +8644,56 @@ fn infer_once(ctx: &mut TypeContext, stmts: &[S]) {
             break;
         }
     }
+    // a function called at two kinds by calls whose other arguments stay
+    // unknown — the calls of a function nothing calls, as a part's are when
+    // it is validated alone — is copied per kind too
+    // (`copy_conflicting_partials`): where the calls the rounds noted show
+    // such a pair, they are read again from nothing noted, so only what
+    // they say now counts, and the copies typed and the calls read again
+    for _ in 0..4 {
+        if !ctx.copy_conflicting_partials(true) {
+            break;
+        }
+        ctx.partial_calls.clear();
+        {
+            let mut reading = Lowerer::for_inference(ctx, in_ui, stmts);
+            reading.scan_program(stmts);
+            for mangled in reading.ctx.clone_names() {
+                reading.scan_clone(&mangled);
+            }
+        }
+        if !ctx.copy_conflicting_partials(false) {
+            break;
+        }
+        for _ in 0..8 {
+            Lowerer::for_inference(ctx, in_ui, stmts).specialize();
+            let round = ctx.signatures();
+            ctx.sync_derive_types();
+            Lowerer::for_inference(ctx, in_ui, stmts).scan_program(stmts);
+            ctx.propagate_indirect_fn_types(stmts);
+            infer_bodies(ctx, in_ui, stmts);
+            if round == ctx.signatures() && !ctx.awaiting_clones() {
+                break;
+            }
+        }
+    }
+    // a place a record's field holds that its makers left of no kind, whose
+    // item read by its position met a number, holds a list of the number's
+    // kind (`field_wishes`): applied once the rounds settle, so a field an
+    // early round had not typed yet — a tensor its makers type later — is
+    // never filled, and the bodies are read again with it (parity 508)
+    if fill_wished_fields(ctx) {
+        for _ in 0..8 {
+            let round = ctx.signatures();
+            ctx.sync_derive_types();
+            Lowerer::for_inference(ctx, in_ui, stmts).scan_program(stmts);
+            ctx.propagate_indirect_fn_types(stmts);
+            infer_bodies(ctx, in_ui, stmts);
+            if round == ctx.signatures() {
+                break;
+            }
+        }
+    }
     // a parameter every call hands a value of no known kind is text, as it
     // is compiled (`default_unknown_params`), and the bodies are read again
     // with it so — a value walked out of it reaches the functions it is
@@ -8497,6 +8810,77 @@ impl Lowerer<'_> {
             Expr::Field { base, .. } | Expr::Index { base, .. } => self.rooted_in_contested(base),
             other => self.contested(other),
         }
+    }
+}
+
+/// The place a loop walks, where an operator can give its items a kind
+/// (`items_are`): a local or a parameter by name, or a record's field.
+fn walked_place(e: &A) -> Option<(String, Option<String>)> {
+    match e {
+        A::Ident(n) => Some((n.clone(), None)),
+        A::FieldAccess { object, field } => match object.as_ref() {
+            A::Ident(h) => Some((h.clone(), Some(field.clone()))),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The wished places of records' fields filled where the makers left them
+/// of no kind (`TypeContext::field_wishes`): whether any was.
+fn fill_wished_fields(ctx: &mut TypeContext) -> bool {
+    let wishes = std::mem::take(&mut ctx.field_wishes);
+    let mut filled_any = false;
+    for ((rec, field), (depth, list)) in wishes {
+        if let Some(slot) = ctx.structs.get_mut(&rec).and_then(|s| s.fields.iter_mut().find(|(f, _)| *f == field))
+            && let Some(filled) = items_filled(&slot.1, depth, &list)
+        {
+            slot.1 = filled;
+            filled_any = true;
+        }
+    }
+    filled_any
+}
+
+/// A field's type with the value `depth` positions or keys below it given
+/// `list` where that value is of no kind (`?`, or a list of nothing known):
+/// `map[str -> ?]` at 1 is `map[str -> list]`, `List(?)` at 0 is `list` —
+/// none where the place holds a kind already.
+fn items_filled(t: &Ty, depth: usize, list: &Ty) -> Option<Ty> {
+    match (t, depth) {
+        (Ty::Unknown, 0) => Some(list.clone()),
+        (Ty::List(e), 0) if **e == Ty::Unknown => Some(list.clone()),
+        (Ty::List(e), d) if d > 0 => items_filled(e, d - 1, list).map(|e| Ty::List(Box::new(e))),
+        (Ty::Map(k, v), d) if d > 0 => items_filled(v, d - 1, list).map(|v| Ty::Map(*k, Box::new(v))),
+        _ => None,
+    }
+}
+
+/// The record's variable and the field a value is read from, and how many
+/// positions or keys below the field it lies (`s.lists['max_lrs']` is `(s,
+/// lists, 1)`): where an item of the value meets a number, the field takes
+/// the kind there (`field_items_are`).
+fn field_read(e: &A) -> Option<(String, String, usize)> {
+    match e {
+        A::FieldAccess { object, field } => match object.as_ref() {
+            A::Ident(h) if crate::modules::by_path(h).is_none() => Some((h.clone(), field.clone(), 0)),
+            _ => None,
+        },
+        A::Call { callee, args } if args.len() == 1 && matches!(callee.as_ref(), A::FieldAccess { .. } | A::Call { .. }) => {
+            field_read(callee).map(|(h, f, d)| (h, f, d + 1))
+        }
+        _ => None,
+    }
+}
+
+/// Whether a value is read from a record's field (`s.lists`), or is an item
+/// or a key of what one holds (`s.lists['max_lrs']`): its items are the
+/// record's makers' to type (`kindless_item`).
+fn reads_a_field(e: &A) -> bool {
+    match e {
+        A::FieldAccess { object, .. } => !matches!(object.as_ref(), A::Ident(m) if crate::modules::by_path(m).is_some()),
+        A::Call { callee, .. } => matches!(callee.as_ref(), A::FieldAccess { .. } | A::Call { .. }) && reads_a_field(callee),
+        _ => false,
     }
 }
 
@@ -8698,6 +9082,32 @@ fn held_name() -> String {
 
 /// Whether two item types hold numbers two ways at some depth: a list of
 /// numbers against a vector.
+/// A map made here — a chain of `set` calls from an empty map, or a map
+/// literal — with each value held as `want` holds its numbers (`held_as`):
+/// a map held elsewhere is answered as it is.
+fn held_map_as(e: Expr, want: &Ty) -> Expr {
+    let retyped = |ty: Ty| match ty {
+        Ty::Map(k, _) => Ty::Map(k, Box::new(want.clone())),
+        t => t,
+    };
+    match e {
+        Expr::Call { target: Target::Row(row), args, ty, propagates } if row.name == "set" && args.len() == 3 && matches!(ty, Ty::Map(..)) => {
+            let mut args = args.into_iter();
+            let (Some(inner), Some(key), Some(value)) = (args.next(), args.next(), args.next()) else {
+                return Expr::Call { target: Target::Row(row), args: Vec::new(), ty, propagates };
+            };
+            let inner = held_map_as(inner, want);
+            if matches!(inner.ty(), Ty::Map(_, ref now) if forms_differ(want, now)) {
+                return Expr::Call { target: Target::Row(row), args: vec![inner, key, value], ty, propagates };
+            }
+            Expr::Call { target: Target::Row(row), args: vec![inner, key, held_as(value, want)], ty: retyped(ty), propagates }
+        }
+        Expr::Call { target: Target::Row(row), args, ty, propagates } if row.name == "map_new" && args.is_empty() => Expr::Call { target: Target::Row(row), args, ty: retyped(ty), propagates },
+        Expr::MapLit(pairs, ty @ Ty::Map(..)) => Expr::MapLit(pairs.into_iter().map(|(k, v)| (k, held_as(v, want))).collect(), retyped(ty)),
+        other => other,
+    }
+}
+
 fn forms_differ(want: &Ty, have: &Ty) -> bool {
     let vector = |d: &Option<crate::type_infer::Dims>| d.as_ref().is_none_or(|d| d.len() == 1);
     match (want, have) {

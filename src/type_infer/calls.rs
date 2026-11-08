@@ -232,6 +232,13 @@ impl TypeContext {
                 // monomorphization pass (skip if anything is unknown)
                 if normalized_sig.len() == sig.params.len() && normalized_sig.iter().all(|t| Self::type_is_concrete(t) || Self::empty_collection(t)) {
                     self.note_signature(name, normalized_sig);
+                } else if normalized_sig.len() == sig.params.len() {
+                    // (a call with an argument not known yet: noted apart,
+                    // for `copy_conflicting_partials`)
+                    let seen = self.partial_calls.entry(name.clone()).or_default();
+                    if !seen.contains(&normalized_sig) && seen.len() < 64 {
+                        seen.push(normalized_sig);
+                    }
                 }
                 self.functions.get_mut(name).unwrap().params = new_params;
                 self.hand_functions(name, args);
@@ -245,6 +252,39 @@ impl TypeContext {
                         && let Some(p) = self.functions.get(name).and_then(|s| s.params.get(i)).map(|(_, t)| t.clone())
                     {
                         self.type_fn_field(&r, field, &p);
+                    }
+                }
+                // (a list of nothing known handed where the callee's
+                // parameter holds numbers — its items met a number there,
+                // `Lowerer::items_are` — is a list of them where it lies: a
+                // local's, a parameter's of the caller's, a record's field;
+                // held as text, the compiled call had not built: parity 502)
+                let kindless = |t: &Ty| matches!(t, Ty::List(e) if **e == Ty::Unknown);
+                for (i, a) in args.iter().enumerate() {
+                    let Some(p) = self.functions.get(name).and_then(|s| s.params.get(i)).map(|(_, t)| t.clone()) else { continue };
+                    if !matches!(&p, Ty::List(e) if matches!(e.as_ref(), Ty::Int | Ty::Float)) {
+                        continue;
+                    }
+                    match a {
+                        Expr::Ident(v) if self.vars.get(v).is_some_and(kindless) => {
+                            self.vars.insert(v.clone(), p.clone());
+                            if let Some(caller) = self.current_fn_name.clone()
+                                && let Some(slot) = self.functions.get_mut(&caller).and_then(|s| s.params.iter_mut().find(|(n, _)| n == v))
+                                && kindless(&slot.1)
+                            {
+                                slot.1 = p.clone();
+                            }
+                        }
+                        Expr::FieldAccess { object, field } => {
+                            if let Expr::Ident(holder) = object.as_ref()
+                                && let Some(Ty::Record(r) | Ty::OptRecord(r)) = self.vars.get(holder).map(|t| t.payload().clone())
+                                && let Some(slot) = self.structs.get_mut(&r).and_then(|s| s.fields.iter_mut().find(|(f, _)| f == field))
+                                && kindless(&slot.1)
+                            {
+                                slot.1 = p.clone();
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }

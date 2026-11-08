@@ -127,10 +127,16 @@ fn seen(a: &Expr) -> &Expr {
 /// Argument i's shape where a tensor is taken: a tensor's own; a list of
 /// numbers is a vector (the order of a list computed in a function —
 /// `argsort[vals]` — is one, and an index into it reads a number), a
-/// list of lists of numbers a matrix, a column a vector, a frame and a
-/// sparse matrix matrices.
+/// list of lists of numbers a matrix, a mask of its depth's rank (a
+/// vector's a list of truths, a matrix's a list of their lists, as
+/// `Ty::mask_of` makes them), a column a vector, a frame and a sparse
+/// matrix matrices.
 fn dims(args: &[Expr], i: usize) -> Option<Dims> {
     args.get(i).map(seen).and_then(|a| match a.ty().payload() {
+        // (read as nothing, a vector's mask had made `where[x gt 0.0, x,
+        // x]` a tensor of no known rank, and the comparison after it was
+        // refused; a matrix's had kept its rank)
+        t @ Ty::List(_) if t.is_truths() => Some(vec![None; t.truths_depth()]),
         Ty::List(item) => match item.payload() {
             Ty::Int | Ty::Float => Some(vec![None]),
             Ty::List(inner) if matches!(inner.payload(), Ty::Int | Ty::Float) => Some(vec![None, None]),

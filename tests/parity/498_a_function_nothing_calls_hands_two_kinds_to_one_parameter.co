@@ -1,0 +1,23 @@
+--- A function nothing calls hands another a number in one branch and a
+--- tensor in the other, for the same parameter: the callee is copied per
+--- kind, as it is for calls whose arguments are known (one function had
+--- been typed by the second call's tensor while the first call handed it
+--- the number, and the lowered program disagreed with itself in both modes:
+--- pie's nn layers, whose weight is a tensor or the default 1.0).
+use math
+
+fn laid[t, dims]
+    if len[dims] eq 1
+        return reshape[t, dims[0]]
+    return reshape[t, dims[0], dims[1]]
+
+fn scaled[x, w = 1.0]
+    return x .* w
+
+fn forward[flag, theta, x]
+    if not flag
+        return scaled[x, 1.0]
+    return scaled[x, laid[theta, [2]]]
+
+--- (`forward` is called by nothing: its calls are the ones the fix copies)
+log[laid[tensor[[1.0, 2.0, 3.0, 4.0]], [2, 2]]]

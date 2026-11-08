@@ -1,0 +1,18 @@
+--- A part's `use math as m` names math inside the part alone: the program
+--- importing it names a variable of its own `m` — here a record whose field
+--- `abs` holds a function of the program's, called through the record as
+--- the program's value, never as math's `abs` — and the part reaches math
+--- through its alias (the alias had refused the program's `m`, "use on
+--- line 0", and then its call `m.abs[…]`, "add `use math`"). The part's
+--- `m.abs[x]` of a number is the core's abs, as the lowering pins it: typed
+--- as math's tensor, the compiled program had not built.
+use lib/aliased
+
+struct Ops [abs]
+
+fn shown[x]
+    return 'shown `x`'
+
+m = Ops[shown]
+log[m.abs[-3.0]]
+log[aliased.twice[-3.0]]

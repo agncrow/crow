@@ -1,0 +1,17 @@
+--- A module's constant read through the module (`math.pi`) is the number
+--- it holds: `math.cos[math.pi * x]` takes a float. It had been typed as
+--- nothing known, and the compiled call reached the decimal's cosine and
+--- did not build (`decimal::cos(&f64)`), where the interpreter ran.
+use math
+
+fn turned[pct]
+    return math.cos[math.pi * pct]
+
+fn spun[pct]
+    x = math.pi * pct
+    return math.sin[x]
+
+log[fmt[turned[0.25], decimals = 9]]
+log[fmt[spun[0.5], decimals = 9]]
+log[fmt[math.cos[math.pi * 0.25], decimals = 9]]
+log[fmt[math.e, decimals = 6]]

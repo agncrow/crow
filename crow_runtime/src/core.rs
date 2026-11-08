@@ -417,6 +417,45 @@ pub fn set_at_taken(mut t: crate::tensor::CrowTensor, at: Vec<i64>, x: f64) -> R
     Ok(t)
 }
 
+/// A tensor whose rank nothing states, handed where a function's copies
+/// hold tensors of the ranks `ranks` names, a bit per rank (spec,
+/// Specialization; Design Note "rank is in the type"): the tensor where its
+/// rank is one of them, and where it is not, a stop naming the function, in
+/// both modes — a copy reads what it is handed by the rank its type says.
+pub fn of_rank(t: &crate::tensor::CrowTensor, ranks: i64, who: &str) -> Result<crate::tensor::CrowTensor, String> {
+    let has = t.shape().len();
+    if has < 63 && ranks & (1i64 << has) != 0 {
+        return Ok(t.clone());
+    }
+    let held: Vec<usize> = (0..63usize).filter(|r| ranks & (1i64 << r) != 0).collect();
+    let axes = |n: usize| if n == 1 { "axis" } else { "axes" };
+    let listed = match held.as_slice() {
+        [one] => format!("{} {}", one, axes(*one)),
+        [rest @ .., last] => format!("{} or {} axes", rest.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", "), last),
+        [] => "no rank".to_string(),
+    };
+    let whose = if held.len() == 1 { "as another call hands it" } else { "as other calls hand them" };
+    Err(format!(
+        "`{}` holds a tensor of {} there, {}, and this one has {} {}: one copy of a function holds one rank — state this tensor's where it is made (`reshape[t, …]` with its sizes, `flatten[t]` for a vector)",
+        who,
+        listed,
+        whose,
+        has,
+        axes(has)
+    ))
+}
+
+/// Whether a tensor has `rank` axes: the copy of a function a tensor whose
+/// rank nothing states is handed to, chosen as the program runs.
+pub fn has_rank(t: &crate::tensor::CrowTensor, rank: i64) -> bool {
+    i64::try_from(t.shape().len()).is_ok_and(|h| h == rank)
+}
+
+/// A vector of no numbers.
+pub fn no_numbers() -> crate::tensor::CrowTensor {
+    crate::tensor::CrowTensor::default()
+}
+
 fn rank_disagrees(read: &str, typed: &str, t: &crate::tensor::CrowTensor) -> String {
     format!(
         "the program reads {} of a tensor its type says is {}, but the value has shape {:?} — a bug in Crow's shape rules, not in this program",

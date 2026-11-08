@@ -167,10 +167,12 @@ impl CrowTensor {
     pub fn qr_decomp(&self) -> (CrowTensor, CrowTensor) {
         let a = tensor_to_mat(self);
         let qr = a.qr();
-        // Q is computed from the thin QR
-        let q_mat = qr.compute_Q();
+        // the reduced QR, numpy's and PyTorch's: Q's first min(m, n)
+        // columns and R's first min(m, n) rows (the complete Q, m × m, had
+        // been answered for a tall matrix, beside R's rows of zeros)
+        let q_mat = qr.compute_thin_Q();
         let q = mat_to_tensor(&q_mat);
-        let r = matref_to_tensor(qr.R());
+        let r = matref_to_tensor(qr.thin_R());
         (q, r)
     }
 
@@ -437,6 +439,25 @@ mod tests {
         let (q, r) = a.qr_decomp();
         let reconstructed = q.matmul(&r);
         tensor_approx_eq(&reconstructed, &a, 1e-10);
+    }
+
+    #[test]
+    fn a_tall_matrixs_qr_is_the_reduced_one() {
+        // (numpy's and PyTorch's default: Q of a's shape, its columns
+        // orthonormal, R square and upper triangular — the complete Q had
+        // been 4 × 4)
+        let a = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 2.0, 0.5, 1.0], vec![4, 3]);
+        let (q, r) = a.qr_decomp();
+        assert_eq!(q.shape(), &[4, 3]);
+        assert_eq!(r.shape(), &[3, 3]);
+        tensor_approx_eq(&q.matmul(&r), &a, 1e-10);
+        tensor_approx_eq(&q.transpose().matmul(&q), &CrowTensor::eye(3), 1e-12);
+        let rs = r.to_vec();
+        for i in 0..3 {
+            for j in 0..i {
+                assert_eq!(rs[i * 3 + j], 0.0, "R below its diagonal at {} {}", i, j);
+            }
+        }
     }
 
     #[test]

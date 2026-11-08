@@ -468,6 +468,14 @@ pub struct TypeContext {
     /// parameter is where inference says only "a parsed value" (noted by
     /// the lowering's passes, read where the schema is written).
     pub param_reads: BTreeMap<String, BTreeMap<String, Ty>>,
+    /// The places a record's field holds that its makers left of no kind,
+    /// by record and field, where an item read by its position out of one
+    /// met a number (`tops[i] * 2.0` of `tops = s.lists['max_lrs']`): how
+    /// many positions or keys below the field the place lies and the list
+    /// it is wished to hold — applied once the rounds settle
+    /// (`lower_ir::fill_wished_fields`), never in a round where a field's
+    /// makers are not typed yet (parity 508).
+    pub field_wishes: BTreeMap<(String, String), (usize, Ty)>,
     /// The functions a dispatch is applying by name (lower_ir/named.rs): a
     /// group's member is called where the group was handed, though a
     /// standard module's function cannot name the program's (`calls_fn`).
@@ -556,6 +564,9 @@ pub struct TypeContext {
     /// Copies made for a signature that arrived after its function was
     /// copied (`note_signature`), for the next copying round to read
     pub late_clones: Vec<String>,
+    /// Each function's calls with an argument not known (no signature of
+    /// their own; `note_call`), for `copy_conflicting_partials`
+    pub partial_calls: BTreeMap<String, Vec<Vec<Ty>>>,
     pub structs: BTreeMap<String, StructSig>,
     /// Module registry for generic type dispatch
     pub registry: crate::modules::ModuleRegistry,
@@ -660,6 +671,7 @@ impl TypeContext {
             views: std::collections::BTreeSet::new(),
             grad_forced: std::collections::BTreeSet::new(),
             param_reads: BTreeMap::new(),
+            field_wishes: BTreeMap::new(),
             applying: Vec::new(),
             fn_fields: BTreeMap::new(),
             stale_answers: std::collections::BTreeSet::new(),
@@ -684,6 +696,7 @@ impl TypeContext {
             module_aliases: BTreeMap::new(),
             specializations: BTreeMap::new(),
             late_clones: Vec::new(),
+            partial_calls: BTreeMap::new(),
             structs,
             registry: crate::modules::ModuleRegistry::new(),
             conn_urls: Vec::new(),
@@ -1019,76 +1032,81 @@ impl TypeContext {
     }
 
     /// The functions a record's fields are given where records are made
-    /// (`Closure[square, 3]`), by record and field, anywhere in the program.
+    /// (`Closure[square, 3]`), by record and field, anywhere in the program:
+    /// a function's name, or a parameter of the function the record is made
+    /// in that is handed functions where it is called (`made['cosine',
+    /// _once]` making `S[name, f]`) — the parameter's own type says nothing
+    /// until the field is called through, and the function had been refused
+    /// as one nothing types (pie's lr_scheduler, a lambda schedule's factor).
     fn record_fn_fields(&self, stmts: &[Stmt], out: &mut std::collections::BTreeMap<(String, String), Vec<String>>) {
-        fn walk(ctx: &TypeContext, e: &Expr, out: &mut std::collections::BTreeMap<(String, String), Vec<String>>) {
-            match e {
-                Expr::Call { callee, args } => {
-                    if let Expr::Ident(r) = callee.as_ref()
-                        && let Some(sig) = ctx.structs.get(r)
-                    {
-                        for (a, (field, _)) in args.iter().zip(&sig.fields) {
-                            if let Expr::Ident(f) = a
-                                && ctx.functions.contains_key(f)
-                            {
-                                let fns = out.entry((r.clone(), field.clone())).or_default();
-                                if !fns.contains(f) {
-                                    fns.push(f.clone());
-                                }
-                            }
+        let held = self.handed_fns(stmts);
+        each_expr(stmts, None, &mut |e, within| {
+            if let Expr::Call { callee, args } = e
+                && let Expr::Ident(r) = callee.as_ref()
+                && let Some(sig) = self.structs.get(r)
+            {
+                for (a, (field, _)) in args.iter().zip(&sig.fields) {
+                    for f in self.fns_of(a, within, &held) {
+                        let fns = out.entry((r.clone(), field.clone())).or_default();
+                        if !fns.contains(&f) {
+                            fns.push(f);
                         }
                     }
-                    walk(ctx, callee, out);
-                    args.iter().for_each(|a| walk(ctx, a, out));
                 }
-                Expr::BinOp { left, right, .. } => {
-                    walk(ctx, left, out);
-                    walk(ctx, right, out);
-                }
-                Expr::UnaryOp { expr, .. } | Expr::Named { value: expr, .. } => walk(ctx, expr, out),
-                Expr::FieldAccess { object, .. } => walk(ctx, object, out),
-                Expr::Array(items) => items.iter().for_each(|x| walk(ctx, x, out)),
-                Expr::Map(pairs) => pairs.iter().for_each(|(k, v)| {
-                    walk(ctx, k, out);
-                    walk(ctx, v, out);
-                }),
-                Expr::ForExpr { iter, body, .. } => {
-                    walk(ctx, iter, out);
-                    ctx.record_fn_fields(body, out);
-                }
-                Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) | Expr::Ident(_) => {}
             }
+        });
+    }
+
+    /// The functions an argument hands: those a parameter of the function
+    /// it lies in is handed, or the function it names.
+    fn fns_of(&self, a: &Expr, within: Option<&str>, held: &std::collections::BTreeMap<(String, String), Vec<String>>) -> Vec<String> {
+        let Expr::Ident(f) = a else { return Vec::new() };
+        if let Some(w) = within
+            && self.functions.get(w).is_some_and(|sig| sig.params.iter().any(|(p, _)| p == f))
+        {
+            return held.get(&(w.to_string(), f.clone())).cloned().unwrap_or_default();
         }
-        for s in stmts {
-            match s {
-                Stmt::Assign { value, .. } | Stmt::ExprStmt(value) | Stmt::Return(Some(value)) => walk(self, value, out),
-                Stmt::MultiAssign { values, .. } => values.iter().for_each(|v| walk(self, v, out)),
-                Stmt::FnDecl { body, .. } | Stmt::Derive { body, .. } | Stmt::TestBlock { body, .. } => self.record_fn_fields(body, out),
-                Stmt::If { condition, then_body, else_body } => {
-                    walk(self, condition, out);
-                    self.record_fn_fields(then_body, out);
-                    if let Some(b) = else_body {
-                        self.record_fn_fields(b, out);
+        if self.functions.contains_key(f) {
+            return vec![f.clone()];
+        }
+        Vec::new()
+    }
+
+    /// The functions each of the program's functions' parameters is handed
+    /// where it is called — a function's name, or a parameter of the
+    /// caller's that is handed functions, handed on — by function and
+    /// parameter, gathered until no call adds one.
+    fn handed_fns(&self, stmts: &[Stmt]) -> std::collections::BTreeMap<(String, String), Vec<String>> {
+        let mut held: std::collections::BTreeMap<(String, String), Vec<String>> = std::collections::BTreeMap::new();
+        loop {
+            let mut found: Vec<((String, String), String)> = Vec::new();
+            each_expr(stmts, None, &mut |e, within| {
+                if let Expr::Call { callee, args } = e
+                    && let Expr::Ident(g) = callee.as_ref()
+                    && let Some(sig) = self.functions.get(g)
+                {
+                    for (i, a) in args.iter().enumerate() {
+                        let (param, value) = match a {
+                            Expr::Named { name, value, .. } => (Some(name.clone()), value.as_ref()),
+                            _ => (sig.params.get(i).map(|(p, _)| p.clone()), a),
+                        };
+                        let Some(param) = param else { continue };
+                        for f in self.fns_of(value, within, &held) {
+                            found.push(((g.clone(), param.clone()), f));
+                        }
                     }
                 }
-                Stmt::For { iter, body, .. } => {
-                    walk(self, iter, out);
-                    self.record_fn_fields(body, out);
+            });
+            let mut grown = false;
+            for (key, f) in found {
+                let fns = held.entry(key).or_default();
+                if !fns.contains(&f) {
+                    fns.push(f);
+                    grown = true;
                 }
-                Stmt::While { condition, body } => {
-                    walk(self, condition, out);
-                    self.record_fn_fields(body, out);
-                }
-                Stmt::FieldAssign { object, value, .. } => {
-                    walk(self, object, out);
-                    walk(self, value, out);
-                }
-                Stmt::IndexAssign { object, index, value } => {
-                    walk(self, object, out);
-                    walk(self, index, out);
-                    walk(self, value, out);
-                }
-                Stmt::Return(None) | Stmt::StructDecl { .. } | Stmt::Use { .. } | Stmt::Break | Stmt::Continue | Stmt::Line(_) => {}
+            }
+            if !grown {
+                return held;
             }
         }
     }
@@ -1188,6 +1206,13 @@ impl TypeContext {
                         // floats disagreed with itself; Rosetta Code, K-d
                         // tree)
                         *held = held.unify(given);
+                    } else if matches!(*held, Ty::Unknown) && given.is_concrete() {
+                        // (a place a call left unknown, once a call says it:
+                        // a signature noted from a call whose caller was not
+                        // typed — `copy_conflicting_partials` — takes the
+                        // kind, so a later call of another kind there is a
+                        // copy of its own)
+                        *held = given.clone();
                     }
                 }
                 // (and the copy already made for it, where it moved: a
@@ -1242,6 +1267,63 @@ impl TypeContext {
                 }
             }
         }
+    }
+
+    /// The calls noted with an argument not known (`partial_calls`) that no
+    /// signature reaches and that differ from another call where both say a
+    /// kind, each noted as a signature, so the function is copied per kind
+    /// (`dry`: only whether one would be). A function nothing calls — every
+    /// function of a part validated alone that the part does not call —
+    /// calls with its own parameters unknown, so its calls had noted no
+    /// signature: two of them handing a float and a tensor for one
+    /// parameter made one function, the parameter flipped to the second's
+    /// tensor, and the first call handed it the float — the lowered
+    /// program disagreed with itself in both modes (pie's nn layers;
+    /// parity 498).
+    pub(crate) fn copy_conflicting_partials(&mut self, dry: bool) -> bool {
+        // (apart where both say a kind; a place either leaves unknown, or
+        // an empty collection, says nothing)
+        let differs = |a: &[Ty], b: &[Ty]| {
+            let (x, y): (Vec<Ty>, Vec<Ty>) = a
+                .iter()
+                .zip(b)
+                .map(|(x, y)| if x.is_concrete() && y.is_concrete() { (x.clone(), y.clone()) } else { (Ty::Unknown, Ty::Unknown) })
+                .unzip();
+            !Self::same_signature(&x, &y)
+        };
+        let takes_fn = |s: &[Ty]| s.iter().any(|t| matches!(t, Ty::Fn(_, _)));
+        let mut noted = false;
+        let partials: Vec<(String, Vec<Vec<Ty>>)> = if dry {
+            self.partial_calls.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        } else {
+            std::mem::take(&mut self.partial_calls).into_iter().collect()
+        };
+        for (name, calls) in partials {
+            if crate::ir::is_copy(&name) || !self.functions.contains_key(&name) || calls.iter().any(|c| takes_fn(c)) {
+                continue;
+            }
+            let whole = self.call_signatures.get(&name).cloned().unwrap_or_default();
+            if whole.iter().any(|s| takes_fn(s)) {
+                continue;
+            }
+            let every: Vec<Vec<Ty>> = whole.iter().cloned().chain(calls.iter().cloned()).collect();
+            for c in &calls {
+                let reached = whole.iter().any(|s| !differs(s, c));
+                if reached || !every.iter().any(|o| differs(o, c)) {
+                    continue;
+                }
+                if dry {
+                    return true;
+                }
+                // (each such call noted once, since a call noted reaches
+                // itself after)
+                if !self.call_signatures.get(&name).is_some_and(|sigs| sigs.iter().any(|s| !differs(s, c))) {
+                    self.note_signature(&name, c.clone());
+                    noted = true;
+                }
+            }
+        }
+        noted
     }
 
     /// Two numbers, two tensors, two lists or two maps of numbers, which
@@ -1571,7 +1653,31 @@ impl TypeContext {
             // of ints is answered, answers that list — reformed to its body's
             // vector, `concat` met the vector; Rosetta Code, Monads/List monad)
             let reformed = ret.is_concrete() && Self::numbers_reformed(&sig.return_type, &ret) && !self.answers_by_use.contains(name);
-            sig.return_type = if reformed {
+            // (returns of tensors of different ranks answer a tensor whose
+            // rank no type states — said, not unknown yet: folded in order,
+            // the first two's disagreement read as nothing known, and the
+            // third's rank was kept (`join_dims`), so a function laying
+            // numbers in three axes, two or one answered a vector, and the
+            // copy a call chose by it read a matrix as one; parity 505)
+            let ranks = |t: &Ty| match t.payload() {
+                Ty::Tensor(_, Some(d)) => Some(d.len()),
+                _ => None,
+            };
+            let mut stated = returns.iter().filter_map(ranks);
+            let ranks_differ = stated.next().is_some_and(|first| stated.any(|r| r != first));
+            let unranked = |t: &Ty| -> Option<Ty> {
+                match t {
+                    Ty::Tensor(item, _) => Some(Ty::Tensor(item.clone(), None)),
+                    Ty::Result(inner) => match inner.as_ref() {
+                        Ty::Tensor(item, _) => Some(Ty::Result(Box::new(Ty::Tensor(item.clone(), None)))),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            };
+            sig.return_type = if let Some(open) = unranked(&ret).filter(|_| ranks_differ) {
+                open
+            } else if reformed {
                 ret.clone()
             } else if !differ || matches!(ret, Ty::Unknown | Ty::Unit) {
                 sig.return_type.unify(&ret)
@@ -1895,6 +2001,68 @@ fn reaching(t: &Ty) -> Ty {
         Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit) => Ty::Unknown,
         Ty::Result(inner) => *inner.clone(),
         other => other.clone(),
+    }
+}
+
+/// Every expression of the statements, inner ones too, with the function
+/// each lies in (a test's or a derivation's body lies in none).
+fn each_expr<'a>(stmts: &'a [Stmt], within: Option<&'a str>, f: &mut dyn FnMut(&'a Expr, Option<&'a str>)) {
+    fn expr<'a>(e: &'a Expr, within: Option<&'a str>, f: &mut dyn FnMut(&'a Expr, Option<&'a str>)) {
+        f(e, within);
+        match e {
+            Expr::Call { callee, args } => {
+                expr(callee, within, f);
+                args.iter().for_each(|a| expr(a, within, f));
+            }
+            Expr::BinOp { left, right, .. } => {
+                expr(left, within, f);
+                expr(right, within, f);
+            }
+            Expr::UnaryOp { expr: x, .. } | Expr::Named { value: x, .. } | Expr::FieldAccess { object: x, .. } => expr(x, within, f),
+            Expr::Array(items) => items.iter().for_each(|x| expr(x, within, f)),
+            Expr::Map(pairs) => pairs.iter().for_each(|(k, v)| {
+                expr(k, within, f);
+                expr(v, within, f);
+            }),
+            Expr::ForExpr { iter, body, .. } => {
+                expr(iter, within, f);
+                each_expr(body, within, f);
+            }
+            Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) | Expr::Ident(_) => {}
+        }
+    }
+    for s in stmts {
+        match s {
+            Stmt::Assign { value, .. } | Stmt::ExprStmt(value) | Stmt::Return(Some(value)) => expr(value, within, f),
+            Stmt::MultiAssign { values, .. } => values.iter().for_each(|v| expr(v, within, f)),
+            Stmt::FnDecl { name, body, .. } => each_expr(body, Some(name), f),
+            Stmt::Derive { body, .. } | Stmt::TestBlock { body, .. } => each_expr(body, None, f),
+            Stmt::If { condition, then_body, else_body } => {
+                expr(condition, within, f);
+                each_expr(then_body, within, f);
+                if let Some(b) = else_body {
+                    each_expr(b, within, f);
+                }
+            }
+            Stmt::For { iter, body, .. } => {
+                expr(iter, within, f);
+                each_expr(body, within, f);
+            }
+            Stmt::While { condition, body } => {
+                expr(condition, within, f);
+                each_expr(body, within, f);
+            }
+            Stmt::FieldAssign { object, value, .. } => {
+                expr(object, within, f);
+                expr(value, within, f);
+            }
+            Stmt::IndexAssign { object, index, value } => {
+                expr(object, within, f);
+                expr(index, within, f);
+                expr(value, within, f);
+            }
+            Stmt::Return(None) | Stmt::StructDecl { .. } | Stmt::Use { .. } | Stmt::Break | Stmt::Continue | Stmt::Line(_) => {}
+        }
     }
 }
 

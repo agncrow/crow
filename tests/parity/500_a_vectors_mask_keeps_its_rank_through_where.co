@@ -1,0 +1,20 @@
+--- A mask handed where a tensor is taken has its tensor's rank: a vector
+--- compared with a number is a vector of truths, so `where` of it answers
+--- a vector, and that vector compared with a number is a mask again (a
+--- vector's had been refused, "the rank of `w` is not known", while a
+--- matrix's mask kept its rank).
+use math
+
+--- ln(x), held no lower than -100 (PyTorch's binary cross-entropy's)
+fn floored[x]
+    pos = x gt 0.0
+    lnx = ln[where[pos, x, x * 0.0 + 1.0]]
+    least = x * 0.0 - 100.0
+    return where[pos, where[lnx gt -100.0, lnx, least], least]
+
+log[floored[tensor[[0.25, 0.0, 2.0]]]]
+log[floored[tensor[[[0.5, 0.0], [1.0, 3.0]]]]]
+w = where[tensor[[1.0, -2.0, 3.0]] gt 0.0, tensor[[1.0, 2.0, 3.0]], tensor[[-1.0, -2.0, -3.0]]]
+log[w gt 0.0]
+for v in w
+    log[v]

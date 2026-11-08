@@ -223,6 +223,16 @@ pub(super) struct Checks {
     /// The loop variables bound over a list whose items no type says: what
     /// a call hands of them is held as text (`TypeContext::text_items`).
     pub unknown_items: BTreeSet<String>,
+    /// What each of those loop variables walks: a local or a parameter by
+    /// name, or a record's field (holder, field) — the place an operator
+    /// meeting the item with a number gives the items' kind (`items_are`).
+    pub item_of: BTreeMap<String, (String, Option<String>)>,
+    /// The locals, by function, read from a record's field or from what
+    /// one holds (`tops = s.lists['max_lrs']`): the record's variable, the
+    /// field and how many positions or keys below it the local lies — the
+    /// place an operator meeting an item of the local with a number gives
+    /// the items' kind (`field_items_are`, parity 508).
+    pub list_from: BTreeMap<(String, String), (String, String, usize)>,
     /// The locals, by function, given a call of one of the program's
     /// functions: such a list's items are that function's to type, and a
     /// function no call has typed yet answers a list of nothing known
@@ -786,8 +796,12 @@ impl<'a> Lowerer<'a> {
             self.refuse(format!("'{}' is a ui builtin (use ui) — rename the {}", name, what));
             return;
         }
-        // Module prefixes and aliases are taken
-        if let Some(line) = self.v.prefix_lines.get(name).copied() {
+        // Module prefixes and aliases are taken — the entry's own, as a bare
+        // import's exports are: an import a part makes is hoisted with no
+        // line of the entry's and reserves its names in the part alone (a
+        // package's `use math as m` had refused every program importing it
+        // a variable `m`, "use on line 0"; pie's nn; parity 499)
+        if let Some(line) = self.v.prefix_lines.get(name).copied().filter(|l| *l > 0) {
             self.refuse(format!("'{}' is a module name (use on line {}) — pick another name for this {}", name, line, what));
         }
     }
@@ -1438,6 +1452,14 @@ impl<'a> Lowerer<'a> {
 
     /// A call through a module's name, `m.f[…]`.
     pub(super) fn check_module_call(&mut self, module: &str, field: &str) {
+        // (a name the program declares is its own value, whatever a part's
+        // import names by it — the entry's own imports reserve their names,
+        // so it can be no import of the entry's: `m.f[…]` is a call through
+        // the value, as the lowering reads it; a part's `use math as m` had
+        // refused the program's `m.abs[…]`, "add `use math`", parity 499)
+        if self.declared(module) {
+            return;
+        }
         let prefixed = format!("{}_{}", module, field);
         let real = self.ctx.module_aliases.get(module).cloned().unwrap_or_else(|| module.to_string());
         // the app is implicit (an app value, and the calls that took one,

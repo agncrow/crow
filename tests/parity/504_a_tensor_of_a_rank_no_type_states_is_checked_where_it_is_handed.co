@@ -1,0 +1,22 @@
+--- A tensor whose rank nothing states, handed to a function whose one copy
+--- holds a matrix (another call's), has its rank checked where it is
+--- handed: a matrix goes on, and a tensor of three axes stops, naming the
+--- function, in both modes. The compiled copy had built the comparison's
+--- mask as a matrix's from the three axes' numbers, and `where` stopped
+--- on lengths that did not meet, where the interpreter answered; pie's
+--- held models, a picture handed to a model's forward.
+use math
+
+fn relu[x]
+    return where[x gt 0.0, x, x * 0.0]
+
+fn shaped[k]
+    t = tensor[[1.0, -2.0, 3.0, -4.0, 5.0, -6.0, 7.0, -8.0]]
+    if k eq 3
+        return reshape[t, 2, 2, 2]
+    return reshape[t, 2, 4]
+
+log[relu[tensor[[[1.0, -1.0], [-2.0, 2.0]]]]]
+log[relu[shaped[2]]]
+log[relu[shaped[3]]]
+log['not reached']

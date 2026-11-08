@@ -1,0 +1,26 @@
+--- A function handed through a parameter into a record's field, then
+--- called from the field, is typed by that call: `made['cosine', _once]`
+--- puts `_once` in `S.factor` through `made`'s parameter `f`. It had been
+--- "handed as a value, nothing types its parameters", in both modes (pie's
+--- lambda scheduler, its factor function kept in the scheduler's record).
+struct S [name, factor, last]
+
+fn _once[e]
+    return 1.0
+
+fn half[e]
+    return 0.5 ^ float[e]
+
+fn made[name, f]
+    return S[name, f, 3]
+
+fn rate_of[s, b]
+    if s.name eq 'lambda'
+        return b * s.factor[s.last]
+    return b
+
+fn stepped[s]
+    return rate_of[s, 2.0]
+
+log[stepped[made['cosine', _once]]]
+log[stepped[made['lambda', half]]]

@@ -1,0 +1,23 @@
+--- An item read by its position out of a list read from a record's field,
+--- met by a number, makes the field hold a list of that number's kind
+--- where the field's makers left it of no kind: `tops =
+--- s.lists['max_lrs']`, then `tops[s.epoch] * 2.0`, the field given by a
+--- maker nothing calls. It had been refused, "never given an item", in
+--- pie's lr_scheduler checked alone (its field given by `cyclic_lr`, which
+--- nothing in the part calls), and without the refusal the compiled
+--- program held the item as nothing and did not build (`() * f64`).
+struct S [name, lists, epoch]
+
+fn plain[]
+    return S['plain', map[], 0]
+
+fn cyclic[tops]
+    return S['cyclic', map[max_lrs = tops], 0]
+
+fn peak[s]
+    if s.name eq 'cyclic'
+        tops = s.lists['max_lrs']
+        return tops[s.epoch] * 2.0
+    return 1.0
+
+log[peak[plain[]]]

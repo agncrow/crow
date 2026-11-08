@@ -798,7 +798,17 @@ impl TypeContext {
         // or via alias: m.zeros after `use math as m`)
         let real = self.module_aliases.get(module).cloned().unwrap_or_else(|| module.to_string());
         if crate::modules::by_path(&real).is_some_and(|m| m.typed) && self.registry.has_function(field) {
-            if let Some(t) = self.registry.type_of_in(&real, field, arg_types) {
+            // (the core's row the kinds pick comes first, as the lowering
+            // pins a qualified call to its bare call (`builtin_row`):
+            // `m.abs[x]` of a number is the core's abs, and typed as math's
+            // tensor the compiled program had not built — parity 499)
+            let kinds: Vec<crate::table::Arg> = arg_types.iter().map(crate::table::Arg::of_type).collect();
+            let core = if kinds.iter().any(|k| matches!(k, crate::table::Arg::Unknown | crate::table::Arg::AnyList)) { None } else { crate::table::core_row(field, &kinds) };
+            let typed = match core {
+                Some(row) => Some(crate::table::exact_form(row, &kinds).ty_given(arg_types)),
+                None => self.registry.type_of_in(&real, field, arg_types),
+            };
+            if let Some(t) = typed {
                 // auto-propagation applies to qualified calls too:
                 // a fallible argument makes the result fallible
                 if !matches!(t, Ty::Result(_) | Ty::Unit) && arg_types.iter().any(|a| matches!(a, Ty::Result(_))) {
@@ -984,6 +994,26 @@ impl TypeContext {
                         return ftype.clone();
                     }
                 }
+            }
+        }
+        // a standard module's constant read by its path or an alias
+        // (`math.pi`, `m.pi` after `use math as m`): its value's kind —
+        // typed as nothing known, `math.cos[math.pi * x]` reached no row and
+        // the compiled program called the first row of the name, the
+        // decimal one, which did not build (pie's lr_scheduler)
+        if let Expr::Ident(mod_name) = object
+            && !self.vars.contains_key(mod_name)
+        {
+            let real = self.module_aliases.get(mod_name).map(|s| s.as_str()).unwrap_or(mod_name);
+            if let Some(module) = crate::modules::module_by_path(real)
+                && let Some((_, v)) = module.constants().into_iter().find(|(n, _)| *n == field)
+            {
+                return match v.value {
+                    crate::value::Value::Int(_) => Ty::Int,
+                    crate::value::Value::Bool(_) => Ty::Bool,
+                    crate::value::Value::Str(_) => Ty::Str,
+                    _ => Ty::Float,
+                };
             }
         }
         // Module variable access: module.var → look up module_var

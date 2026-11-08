@@ -1,0 +1,19 @@
+--- A record's field holding a map of lists, given a map whose list is a
+--- vector — a literal of floats is a tensor — holds it as a list, as the
+--- field's kind says: the map is converted where the record is made. The
+--- interpreter had stopped ("expected a list, got array") reading the
+--- field the compiled program held; pie's schedulers keep their phases'
+--- ends this way.
+struct S [lists]
+
+fn grown[]
+    return S[map[base = push[[], 1.0]]]
+
+fn written[]
+    return S[map[ends = [1.0, 2.0]]]
+
+s = written[]
+log[len[s.lists['ends']]]
+log[s.lists['ends'][1]]
+x = grown[]
+log[len[x.lists['base']]]

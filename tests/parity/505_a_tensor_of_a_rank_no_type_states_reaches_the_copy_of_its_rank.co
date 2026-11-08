@@ -1,0 +1,29 @@
+--- A tensor whose rank nothing states, handed to a function copied per
+--- rank — a vector's copy and a matrix's, each answering a matrix — reaches
+--- the copy of its rank, chosen as the program runs: the copy inference
+--- met first had taken it, and a matrix handed there stopped as a vector
+--- (pie's `nll_loss_each` handing `_rows` a matrix of unknown rank). Where
+--- no copy has its rank, the check stops, naming the function.
+use math
+
+--- rows of a vector or a matrix: a vector is one row
+fn rows[x]
+    s = x.shape
+    if len[s] eq 1
+        return reshape[x, 1, s[0]]
+    return reshape[x, s[0], s[1]]
+
+fn laid[t, k]
+    if k eq 3
+        return reshape[t, 2, 1, 2]
+    if k eq 2
+        return reshape[t, 2, 2]
+    return reshape[t, 4]
+
+t = tensor[[1.0, 2.0, 3.0, 4.0]]
+log[rows[tensor[[1.0, 2.0]]].shape]
+log[rows[tensor[[[1.0, 2.0], [3.0, 4.0]]]].shape]
+log[rows[laid[t, 2]].shape]
+log[rows[laid[t, 1]].shape]
+log[rows[laid[t, 3]].shape]
+log['not reached']

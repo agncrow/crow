@@ -70,7 +70,7 @@ All reductions except `argmax`/`argmin` accept an optional axis parameter: `sum[
 | `argsort[t]` | The indices that would sort the numbers, ascending: a list of ints, as `range` answers one, so `xs[order[0]]` reads the smallest (it had answered a tensor, whose items read as floats and indexed nothing) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `topk[t, k]` | Top k largest values, sorted descending (NumArray) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `unique[t]` | Unique values, sorted (NumArray) | [Frames: `use frame`](../by-example/frames.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) |
-| `where[cond, a, b]` | Element-wise: a where cond≠0, else b (NumArray); `cond` a mask too — `where[v gt 15.0, v, 0.0 * v]` — as a mask is numbers where numbers are asked (true 1, false 0; `sum[v gt 15.0]` counts) | [Frames: `use frame`](../by-example/frames.md) · [Automatic differentiation](../by-example/grad.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
+| `where[cond, a, b]` | Element-wise: a where cond≠0, else b (NumArray); `cond` a mask too — `where[v gt 15.0, v, 0.0 * v]` — as a mask is numbers where numbers are asked (true 1, false 0; `sum[v gt 15.0]` counts); a mask has its tensor's rank, so `where` of a vector's is a vector (parity 500) | [Frames: `use frame`](../by-example/frames.md) · [Automatic differentiation](../by-example/grad.md) · [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) · [Project: Analyzing Data](../ch10-00-analyzing-data.md) |
 
 Note: `sort[t]` is a core builtin (not in the math module) that works on both arrays and tensors.
 
@@ -139,7 +139,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 | `inv[a]` | Matrix inverse | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `det[a]` | Determinant (returns float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) |
 | `svd[a]` | SVD → returns [U, S, Vt] | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
-| `qr[a]` | QR decomposition → returns [Q, R] | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
+| `qr[a]` | QR decomposition → returns [Q, R], the reduced one (numpy's and PyTorch's): Q's columns orthonormal, `m × min(m, n)`, R upper triangular, `min(m, n) × n`, and Q · R is `a` | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `cholesky[a]` | Cholesky (L*L^T) for symmetric positive-definite | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `eigen[a]` | Eigenvalues → returns [real, imag] | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `norm[x]` | L2 (Euclidean) norm (returns float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
@@ -284,6 +284,8 @@ The statistics (a median, a variance, a test, a fit), the activations, losses an
 | `e` | Euler's number e = 2.71828... | [Frames: `use frame`](../by-example/frames.md) |
 | `inf` | Positive infinity |  |
 | `nan` | Not a number |  |
+
+A constant read through its module (`math.pi`, `math.e`) is the number it holds, as the bare name is: `math.cos[math.pi * x]` takes a float (parity 507; it had been typed as nothing known, and the compiled call reached the decimal's cosine).
 
 ### Properties
 

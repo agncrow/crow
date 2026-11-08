@@ -1,0 +1,20 @@
+--- `qr` of a tall matrix answers the reduced pair, numpy's and PyTorch's:
+--- Q of the matrix's shape, its columns orthonormal, and R square and upper
+--- triangular, so Q's columns are scaled by R's diagonal (the complete Q,
+--- square, had been answered beside R's rows of zeros).
+use math
+
+a = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 10.0], [2.0, 0.5, 1.0]]
+parts = qr[a]
+q = parts[0]
+r = parts[1]
+log[q.shape]
+log[r.shape]
+log[max[abs[q * r - tensor[a]]] lt 0.000000000001]
+log[max[abs[transpose[q] * q - eye[3]]] lt 0.000000000001]
+signs = sign[diag[r]]
+log[(q .* reshape[signs, 1, 3]).shape]
+log[r[1][0] eq 0.0 and r[2][0] eq 0.0 and r[2][1] eq 0.0]
+wide = qr[transpose[a]]
+log[wide[0].shape]
+log[wide[1].shape]

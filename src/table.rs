@@ -483,6 +483,11 @@ pub enum Prop {
     /// The program ends at the call — `halt`, `exit` — so no path goes on
     /// past it: a function's body may end there without its answer.
     Ends,
+    /// Hands on a tensor whose rank nothing states where a function's copy
+    /// holds a tensor of a known rank, the value's rank checked against the
+    /// type's where it is handed (Design Note "rank is in the type"): found
+    /// by this property (`table::rank_held`), so the lowering names no row.
+    RankHeld,
 }
 
 /// The shape of the tensor a row answers, declared on the row from a fixed
@@ -595,7 +600,8 @@ pub enum Tape {
     /// read, never differentiated: the row's own function of the values
     /// (`len`, `onehot`), a tensor it answers a constant of the tape
     Read,
-    /// the value itself, its trace kept (`tensor[t]`, `float[x]`)
+    /// the value itself, its trace kept (`tensor[t]`, `float[x]`, a
+    /// tensor's rank checked where a copy is handed it)
     Same,
     /// a traced number's whole part, an int (`int[x]`)
     Whole,
@@ -605,7 +611,11 @@ impl Tape {
     /// Whether a call of `n` arguments is this kernel's.
     pub fn takes(&self, n: usize, row: &Row) -> bool {
         match self {
-            Tape::Map(..) | Tape::Same | Tape::Whole => n == 1,
+            Tape::Map(..) | Tape::Whole => n == 1,
+            // (the value itself: a row's later arguments only say how it is
+            // checked — the rank and the function's name a copy's hand-off
+            // checks it by)
+            Tape::Same => n == row.params.len(),
             Tape::Axis(..) => n == 2,
             Tape::Bounds(..) | Tape::Span(..) | Tape::Choose(..) => n == 3,
             Tape::Join(..) => n == 2 || n == 3,
@@ -649,7 +659,9 @@ pub fn tape_named(name: &str, n: usize) -> Option<(&'static Row, Tape)> {
 pub fn taped() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = Vec::new();
     for r in ROWS.iter().chain(FORMS.iter()) {
-        if r.tape.is_some() && !names.contains(&r.name) {
+        // (a check the lowering hands a tensor through is no builtin a
+        // program writes)
+        if r.tape.is_some() && !r.props.contains(&Prop::RankHeld) && !names.contains(&r.name) {
             names.push(r.name);
         }
     }
@@ -2397,6 +2409,17 @@ pub static ROWS: &[Row] = &[
     // an int where a record or none is held: 0 is none, another int stops
     // (the lowering's `none_of`, in both modes)
     row!("core.__none", "", "__none", crow_runtime::core::none_of, (Int) -> Int, stops),
+    // a tensor whose rank nothing states, handed where a function's copy
+    // holds a tensor of a known rank: the tensor where its rank agrees, a
+    // stop naming the function where it does not, in both modes (its trace
+    // kept: a value grad differentiates passes through)
+    Row { tape: Some(Tape::Same), shape: Shape::Same(0), props: &[Prop::RankHeld], ..row!("core.__of_rank", "", "__of_rank", crow_runtime::core::of_rank, (Tensor, Int, Str) -> Tensor, stops) },
+    // (whether a tensor has so many axes: the copy of that rank is the one
+    // called, where a function's copies differ in that rank alone)
+    Row { tape: Some(Tape::Read), props: &[Prop::RankHeld], ..row!("core.__has_rank", "", "__has_rank", crow_runtime::core::has_rank, (Tensor, Int) -> Bool, never) },
+    // (a vector of no numbers: what that choice's answer holds until a copy
+    // gives it its value)
+    Row { shape: Shape::Dims(&[Dim::Open]), props: &[Prop::RankHeld, Prop::Constructs], ..row!("core.__no_numbers", "", "__no_numbers", crow_runtime::core::no_numbers, () -> Tensor, never) },
     Row { range: IntRange::Any, ..row!("core.__int_of_float_big", "", "__int_of_float_big", crow_runtime::int::int_of_float, (Float) -> Big, stops) },
     Row { range: IntRange::Any, ..row!("core.__floor_big", "", "__floor_big", crow_runtime::int::floor, (Float) -> Big, stops) },
     Row { range: IntRange::Any, ..row!("core.__ceil_big", "", "__ceil_big", crow_runtime::int::ceil, (Float) -> Big, stops) },
@@ -4543,6 +4566,26 @@ pub fn taken_path(id: &str) -> Option<&'static str> {
 /// its name.
 pub fn column_write() -> &'static Row {
     ROWS.iter().find(|r| r.props.contains(&Prop::ColumnWrite)).expect("the column write's row is declared")
+}
+
+/// The row a tensor whose rank nothing states is handed through where a
+/// function's copy holds a tensor of a known rank: the one row carrying
+/// `Prop::RankHeld`.
+pub fn rank_held() -> &'static Row {
+    ROWS.iter().find(|r| r.props.contains(&Prop::RankHeld) && r.params.len() == 3).expect("the rank check's row is declared")
+}
+
+/// Whether a tensor has so many axes (`Prop::RankHeld`, of two
+/// arguments): the test a call makes to choose the copy of its value's
+/// rank.
+pub fn rank_is() -> &'static Row {
+    ROWS.iter().find(|r| r.props.contains(&Prop::RankHeld) && r.params.len() == 2).expect("the rank test's row is declared")
+}
+
+/// A vector of no numbers (`Prop::RankHeld`, of no arguments): the value
+/// a choice of copies holds before a copy gives it one.
+pub fn no_numbers() -> &'static Row {
+    ROWS.iter().find(|r| r.props.contains(&Prop::RankHeld) && r.params.is_empty()).expect("the empty vector's row is declared")
 }
 
 /// The row a frame's column is read through by a name the program

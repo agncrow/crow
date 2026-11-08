@@ -1,0 +1,40 @@
+--- A list no line gives an item, walked and its items compared with a
+--- number, holds numbers: its items take the kind they are compared with
+--- (a parameter's list, a local's and a record field's alike). The
+--- compiled program had held the items as text, and a comparison of text
+--- with a number did not build (`&String <= i64`), where the interpreter
+--- ran; pie's milestones read from a scheduler's record.
+struct Sched [theta, marks, epoch]
+
+fn below[xs, n]
+    count = 0
+    for k in xs
+        if k lte n
+            count = count + 1
+    return count
+
+--- (a list read from a record's field, never given an item)
+fn passed[s, epoch]
+    n = 0
+    for k in s.marks
+        if k lte epoch
+            n = n + 1
+    return n
+
+fn stepped[s]
+    o = s
+    o.epoch = s.epoch + 1
+    if len[o.marks] gt 0
+        return passed[o, o.epoch]
+    return 0
+
+log[below[[], 3]]
+log[below[[1, 4, 2], 3]]
+xs = []
+c = 0
+for k in xs
+    if k lte 3
+        c = c + 1
+log[c]
+log[stepped[Sched[1.0, [], 0]]]
+log[stepped[Sched[1.0, [1, 5], 0]]]

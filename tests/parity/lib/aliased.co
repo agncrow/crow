@@ -1,0 +1,5 @@
+--- module: a part importing a module by an alias (imported by parity 499)
+use math as m
+
+fn twice[x]
+    return m.abs[x] * 2.0
