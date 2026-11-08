@@ -783,7 +783,14 @@ impl<'a> Lowerer<'a> {
                 return;
             }
         }
-        let web_bare = self.v.bare_import_lines.keys().any(|p| p == "web" || p.starts_with("web."));
+        // web's and ui's names by the same rule: a part validated alone is
+        // the entry there, and an import of a part it imports has no line in
+        // it (llm's `fn _applied[s, change]` had been held to web's names once
+        // mcp, which imports web, was a package llm imports); ui with no
+        // import here at all is an earlier cell's, a console's
+        let web_bare = self.v.bare_import_lines.iter().any(|(p, l)| *l > 0 && (p == "web" || p.starts_with("web.")));
+        let ui_written = ["ui", "web.ui"].iter().any(|m| self.v.bare_import_lines.contains_key(*m));
+        let ui_bare = entry_line("ui").is_some() || entry_line("web.ui").is_some() || (self.v.ui_mode && !ui_written);
         if web_bare && name == "reader" {
             self.refuse(format!("'reader' is the page's signed-in reader, which sign_in and sign_out set — rename the {}", what));
             return;
@@ -792,7 +799,7 @@ impl<'a> Lowerer<'a> {
             self.refuse(format!("'{}' is a web builtin (use web) — rename the {}", name, what));
             return;
         }
-        if self.v.ui_mode && UI_RESERVED.contains(&name) {
+        if ui_bare && UI_RESERVED.contains(&name) {
             self.refuse(format!("'{}' is a ui builtin (use ui) — rename the {}", name, what));
             return;
         }

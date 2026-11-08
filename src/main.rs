@@ -3780,7 +3780,7 @@ fn attribute_to_parts(errors: &[(String, Option<String>)]) -> String {
                         .unwrap_or_else(|| msg.clone());
                     format!("{}: {}", parts[prefix], as_the_part_writes(&refined, prefix))
                 }
-                None => msg.clone(),
+                None => as_the_entry_writes(msg),
             }
         })
         .collect::<Vec<_>>()
@@ -5265,6 +5265,7 @@ pub(crate) fn expand_module_imports_checked(
     // (set last, after each part validated alone set its own)
     UNRESOLVED_USES.with(|u| *u.borrow_mut() = ex.unresolved);
     AMBIGUOUS_USES.with(|u| *u.borrow_mut() = ex.ambiguous);
+    ENTRY_SPELLED.with(|s| *s.borrow_mut() = ex.spelled);
     // the standard modules only a part imports: the entry's own imports
     // are what its names resolve against
     let entry_has: std::collections::BTreeSet<String> = stmts
@@ -5864,6 +5865,20 @@ struct ModuleExpansion {
     /// part dropped silently had left its names undefined in the entry:
     /// "undefined variable 'sim'" for a `contains[…]` in views/sim.co)
     refused: Vec<String>,
+    /// how the entry writes each declaration of a part it imports, by its
+    /// prefixed name (`lib_tools_greet` is `tools.greet`), for its refusals
+    spelled: std::collections::BTreeMap<String, String>,
+}
+
+/// The entry's spelling of each declaration an import of its brings, noted
+/// where the entry makes the import (a part's own imports are spelled in
+/// the part, validated alone).
+fn note_spelled(ex: &mut ModuleExpansion, spelling: &str, names: &std::collections::BTreeMap<String, String>) {
+    if ex.depth == 0 {
+        for (name, prefixed) in names {
+            ex.spelled.insert(prefixed.clone(), format!("{}.{}", spelling, name));
+        }
+    }
 }
 
 thread_local! {
@@ -5883,6 +5898,44 @@ thread_local! {
     /// import, as it would be with no import at all. Set when a program is
     /// expanded (the program still links every module its parts import).
     pub(crate) static PART_ONLY_IMPORTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// How the entry writes each declaration of a part it imports
+    /// (`ModuleExpansion::spelled`). Set when a program is expanded.
+    pub(crate) static ENTRY_SPELLED: std::cell::RefCell<std::collections::BTreeMap<String, String>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// The entry's refusal names a part's declaration as the entry writes it
+/// (`'tools.greet'`, not the inlined `'lib_tools_greet'`) and a part's local
+/// as the part does (`m`, not `m__lib_tools`, the name that keeps it apart
+/// from the entry's own `m`): an option's refusal had listed a part
+/// function's parameters as `m__lib_tools, name`.
+pub(crate) fn as_the_entry_writes(msg: &str) -> String {
+    let mut out = msg.to_string();
+    ENTRY_SPELLED.with(|s| {
+        for (prefixed, written) in s.borrow().iter() {
+            for quote in ['\'', '`'] {
+                out = out.replace(&format!("{q}{}{q}", prefixed, q = quote), &format!("{q}{}{q}", written, q = quote));
+            }
+        }
+    });
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    for prefix in EXPANSION_PARTS.with(|p| p.borrow().keys().cloned().collect::<Vec<_>>()) {
+        // (separate_part_locals' suffix, ended where the name ends)
+        let suffix = format!("__{}", prefix.trim_end_matches('_'));
+        let mut kept = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some(i) = rest.find(&suffix) {
+            let after = &rest[i + suffix.len()..];
+            let named = i > 0 && rest[..i].chars().last().is_some_and(word);
+            kept.push_str(&rest[..i]);
+            if !(named && !after.starts_with(word)) {
+                kept.push_str(&suffix);
+            }
+            rest = after;
+        }
+        kept.push_str(rest);
+        out = kept;
+    }
+    out
 }
 
 /// The standard modules an import makes names from: its own, and `math`
@@ -5959,8 +6012,9 @@ fn expand_into(
         let canon = std::fs::canonicalize(&file_path).unwrap_or(file_path.clone());
         // Expanded already, through another importer: one copy, this
         // file's spelling of it
-        if let Some(names) = ex.done.get(&canon) {
-            imported.push((spelling, names.clone()));
+        if let Some(names) = ex.done.get(&canon).cloned() {
+            note_spelled(ex, &spelling, &names);
+            imported.push((spelling, names));
             expanded.push(stmt.clone());
             continue;
         }
@@ -6158,6 +6212,7 @@ fn expand_into(
         }
         ex.written.insert(canon.clone(), mod_dir.to_path_buf());
         ex.done.insert(canon, local_names.clone());
+        note_spelled(ex, &spelling, &local_names);
         imported.push((spelling, local_names));
         // Keep the original statement (including Use, so the compiler knows about it)
         expanded.push(stmt.clone());
@@ -6677,8 +6732,73 @@ mod module_parts_tests {
     }
 
     /// A part that never imports web may name a parameter `close`: the
-    /// whole program carries the entry's imports, and a part is held to its
-    /// own (finch's pattern parts were refused through a ui app)
+    /// whole program carries every file's imports, and a part is held to its
+    /// own — not the entry's (finch's pattern parts were refused through a
+    /// ui app) and not those of a part it imports (llm's `fn _applied[s,
+    /// change]` was refused once mcp, which imports web, became a package
+    /// llm imports). The entry is held to its own imports alone, too.
+    #[test]
+    fn a_part_is_held_to_its_own_imports_not_its_imports_imports() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_reserved_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/served.co"), "use web, ui\n\nfn shown[n]\n    return n + 1\n").unwrap();
+        std::fs::write(dir.join("lib/counts.co"), "use lib.served\n\nfn bumped[change, progress]\n    return served.shown[change] + progress\n").unwrap();
+        let path = std::fs::canonicalize(dir.join("lib/counts.co")).unwrap();
+        assert!(validate_part_alone(&path).is_ok(), "{:?}", validate_part_alone(&path).err());
+        let check = |src: &str| -> Result<(), String> {
+            let stmts = build(src).unwrap();
+            let mut visited = std::collections::HashSet::new();
+            let stmts = expand_module_imports_checked(&stmts, &dir, &mut visited)?;
+            let lowered = lower::lower_program(&stmts).map_err(|e| format!("error: {}", e))?;
+            infer_and_validate(&lowered, false).map(|_| ())
+        };
+        let entry = "use lib.counts\n\nfn twice[close, progress]\n    return counts.bumped[close, progress] * 2\n\nlog[twice[1, 2]]\n";
+        assert!(check(entry).is_ok(), "{:?}", check(entry).err());
+        // (the file's own import reserves: the part's and the entry's alike)
+        let err = check(&entry.replacen("use lib.counts\n", "use lib.counts, web\n", 1)).unwrap_err();
+        assert!(err.contains("'close' is a web builtin"), "{}", err);
+        let err = check(&entry.replacen("use lib.counts\n", "use lib.counts, ui\n", 1)).unwrap_err();
+        assert!(err.contains("'progress' is a ui builtin"), "{}", err);
+        std::fs::write(dir.join("lib/counts.co"), "use lib.served, web\n\nfn bumped[change]\n    return served.shown[change]\n").unwrap();
+        let err = validate_part_alone(&path).unwrap_err();
+        assert!(err.contains("'change' is a web builtin"), "{}", err);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The entry's refusal of its call of a part's function names the
+    /// function as the entry writes it (`tools.greet`, `t.greet` through an
+    /// alias) and its parameters as the part does: `m`, where the entry's
+    /// own `m` had renamed the part's `m__lib_tools` (an option's refusal
+    /// had said `'lib_tools_greet' has no parameter named 'nam'
+    /// (parameters: m__lib_tools, name)`).
+    #[test]
+    fn a_call_of_a_parts_function_is_refused_as_the_entry_writes_it() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_written_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib/tools")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(dir.join("lib/tools.co"), "fn greet[m, name = 'you']\n    return '`m`, `name`'\n").unwrap();
+        std::fs::write(dir.join("lib/tools/more.co"), "fn twice[m]\n    return m + m\n").unwrap();
+        let check = |src: &str| -> String {
+            let stmts = build(src).unwrap();
+            let mut visited = std::collections::HashSet::new();
+            let stmts = expand_module_imports_checked(&stmts, &dir, &mut visited).unwrap();
+            lower::lower_program(&stmts).err().unwrap_or_default()
+        };
+        let err = check("use lib.tools\n\nm = 'hello'\nlog[tools.greet[m, nam = 'ada']]\n");
+        assert!(err.contains("'tools.greet' has no parameter named 'nam' (parameters: m, name)"), "{}", err);
+        let err = check("use lib.tools as t\n\nm = 'hello'\nlog[t.greet[m, 'a', 'b']]\n");
+        assert!(err.contains("'t.greet' expects 2 arguments, got 3"), "{}", err);
+        let err = check("use lib.tools\n\nm = 'hello'\nlog[tools.greet[m, name = 'a', name = 'b']]\n");
+        assert!(err.contains("argument 'name' given more than once in call to 'tools.greet'"), "{}", err);
+        // (a part whose prefix begins with another's keeps its own suffix)
+        let err = check("use lib.tools, lib.tools.more\n\nm = 'hello'\nlog[more.twice[m = 'a', n = 'b']]\n");
+        assert!(err.contains("'more.twice' has no parameter named 'n' (parameters: m)"), "{}", err);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Each file's imports are its own: the entry reaches a module only
     /// through its own `use`, not a part's — bare (`join`), qualified
     /// (`frame.new`), a core name whose form for these arguments is the

@@ -1,0 +1,3 @@
+--- a part's function with an option
+fn greet[m, name = 'you']
+    return '`m`, `name`'

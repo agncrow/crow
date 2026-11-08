@@ -107,6 +107,7 @@ pub fn analyze(
             crate::UNRESOLVED_USES.with(|u| u.borrow_mut().clear());
             crate::AMBIGUOUS_USES.with(|u| u.borrow_mut().clear());
             crate::PART_ONLY_IMPORTS.with(|p| p.borrow_mut().clear());
+            crate::ENTRY_SPELLED.with(|s| s.borrow_mut().clear());
             stmts
         }
     };

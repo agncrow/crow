@@ -1,0 +1,5 @@
+--- a part's function given an option it does not have: refused naming the function as the entry writes it and its parameters as the part does (it had been 'lib_tools_greet', its parameters `m__lib_tools, name`: the part's `m`, renamed apart from the entry's own `m`)
+use lib.tools
+
+m = 'hello'
+log[tools.greet[m, nam = 'ada']]

@@ -898,7 +898,8 @@ impl Lowerer {
             // a part's function is refused in the part's file at its own
             // line: placed in the entry, a call in Magpie's manifest.co had
             // been shown at the entry's line of that number
-            crate::placed_in_part(&self.current_fn, &at).unwrap_or(at)
+            // (the entry's names a part's function as the entry writes it)
+            crate::placed_in_part(&self.current_fn, &at).unwrap_or_else(|| crate::as_the_entry_writes(&at))
         } else {
             msg
         }
