@@ -1,0 +1,14 @@
+--- Over tensors, a parameter beside the tensors is a constant of the run —
+--- a number, a bool, text, a list, a map or a record — and a function is
+--- none: the tape cannot hold what a function value would do with a
+--- traced number
+use math
+
+fn sq[x]
+    return x * x
+
+fn loss[w, f]
+    return sum[w .* w]
+
+log[sq[2.0]]
+log[grad[loss][tensor[[1.0, 2.0]], sq]]

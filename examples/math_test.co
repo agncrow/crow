@@ -1,5 +1,4 @@
 use math
-use math.stats
 
 --- tensor creation
 a = zeros[2, 3]
@@ -147,17 +146,3 @@ d = dense[s3]
 log[d]
 x = solve[s2, [10, 12, 14]]
 log[x]
-
---- statistics
-data = linspace[1, 10, 10]
-log['median:', median[data]]
-log['std:', std[data]]
-log['var:', var[data]]
-log['p50:', percentile[data, 50]]
-log['zscore:', zscore[data]]
-data2 = linspace[2, 20, 10]
-log['corr:', corr[data, data2]]
-log['cov:', cov[data, data2]]
-result = ttest[data, data2]
-log['ttest:', result]
-

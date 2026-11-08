@@ -5,6 +5,19 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
+## Unreleased
+
+### Breaks
+
+- `use math.stats` and `use math.nn` are gone, and so are the packages
+  under `packages/` (gpt, models, optimize, symbolic, graph, retrieval,
+  vectors) and the RAG example: they are the pie repository's now
+  (github.com/agncrow/pie), each a package a program installs and calls
+  qualified — `deps = map[nn = 'github.com/agncrow/pie/packages/nn@v0.1.0']`,
+  then `nn.relu[x]`; `stats.anova` takes its groups as one list. The
+  market package moved to finch. Crow keeps the tensor and the frame,
+  their kernels, and `grad`.
+
 ## v0.8.2 — 2026-11-07
 
 (0.8.1 was tagged and never released: GitHub no longer runs the macOS

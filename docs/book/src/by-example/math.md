@@ -113,6 +113,24 @@ log[round[[1.4, 1.6]]]
 [1, 2]
 ```
 
+`log1p` and `expm1` are ln(1 + x) and exp(x) − 1 computed whole, so a
+small x keeps its digits: `1.0 + x` of a very small x is 1 already, and
+its logarithm 0.
+
+```crow
+use math
+
+log[log1p[[0.00000000000000000001, 1.0]]]
+log[ln[1.0 + 0.00000000000000000001]]
+log[expm1[[0.00000000000000000001]]]
+```
+
+```text
+[0.00000000000000000001, 0.6931471805599453]
+0
+[0.00000000000000000001]
+```
+
 Trigonometry and hyperbolics map over a tensor the same way, and take a
 plain number too (`sin[pi / 2.0]` is 1); `atan2` takes tensors alone.
 Angles are radians. Here each is handed a tensor of one number, and

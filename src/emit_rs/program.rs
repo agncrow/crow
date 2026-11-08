@@ -1893,6 +1893,8 @@ impl Emitter {
         self.line("fn ln(self) -> CrowDual { CrowDual { real: self.real.ln(), dual: self.dual / self.real } }");
         self.line("fn log2(self) -> CrowDual { CrowDual { real: self.real.log2(), dual: self.dual / (self.real * std::f64::consts::LN_2) } }");
         self.line("fn log10(self) -> CrowDual { CrowDual { real: self.real.log10(), dual: self.dual / (self.real * std::f64::consts::LN_10) } }");
+        self.line("fn log1p(self) -> CrowDual { CrowDual { real: self.real.ln_1p(), dual: self.dual / (1.0 + self.real) } }");
+        self.line("fn expm1(self) -> CrowDual { CrowDual { real: self.real.exp_m1(), dual: self.dual * self.real.exp() } }");
         self.line("fn sin(self) -> CrowDual { CrowDual { real: self.real.sin(), dual: self.dual * self.real.cos() } }");
         self.line("fn cos(self) -> CrowDual { CrowDual { real: self.real.cos(), dual: -self.dual * self.real.sin() } }");
         self.line("fn tan(self) -> CrowDual { let t = self.real.tan(); CrowDual { real: t, dual: self.dual * (1.0 + t * t) } }");

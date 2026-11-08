@@ -13,9 +13,9 @@ use crate::type_infer::Ty;
 /// compiler had kept apart, each named for what its readers make of it;
 /// unifying them is a later phase's (docs/extending-crow.md).
 pub struct Module {
-    /// The import path (`math.stats`); "" the core, imported by no `use`.
+    /// The import path (`web.auth`); "" the core, imported by no `use`.
     pub path: &'static str,
-    /// The prefix its inlined functions carry (`_math_stats`).
+    /// The prefix its inlined functions carry (`_web_auth`).
     pub prefix: &'static str,
     /// Its source, where it is written in Crow (design rule 20): inlined
     /// into the program that imports it.
@@ -81,18 +81,6 @@ pub static MODULES: &[Module] = &[
         docs: Some("Tensors, element-wise math, reductions, linear algebra, random numbers, signal processing, sparse arrays, and numeric loading."),
         module: Some(|| Arc::new(math::MathModule)),
         ..Module::plain("math", "_math")
-    },
-    Module {
-        source: Some(STATS_SOURCE), loads: &["math"], needs: &[RUNTIME], registry: true, known: true, pinned: true, typed: true,
-        docs: Some("Descriptive statistics, correlation, tests, and fitting over tensors and frame columns."),
-        module: Some(|| Arc::new(Named::new("math.stats"))),
-        ..Module::plain("math.stats", "_math_stats")
-    },
-    Module {
-        source: Some(NN_SOURCE), loads: &["math"], needs: &[RUNTIME], registry: true, known: true, pinned: true, typed: true,
-        docs: Some("Activation functions, losses, and a linear layer for small networks with autograd."),
-        module: Some(|| Arc::new(Named::new("math.nn"))),
-        ..Module::plain("math.nn", "_math_nn")
     },
     Module {
         source: Some(IO_SOURCE), needs: &[RUNTIME], registry: true, known: true, pinned: true, typed: true,
@@ -198,7 +186,7 @@ pub fn by_path(path: &str) -> Option<&'static Module> {
     MODULES.iter().find(|m| m.path == path)
 }
 
-/// The module a path is a module of (`math` of `math.stats`), where that
+/// The module a path is a module of (`web` of `web.auth`), where that
 /// is a module.
 pub fn parent_of(path: &str) -> Option<&'static str> {
     let (parent, _) = path.rsplit_once('.')?;
@@ -221,7 +209,7 @@ pub fn crow_modules() -> impl Iterator<Item = (&'static str, &'static str)> {
 
 /// The source of a standard module written in Crow (design rule 20), by
 /// its import path. Each is inlined into the program that imports it, its
-/// functions named by `crate::table::crow_fn_name` (`_math_nn_relu`).
+/// functions named by `crate::table::crow_fn_name` (`_io_lines`).
 pub fn crow_source(path: &str) -> Option<&'static str> {
     by_path(path)?.source
 }
@@ -261,11 +249,6 @@ pub(crate) const WS_SOURCE: &str = include_str!("ws.co");
 /// Mail over SMTP, written in Crow (`use web.mail`).
 pub(crate) const MAIL_SOURCE: &str = include_str!("mail.co");
 
-/// The statistics, written in Crow (`use math.stats`).
-pub(crate) const STATS_SOURCE: &str = include_str!("stats.co");
-
-/// The neural networks, written in Crow over the math builtins (`use math.nn`).
-pub(crate) const NN_SOURCE: &str = include_str!("nn.co");
 
 /// The ClickHouse driver, written in Crow (carried by `use db`).
 pub(crate) const CLICKHOUSE_SOURCE: &str = include_str!("clickhouse.co");
@@ -332,7 +315,7 @@ pub fn crow_modules_carried<'a>(fn_names: impl Iterator<Item = &'a str>) -> Vec<
 }
 
 /// Every module a program carries, its imports loaded into its own scope
-/// of a registry (a module's `use math.nn` loads math too, as a program's
+/// of a registry (a module's `use web.auth` loads web too, as a program's
 /// does), given the program's function names.
 pub fn load_crow_scopes<'a>(registry: &mut ModuleRegistry, fn_names: impl Iterator<Item = &'a str>) {
     for (prefix, imports) in crow_modules_carried(fn_names) {
@@ -401,7 +384,7 @@ pub fn is_crow_fn(name: &str) -> bool {
 }
 
 /// Every function a standard module written in Crow declares, helpers
-/// too, by the name it is inlined under (`_math_nn_relu`, `_llm__talk_of`).
+/// too, by the name it is inlined under (`_io_lines`, `_llm__talk_of`).
 fn inlined_names() -> &'static std::collections::HashSet<String> {
     static NAMES: std::sync::LazyLock<std::collections::HashSet<String>> = std::sync::LazyLock::new(|| {
         MODULES
@@ -470,7 +453,7 @@ fn parse_source(source: &str) -> Result<Vec<crate::ast::Stmt>, String> {
 }
 
 /// A message with every inlined function named as the program writes it:
-/// `_llm_chat` is `chat`, `_math_stats_median` is `median` — the prefix a
+/// `_llm_chat` is `chat`, `_io_lines` is `lines` — the prefix a
 /// module's functions carry is no program's spelling.
 pub fn unprefixed(msg: &str) -> String {
     let mut prefixes: Vec<&'static str> = crow_modules().map(|(_, p)| p).collect();
@@ -590,7 +573,7 @@ fn bound_in_expr(e: &crate::ast::Expr, out: &mut std::collections::BTreeSet<Stri
     }
 }
 
-/// The spelling of a module an access names (`math.nn` of `math.nn.relu`),
+/// The spelling of a module an access names (`web.auth` of `web.auth.sign`),
 /// or none where the object is no chain of names.
 fn spelled(e: &crate::ast::Expr) -> Option<String> {
     use crate::ast::Expr;
@@ -604,8 +587,8 @@ fn spelled(e: &crate::ast::Expr) -> Option<String> {
 /// Names rewritten through a body, at every depth and inside the
 /// interpolations of its strings: a bare name to the function it reaches
 /// (an export's inlined name, a helper's), unless a parameter or a loop
-/// variable shadows it; a module's spelling and a name — `math.nn.relu`,
-/// `s.median` under `use math.stats as s` — to the same. A field after a
+/// variable shadows it; a module's spelling and a name — `web.auth.sign`,
+/// `a.sign` under `use web.auth as a` — to the same. A field after a
 /// dot is a field, and an assignment's target is never rewritten.
 struct Rewrite {
     bare: std::collections::BTreeMap<String, String>,
@@ -722,7 +705,7 @@ impl Rewrite {
     }
 
     /// The names between the backticks of a string: a chain of names
-    /// (`math.nn.relu`) as a module's spelling and a name, a bare name as a
+    /// (`web.auth.sign`) as a module's spelling and a name, a bare name as a
     /// bare name; the fields after a chain's head are fields.
     fn interpolated(&self, s: &str, shadowed: &std::collections::HashSet<String>) -> String {
         let chars: Vec<char> = s.chars().collect();
@@ -821,7 +804,7 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
     for s in stmts {
         if let Stmt::Use { path, .. } = s {
             todo.push(path.clone());
-            // (`use math.nn` is math's too, as the registry reads it)
+            // (`use web.auth` is web's too, as the registry reads it)
             if let Some(parent) = parent_of(path) {
                 todo.push(parent.to_string());
             }
@@ -1156,7 +1139,7 @@ fn called_in_expr(e: &crate::ast::Expr, out: &mut std::collections::BTreeSet<Str
                     out.insert(n.clone());
                 }
                 // a module's function called by the module's name
-                // (`io.csv[…]`, `math.nn.relu[…]`)
+                // (`io.csv[…]`, `web.auth.sign[…]`)
                 Expr::FieldAccess { object, field } => {
                     out.insert(field.clone());
                     called_in_expr(object, out);
@@ -1233,7 +1216,7 @@ pub const STOP_LINE: &str = "__crow_line__";
 /// Each module is self-contained: it declares its functions, constants,
 /// and knows how to interpret calls, emit Rust code, and infer types.
 pub trait CrowModule: Send + Sync {
-    /// Module name (e.g. "math", "math.stats")
+    /// Module name (e.g. "math", "web.auth")
     fn name(&self) -> &str;
 
     /// List of function names this module provides.
@@ -1473,7 +1456,7 @@ impl ModuleRegistry {
         self.providers(name).into_iter().filter(|i| !(program && self.qualified.contains(i))).map(|i| self.modules[i].name()).collect()
     }
 
-    /// The functions a loaded module provides, by its name (`math.stats`).
+    /// The functions a loaded module provides, by its name (`web.auth`).
     pub fn functions_of(&self, module: &str) -> Vec<&str> {
         self.modules.iter().filter(|m| m.name() == module).flat_map(|m| m.functions().iter().copied()).collect()
     }
@@ -1696,50 +1679,42 @@ mod tests {
             assert!(llm.contains(&f), "llm exports {}: {:?}", f, llm);
         }
         assert!(!llm.contains(&"_talk_of") && !llm.contains(&"talk_of"), "{:?}", llm);
-        assert!(exports("math.stats").contains(&"median") && !exports("math.stats").contains(&"anova"), "{:?}", exports("math.stats"));
+        assert!(exports("web.auth").contains(&"sign") && exports("web.auth").contains(&"verify"), "{:?}", exports("web.auth"));
         assert!(exports("web.ws").contains(&"socket") && exports("web.ws").contains(&"close") && !exports("web.ws").contains(&"send"), "{:?}", exports("web.ws"));
         // a message names the function as the program writes it
-        assert_eq!(unprefixed("'_llm_chat' has no parameter named 'max' (in _math_stats_median, _core_read_asked)"), "'chat' has no parameter named 'max' (in median, read_asked)");
+        assert_eq!(unprefixed("'_llm_chat' has no parameter named 'max' (in _io_lines, _core_read_asked)"), "'chat' has no parameter named 'max' (in lines, read_asked)");
         assert_eq!(unprefixed("_mathx_relu and x_llm_chat stay"), "_mathx_relu and x_llm_chat stay");
     }
 
-    /// `use math.nn` inlines the exported functions the program calls and
-    /// the helpers they reach, renamed behind the prefix, their line marks
-    /// dropped; the program's calls name the inlined functions; a
-    /// test-only helper is left out, and a program without the import gets
-    /// nothing.
+    /// `use io` inlines the exported functions the program calls and the
+    /// helpers they reach, renamed behind the prefix, their line marks
+    /// dropped; a function the program never reaches is left out, and a
+    /// program without the import gets nothing.
     #[test]
     fn a_crow_module_is_inlined_as_its_rows_reach_it() {
-        let stmts = crate::build("use math, math.nn\nlog[relu[[1.0]]]\nlog[crossentropy[[[1.0, 0.0]], [0.0]]]\n").expect("parses");
+        let stmts = crate::build("use io\nlog[len[lines['a.txt']]]\n").expect("parses");
         let out = inline_crow_modules(&stmts).expect("inlines");
         let fns: std::collections::BTreeMap<String, Vec<Stmt>> = out.iter().filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.clone(), body.clone())) } else { None }).collect();
-        for f in ["relu", "crossentropy"] {
-            assert!(fns.contains_key(&format!("_math_nn_{}", f)), "{} is inlined: {:?}", f, fns.keys());
-        }
-        for f in ["linear", "mse", "gelu"] {
-            assert!(!fns.contains_key(&format!("_math_nn_{}", f)), "a row the program never reaches stays out: {:?}", fns.keys());
-        }
-        assert!(!fns.keys().any(|n| n.contains("through_all")), "a test's helper is not inlined: {:?}", fns.keys());
+        assert!(fns.contains_key("_io_lines"), "lines is inlined: {:?}", fns.keys());
+        assert!(!fns.contains_key("_io_csv"), "a function the program never reaches stays out: {:?}", fns.keys());
         for (n, body) in &fns {
             assert!(!has_line(body), "{} keeps no line mark", n);
         }
-        let ce = names_called(&fns["_math_nn_crossentropy"]);
-        assert!(ce.contains("onehot") && ce.contains("halt") && !ce.iter().any(|c| c.starts_with("_math_nn_")), "{:?}", ce);
-        assert!(is_crow_fn("_math_nn_relu") && is_crow_fn("_traced__math_nn_relu") && !is_crow_fn("relu") && !is_crow_fn("_mathx_relu"));
+        assert!(is_crow_fn("_io_lines") && !is_crow_fn("lines") && !is_crow_fn("_iox_lines"));
         let plain = crate::build("use math\nlog[1]\n").expect("parses");
         assert_eq!(inline_crow_modules(&plain).expect("inlines").len(), plain.len());
-        // a row reached by the module's name, handed as a value, or called
-        // inside an interpolation
+        // a function reached by the module's name, handed as a value, or
+        // called inside an interpolation
         let names = |src: &str| -> Vec<String> {
             let stmts = crate::build(src).expect("parses");
             inline_crow_modules(&stmts).expect("inlines").iter().filter_map(|s| if let Stmt::FnDecl { name, .. } = s { Some(name.clone()) } else { None }).collect()
         };
-        let qualified = names("use math, math.nn\nlog[math.nn.sigmoid[[1.0]]]\n");
-        assert!(qualified.contains(&"_math_nn_sigmoid".to_string()) && !qualified.contains(&"_math_nn_relu".to_string()), "{:?}", qualified);
-        let handed = names("use math, math.nn\nf = gelu\nlog[f[[1.0]]]\n");
-        assert!(handed.contains(&"_math_nn_gelu".to_string()), "{:?}", handed);
-        let interpolated = names("use math, math.nn\nlog['`mse[[1.0], [2.0]]`']\n");
-        assert!(interpolated.contains(&"_math_nn_mse".to_string()) && !interpolated.contains(&"_math_nn_relu".to_string()), "{:?}", interpolated);
+        let qualified = names("use io\nlog[len[io.csv['a.csv']]]\n");
+        assert!(qualified.contains(&"_io_csv".to_string()) && !qualified.contains(&"_io_lines".to_string()), "{:?}", qualified);
+        let handed = names("use io\nf = lines\nlog[len[f['a.txt']]]\n");
+        assert!(handed.contains(&"_io_lines".to_string()), "{:?}", handed);
+        let interpolated = names("use io\np = 'a.txt'\nlog['`len[lines[p]]`']\n");
+        assert!(interpolated.contains(&"_io_lines".to_string()) && !interpolated.contains(&"_io_csv".to_string()), "{:?}", interpolated);
     }
 
     /// A module's own imports are inlined after it (io's readers are

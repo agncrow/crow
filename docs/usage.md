@@ -120,7 +120,7 @@ Without `crow book`, the pages still read fine from disk and the buttons say how
 | `crow test --errors [--bless] [word…]` | In the Crow repository: the wrong programs of `tests/errors/`, each run in both modes and through the language server, its refusal held to what was reviewed (`<name>.expect`) and to the rules every message keeps; `--bless` writes what the programs answer now, for review. |
 | `crow test --fixtures [file.co]` | The tests where the database servers and the model are not (CI, a laptop without the data): a connection to Postgres or ClickHouse reaches nothing, a read is answered from what `crow check --record-fixtures` kept in `.crow/fixtures`, one no fixture holds is the query's error (a failing test names the statement), and a write answers as one that landed; a request is answered from its fixture the same way, and one no fixture holds is the request's error value. A sqlite file opens as always. The clock stands at 2026-01-01 and random draws are seeded, as when the fixtures were recorded; with `--compiled`, the apps the tests open answer the same way. |
 | `crow check --record-fixtures` | The scenarios read the real databases and send their requests, and what each statement answers first (its first 10,000 rows) and what each request answers are kept in `.crow/fixtures`, for the rehearsals after and for `crow test --fixtures`; the tests that open no app run too, for their fixtures alone. A write is recorded, never made. See [crow-check.md](crow-check.md). |
-| `crow test --packages` | In the Crow repository: every package under `packages/` — each file's test blocks pass, and the package's `example.co` runs in both modes with the same output (a test block runs in the interpreter, so the example is what holds the package to the compiled program). `crow test --packages models` checks one. |
+| `crow test --packages` | In a repository of packages (pie's, Magpie's): every package under `packages/` — each file's test blocks pass, and the package's `example.co` runs in both modes with the same output (a test block runs in the interpreter, so the example is what holds the package to the compiled program). `crow test --packages models` checks one. |
 | `crow test --modules [word…]` | In the Crow repository: every standard module written in Crow (`src/modules/*.co`) runs its own test blocks; words pick modules by name. |
 | `CROW_IR_SHOW=1 crow test file.co` | Print each test block's lowered program — the declarations it sees, then the block as the `Test` item it is — as the interpreter runs it; `crow build --ir` prints a whole file the same way. |
 | `crow build --ir file.co` | Print the program's IR, the one typed form both execution modes are built from (`docs/ir-design.md`): types decided once, effects marked answered or held, propagation explicit, last reads as moves. Nothing is compiled. |
@@ -221,7 +221,7 @@ code, and every command refuses a package changed by hand under
 version of a package: two requirements at tags of one major take the
 higher, saying so. On a forge the repository is
 the first two path segments and the rest is a directory inside it
-(`github.com/agncrow/crow/packages/models@v0.6.0`). Installed modules are
+(`github.com/agncrow/pie/packages/models@v0.1.0`). Installed modules are
 imported like any user module — qualified: `use models.line` then
 `line.slope[...]`.
 

@@ -80,8 +80,6 @@ math.imag	no reference yet: add its answer to tests/self/reference.py, or say he
 math.lowpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.lstsq	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.magnitude	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.nn.crossentropy	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.nn.linear	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.nnz	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.phase	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.pinv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
@@ -92,7 +90,6 @@ math.sparse	no reference yet: add its answer to tests/self/reference.py, or say 
 math.sparse_coo	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.spectrogram	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.spmv	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-math.stats.kstest	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.stft	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.svd	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.tensor_of_columns	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only

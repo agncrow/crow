@@ -1,4 +1,4 @@
-//! The special functions `use math.stats` stands on, validated kernels
+//! The special functions pie's statistics stand on (through `use sys`), validated kernels
 //! the module written in Crow (src/modules/stats.co) calls through the sys
 //! layer: the regularized incomplete beta and gamma functions, which the
 //! t, F and chi-square distributions are written over, and log-gamma. The

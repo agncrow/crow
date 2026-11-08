@@ -78,7 +78,7 @@ pub(super) fn view_cases(all: &[Val]) -> Vec<Case> {
         Val { name: "markup".into(), expr: "'a < b & \"c\" \\'d\\' > e'".into(), setup: Vec::new(), imports: Vec::new() },
         Val { name: "tagtext".into(), expr: "'<b>x</b>'".into(), setup: Vec::new(), imports: Vec::new() },
     ];
-    let shown: Vec<&Val> = all.iter().chain(escaped.iter()).filter(|v| !matches!(v.name.as_str(), "sizes" | "groups" | "lists" | "maskcmp")).collect();
+    let shown: Vec<&Val> = all.iter().chain(escaped.iter()).filter(|v| !matches!(v.name.as_str(), "sizes" | "lists" | "maskcmp")).collect();
     for e in DRAWN {
         for v in &shown {
             let n = v.name.as_str();
@@ -334,7 +334,7 @@ const LAYOUT_WORDS: &[&str] = &["'s'", "'m'", "'xl'", "'center'", "'between'", "
 pub(super) fn route_cases(all: &[Val]) -> Vec<Case> {
     let mut cases = Vec::new();
     // every response with every value, asked once
-    let shown: Vec<&Val> = all.iter().filter(|v| !matches!(v.name.as_str(), "sizes" | "groups" | "lists" | "maskcmp")).collect();
+    let shown: Vec<&Val> = all.iter().filter(|v| !matches!(v.name.as_str(), "sizes" | "lists" | "maskcmp")).collect();
     for v in &shown {
         let n = v.name.as_str();
         for form in RESPONSES {

@@ -811,9 +811,9 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
 /// `Point[1, 2]`.
 pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, String> {
     match &callee.value {
-    // (the lowering refuses an index into a tensor a function grad
-    // differentiates holds; this is one it could not see)
-    Value::Traced(_) => Err("grad: an index into a tensor is not differentiable — compute with the tensor whole".to_string()),
+    // a tensor a function grad differentiates holds: its row, its number
+    // or the numbers at positions, recorded on the tape
+    Value::Traced(t) => crate::autograd_bridge::index(t, &arg_vals),
     // a parsed value's item or key, as the compiled program reads its JSON:
     // one it lacks (or a negative position) is JSON's null, an error value
     // of reason `null`
@@ -864,6 +864,9 @@ pub fn index(callee: &CrowValue, arg_vals: Vec<CrowValue>) -> Result<CrowValue, 
                 // Advanced indexing: gather by index array
                 Ok(CrowValue::ok(Value::NumArray(Box::new(tensor.try_gather(idx_tensor)?))))
             }
+            // (positions a function grad differentiates computed: a read
+            // of a constant, which takes no gradient)
+            Value::Traced(idx_tensor) => Ok(crate::autograd_bridge::wrap(crow_runtime::autograd::Traced::constant(tensor.try_gather(&idx_tensor.value)?))),
             _ => Err("array index must be an integer or tensor".to_string()),
         }
     }

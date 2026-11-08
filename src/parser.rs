@@ -816,7 +816,7 @@ impl Parser {
 
     fn parse_use_path(&mut self) -> Result<String, String> {
         let mut path = self.expect_ident()?;
-        // Support both slash paths (use myapp/utils) and dot paths (use math.stats)
+        // Support both slash paths (use myapp/utils) and dot paths (use web.auth)
         while self.check(&Token::Slash) || self.check(&Token::Dot) {
             let sep = if self.check(&Token::Dot) { '.' } else { '/' };
             self.advance();

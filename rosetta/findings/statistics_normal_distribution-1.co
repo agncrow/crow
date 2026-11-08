@@ -4,7 +4,7 @@
 ---   15:1: cannot reassign 'inside' from float to array — variable type cannot change
 --- Expected: [-2], as `log[z[z lt half[1.0]]]`, `s = 0.5` then `z[z lt s]`, and
 --- `mask = z lt half[1.0]` then `inside = z[mask]` all answer, and as the same
---- assignment inside a function does. The answer of math.stats's `median` or `std`
+--- assignment inside a function does. The answer of a function such as `std`
 --- held in a variable (`s = std[z]`, then `inside = z[abs[z - m] lt s]`) is refused
 --- alike, which is how it was met.
 

@@ -74,7 +74,7 @@ repository root points assistants here.
     rejected ones stay, with the reason.
 20. **Formulas in Crow, primitives in Rust, laws in Crow for both.** A
     standard module is written in Crow wherever it is a formula over other
-    builtins (`math.nn`, `math.stats`, the indicators); native only when
+    builtins (the HTTP client, the readers, the indicators); native only when
     it must be — it touches the operating system, it is the compiler's own
     mechanism (the autograd tape), it is a validated numeric kernel
     (`faer`, `rustfft`), or it is a scalar loop the interpreter cannot

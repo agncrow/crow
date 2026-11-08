@@ -1,0 +1,18 @@
+--- A tensor indexed by a list of whole numbers gathers the numbers at
+--- them, as it does at a tensor of them — a range, a list grown by push,
+--- inside a function grad differentiates too, in both modes (the read had
+--- been typed as one number's: interpreted it stopped, "array index must be
+--- an integer or tensor", and compiled it did not build).
+use math
+
+t = [10.0, 20.0, 30.0, 40.0]
+log[t[range[2]]]
+log[t[range[1, 4]] .* 2.0]
+q = push[push[[], 3], -4]
+log[t[q]]
+m = [[1.0, 2.0], [3.0, 4.0]]
+log[m[range[1, 3]]]
+
+fn f[v]
+    return sum[v[range[2]] .* v[range[1, 3]]]
+log[grad[f][t]]

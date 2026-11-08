@@ -813,8 +813,8 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
             // (what a row gives, never takes; a map of text or a record read
             // by its fields; what a row shows or encodes, which is any
             // value; the rest of the arguments as sizes or operands)
-            Kind::FloatMap | Kind::Unit | Kind::Answer | Kind::Shell | Kind::Reply | Kind::TextRows | Kind::JsonList => true,
-            Kind::Mailer | Kind::Sizes | Kind::Groups | Kind::Lists | Kind::Item | Kind::ItemRef | Kind::TextMap | Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Scalars => true,
+            Kind::Unit | Kind::Answer | Kind::Shell | Kind::Reply | Kind::TextRows | Kind::JsonList => true,
+            Kind::Mailer | Kind::Sizes | Kind::Lists | Kind::Item | Kind::ItemRef | Kind::TextMap | Kind::Shown | Kind::Encoded | Kind::Shows | Kind::ShownDyn | Kind::Operands | Kind::Scalars => true,
         }
 }
 

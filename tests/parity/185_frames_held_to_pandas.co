@@ -18,7 +18,7 @@
 --- a right or outer join compared sorted, since the two order its rows
 --- differently, a percentile interpolated, a time window of the rows
 --- within the span before each row's own, and buckets floored in UTC.
-use frame, math, math.stats
+use frame, math
 
 fn trades[]
     return frame.load['tests/frames/data/trades.csv']
@@ -186,7 +186,8 @@ fn computing[t]
     r = frame.new[rows = [len[t]]]
     r.notional_sum = [sum[tf.qty .* tf.price]]
     r.price_mean = [mean[tf.price]]
-    r.price_std = [std[tf.price]]
+    spread = tf.price - mean[tf.price]
+    r.price_std = [sqrt[mean[spread .* spread]]]
     r.qty_max = [int[max[tf.qty]]]
     r.price_min = [min[tf.price]]
     oks = push[oks, held['reduce', r]]

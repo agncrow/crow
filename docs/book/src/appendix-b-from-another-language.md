@@ -127,7 +127,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `stop("msg")`, `tryCatch` | `return error['msg', kind]`; check `.ok` |
 | `%in%` | `v in xs` |
 | `# comment` | `--- comment` |
-| `mean(x)`, `sd(x)` | `mean[x]` after `use math`, `std[x]` after `use math.stats` |
+| `mean(x)`, `sd(x)` | `mean[x]` after `use math`, `stats.std[x]` from pie's `stats` package |
 | `Sys.time()`, `as.POSIXct(s)` | `now[]`, `moment[s]` |
 
 ## From MATLAB and Octave
@@ -174,7 +174,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `Dict("a" => 1)` | `map[a = 1]` |
 | `struct P; x; y; end` | `struct P [x, y]` |
 | `x::Int` annotations | none — inferred |
-| `using Statistics` | `use math, math.stats` |
+| `using Statistics` | `use math, stats` (pie's `stats` package) |
 | `nothing`, `missing` | no null — error values |
 | `big(2)^100`, `1//3`, `BigFloat` | `2 ^ 100` (an int grows), `fraction[1, 3]`, `decimal[x, digits = 50]` |
 | `try/catch`, `error("…")` | errors are values; `return error['…', kind]` |

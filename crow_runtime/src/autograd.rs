@@ -450,6 +450,18 @@ pub fn log10(a: &Traced) -> Traced {
     unary(a, a.value.map(f64::log10), move || av.map(|x| 1.0 / (x * std::f64::consts::LN_10)))
 }
 
+/// `log1p[t]`: d/dx ln(1 + x) = 1/(1 + x).
+pub fn log1p(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.log1p(), move || av.map(|x| 1.0 / (1.0 + x)))
+}
+
+/// `expm1[t]`: d/dx (exp(x) − 1) = exp(x).
+pub fn expm1(a: &Traced) -> Traced {
+    let av = a.value.clone();
+    unary(a, a.value.expm1(), move || av.map(f64::exp))
+}
+
 /// `sign[t]`: piecewise constant, a constant of the tape (derivative 0).
 pub fn sign(a: &Traced) -> Traced {
     Traced::constant(a.value.map(|x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 }))
@@ -587,6 +599,115 @@ pub fn min_axis(a: &Traced, axis: usize) -> Result<Traced, String> {
     Ok(extreme_axis(a, axis, a.value.min_axis(axis), |x, best| x < best))
 }
 
+/// `t[positions]` of a tensor by a tensor of whole-number positions: the
+/// numbers of the flattened tensor at the positions (a negative one counted
+/// from the end), shaped like the positions (spec, Advanced Indexing). The
+/// gradient reaches each number read, summed where a position is read
+/// more than once: the answer's gradient scattered back over the tensor.
+/// A layer reads its weights out of one vector of parameters so, a
+/// convolution its windows, an embedding its rows.
+pub fn gather(a: &Traced, positions: &CrowTensor) -> Result<Traced, String> {
+    let value = a.value.try_gather(positions)?;
+    let n = a.value.len();
+    let shape = a.value.shape().to_vec();
+    // (where each read lies, settled once: the read above checked them)
+    let at: Vec<usize> = positions.numbers().iter().map(|&i| crate::stops::item(CrowTensor::position(i)?, n)).collect::<Result<_, _>>()?;
+    let node = record(vec![a.node], move |g| {
+        let mut d = vec![0.0; n];
+        for (k, gk) in g.numbers().iter().enumerate() {
+            if let Some(cell) = at.get(k).and_then(|&p| d.get_mut(p)) {
+                *cell += gk;
+            }
+        }
+        vec![CrowTensor::from_vec(d, shape.clone())]
+    });
+    Ok(Traced::from(value, node))
+}
+
+/// `t[i]`: a matrix's row (a cube's matrix), a vector's number — a
+/// negative position counted from the end, as the untraced read counts;
+/// the gradient reaches what was read.
+pub fn at(a: &Traced, i: i64) -> Result<Traced, String> {
+    let shape = a.value.shape().to_vec();
+    let n = a.value.len();
+    if a.value.ndim() >= 2 {
+        let value = crate::core::row_at(&a.value, i)?;
+        let r = crate::stops::row(i, shape[0])?;
+        let width = value.len();
+        let node = record(vec![a.node], move |g| {
+            let mut d = vec![0.0; n];
+            if let Some(cells) = d.get_mut(r * width..(r + 1) * width) {
+                cells.copy_from_slice(&g.numbers());
+            }
+            vec![CrowTensor::from_vec(d, shape.clone())]
+        });
+        return Ok(Traced::from(value, node));
+    }
+    let value = crate::core::number_at(&a.value, i)?;
+    let k = crate::stops::item(i, n)?;
+    let node = record(vec![a.node], move |g| {
+        let mut d = vec![0.0; n];
+        if let Some(cell) = d.get_mut(k) {
+            *cell = g.sum();
+        }
+        vec![CrowTensor::from_vec(d, shape.clone())]
+    });
+    Ok(Traced::from(CrowTensor::scalar(value), node))
+}
+
+/// `slice[t, start, end]`: a vector's numbers, a matrix's rows, from
+/// `start` to `end` (crate::core::slice_tensor's positions); the gradient
+/// reaches the items kept, and nothing the slice left out.
+pub fn slice(a: &Traced, start: i64, end: i64) -> Traced {
+    let value = crate::core::slice_tensor(&a.value, start, end);
+    if a.value.ndim() == 0 {
+        return Traced::constant(value);
+    }
+    let shape = a.value.shape().to_vec();
+    let (s, e) = crate::core::slice_bounds(start, end, shape[0]);
+    let e = e.max(s);
+    let width = CrowTensor::numel(&shape[1..]);
+    let n = a.value.len();
+    let node = record(vec![a.node], move |g| {
+        let mut d = vec![0.0; n];
+        if let Some(cells) = d.get_mut(s * width..e * width) {
+            cells.copy_from_slice(&g.numbers());
+        }
+        vec![CrowTensor::from_vec(d, shape.clone())]
+    });
+    Traced::from(value, node)
+}
+
+/// `concat[a, b]` and `concat[a, b, axis = k]` of tensors: the two joined
+/// along the axis (0 unless named); the gradient is the answer's, split
+/// where the two met.
+pub fn concat(a: &Traced, b: &Traced, axis: i64) -> Result<Traced, String> {
+    let value = a.value.try_concat(&b.value, axis)?;
+    let ax = usize::try_from(axis).unwrap_or(0);
+    let first = a.value.shape().get(ax).copied().unwrap_or(0);
+    let whole = value.shape().get(ax).copied().unwrap_or(0);
+    let node = record(vec![a.node, b.node], move |g| vec![g.slice(ax, 0, first), g.slice(ax, first, whole)]);
+    Ok(Traced::from(value, node))
+}
+
+/// `where[cond, a, b]`: `a`'s number where the condition's is not 0 (a
+/// mask's true), `b`'s elsewhere — PyTorch's `torch.where`; the condition
+/// is a constant of the tape (a mask a comparison answers inside the
+/// function is one), and the gradient reaches `a` where the condition
+/// held and `b` where it did not, each in its own shape.
+pub fn where_(cond: &CrowTensor, a: &Traced, b: &Traced) -> Result<Traced, String> {
+    let value = crate::math::where_(cond, &a.value, &b.value)?;
+    let held: Vec<f64> = cond.numbers().iter().map(|&c| if c != 0.0 { 1.0 } else { 0.0 }).collect();
+    let (sa, sb) = (a.value.shape().to_vec(), b.value.shape().to_vec());
+    let node = record(vec![a.node, b.node], move |g| {
+        let g = g.numbers();
+        let ga: Vec<f64> = g.iter().zip(&held).map(|(x, h)| x * h).collect();
+        let gb: Vec<f64> = g.iter().zip(&held).map(|(x, h)| x * (1.0 - h)).collect();
+        vec![CrowTensor::from_vec(ga, sa.clone()), CrowTensor::from_vec(gb, sb.clone())]
+    });
+    Ok(Traced::from(value, node))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -667,6 +788,8 @@ mod tests {
             check("mean axis 1", &[a.clone()], |x| Ok(sum(&mul(&mean_axis(&x[0], 1)?, &mean_axis(&x[0], 1)?)?)));
             check("exp", &[a.clone()], |x| Ok(sum(&exp(&x[0]))));
             check("ln", &[positive.clone()], |x| Ok(sum(&ln(&x[0]))));
+            check("log1p", &[positive.clone()], |x| Ok(sum(&mul(&log1p(&x[0]), &x[0])?)));
+            check("expm1", &[a.clone()], |x| Ok(sum(&mul(&expm1(&x[0]), &x[0])?)));
             check("sqrt", &[positive.clone()], |x| Ok(sum(&sqrt(&x[0]))));
             check("tanh", &[a.clone()], |x| Ok(sum(&tanh(&x[0]))));
             check("abs", &[a.clone()], |x| Ok(sum(&abs(&x[0]))));
@@ -676,13 +799,40 @@ mod tests {
             check("min", &[a.clone()], |x| mul(&min(&x[0]), &sum(&x[0])));
             check("max axis 0", &[a.clone()], |x| Ok(sum(&mul(&max_axis(&x[0], 0)?, &max_axis(&x[0], 0)?)?)));
             check("min axis 1", &[a.clone()], |x| Ok(sum(&mul(&min_axis(&x[0], 1)?, &sum_axis(&x[0], 1)?)?)));
+            // (a position read twice sums its two shares; one counted from
+            // the end is the number it names)
+            let positions = CrowTensor::from_vec(vec![0.0, 5.0, 5.0, 11.0, -1.0, 7.0], vec![2, 3]);
+            check("gather", &[a.clone()], |x| Ok(sum(&mul(&gather(&x[0], &positions)?, &gather(&x[0], &positions)?)?)));
+            check("row", &[a.clone()], |x| Ok(sum(&mul(&at(&x[0], 1)?, &at(&x[0], -1)?)?)));
+            check("number", &[row.clone()], |x| mul(&at(&x[0], 2)?, &at(&x[0], -4)?));
+            check("slice", &[a.clone()], |x| Ok(sum(&mul(&slice(&x[0], 1, 3), &slice(&x[0], 0, 2))?)));
+            check("slice past the end", &[row.clone()], |x| Ok(sum(&mul(&slice(&x[0], -2, 9), &slice(&x[0], -2, 9))?)));
+            check("concat", &[a.clone(), b.clone()], |x| Ok(sum(&mul(&concat(&x[0], &x[1], 0)?, &concat(&x[1], &x[0], 0)?)?)));
+            check("concat axis 1", &[a.clone(), col.clone()], |x| Ok(sum(&mul(&concat(&x[0], &x[1], 1)?, &concat(&x[1], &x[0], 1)?)?)));
+            let cond = a.map(|v| if v > 0.3 { 1.0 } else { 0.0 });
+            check("where", &[a.clone(), b.clone()], |x| Ok(sum(&mul(&where_(&cond, &x[0], &x[1])?, &x[0])?)));
         }
+    }
+
+    /// The reads a layer makes of one vector of parameters: a gather's
+    /// answer is the untraced index's, and a read of no parameter is a
+    /// constant (no node, no gradient).
+    #[test]
+    fn a_read_by_positions_is_the_index_and_reaches_what_it_read() {
+        let t = CrowTensor::from_vec(vec![10.0, 20.0, 30.0, 40.0], vec![2, 2]);
+        let p = CrowTensor::from_vec(vec![3.0, 0.0, 3.0], vec![3]);
+        let grads = gradient(std::slice::from_ref(&t), |x| Ok(sum(&gather(&x[0], &p)?))).expect("a gradient");
+        assert_eq!(grads[0].to_vec(), vec![1.0, 0.0, 0.0, 2.0]);
+        assert_eq!(gather(&Traced::constant(t.clone()), &p).map(|g| g.value.to_vec()), Ok(vec![40.0, 10.0, 40.0]));
+        assert_eq!(at(&Traced::constant(t.clone()), -1).map(|r| r.value.to_vec()), Ok(vec![30.0, 40.0]));
+        assert!(at(&Traced::constant(t.clone()), 2).is_err());
+        assert!(gather(&Traced::constant(t), &CrowTensor::from_vec(vec![4.0], vec![1])).is_err());
     }
 
     /// A small network's loss, differentiated with respect to every weight,
     /// against finite differences: the chain through matmul, a bias
     /// broadcast, and relu, sigmoid and the binary cross-entropy written as
-    /// the formulas math.nn states them in Crow (src/modules/nn.co).
+    /// the formulas pie's nn states them in Crow.
     #[test]
     fn a_networks_loss_differentiates_to_the_weights() {
         let mut g = Gen(7);

@@ -1,0 +1,26 @@
+--- A draw inside a function `grad` differentiates — `bernoulli`'s mask, a
+--- dropout's, and `uniform`'s noise — is drawn as the function runs, a
+--- constant of the tape: the gradient reaches the weights through the
+--- numbers drawn, and a second call draws again. The draws come from the
+--- seeded generator in the same order in both modes.
+use math
+
+fn dropped[w, p]
+    keep = bernoulli[1.0 - p, len[w]]
+    return sum[w .* keep / (1.0 - p)]
+
+fn loss[w]
+    return dropped[w, 0.5]
+
+fn noisy[w]
+    jitter = uniform[0.0, 1.0, 2, 2]
+    return sum[w .* jitter]
+
+seed[7]
+w = tensor[[1.0, 2.0, 3.0, 4.0]]
+g = grad[loss]
+log[g[w]]
+log[g[w]]
+m = tensor[[[1.0, 2.0], [3.0, 4.0]]]
+h = grad[noisy]
+log[h[m]]

@@ -6,7 +6,7 @@
 --- repeats it on fresh seeded draws (radius from a normal distribution, angle
 --- uniform), and stretch 2 draws the four scatter plots in characters.
 
-use math, math.stats
+use math
 
 --- rule 1: the funnel stays over the target
 fn rule1[z, d]
@@ -99,3 +99,8 @@ experiments[radii .* cos[angles], radii .* sin[angles]]
 
 --- stretch 2: the four scatter plots of the given data
 scatter_plots[dxs, dys]
+
+--- the population standard deviation (pie's stats package holds the library)
+fn std[x]
+    d = x - mean[x]
+    return sqrt[mean[d .* d]]

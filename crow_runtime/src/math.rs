@@ -505,6 +505,8 @@ elementwise! {
     ln_n, ln_t, |x| x.ln(), log;
     log2_n, log2_t, |x| x.log2(), log2;
     log10_n, log10_t, |x| x.log10(), log10;
+    log1p_n, log1p_t, |x| x.ln_1p(), log1p;
+    expm1_n, expm1_t, |x| x.exp_m1(), expm1;
     sin_n, sin_t, |x| x.sin(), sin;
     cos_n, cos_t, |x| x.cos(), cos;
     tan_n, tan_t, |x| x.tan(), tan;

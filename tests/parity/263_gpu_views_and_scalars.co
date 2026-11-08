@@ -6,7 +6,7 @@
 --- CPU where the interpreter did both on the GPU, so the two showed
 --- different digits, and `sigmoid` and `softmax` with them. Where no GPU
 --- answers, every tensor stays on the CPU and both modes agree there.
-use math, math.nn
+use math
 
 gpu[]
 m = reshape[linspace[1.0, 4.0, 4], 2, 2]
@@ -22,3 +22,13 @@ log[2.5 / v]
 log[v - 0.5]
 log[sigmoid[v]]
 log[softmax[v]]
+
+--- the formulas the program uses (pie's nn holds the library)
+fn sigmoid[x]
+    x_t = tensor[x]
+    return 1.0 / (1.0 + exp[-x_t])
+
+fn softmax[x]
+    x_t = tensor[x]
+    ex = exp[x_t - max[x_t]]
+    return ex / sum[ex]

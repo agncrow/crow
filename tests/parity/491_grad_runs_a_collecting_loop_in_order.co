@@ -1,0 +1,29 @@
+--- A collecting loop inside a function grad differentiates runs in order,
+--- on the thread that holds the tape, in both modes: its rounds had been
+--- shared across the cores, where a round on another thread records
+--- nothing (its share of the gradient lost with no word), and compiled the
+--- copy over traced values did not build. A statement loop over the
+--- traced numbers it collected reads each as its own.
+use math
+
+fn sq[t, i]
+    return sum[t .* t] * float[i]
+
+fn f[theta]
+    parts = for i in range[200]
+        sq[theta, i]
+    s = 0.0
+    for p in parts
+        s = s + p
+    return s
+
+fn rows[m]
+    picked = for i in range[2]
+        m[i] * float[i + 1]
+    total = 0.0
+    for r in picked
+        total = total + sum[r .* r]
+    return total
+
+log[grad[f][[1.0, 2.0]]]
+log[grad[rows][[[1.0, 2.0], [3.0, 4.0]]]]

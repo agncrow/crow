@@ -1,0 +1,53 @@
+--- A model as pie writes one: its layers' sizes in records, its weights
+--- one vector, each layer's read out of it by positions; the loss builds
+--- the model by calling a function and runs it on the vector. A whole
+--- number read out of a record's list of them is the plain read inside the
+--- copy over traced values (the compiled program had read it as a traced
+--- one, and did not build). The forward, the loss and the gradient are
+--- PyTorch's to the last digit (nn.Sequential of Linear(3, 4), ReLU,
+--- Linear(4, 2), its parameters filled from the vector in order).
+use math
+
+struct Layer [form, at, size, ints]
+
+fn linear[inputs, outputs]
+    return Layer['linear', 0, inputs * outputs + outputs, [inputs, outputs]]
+
+fn relu[]
+    return Layer['relu', 0, 0, [0]]
+
+fn placed[layers]
+    at = 0
+    out = []
+    for l in layers
+        out = push[out, Layer[l.form, at, l.size, l.ints]]
+        at = at + l.size
+    return out
+
+fn forward[l, theta, x]
+    if l.form eq 'relu'
+        return clip[x, 0.0, inf]
+    i = l.ints[0]
+    o = l.ints[1]
+    w = reshape[theta[tensor[range[l.at, l.at + i * o]]], o, i]
+    return x * transpose[w] + slice[theta, l.at + i * o, l.at + i * o + o]
+
+fn net[]
+    return placed[[linear[3, 4], relu[], linear[4, 2]]]
+
+fn run[layers, theta, x]
+    h = x
+    for l in layers
+        h = forward[l, theta, h]
+    return h
+
+fn loss[theta, x, y]
+    d = run[net[], theta, x] - y
+    return mean[d .* d]
+
+theta = sin[tensor[range[26]] * 0.37 + 0.1] * 0.5
+x = [[0.5, -1.0, 2.0], [1.5, 0.25, -0.75]]
+y = [[1.0, 0.0], [0.0, 1.0]]
+log[run[net[], theta, x]]
+log[loss[theta, x, y]]
+log[grad[loss][theta, x, y][0]]

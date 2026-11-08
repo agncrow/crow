@@ -172,7 +172,6 @@ fn values() -> Vec<Val> {
         Val { name: "vecframe".into(), expr: "sv".into(), setup: vec![VEC_SETUP.to_string()], imports: vec!["frame"] },
         // (several arguments at once, for a row that takes the rest of them)
         plain("sizes", "2, 3"),
-        plain("groups", "[1.0, 2.0], [3.0, 4.0]"),
         plain("lists", "['a', 'b']"),
         plain("tensors", "push[push[[], [1.0, 2.0]], [3.0, 4.0]]"),
     ];
@@ -206,7 +205,6 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
         Kind::Tensor => &["vector", "matrix", "floats"],
         Kind::Sizes => &["sizes", "int"],
         Kind::Tensors => &["tensors"],
-        Kind::Groups => &["groups"],
         Kind::Frame => &["frame"],
         Kind::Strs => &["texts", "colnames"],
         Kind::Bools => &["bools", "maskcmp", "colbool"],
@@ -248,8 +246,7 @@ fn tried_first(k: Kind) -> &'static [&'static str] {
         Kind::Request | Kind::Found => &[],
         // given, never taken from a program; or a server's answer, a fused
         // kernel's own: no program value is one
-        Kind::FloatMap
-        | Kind::Unit
+        Kind::Unit
         | Kind::Answer
         | Kind::Response
         | Kind::Markup
@@ -579,7 +576,7 @@ fn form_cases(all: &[Val]) -> Vec<Case> {
     // text, decided on, walked, collected, handed to a function and back,
     // held in a record, a list and a map, copied, read after it was lent,
     // compared with itself, written down as JSON and read back
-    let shown: Vec<&str> = all.iter().map(|x| x.name.as_str()).filter(|n| !matches!(*n, "sizes" | "groups" | "lists" | "maskcmp")).collect();
+    let shown: Vec<&str> = all.iter().map(|x| x.name.as_str()).filter(|n| !matches!(*n, "sizes" | "lists" | "maskcmp")).collect();
     for n in &shown {
         let x = v(n);
         let e = &x.expr;
@@ -993,7 +990,7 @@ fn import_of(module: &'static str) -> Option<&'static str> {
 /// What the check writes cases of: a row of the table, or a function a
 /// module written in Crow exports (crate::modules::exports), its
 /// signature as the module's own tests type it — by one id (a row's its
-/// own, an export's `math.stats.median`), its module, the name it is
+/// own, an export's `web.auth.sign`), its module, the name it is
 /// called by, and the kinds its parameters take.
 struct Sig {
     id: String,
@@ -2498,9 +2495,11 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     }
     let _ = std::fs::write(dir.join("refusals.txt"), &refusals);
     // the forms of the language the cases that lower reach (the forms guard),
-    // and the standard modules' own tests where the test-block family runs
+    // and the standard modules' own tests, which the test-block family runs
+    // — read for their forms in a run that lowers only too, or a test
+    // block, which only they hold, was a form no case reaches
     let mut reaching: Vec<&String> = accepted.iter().map(|&i| &sources[i]).collect();
-    let module_sources: Vec<String> = if !lower_only && only.is_none() { module_files().iter().filter_map(|p| std::fs::read_to_string(p).ok()).collect() } else { Vec::new() };
+    let module_sources: Vec<String> = if only.is_none() { module_files().iter().filter_map(|p| std::fs::read_to_string(p).ok()).collect() } else { Vec::new() };
     reaching.extend(module_sources.iter());
     let reached = forms_reached(&reaching);
     let forms_now: BTreeMap<String, String> = every_form().into_iter().filter(|f| !reached.contains(f)).map(|f| (f, "no case reaches it".to_string())).collect();
@@ -3300,7 +3299,7 @@ fn every_form() -> BTreeSet<String> {
 /// is never one in a thousand wrong); a shuffle, a choice and a
 /// permutation as what they must be (the same items, distinct, in range).
 fn draw_cases() -> Vec<Case> {
-    let shown = "log[mean[x]]\nlog[std[x]]\nlog[min[x]]\nlog[max[x]]";
+    let shown = "log[mean[x]]\nlog[sqrt[mean[(x - mean[x]) .* (x - mean[x])]]]\nlog[min[x]]\nlog[max[x]]";
     let table: Vec<(&str, String)> = vec![
         ("randn", format!("x = randn[20000]\n{}", shown)),
         ("normal", format!("x = normal[3.0, 2.0, 20000]\n{}", shown)),
@@ -3311,9 +3310,9 @@ fn draw_cases() -> Vec<Case> {
         ("beta", format!("x = beta_dist[2.0, 5.0, 20000]\n{}", shown)),
         // (shape 2, rate 4: the mean 0.5, the spread √2 / 4)
         ("gamma", format!("x = gamma_dist[2.0, 4.0, 20000]\n{}", shown)),
-        ("rand", "xs = for i in range[20000]\n    rand[]\nx = tensor[xs]\nlog[mean[x]]\nlog[std[x]]\nlog[min[x]]\nlog[max[x]]".to_string()),
-        ("rand-n", "xs = for i in range[20000]\n    rand[6]\nx = tensor[xs]\nlog[mean[x]]\nlog[std[x]]\nlog[min[x]]\nlog[max[x]]".to_string()),
-        ("rand-between", "xs = for i in range[20000]\n    rand[-3, 3]\nx = tensor[xs]\nlog[mean[x]]\nlog[std[x]]\nlog[min[x]]\nlog[max[x]]".to_string()),
+        ("rand", "xs = for i in range[20000]\n    rand[]\nx = tensor[xs]\nlog[mean[x]]\nlog[sqrt[mean[(x - mean[x]) .* (x - mean[x])]]]\nlog[min[x]]\nlog[max[x]]".to_string()),
+        ("rand-n", "xs = for i in range[20000]\n    rand[6]\nx = tensor[xs]\nlog[mean[x]]\nlog[sqrt[mean[(x - mean[x]) .* (x - mean[x])]]]\nlog[min[x]]\nlog[max[x]]".to_string()),
+        ("rand-between", "xs = for i in range[20000]\n    rand[-3, 3]\nx = tensor[xs]\nlog[mean[x]]\nlog[sqrt[mean[(x - mean[x]) .* (x - mean[x])]]]\nlog[min[x]]\nlog[max[x]]".to_string()),
         ("shuffle", "xs = [5.0, 3.0, 9.0, 1.0, 7.0]\ny = shuffle[xs]\nlog[sort[y] eq sort[xs]]\nlog[len[y]]".to_string()),
         ("choice", "xs = [5.0, 3.0, 9.0, 1.0, 7.0]\ny = choice[xs, 3]\nlog[len[y]]\nlog[len[unique[y]]]\nlog[all[y, self_in_five]]".to_string()),
         ("permutation", "y = permutation[6]\nlog[sort[y]]".to_string()),
@@ -3325,7 +3324,6 @@ fn draw_cases() -> Vec<Case> {
             lines.extend(body.lines().map(str::to_string));
             let mut c = Case::new(format!("draw/{}", name), &[], lines).referring(format!("draw:{}", name), &[]);
             c.imports.insert("math");
-            c.imports.insert("math.stats");
             c
         })
         .collect()
@@ -3659,7 +3657,7 @@ mod tests {
         let mut refused = Vec::new();
         for v in &all {
             // (a function is not shown)
-            if matches!(v.name.as_str(), "sizes" | "groups" | "lists" | "fn" | "pred") {
+            if matches!(v.name.as_str(), "sizes" | "lists" | "fn" | "pred") {
                 continue;
             }
             let case = Case::new(format!("shown/{}", v.name), &[v], vec![format!("log[{}]", v.expr)]);

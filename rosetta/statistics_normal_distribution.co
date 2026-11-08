@@ -5,13 +5,13 @@
 --- Marsaglia's polar method with rand[] one draw at a time (a point of the square is
 --- kept when it falls inside the unit circle, and needs no sine or cosine). Native
 --- support: use math has randn[n], standard normals (itself Box-Muller, written in
---- Crow), and normal[mean, std, n]; math's mean and math.stats's std (the population
---- standard deviation) give the statistics. Each set of 100,000 numbers is shown with
+--- Crow), and normal[mean, std, n]; math's mean and a population standard deviation
+--- written here give the statistics. Each set of 100,000 numbers is shown with
 --- its mean, its standard deviation and the shares within 1, 2 and 3 deviations of
 --- the mean (a normal's are 68.27%, 95.45% and 99.73%); the two built from uniform
 --- draws are drawn as histograms in characters, a bar per half deviation.
 
-use math, math.stats
+use math
 
 fn box_muller[n]
     u = uniform[0.0, 1.0, n / 2]
@@ -77,3 +77,8 @@ report['Box-Muller, from 100,000 uniform draws:', box_muller[n], true]
 report['Marsaglia\'s polar method, from uniform draws one at a time:', marsaglia[n], true]
 report['randn[100000], math\'s own standard normals:', randn[n], false]
 report['normal[50.0, 4.0, 100000], math\'s normals of mean 50 and deviation 4:', normal[50.0, 4.0, n], false]
+
+--- the population standard deviation (pie's stats package holds the library)
+fn std[x]
+    d = x - mean[x]
+    return sqrt[mean[d .* d]]

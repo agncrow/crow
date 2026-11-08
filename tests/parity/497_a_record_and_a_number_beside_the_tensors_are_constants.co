@@ -1,0 +1,42 @@
+--- Over tensors `grad` differentiates the tensor parameters, and a
+--- parameter of another kind beside them is a constant of the run: a list
+--- of layers (records) and a scale (a number) are read as the function
+--- runs and take no gradient, so `grad[loss][layers, theta, x, y, 2.0]`
+--- answers the gradients of `theta`, `x` and `y`. The numbers are
+--- PyTorch's in float64 (θ's to the bit).
+use math
+
+struct Layer [form, at, rows, cols]
+
+fn weight[layer, theta]
+    n = layer.rows * layer.cols
+    return reshape[theta[range[layer.at, layer.at + n]], layer.rows, layer.cols]
+
+fn forward[layers, theta, x]
+    h = x
+    for layer in layers
+        h = h * weight[layer, theta]
+        if layer.form eq 'tanh'
+            h = tanh[h]
+    return h
+
+fn loss[layers, theta, x, y, scale]
+    d = flatten[forward[layers, theta, x]] - y
+    return mean[d .* d] * scale
+
+layers = [Layer['tanh', 0, 2, 3], Layer['linear', 6, 3, 1]]
+theta = tensor[[0.1, -0.2, 0.3, 0.4, -0.5, 0.6, 0.7, -0.8, 0.9]]
+x = tensor[[[1.0, 2.0], [0.5, -1.0]]]
+y = tensor[[1.0, -1.0]]
+g = grad[loss][layers, theta, x, y, 2.0]
+log[len[g]]
+log[g[0]]
+log[g[1]]
+log[loss[layers, theta, x, y, 2.0]]
+
+fn one[layers, theta, x, y]
+    d = flatten[forward[layers, theta, x]] - y
+    return sum[d .* d]
+
+dl = grad[one]
+log[dl[layers, theta, x, y][0]]

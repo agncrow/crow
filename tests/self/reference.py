@@ -811,6 +811,21 @@ def log10(x):
     return math.log10(x)
 
 
+def log1p(x):
+    if x == -1.0:
+        return -math.inf
+    if x == math.inf:
+        return math.inf
+    return math.log1p(x)
+
+
+def expm1(x):
+    try:
+        return math.expm1(x)
+    except OverflowError:
+        return math.inf
+
+
 def sinh(x):
     try:
         return math.sinh(x)
@@ -827,6 +842,8 @@ UNARY = {
     "ln": libm(ln),
     "log2": libm(log2),
     "log10": libm(log10),
+    "log1p": libm(log1p),
+    "expm1": libm(expm1),
     "sin": libm(math.sin),
     "cos": libm(math.cos),
     "tan": libm(math.tan),
@@ -2514,11 +2531,8 @@ E1 = {
 }
 
 
-# ── statistics and neural networks (spec, math.stats and math.nn) ──
-#
-# Each a formula the spec states, computed with numpy (whose sums the spec
-# holds math's reductions to); compared within a few units in the last
-# place, as the module computes them in Crow.
+# ── helpers for series of numbers (the statistics and the networks are
+# pie's since 2026-11-07, held to scipy and PyTorch there) ──
 
 
 def _series(x):
@@ -2531,69 +2545,11 @@ def _series(x):
     return numpy.array(t.data, dtype=numpy.float64)
 
 
-def _near(r):
-    return Near(show(r, True))
-
-
-def _nan_if_empty(a, f):
-    if a.size == 0:
-        return float("nan")
-    with numpy.errstate(all="ignore"):
-        return float(f(a))
-
-
-def f_median(x):
-    a = numpy.sort(_series(x))
-    return _nan_if_empty(a, lambda v: v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1] + v[len(v) // 2]) / 2)
-
-
-def f_var(x):
-    a = _series(x)
-    return _nan_if_empty(a, lambda v: numpy.mean((v - numpy.mean(v)) ** 2))
-
-
-def f_std(x):
-    v = f_var(x)
-    return v ** 0.5 if v == v else v
-
-
-def f_percentile(x, p):
-    a = numpy.sort(_series(x))
-    if isinstance(p, bool) or not is_num(p):
-        raise Skip()
-    if not 0 <= p <= 100:
-        raise Err()
-    return _nan_if_empty(a, lambda v: numpy.percentile(v, p, method="linear"))
-
-
-def f_zscore(x):
-    a = _series(x)
-    if a.size == 0:
-        return T([], [0])
-    with numpy.errstate(all="ignore"):
-        z = (a - numpy.mean(a)) / numpy.sqrt(numpy.mean((a - numpy.mean(a)) ** 2))
-    return T([float(v) for v in z], [len(z)])
-
-
 def _paired(x, y):
     a, b = _series(x), _series(y)
     if a.size != b.size:
         raise Err()
     return a, b
-
-
-def f_cov(x, y):
-    a, b = _paired(x, y)
-    return _nan_if_empty(a, lambda v: numpy.mean((v - numpy.mean(v)) * (b - numpy.mean(b))))
-
-
-def f_corr(x, y):
-    a, b = _paired(x, y)
-    if a.size == 0:
-        return float("nan")
-    with numpy.errstate(all="ignore"):
-        da, db = a - numpy.mean(a), b - numpy.mean(b)
-        return float(numpy.sum(da * db) / numpy.sqrt(numpy.sum(da * da) * numpy.sum(db * db)))
 
 
 def _tensor_of(x):
@@ -2607,74 +2563,6 @@ def _tensor_of(x):
 
 def _as_T(a):
     return T([float(v) for v in a.ravel()], list(a.shape))
-
-
-def f_relu(x):
-    a, _ = _tensor_of(x)
-    return _as_T(numpy.maximum(a, 0.0))
-
-
-def f_sigmoid(x):
-    a, _ = _tensor_of(x)
-    with numpy.errstate(all="ignore"):
-        return _as_T(1.0 / (1.0 + numpy.exp(-a)))
-
-
-def f_softmax(x):
-    a, _ = _tensor_of(x)
-    if a.size == 0:
-        raise Skip()
-    with numpy.errstate(all="ignore"):
-        e = numpy.exp(a - numpy.max(a))
-        return _as_T(e / numpy.sum(e))
-
-
-def f_gelu(x):
-    a, _ = _tensor_of(x)
-    return _as_T(a * (0.5 * (1.0 + numpy.vectorize(math.erf)(a / math.sqrt(2.0)))) if a.size else a)
-
-
-def f_mse(p, t):
-    a, sa = _tensor_of(p)
-    b, sb = _tensor_of(t)
-    if sa != sb:
-        raise Skip()
-    with numpy.errstate(all="ignore"):
-        return float(numpy.mean((a - b) * (a - b))) if a.size else float("nan")
-
-
-def f_bce(p, t):
-    a, _ = _tensor_of(p)
-    b, _ = _tensor_of(t)
-    a, b = a.ravel(), b.ravel()
-    if a.size != b.size:
-        raise Err()
-    a = numpy.clip(a, 1e-12, 1 - 1e-12)
-    with numpy.errstate(all="ignore"):
-        return float(-numpy.mean(b * numpy.log(a) + (1.0 - b) * numpy.log(1.0 - a))) if a.size else float("nan")
-
-
-def near_of(f):
-    def g(*args):
-        return _near(f(*args))
-    return g
-
-
-E2 = {name: near_of(f) for name, f in {
-    "math.stats.median": f_median,
-    "math.stats.var": f_var,
-    "math.stats.std": f_std,
-    "math.stats.percentile": f_percentile,
-    "math.stats.zscore": f_zscore,
-    "math.stats.cov": f_cov,
-    "math.stats.corr": f_corr,
-    "math.nn.relu": f_relu,
-    "math.nn.sigmoid": f_sigmoid,
-    "math.nn.softmax": f_softmax,
-    "math.nn.gelu": f_gelu,
-    "math.nn.mse": f_mse,
-    "math.nn.bce": f_bce,
-}.items()}
 
 
 # ── math's tensors (spec, math) ─────────────────────────────────────
@@ -3020,7 +2908,7 @@ E3 = {
 }
 
 
-# ── fractions and the statistics with a test's p (spec) ────────────
+# ── fractions (spec) ────────────────────────────────────────────────
 
 from fractions import Fraction as _Fraction
 
@@ -3035,78 +2923,8 @@ def f_fraction(*args):
     return str(q.numerator) if q.denominator == 1 else "{}/{}".format(q.numerator, q.denominator)
 
 
-def _stats_map(d):
-    return Close(show(M(d), True))
-
-
-def f_linreg(x, y):
-    a, b = _paired(x, y)
-    if a.size == 0:
-        raise Skip()
-    with numpy.errstate(all="ignore"):
-        ma, mb = numpy.mean(a), numpy.mean(b)
-        sxy = numpy.mean((a - ma) * (b - mb))
-        sxx = numpy.mean((a - ma) ** 2)
-        syy = numpy.mean((b - mb) ** 2)
-        slope = sxy / sxx
-        r = sxy / numpy.sqrt(sxx * syy)
-    if not all(math.isfinite(v) for v in (slope, r)):
-        raise Skip()
-    return _stats_map({"slope": float(slope), "intercept": float(mb - slope * ma), "r2": float(r * r)})
-
-
-def f_fit(x, dist):
-    a = _series(x)
-    if not isinstance(dist, str):
-        raise Skip()
-    if dist not in ("normal", "exponential", "uniform", "poisson"):
-        raise Err()
-    if a.size == 0:
-        raise Skip()
-    m = float(numpy.mean(a))
-    if dist == "normal":
-        return _stats_map({"mu": m, "sigma": float(numpy.sqrt(numpy.mean((a - m) ** 2)))})
-    if dist == "exponential":
-        return _stats_map({"lambda": 1.0 / m}) if m else _skip()
-    if dist == "uniform":
-        return _stats_map({"a": float(numpy.min(a)), "b": float(numpy.max(a))})
-    return _stats_map({"lambda": m})
-
-
-def _scipy():
-    try:
-        import scipy.stats
-        return scipy.stats
-    except ImportError:
-        raise Needs("scipy")
-
-
-def f_ttest(x, y):
-    a, b = _series(x), _series(y)
-    if a.size < 2 or b.size < 2:
-        raise Skip()
-    st = _scipy()
-    r = st.ttest_ind(a, b, equal_var=False)
-    if not (math.isfinite(r.statistic) and math.isfinite(r.pvalue)):
-        raise Skip()
-    return _stats_map({"t": float(r.statistic), "p": float(r.pvalue)})
-
-
-def f_chisq(o, e):
-    a, b = _paired(o, e)
-    if a.size < 2 or (b <= 0).any():
-        raise Skip()
-    st = _scipy()
-    chi2 = float(numpy.sum((a - b) ** 2 / b))
-    return _stats_map({"chi2": chi2, "p": float(st.chi2.sf(chi2, a.size - 1))})
-
-
 E4 = {
     "fraction": f_fraction,
-    "math.stats.linreg": f_linreg,
-    "math.stats.fit": f_fit,
-    "math.stats.ttest": f_ttest,
-    "math.stats.chisq": f_chisq,
 }
 
 
@@ -3492,7 +3310,6 @@ E7 = {
 
 
 BUILTINS.update(E1)
-BUILTINS.update(E2)
 BUILTINS.update(E3)
 BUILTINS.update(E4)
 BUILTINS.update(E5)

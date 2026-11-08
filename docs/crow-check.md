@@ -386,8 +386,7 @@ functions (Crow's), numpy for math's reductions (the spec holds `sum` to
 it), Rust's float display — and for the modules: `sys`'s bytes by Python's
 own (`<n bytes>` shown, their text, hex, base64, packing and digests); `bits` by Python's own
 operators, `encode`/`decode`'s schemes by `base64` and `urllib`, regular
-expressions by `re`, `hash` by `hashlib`, statistics and `math.nn` by
-their formulas over numpy (a test's p by scipy), math's tensors —
+expressions by `re`, `hash` by `hashlib`, math's tensors —
 element-wise forms, scans, sorts, constructors, shapes, linear algebra,
 convolution, windows and transforms — by numpy within a tolerance scaled
 to the answer, fractions by Python's `fractions`. A route's answer is computed the same way:

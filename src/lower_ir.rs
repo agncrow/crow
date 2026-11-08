@@ -1611,7 +1611,7 @@ impl<'a> Lowerer<'a> {
                     // (a standard module's function, inlined behind its
                     // prefix, was checked as a program of its own under its
                     // own imports: the program's imports and aliases reserve
-                    // nothing in it — `use math.stats as s` beside a module
+                    // nothing in it — `use web.auth as a` beside a module
                     // whose parameter is `s`)
                     if !crate::modules::is_crow_fn(name) {
                         self.check_reserved(name, if *is_view { "view" } else { "function" });
@@ -5965,6 +5965,19 @@ impl<'a> Lowerer<'a> {
                 }
                 return Ok(picked(row, base, index, ty));
             }
+            // a tensor gathers at a list of whole numbers as it does at a
+            // tensor of them (spec, Advanced Indexing): the list is made the
+            // tensor of its positions here, so both modes read one gather —
+            // `t[range[a, b]]` had been typed as a number's read, stopped
+            // interpreted ("array index must be an integer or tensor") and
+            // not built compiled
+            if matches!(base.ty().payload(), Ty::Tensor(..))
+                && let [index] = idx.as_slice()
+                && matches!(index.ty().payload(), Ty::List(e) if matches!(e.payload(), Ty::Int | Ty::Unknown))
+                && let Some(index) = idx.pop()
+            {
+                idx.push(Expr::Convert { how: Convert::ToTensor, expr: Box::new(index), ty: Ty::vector(Ty::Float) });
+            }
             // a map's keys are one kind: an index of the other kind is
             // refused before the program runs, in both modes — and a key is
             // text or an int
@@ -7299,7 +7312,7 @@ impl<'a> Lowerer<'a> {
             let Some(item) = listed_item(*k) else { continue };
             // (a tensor's parameter takes numbers whatever the name's other
             // rows take: the rule a parameter handed `[]` has always had —
-            // `tensor[x]` in math.stats's `corr` — which the agreement must
+            // `tensor[x]` in a module's formula — which the agreement must
             // not undo)
             if *k != crate::table::Kind::Tensor && rows.iter().any(|ks| ks.get(i).and_then(|k| listed_item(*k)).as_ref() != Some(&item)) {
                 continue;
@@ -7398,8 +7411,8 @@ impl<'a> Lowerer<'a> {
                 _ => x,
             }
         };
-        // a parameter that takes the rest of the arguments (`anova[a, b,
-        // c]`, `normal[0, 1, 3, 4]`) is handed them as one list, as the
+        // a parameter that takes the rest of the arguments (`randn[2, 3]`,
+        // `normal[0, 1, 3, 4]`) is handed them as one list, as the
         // function takes it; the parameters before it read theirs as above
         if row.params.iter().any(|k| k.is_rest()) {
             let Ok(spans) = crate::table::spans(row.params, lowered.len(), row.name) else { return lowered };
@@ -7417,7 +7430,6 @@ impl<'a> Lowerer<'a> {
                     let fails = |x: &Expr| x.ty().is_result() || matches!(x, Expr::Convert { how: Convert::Unwrap, expr, .. } if expr.ty().is_result());
                     let gather = match k {
                         crate::table::Kind::Sizes => crate::table::ROWS.iter().find(|r| r.id == "core.__sizes"),
-                        crate::table::Kind::Groups => crate::table::ROWS.iter().find(|r| r.id == "core.__groups"),
                         _ => None,
                     };
                     match gather {
@@ -10379,7 +10391,7 @@ log[drive[3]]
     /// their chains unfused, since a fused kernel is opaque to the tape
     #[test]
     fn a_function_grad_differentiates_over_tensors() {
-        let ir = ir_of("use math, math.nn\nfn loss[w, x, y]\n    return mse[flatten[x * w], y]\nfn helper[w]\n    return sum[w .* w + w]\nfn outer[w]\n    return helper[w] * 2.0\ng = grad[loss]\ngs = g[zeros[2, 1], [[1.0, 0.0], [0.0, 1.0]], [1.0, 2.0]]\nlog[gs[0].shape]\nh = grad[outer][[1.0, 2.0]]\nlog[h.shape]\n");
+        let ir = ir_of("use math\nfn sqerr[p, t]\n    d = p - t\n    return mean[d .* d]\nfn loss[w, x, y]\n    return sqerr[flatten[x * w], y]\nfn helper[w]\n    return sum[w .* w + w]\nfn outer[w]\n    return helper[w] * 2.0\ng = grad[loss]\ngs = g[zeros[2, 1], [[1.0, 0.0], [0.0, 1.0]], [1.0, 2.0]]\nlog[gs[0].shape]\nh = grad[outer][[1.0, 2.0]]\nlog[h.shape]\n");
         assert!(ir.contains("loss(w: Tensor(Float") && ir.contains(") -> Float"), "{}", ir);
         assert!(ir.contains("helper(w: Tensor(Float"), "{}", ir);
         assert!(ir.contains("let gs: List(Tensor(Float))"), "{}", ir);
@@ -10451,7 +10463,7 @@ log[drive[3]]
     /// had not built)
     #[test]
     fn a_loop_and_an_index_go_by_the_rank_the_type_states() {
-        let ir = ir_of("use math, math.nn\nstruct Net[w]\nnet = Net[zeros[2, 3] + 1.0]\nfor r in relu[net.w]\n    a = r\n    log[a]\nfor x in sum[net.w, 1]\n    b = x\n    log[b]\nfor x in flatten[net.w]\n    c = x\n    log[c]\nfor r in reshape[linspace[0.0, 5.0, 6], 3, 2]\n    d = r\n    log[d]\nrow0 = concat[net.w, net.w][0]\nfn fn_loss[w]\n    return sum[w .* w]\ng = grad[fn_loss][net.w]\nf = g[1]\nv = [1.0, 2.0]\nv[0] = 3.0\nfor x in v\n    h = x\n    log[h]\nlog[row0, f]\n");
+        let ir = ir_of("use math\nstruct Net[w]\nnet = Net[zeros[2, 3] + 1.0]\nfor r in abs[net.w]\n    a = r\n    log[a]\nfor x in sum[net.w, 1]\n    b = x\n    log[b]\nfor x in flatten[net.w]\n    c = x\n    log[c]\nfor r in reshape[linspace[0.0, 5.0, 6], 3, 2]\n    d = r\n    log[d]\nrow0 = concat[net.w, net.w][0]\nfn fn_loss[w]\n    return sum[w .* w]\ng = grad[fn_loss][net.w]\nf = g[1]\nv = [1.0, 2.0]\nv[0] = 3.0\nfor x in v\n    h = x\n    log[h]\nlog[row0, f]\n");
         assert!(ir.contains("let a: Tensor(Float, [3]) = "), "{}", ir);
         assert!(ir.contains("let b: Float = "), "{}", ir);
         assert!(ir.contains("let c: Float = "), "{}", ir);
@@ -10493,11 +10505,17 @@ log[drive[3]]
             assert!(r.contains(words), "{}\n--- wanted: {}", r, words);
         };
         refuses("use math\nfn f[w]\n    return prod[w]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f calls `prod`, which is not differentiable");
-        refuses("use math\nfn f[w]\n    return w[0] * w[1]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f indexes a tensor");
+        refuses("use math\nfn f[w]\n    return max[w[0], w[1]]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f calls `max` with 2 arguments, which is not differentiable");
         refuses("use math\nfn f[w]\n    t = 0.0\n    for x in w\n        t = t + x\n    return t\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f walks a tensor");
-        refuses("use math\nfn f[w, k]\n    return sum[w] * k\nlog[grad[f][[1.0, 2.0], 3.0]]\n", "a function grad differentiates takes tensors, or numbers alone — f takes a tensor, a number");
+        refuses("use math\nfn sq[x]\n    return x * x\nfn f[w, h]\n    return sum[w]\nlog[sq[2.0]]\nlog[grad[f][[1.0, 2.0], sq]]\n", "a parameter beside the tensors is a constant of the run — a number, a bool, text, a list, a map or a record — and 'h' is a function");
+        // a number, a list or a record beside the tensors is a constant
+        assert_eq!(refusal_of("use math\nfn f[w, k]\n    return sum[w] * k\nlog[grad[f][[1.0, 2.0], 3.0]]\n"), "");
+        assert_eq!(refusal_of("use math\nstruct L [n]\nfn f[l, w, ks]\n    return sum[w] * float[l.n + len[ks]]\nlog[grad[f][L[2], [1.0, 2.0], [1, 2]]]\n"), "");
         refuses("use math\nfn inner[x]\n    return x * x\nfn outer[w]\n    return sum[w] * grad[inner][2.0]\nlog[grad[outer][[1.0]]]\n", "grad: outer calls grad");
-        refuses("use math\nfn f[w]\n    n = len[w gt 0.0]\n    return sum[w] * float[n]\nlog[grad[f][[3.0, 1.0]]]\n", "grad: f compares tensors with `gt`");
+        // a tensor's index, and its mask beside a number, are read inside
+        // `f` as outside it
+        assert_eq!(refusal_of("use math\nfn f[w]\n    return w[0] * w[1]\nlog[grad[f][[3.0, 1.0]]]\n"), "");
+        assert_eq!(refusal_of("use math\nfn f[w]\n    n = len[w gt 0.0]\n    return sum[w] * float[n]\nlog[grad[f][[3.0, 1.0]]]\n"), "");
     }
 
     /// A second derivative is not built: `grad` inside a function `grad`
@@ -10922,23 +10940,18 @@ log[drive[3]]
         assert!(!loop_line(&ir, "for x in").ends_with("parallel"), "{}", ir);
     }
 
-    /// A standard module's function written in Crow (math.nn,
-    /// src/modules/nn.co) is the program's call of the function inlined:
-    /// typed by its use, a copy per signature (a vector and a matrix are
-    /// two), the answer its body's; a misuse is refused before the program
-    /// runs where the body first cannot take the kind, the refusal naming
-    /// the function the program called and the program's line.
+    /// A standard module's function written in Crow (io's `lines`,
+    /// src/modules/io.co) is the program's call of the function inlined:
+    /// typed by its use, the answer its body's; a function only the
+    /// module's tests use is not inlined; a misuse is refused before the
+    /// program runs, the refusal naming the function the program called.
     #[test]
     fn a_modules_function_written_in_crow_is_the_programs_call() {
-        let ir = ir_of("use math, math.nn\nlog[relu[[-1.0, 2.0]]]\nlog[mse[[1.0, 2.0], [1.0, 4.0]]]\nlog[sum[relu[[[1.0, -2.0], [3.0, 0.5]]]]]\n");
-        assert!(ir.contains("pure _math_nn_relu"), "{}", ir);
-        assert!(ir.contains("call _math_nn_mse"), "{}", ir);
-        assert!(ir.contains("math.sum(call _math_nn_relu"), "{}", ir);
-        assert!(!ir.contains("_math_nn__through_all"), "a function only the module's tests use is not inlined: {}", ir);
-        let r = refusal_of("use math, math.nn\nlog[relu[5]]\n");
-        assert!(r.contains("in relu:") && r.contains("got an int") && !r.contains("_math_nn"), "{}", r);
-        let r = refusal_of("use math, math.nn\nlog[mse[[1.0], 'x']]\n");
-        assert!(r.contains("in mse:") && !r.contains("_math_nn"), "{}", r);
+        let ir = ir_of("use io\nlog[len[lines['a.txt']]]\n");
+        assert!(ir.contains("_io_lines"), "{}", ir);
+        assert!(!ir.contains("_io_csv"), "a function the program does not call is not inlined: {}", ir);
+        let r = refusal_of("use io\nlog[lines[5]]\n");
+        assert!(r.contains("lines") && !r.contains("_io_"), "{}", r);
     }
 
     /// A call indexed (`f[x][0]`) types its callee as any call does; a
@@ -10951,7 +10964,7 @@ log[drive[3]]
         assert!(ir.contains("pure f(x: Tensor(Float, [1])) -> Tensor(Float, [1])"), "{}", ir);
         let ir = ir_of("use math\nfn g[x]\n    ex = exp[x - max[x]]\n    return ex / sum[ex]\nlog[1]\n");
         assert!(ir.contains("pure g(x: ?) -> ?"), "{}", ir);
-        let r = refusal_of("use math, math.nn\nfn loss[w, y]\n    return mse[flatten[w], y]\ngrads = grad[loss][[[1.0], [2.0]], [1.0, 2.0]]\nlog[grads[0][0][0]]\n");
+        let r = refusal_of("use math\nfn sqerr[p, t]\n    d = p - t\n    return mean[d .* d]\nfn loss[w, y]\n    return sqerr[flatten[w], y]\ngrads = grad[loss][[[1.0], [2.0]], [1.0, 2.0]]\nlog[grads[0][0][0]]\n");
         assert!(r.contains("the rank of the tensor is not known here"), "{}", r);
     }
 

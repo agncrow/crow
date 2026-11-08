@@ -27,8 +27,6 @@ tables, with every function linked back to the example that shows it, see
 | [Math: reductions and linear algebra](math-linalg.md) | `sum prod mean min max argmax argmin cumsum cumprod topk argsort unique where`, `axis =`; `det inv norm dot triu tril rank cond solve lstsq pinv qr svd cholesky eigen` |
 | [Math: random, signal, special, and sparse](math-more.md) | `seed normal uniform poisson bernoulli gamma_dist beta_dist exponential shuffle choice permutation rand`, `fft ifft fft2 conv conv2d hamming hanning stft spectrogram lowpass highpass bandpass`, `gamma erf bessel factorial choose fma`, `complex real imag magnitude phase conjugate`, `sparse dense nnz spmv` |
 | [Automatic differentiation](grad.md) | `grad` of a function of numbers, one parameter and several, and of a function of tensors |
-| [Statistics: `use math.stats`](stats.md) | `median std var percentile corr linreg cov zscore ttest anova chisq fit kstest` |
-| [Neural-network building blocks: `use math.nn`](nn.md) | `relu sigmoid softmax mse bce crossentropy gelu linear`, a misuse refused |
 | [Structured files: `use io`](io.md) | `csv lines` |
 | [Documentation: `use doc`](doc.md) | `chapters markdown menu pager plain document` |
 | [Bits and character codes: `use bits`](bits.md) | `bitand bitor bitxor bitcount shift code char` |

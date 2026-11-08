@@ -10,6 +10,7 @@ use crate::ast::{BinOp, UnaryOp};
 use crate::value::*;
 use crow_runtime::autograd::{self, Traced};
 use crow_runtime::tensor::CrowTensor;
+use crate::table::{Row, Tape};
 
 /// A traced value as the interpreter holds it.
 pub fn wrap(t: Traced) -> CrowValue {
@@ -34,9 +35,32 @@ pub fn traced_of(v: &Value) -> Result<Traced, String> {
     }
 }
 
-/// The builtins a function `grad` differentiates may call with a traced
-/// value (the lowering's list, crate::lower_ir::grad).
-pub fn call(name: &str, vals: &[CrowValue]) -> Result<CrowValue, String> {
+/// A builtin a function `grad` differentiates calls with a traced value:
+/// the kernel its row declares (`table::Tape`), recorded on the tape. A row
+/// with none is the reason, in the words the lowering refuses it with where
+/// it sees the call; the interpreter meets it only where the lowering could
+/// not see.
+pub fn call(row: &'static Row, vals: &[CrowValue]) -> Result<CrowValue, String> {
+    let name = crate::table::written_name(row);
+    match crate::table::tape_of(row, vals.len()) {
+        Some(tape) => run(tape, row, name, vals),
+        None => Err(not_differentiable(name)),
+    }
+}
+
+/// The same call of a builtin the IR left by name.
+pub fn call_named(name: &str, vals: &[CrowValue]) -> Result<CrowValue, String> {
+    match crate::table::tape_named(name, vals.len()) {
+        Some((row, tape)) => run(tape, row, name, vals),
+        None => Err(not_differentiable(name)),
+    }
+}
+
+fn not_differentiable(name: &str) -> String {
+    format!("grad: `{}` is not differentiable — a function grad differentiates may use {}", name, crate::table::taped().join(", "))
+}
+
+fn run(tape: Tape, row: &Row, name: &str, vals: &[CrowValue]) -> Result<CrowValue, String> {
     let one = |i: usize| -> Result<Traced, String> {
         vals.get(i).ok_or_else(|| format!("{}[] is missing an argument", name)).and_then(|v| traced_of(&v.value))
     };
@@ -49,52 +73,66 @@ pub fn call(name: &str, vals: &[CrowValue]) -> Result<CrowValue, String> {
         }
     };
     let axis = |i: usize| -> Result<usize, String> { usize::try_from(int(i)?).map_err(|_| format!("{}: an axis is 0 or more", name)) };
-    Ok(match (name, vals.len()) {
-        ("sum", 1) => wrap(autograd::sum(&one(0)?)),
-        ("sum", 2) => wrap(autograd::sum_axis(&one(0)?, axis(1)?)?),
-        ("mean", 1) => wrap(autograd::mean(&one(0)?)),
-        ("mean", 2) => wrap(autograd::mean_axis(&one(0)?, axis(1)?)?),
-        ("exp", 1) => wrap(autograd::exp(&one(0)?)),
-        ("ln", 1) => wrap(autograd::ln(&one(0)?)),
-        ("sqrt", 1) => wrap(autograd::sqrt(&one(0)?)),
-        ("tanh", 1) => wrap(autograd::tanh(&one(0)?)),
-        ("abs", 1) => wrap(autograd::abs(&one(0)?)),
-        ("erf", 1) => wrap(autograd::erf(&one(0)?)),
-        ("sin", 1) => wrap(autograd::sin(&one(0)?)),
-        ("cos", 1) => wrap(autograd::cos(&one(0)?)),
-        ("tan", 1) => wrap(autograd::tan(&one(0)?)),
-        ("asin", 1) => wrap(autograd::asin(&one(0)?)),
-        ("acos", 1) => wrap(autograd::acos(&one(0)?)),
-        ("atan", 1) => wrap(autograd::atan(&one(0)?)),
-        ("sinh", 1) => wrap(autograd::sinh(&one(0)?)),
-        ("cosh", 1) => wrap(autograd::cosh(&one(0)?)),
-        ("log2", 1) => wrap(autograd::log2(&one(0)?)),
-        ("log10", 1) => wrap(autograd::log10(&one(0)?)),
-        ("sign", 1) => wrap(autograd::sign(&one(0)?)),
-        ("clip", 3) => wrap(autograd::clip(&one(0)?, &one(1)?, &one(2)?)?),
-        ("max", 1) => wrap(autograd::max(&one(0)?)),
-        ("max", 2) => wrap(autograd::max_axis(&one(0)?, axis(1)?)?),
-        ("min", 1) => wrap(autograd::min(&one(0)?)),
-        ("min", 2) => wrap(autograd::min_axis(&one(0)?, axis(1)?)?),
-        ("floor", 1) => wrap(autograd::floor(&one(0)?)),
-        ("ceil", 1) => wrap(autograd::ceil(&one(0)?)),
-        ("round", 1) => wrap(autograd::round(&one(0)?)),
-        ("onehot", 2) => wrap(Traced::constant(crow_runtime::math::onehot(&one(0)?.value, int(1)?)?)),
-        ("transpose", 1) => wrap(autograd::transpose(&one(0)?)),
-        ("flatten", 1) => wrap(autograd::flatten(&one(0)?)),
-        ("reshape", n) if n >= 2 => {
-            let shape: Vec<usize> = (1..n).map(|i| usize::try_from(int(i)?).map_err(|_| "reshape: a size is 0 or more".to_string())).collect::<Result<_, _>>()?;
-            wrap(autograd::reshape(&one(0)?, shape)?)
+    Ok(match tape {
+        Tape::Map(_, f) => wrap(f(&one(0)?)),
+        Tape::Axis(_, f) => wrap(f(&one(0)?, axis(1)?)?),
+        Tape::Bounds(_, f) => wrap(f(&one(0)?, &one(1)?, &one(2)?)?),
+        Tape::Join(_, f) => wrap(f(&one(0)?, &one(1)?, if vals.len() == 3 { int(2)? } else { 0 })?),
+        Tape::Span(_, f) => wrap(f(&one(0)?, int(1)?, int(2)?)),
+        Tape::Choose(_, f) => wrap(f(&condition(&vals[0].value)?, &one(1)?, &one(2)?)?),
+        Tape::Shape(_, f) => {
+            let shape: Vec<usize> = (1..vals.len()).map(|i| usize::try_from(int(i)?).map_err(|_| format!("{}: a size is 0 or more", name))).collect::<Result<_, _>>()?;
+            wrap(f(&one(0)?, shape)?)
         }
-        // read, never differentiated
-        ("len", 1) => CrowValue::ok(Value::Int(crow_runtime::core::len_tensor(&one(0)?.value))),
-        ("float", 1) | ("tensor", 1) => wrap(one(0)?),
-        ("int", 1) => {
-            let x = one(0)?.as_number().ok_or_else(|| "int[] takes a number".to_string())?;
+        // the row's own function of the values; a tensor it answers is a
+        // constant of the tape
+        Tape::Read => {
+            let plain: Vec<CrowValue> = vals
+                .iter()
+                .map(|v| match &v.value {
+                    Value::Traced(t) if t.value.ndim() == 0 => CrowValue::ok(Value::Float(t.as_number().unwrap_or(f64::NAN))),
+                    Value::Traced(t) => CrowValue::ok(Value::NumArray(Box::new(t.value.clone()))),
+                    _ => v.clone(),
+                })
+                .collect();
+            let answer = (row.call)(&plain, "")?;
+            match answer.value {
+                Value::NumArray(t) if answer.is_ok() => wrap(Traced::constant(*t)),
+                _ => answer,
+            }
+        }
+        Tape::Same => wrap(one(0)?),
+        Tape::Whole => {
+            let x = one(0)?.as_number().ok_or_else(|| format!("{}[] takes a number", name))?;
             CrowValue::ok(Value::Int(x as i64))
         }
-        _ => return Err(format!("grad: `{}` is not differentiable — a function grad differentiates may use {}", name, crate::table::with(crate::table::Prop::Differentiable).join(", "))),
     })
+}
+
+/// A condition `where` reads: a mask (true 1, false 0, a matrix's rows of
+/// them), or a tensor's numbers — a constant of the tape either way.
+fn condition(v: &Value) -> Result<CrowTensor, String> {
+    match v {
+        Value::Array(items) => {
+            let mut flat = Vec::new();
+            let shape = crate::ops::truths_flat(items, &mut flat)?;
+            Ok(CrowTensor::from_vec(flat, shape))
+        }
+        other => Ok(traced_of(other)?.value),
+    }
+}
+
+/// `t[i]` and `t[positions]` of a traced tensor: a row or a number by a
+/// whole number, the numbers at a tensor of positions (spec, Advanced
+/// Indexing), each recorded on the tape.
+pub fn index(t: &Traced, idx: &[CrowValue]) -> Result<CrowValue, String> {
+    let [i] = idx else { return Err("a tensor is indexed one position at a time — `m[i][j]`".to_string()) };
+    match i.unwrap_or_propagate()? {
+        Value::Int(n) => Ok(wrap(autograd::at(t, *n)?)),
+        Value::NumArray(p) => Ok(wrap(autograd::gather(t, p)?)),
+        Value::Traced(p) => Ok(wrap(autograd::gather(t, &p.value)?)),
+        other => Err(format!("a tensor's position is a whole number, or a tensor of them — got {}", other.type_name())),
+    }
 }
 
 /// An operator on a traced value: the kernel's own, recorded on the tape.
@@ -103,6 +141,18 @@ pub fn call(name: &str, vals: &[CrowValue]) -> Result<CrowValue, String> {
 pub fn binop(op: &BinOp, l: &Value, r: &Value) -> Result<CrowValue, String> {
     let (a, b) = (traced_of(l)?, traced_of(r)?);
     let both_tensors = a.value.ndim() >= 1 && b.value.ndim() >= 1;
+    // a tensor compared with a number answers its mask, as it does
+    // untraced: a constant of the tape, no gradient through the decision
+    let compares = matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte);
+    if compares && (a.value.ndim() >= 1) != (b.value.ndim() >= 1) {
+        let plain = |t: &Traced| {
+            CrowValue::ok(match t.as_number().filter(|_| t.value.ndim() == 0) {
+                Some(x) => Value::Float(x),
+                None => Value::NumArray(Box::new(t.value.clone())),
+            })
+        };
+        return crate::ops::binop(&plain(&a), op, &plain(&b));
+    }
     let number = |t: &Traced| t.as_number().ok_or_else(|| "grad: a comparison of tensors is not differentiable (compare numbers)".to_string());
     Ok(match op {
         BinOp::Add => wrap(autograd::add(&a, &b)?),

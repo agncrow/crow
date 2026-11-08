@@ -8,7 +8,7 @@
 --- order; a value f reads that is no parameter is a constant. A shape
 --- that does not meet stops with the operator's words. Numbers still
 --- differentiate forward, as before. The same in both modes.
-use math, math.nn
+use math
 
 fn square_sum[w]
     return sum[w .* w]
@@ -66,3 +66,17 @@ fn mismatched[a, b]
 n = len[[1.0, 2.0, 3.0]]
 log[grad[mismatched][ones[n], ones[2]]]
 log['not reached']
+
+--- the formulas the program uses (pie's nn holds the library)
+fn relu[x]
+    x_t = tensor[x]
+    return clip[x_t, 0.0, inf]
+
+fn sigmoid[x]
+    x_t = tensor[x]
+    return 1.0 / (1.0 + exp[-x_t])
+
+fn bce[pred, target]
+    p = clip[flatten[tensor[pred]], 0.000000000001, 0.999999999999]
+    t = flatten[target]
+    return -mean[t .* ln[p] + (1.0 - t) .* ln[1.0 - p]]

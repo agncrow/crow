@@ -1400,6 +1400,17 @@ impl Emitter {
         let idx = idx_strs.first().cloned().unwrap_or_default();
         let idx_ty = indices.first().map(|x| Self::inner(&self.tt(x)));
         match &inner {
+            // (inside a function's traced copy a tensor of floats is a
+            // traced value: its index is the kernel's, recorded on the tape —
+            // a row or a number by a whole number, the numbers at a tensor of
+            // positions; a whole number read out of a tensor of them, a
+            // record's sizes, is the plain read below)
+            Ty::Tensor(..) if self.emitting_traced && Self::traced_type(&self.tt(whole)) => {
+                if matches!(idx_ty, Some(Ty::Tensor(..))) {
+                    return format!("crow_runtime::autograd::gather({}, &crow_runtime::autograd::AsTraced::traced(&({})).value){}", Self::tr(&b), idx, self.or_stop());
+                }
+                return format!("crow_runtime::autograd::at({}, ({}) as i64){}", Self::tr(&b), idx, self.or_stop());
+            }
             Ty::Tensor(el, dims) => {
                 if matches!(idx_ty, Some(Ty::Tensor(..))) {
                     return format!("{}.try_gather(&{}){}", b, idx, self.or_stop());
@@ -2048,7 +2059,9 @@ impl Emitter {
         }
         let it = self.tt(iter);
         let (iter_str, elem) = self.loop_items(iter_str, &it, iter);
-        let is_copy = Self::is_copy_type(&elem);
+        // (a traced copy's number is a traced value, no Copy: the item is
+        // the body's own clone, as a tensor's is)
+        let is_copy = Self::is_copy_type(&elem) && !(self.emitting_traced && matches!(elem, Ty::Float));
         // a list the loop reads for the last time is walked by value: each
         // item is moved into the body, no copy made, and the list goes as
         // the loop does (k-nucleotide's 2 million lines had each been copied
@@ -2097,7 +2110,7 @@ impl Emitter {
             if use_par {
                 return shared("crow_runtime::cores::collect", format!("{} {{ {}if {} {{ Some({}) }} else {{ None }} }}", param, rebind, c, v));
             }
-            return format!("{}.{}().filter_map({} {{ {}if {} {{ Some({}) }} else {{ None }} }}).collect::<Vec<{}>>()", iter_str, method, param, rebind, c, v, vt.to_rust_type());
+            return format!("{}.{}().filter_map({} {{ {}if {} {{ Some({}) }} else {{ None }} }}).collect::<Vec<{}>>()", iter_str, method, param, rebind, c, v, self.held_type(&vt));
         }
 
         // a body that yields on some paths only, or from the arms of a
@@ -2120,7 +2133,7 @@ impl Emitter {
             if !rebind.is_empty() {
                 self.line(rebind.trim_end());
             }
-            self.line(&format!("let mut {}: {} = Vec::new();", one, list_ty.to_rust_type()));
+            self.line(&format!("let mut {}: {} = Vec::new();", one, self.held_type(&list_ty)));
             self.declare(&one, list_ty.clone());
             self.closure_depth += 1;
             for s in yielding(body, &one, &list) {
@@ -2135,7 +2148,7 @@ impl Emitter {
             if use_par {
                 return shared("crow_runtime::cores::collect", format!("{} {{\n{}{}}}", param, closure_body, pad));
             }
-            return format!("{}.{}().flat_map_iter({} {{\n{}{}}}).collect::<{}>()", iter_str, method, param, closure_body, pad, list_ty.to_rust_type());
+            return format!("{}.{}().flat_map_iter({} {{\n{}{}}}).collect::<{}>()", iter_str, method, param, closure_body, pad, self.held_type(&list_ty));
         }
 
         // the body's statements, then its last value
@@ -2189,7 +2202,25 @@ impl Emitter {
         if use_par {
             return shared("crow_runtime::cores::map", format!("{} {{\n{}{}}}", param, closure_body, pad));
         }
-        format!("{}.{}().map({} {{\n{}{}}}).collect::<Vec<{}>>()", iter_str, method, param, closure_body, pad, last_type.to_rust_type())
+        format!("{}.{}().map({} {{\n{}{}}}).collect::<Vec<{}>>()", iter_str, method, param, closure_body, pad, self.held_type(&last_type))
+    }
+
+    /// A type as the code being printed holds it: inside a function's
+    /// traced copy a number and a tensor are traced values, and a list of
+    /// them a vector of traced values (a collecting loop there had
+    /// declared its list of numbers as `Vec<f64>`).
+    pub(crate) fn held_type(&self, t: &Ty) -> String {
+        fn traced(t: &Ty) -> Option<String> {
+            match t {
+                Ty::Float | Ty::Tensor(..) => Some("crow_runtime::autograd::Traced".to_string()),
+                Ty::List(item) => traced(item).map(|i| format!("Vec<{}>", i)),
+                _ => None,
+            }
+        }
+        if !self.emitting_traced {
+            return t.to_rust_type();
+        }
+        traced(t).unwrap_or_else(|| t.to_rust_type())
     }
 
     /// A parallel loop run on the cores `cpu[…]` allows where it starts
@@ -2212,7 +2243,7 @@ impl Emitter {
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = saved_indent + 1;
-        self.line(&format!("let mut {}: {} = Vec::new();", acc, list_ty.to_rust_type()));
+        self.line(&format!("let mut {}: {} = Vec::new();", acc, self.held_type(&list_ty)));
         self.declare(&acc, list_ty);
         self.emit_stmt(&each);
         self.line(&acc);
@@ -2892,7 +2923,7 @@ impl Emitter {
     /// argument's kind unknown to it): its row by the arguments' types
     /// here, or, where they still say nothing, by their count — one row
     /// of the name takes that many. The module is the whole path before
-    /// the name (`math.nn.relu`).
+    /// the name (`web.auth.sign`).
     fn crow_row_left(&self, m: &str, f: &str, args: &[Expr]) -> Option<&'static crate::table::Row> {
         let (m, f) = format!("{}.{}", m, f).rsplit_once('.').map(|(a, b)| (a.to_string(), b.to_string()))?;
         let kinds: Vec<crate::table::Arg> = args.iter().map(|x| self.held_kind(x)).collect();
@@ -3022,6 +3053,20 @@ impl Emitter {
                     "gte" => ">=",
                     _ => "<=",
                 };
+                // a tensor beside a number is its mask (a matrix's rows of
+                // truths), a constant of the tape, as it is untraced
+                let (l_t, r_t) = (matches!(Self::inner(&lt), Ty::Tensor(..)), matches!(Self::inner(&rt), Ty::Tensor(..)));
+                if l_t != r_t {
+                    let (t, n, tt) = if l_t { (&l, &r, Self::inner(&lt)) } else { (&r, &l, Self::inner(&rt)) };
+                    let each = if l_t { format!("_v {} _s", sign) } else { format!("_s {} _v", sign) };
+                    let depth = tt.mask_of().truths_depth();
+                    let body = format!("let _s = ({}).as_number().unwrap_or(f64::NAN); let _t = &({}).value; let _f: Vec<bool> = _t.to_vec().iter().map(|&_v| {}).collect();", n, t, each);
+                    return Some(if depth >= 2 {
+                        format!("{{ {} crow_runtime::mask::shaped::<{}>(_f, _t.shape()) }}", body, Self::truths_type(depth))
+                    } else {
+                        format!("{{ {} _f }}", body)
+                    });
+                }
                 return Some(format!("(({}).as_number().unwrap_or(f64::NAN) {} ({}).as_number().unwrap_or(f64::NAN))", l, sign, r));
             }
             other => return Some(format!("compile_error!(\"grad: `{}` is not differentiable\")", other)),
@@ -3074,22 +3119,49 @@ impl Emitter {
             Target::Row(row) => crate::table::written_name(row),
             _ => name,
         };
-        Some(match (name, n) {
-            ("sum", 1) | ("mean", 1) | ("max", 1) | ("min", 1) | ("exp", 1) | ("ln", 1) | ("sqrt", 1) | ("tanh", 1) | ("abs", 1) | ("erf", 1) | ("floor", 1) | ("ceil", 1) | ("round", 1) | ("transpose", 1) | ("flatten", 1)
-            | ("sin", 1) | ("cos", 1) | ("tan", 1) | ("asin", 1) | ("acos", 1) | ("atan", 1) | ("sinh", 1) | ("cosh", 1) | ("log2", 1) | ("log10", 1) | ("sign", 1) => {
-                format!("crow_runtime::autograd::{}({})", name, a(0))
+        use crate::table::Tape;
+        // the kernel the row declares (`table::Tape`)
+        let tape = match target {
+            Target::Row(row) => crate::table::tape_of(row, n).map(|t| (*row, t)),
+            _ => crate::table::tape_named(name, n),
+        };
+        let Some((row, tape)) = tape else {
+            return Some(format!("compile_error!(\"grad: `{}` is not differentiable\")", name));
+        };
+        let path = tape.path();
+        Some(match tape {
+            Tape::Map(..) => format!("{}({})", path, a(0)),
+            Tape::Axis(..) => format!("{}({}, ({}) as usize){}", path, a(0), plain(1), stop),
+            Tape::Bounds(..) => format!("{}({}, {}, {}){}", path, a(0), a(1), a(2), stop),
+            Tape::Join(..) if n == 3 => format!("{}({}, {}, ({}) as i64){}", path, a(0), a(1), plain(2), stop),
+            Tape::Join(..) => format!("{}({}, {}, 0){}", path, a(0), a(1), stop),
+            Tape::Span(..) => format!("{}({}, ({}) as i64, ({}) as i64)", path, a(0), plain(1), plain(2)),
+            Tape::Choose(..) => format!("{}(&({}).value, {}, {}){}", path, a(0), a(1), a(2), stop),
+            Tape::Shape(..) => {
+                let sizes: Vec<String> = (1..n).map(|i| format!("({}) as usize", plain(i))).collect();
+                format!("{}({}, vec![{}]){}", path, a(0), sizes.join(", "), stop)
             }
-            ("sum", 2) | ("mean", 2) | ("max", 2) | ("min", 2) => format!("crow_runtime::autograd::{}_axis({}, ({}) as usize){}", name, a(0), plain(1), stop),
-            ("clip", 3) => format!("crow_runtime::autograd::clip({}, {}, {}){}", a(0), a(1), a(2), stop),
-            ("onehot", 2) => format!("crow_runtime::autograd::Traced::constant(crow_runtime::math::onehot(&({}).value, ({}) as i64){})", a(0), plain(1), stop),
-            ("reshape", k) if k >= 2 => {
-                let sizes: Vec<String> = (1..k).map(|i| format!("({}) as usize", plain(i))).collect();
-                format!("crow_runtime::autograd::reshape({}, vec![{}]){}", a(0), sizes.join(", "), stop)
+            // the row's own call over the values; a tensor it answers is a
+            // constant of the tape
+            Tape::Read => {
+                let values: Vec<String> = args
+                    .iter()
+                    .zip(arg_strs)
+                    .map(|(x, s)| match Self::inner(&self.tt(x)) {
+                        Ty::Float => format!("(({}).as_number().unwrap_or(f64::NAN))", Self::tr(s)),
+                        Ty::Tensor(..) => format!("(({}).value.clone())", Self::tr(s)),
+                        _ => s.clone(),
+                    })
+                    .collect();
+                let inner = self.dispatch_plain(target, name, args, &values, whole);
+                if row.ret == crate::table::Kind::Tensor {
+                    format!("crow_runtime::autograd::Traced::constant({})", inner)
+                } else {
+                    inner
+                }
             }
-            ("len", 1) => format!("crow_runtime::core::len_tensor(&({}).value)", a(0)),
-            ("float", 1) | ("tensor", 1) => format!("({}).clone()", a(0)),
-            ("int", 1) => format!("(({}).as_number().unwrap_or(0.0) as i64)", a(0)),
-            _ => format!("compile_error!(\"grad: `{}` is not differentiable\")", name),
+            Tape::Same => format!("({}).clone()", a(0)),
+            Tape::Whole => format!("(({}).as_number().unwrap_or(0.0) as i64)", a(0)),
         })
     }
 

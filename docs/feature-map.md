@@ -54,8 +54,6 @@ compiler's own tables.
 | Import | Provides | Reference |
 |--------|----------|-----------|
 | `use math` | tensor creation, element-wise ops, reductions with `axis =`, sorting/selection, shape ops, linear algebra, random, FFT and filters, special functions, complex, sparse, `load` (a table of numbers as a matrix: CSV, JSON or Parquet), constants `pi e inf nan` | spec §13 math, `math-library.md` |
-| `use math.stats` | `median std var percentile zscore corr cov ttest linreg chisq anova kstest fit` | spec §13 math → Statistics |
-| `use math.nn` | `relu sigmoid softmax gelu mse crossentropy bce linear` | spec §13 math → Neural Networks |
 | `use frame` | `frame.new` `load save select sort group pivot window join stack head tail fill unique rename unpivot complete sample where bucket stats`; a mask picks rows (`df[df.col gt x]`); a column is written by the dot (`df.name = values`); `sort[df, 'col', desc = true]`; `join[a, b, 'key', 'left']` | spec §13 frame, `frame-module.md` |
 | `use io` | `csv[path]` → array of maps, `lines[path]` | spec §13 io |
 | `use doc` | `markdown chapters menu pager plain document` — Markdown made into pages, as the book is | spec §13 doc |

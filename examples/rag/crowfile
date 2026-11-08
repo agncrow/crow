@@ -1,2 +1,0 @@
-name = 'rag'
-deps = map[vectors = '../../packages/vectors', retrieval = '../../packages/retrieval']

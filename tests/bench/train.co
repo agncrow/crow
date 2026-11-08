@@ -1,6 +1,6 @@
 --- Training: linear regression by hand-written gradient descent over
 --- tensors, an MLP forward pass over a batch, and many scalar grad calls.
-use math, math.nn
+use math
 
 q = env['BENCH_QUICK']
 quick = q.ok
@@ -51,3 +51,21 @@ while i lt n
     i = i + 1
 log['bench: grad_calls `now[] - t0`']
 log[acc gt 0.0]
+
+--- the formulas the program uses (pie's nn holds the library)
+fn relu[x]
+    x_t = tensor[x]
+    return clip[x_t, 0.0, inf]
+
+fn softmax[x]
+    x_t = tensor[x]
+    ex = exp[x_t - max[x_t]]
+    return ex / sum[ex]
+
+fn mse[pred, target]
+    pred_t = tensor[pred]
+    d = pred_t - target
+    return mean[d .* d]
+
+fn linear[x, w, b]
+    return tensor[x] * tensor[w] + b

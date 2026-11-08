@@ -25,10 +25,10 @@ the prefixed form `math.sum[...]` *always* works too, if you prefer to
 read the source of a name at its callsite.
 
 Import several modules in one line: `use web, ui`. Submodules opt in
-separately: `use math.stats` adds `median` and friends without bloating
-plain `use math`.
+separately: `use web.auth` adds sign-in tokens without bloating plain
+`use web`.
 
-The standard modules are `math` (+ `.stats`, `.nn`), `frame`, `io`, `db`,
+The standard modules are `math`, `frame`, `io`, `db`,
 `doc`, `bits`, `chart`, `llm`, `mcp`, `web` (+ feature submodules), and
 `ui`; the standard library's pages in Part II list each one's names. Only
 these get the bare-name privilege — everything else you import lives

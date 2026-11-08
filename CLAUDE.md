@@ -32,7 +32,6 @@ cargo test --workspace
 cargo clippy --workspace --all-features
 ./target/release/crow test --errors
 ./target/release/crow test --parity
-./target/release/crow test --packages
 ./target/release/crow test --fuzz 20
 ./target/release/crow test --fuzz 50 --mistakes
 ./target/release/crow check --self
@@ -43,16 +42,16 @@ cargo clippy --workspace --all-features
 ./target/release/crow test tests/layout/conformance.co
 ./target/release/crow test tests/parity/185_frames_held_to_pandas.co
 ./target/release/crow test --modules
-(cd examples/rag && ../../target/release/crow test chat/corpus.co && ../../target/release/crow test chat/retrieve.co && ../../target/release/crow test --fixtures chat/page.co && ../../target/release/crow test --fixtures --compiled chat/page.co)
 (cd ~/code/crow_projects/magpie && ./test.sh "$OLDPWD/target/release/crow")
+(cd ~/code/crow_projects/pie && ./test.sh "$OLDPWD/target/release/crow")
 (cd examples/agent && ../../target/release/crow test agent/store.co && ../../target/release/crow test agent/judge.co && ../../target/release/crow test --fixtures agent/support.co && ../../target/release/crow test --fixtures agent/trace.co && ../../target/release/crow test --fixtures agent/chat.co && ../../target/release/crow test --fixtures --compiled agent/trace.co && ../../target/release/crow test --fixtures --compiled agent/chat.co)
 scripts/coverage.sh
 ```
 
 Use the release binary for the layout and site suites: the debug binary
 overflows its stack there. CI (`.github/workflows/ci.yml`) runs the same
-steps on every push and must be green — all but Magpie's suite (the
-`./test.sh` line), which runs here only.
+steps on every push and must be green — all but Magpie's and pie's
+suites (the `./test.sh` lines), which run here only.
 
 ## Things that have bitten
 

@@ -1,0 +1,19 @@
+--- `log1p` and `expm1` are ln(1 + x) and exp(x) − 1 computed whole: a
+--- small x keeps its digits where `ln[1.0 + x]` has lost them in the sum.
+--- Of a number and of a tensor, differentiated over numbers (the dual
+--- numbers) and over tensors (the tape), in both modes; the gradients are
+--- PyTorch's in float64.
+use math
+
+log[log1p[[0.00000000000000000001, 1.0]]]
+log[ln[1.0 + 0.00000000000000000001]]
+log[expm1[[0.00000000000000000001, -1.0]]]
+log[log1p[0.5]]
+log[expm1[0.5]]
+log[log1p[-1.0]]
+fn f[x]
+    return log1p[x] * expm1[x]
+log[grad[f][0.5]]
+fn g[t]
+    return sum[log1p[t] .* expm1[t]]
+log[grad[g][[0.5, 2.0]]]

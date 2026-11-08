@@ -38,6 +38,10 @@ pub fn call(name: &str, args: &[CrowValue], trace: &str) -> Option<Result<CrowVa
 }
 
 fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, String> {
+    // a function of one number whose row says its slope (`Row::dual`)
+    if let Some(rule) = crate::table::dual_of(name) {
+        return dual_math(name, args, rule);
+    }
     match name {
         "type" => {
             if args.len() != 1 { return Err("type[] takes exactly 1 argument".into()); }
@@ -127,21 +131,6 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                 _ => Err("round[] requires a number".into()),
             }
         }
-        "sign" => dual_math(name, args, |a| (if a > 0.0 { 1.0 } else if a < 0.0 { -1.0 } else { 0.0 }, 0.0)),
-        "exp" => dual_math(name, args, |a| (a.exp(), a.exp())),
-        "ln" => dual_math(name, args, |a| (a.ln(), 1.0 / a)),
-        "log2" => dual_math(name, args, |a| (a.log2(), 1.0 / (a * std::f64::consts::LN_2))),
-        "log10" => dual_math(name, args, |a| (a.log10(), 1.0 / (a * std::f64::consts::LN_10))),
-        "sin" => dual_math(name, args, |a| (a.sin(), a.cos())),
-        "cos" => dual_math(name, args, |a| (a.cos(), -a.sin())),
-        "tan" => dual_math(name, args, |a| (a.tan(), 1.0 + a.tan() * a.tan())),
-        "asin" => dual_math(name, args, |a| (a.asin(), 1.0 / (1.0 - a * a).sqrt())),
-        "acos" => dual_math(name, args, |a| (a.acos(), -1.0 / (1.0 - a * a).sqrt())),
-        "atan" => dual_math(name, args, |a| (a.atan(), 1.0 / (1.0 + a * a))),
-        "sinh" => dual_math(name, args, |a| (a.sinh(), a.cosh())),
-        "cosh" => dual_math(name, args, |a| (a.cosh(), a.sinh())),
-        "tanh" => dual_math(name, args, |a| (a.tanh(), 1.0 - a.tanh() * a.tanh())),
-        "erf" => dual_math(name, args, |a| (crow_runtime::special::erf_scalar(a), std::f64::consts::FRAC_2_SQRT_PI * (-a * a).exp())),
         // pow removed — use ^ operator instead
         // --- String builtins ---
         // fmt: value formatting via the shared display kernel. The lowering

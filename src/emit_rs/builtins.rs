@@ -312,12 +312,37 @@ impl Emitter {
                         // leaves, its number differentiated backwards
                         if self.traced_functions.contains(fname) {
                             self.needs_crow_runtime = true;
-                            let cps: Vec<String> = ps.iter().map(|p| format!("{}: crow_runtime::tensor::CrowTensor", p)).collect();
-                            let leaves: Vec<String> = (0..ps.len()).map(|i| format!("_l[{}].clone()", i)).collect();
-                            let (ret, pick) = if ps.len() == 1 { ("crow_runtime::tensor::CrowTensor", "[0].clone()") } else { ("Vec<crow_runtime::tensor::CrowTensor>", "") };
+                            // the leaves are the tensor parameters; one of
+                            // another kind beside them is a constant of the
+                            // run, handed to the traced copy as it is (a
+                            // number as a traced constant), as the
+                            // interpreter hands it
+                            let tensor = |t: &Ty| matches!(as_inferred(t), Ty::Tensor(..));
+                            let cps: Vec<String> = sig
+                                .params
+                                .iter()
+                                .map(|(p, t)| if tensor(t) { format!("{}: crow_runtime::tensor::CrowTensor", p) } else { format!("{}: {}", p, as_inferred(t).to_rust_type()) })
+                                .collect();
+                            let leaves: Vec<String> = sig.params.iter().filter(|(_, t)| tensor(t)).map(|(p, _)| p.clone()).collect();
+                            let mut k = 0;
+                            let passed: Vec<String> = sig
+                                .params
+                                .iter()
+                                .map(|(p, t)| {
+                                    if tensor(t) {
+                                        k += 1;
+                                        format!("_l[{}].clone()", k - 1)
+                                    } else if matches!(as_inferred(t), Ty::Float) {
+                                        format!("crow_runtime::autograd::Traced::number({})", p)
+                                    } else {
+                                        p.clone()
+                                    }
+                                })
+                                .collect();
+                            let (ret, pick) = if leaves.len() == 1 { ("crow_runtime::tensor::CrowTensor", "[0].clone()") } else { ("Vec<crow_runtime::tensor::CrowTensor>", "") };
                             return Some(format!(
                                 "|{}| -> {} {{ crow_runtime::autograd::gradient(&[{}], |_l| Ok(_traced_{}({}))).unwrap_or_else(|e| crow_stop({}, e)){} }}",
-                                cps.join(", "), ret, ps.join(", "), Self::rust_fn_name(fname), leaves.join(", "), self.line_now(), pick
+                                cps.join(", "), ret, leaves.join(", "), Self::rust_fn_name(fname), passed.join(", "), self.line_now(), pick
                             ));
                         }
                         let dual = format!("_dual_{}", Self::rust_fn_name(fname));

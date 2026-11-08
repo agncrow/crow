@@ -890,7 +890,6 @@ The killer differentiator: train a model and serve it in the same language, comp
 
 ```
 use math
-use math.nn
 use web
 
 model = load['model.co']
@@ -944,7 +943,6 @@ Arrow IPC is the standout for data science: Python (pandas/polars), R, Julia, an
 
 ```
 use web
-use math.nn
 
 model = load['model.co']
 

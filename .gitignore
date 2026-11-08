@@ -45,14 +45,6 @@ _tmp_test_error_line
 !tests/served/fixtures/*.csv
 !tests/frames/data/*.csv
 !tests/frames/expected/*.csv
-!packages/retrieval/reference/data/*.csv
-!packages/retrieval/reference/expected/*.csv
-!packages/gpt/reference/data/*.csv
-!packages/gpt/reference/data/*.txt
-!packages/gpt/reference/expected/*.csv
-!packages/gpt/reference/expected/*.txt
-!packages/vectors/reference/data/*.csv
-!packages/vectors/reference/expected/*.csv
 !examples/rag/.crow/fixtures/*.json
 !examples/agent/.crow/fixtures/*.json
 !examples/taskboard/fixtures/*.csv

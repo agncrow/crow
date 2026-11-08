@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Line coverage of the compiler and its crates under every suite the gate
-# runs — the unit tests, the docs check, the parity corpus, the packages,
+# runs — the unit tests, the docs check, the parity corpus,
 # the served pages, the book, twenty generated programs, the layout and
 # module tests, the harness programs in both modes, the parts and the task
 # board — measured by cargo llvm-cov (design rule 22). Fails when a crate
@@ -52,7 +52,7 @@ if [ $quick = 0 ]; then
   # the instrumented binary, run as the gate runs it; the programs it
   # compiles link an instrumented runtime, so both modes count
   run() { cargo llvm-cov run --release --no-report --bin crow -- "$@" 2>&1 | tail -1; }
-  for suite in --docs --errors --parity --packages --served; do run test $suite; done
+  for suite in --docs --errors --parity --served; do run test $suite; done
   CROW_BOOK_JOBS=2 run test --book
   run test --fuzz 20
   run test --fuzz 50 --mistakes

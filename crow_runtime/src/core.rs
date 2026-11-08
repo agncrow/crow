@@ -24,12 +24,6 @@ pub fn sizes(sizes: &[i64]) -> Vec<i64> {
     sizes.to_vec()
 }
 
-/// The tensors a call of a function written in Crow is handed (`anova[a,
-/// b]`), gathered as `sizes` gathers sizes.
-pub fn groups(groups: &[&crate::tensor::CrowTensor]) -> Vec<crate::tensor::CrowTensor> {
-    groups.iter().map(|t| (*t).clone()).collect()
-}
-
 /// `range[stop]`, `range[start, stop]`, `range[start, stop, step]`: the
 /// ints from `start` up to (or, with a negative step, down to) `stop`,
 /// exclusive. A zero step is refused.

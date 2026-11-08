@@ -1539,14 +1539,18 @@ impl Emitter {
             Expr::Local(v, _) if Self::mutated_in(body).contains(v) => format!("({}).clone()", actual),
             _ => actual,
         };
-        let is_copy = Self::is_copy_type(&elem);
+        // (a traced copy's number or tensor is a traced value, which is no
+        // Copy: the item is the body's own clone — `for &p in parts` of a
+        // collecting loop's traced numbers did not build)
+        let traced_item = self.emitting_traced && matches!(elem, Ty::Float | Ty::Tensor(..));
+        let is_copy = Self::is_copy_type(&elem) && !traced_item;
         // in parallel as the lowering decided, on the cores `cpu[…]` allows
         // where the loop starts (a traced copy runs its loops in order: one
         // tape records the run)
         let use_par = parallel && !self.emitting_traced;
         // an item of text, or a parsed value, is the loop's own, as the body
         // reads it (a borrowed one compared with a cell's text did not build)
-        let text = matches!(elem, Ty::Str | Ty::Markup | Ty::Json);
+        let text = matches!(elem, Ty::Str | Ty::Markup | Ty::Json) || traced_item;
         self.push_scope();
         if use_par {
             self.needs_rayon = true;

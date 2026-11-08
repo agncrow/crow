@@ -955,6 +955,16 @@ impl CrowTensor {
         self.map(|x| x.log10())
     }
 
+    /// ln(1 + x), exact where x is near 0 (where `ln[1 + x]` loses x).
+    pub fn log1p(&self) -> CrowTensor {
+        self.map(|x| x.ln_1p())
+    }
+
+    /// exp(x) − 1, exact where x is near 0.
+    pub fn expm1(&self) -> CrowTensor {
+        self.map(|x| x.exp_m1())
+    }
+
     pub fn sqrt(&self) -> CrowTensor {
         self.gpu_unary_or_cpu(gpu::UnaryOp::Sqrt, |x| x.sqrt())
     }
@@ -1410,9 +1420,19 @@ impl CrowTensor {
         let idx = indices.numbers();
         let mut data = Vec::with_capacity(idx.len());
         for &i in idx.iter() {
-            data.push(src[crate::stops::item(i as i64, src.len())?]);
+            data.push(src[crate::stops::item(Self::position(i)?, src.len())?]);
         }
         Ok(Self::from_vec(data, indices.shape.clone()))
+    }
+
+    /// A position a tensor of positions holds: a whole number (a tensor's
+    /// numbers are floats, so `0.5` would have read position 0).
+    pub fn position(i: f64) -> Result<i64, String> {
+        if i.fract() == 0.0 && i.abs() < 9_007_199_254_740_992.0 {
+            Ok(i as i64)
+        } else {
+            Err(format!("a position is a whole number, and this is {}", i))
+        }
     }
 
     pub fn gather(&self, indices: &CrowTensor) -> CrowTensor {

@@ -1,4 +1,4 @@
-use math, math.nn
+use math
 
 struct Bag [t, m]
 
@@ -9,3 +9,8 @@ v0 = rveerse[zeros[3]]
 g = Bag[relu[v0], [[0.5, 1.0]]]
 log[first_of[g]]
 log[g.t[1] + g.m[0][1]]
+
+--- the formulas the program uses (pie's nn holds the library)
+fn relu[x]
+    x_t = tensor[x]
+    return clip[x_t, 0.0, inf]

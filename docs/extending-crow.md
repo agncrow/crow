@@ -389,7 +389,7 @@ leave untyped, or that takes a function, is listed as not called with
 why. The reference's keys are unchanged (`math.stats.median`); the
 agreement-only list's ids follow the module path (`stats.median` is
 `math.stats.median`), blessed once. Open question 2 holds as stated;
-question 3 is the specialization the IR shows (`_math_nn_relu__2` for a
+question 3 is the specialization the IR shows (`_math_nn_relu__2`, as it was, for a
 matrix beside the vector's).
 
 **The ratchet** no longer counts the tests of a compiler file (a test

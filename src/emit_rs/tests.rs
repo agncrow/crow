@@ -1635,29 +1635,6 @@ fn a_builtin_reading_text_takes_a_literal_or_an_indexed_read_without_a_copy() {
     assert!(!rust.contains("\" \".to_string()"), "no String for the separator\n{}", rust);
 }
 
-/// A statistic is a Crow row: the compiled program defines and calls the
-/// module's function, and names no Rust statistic
-#[test]
-fn test_stats_rows_are_crow_functions() {
-    for (name, call) in [
-        ("median", "median[ones[5]]"),
-        ("std", "std[ones[5]]"),
-        ("var", "var[ones[5]]"),
-        ("percentile", "percentile[ones[5], 50]"),
-        ("zscore", "zscore[ones[5]]"),
-        ("corr", "corr[ones[5], ones[5]]"),
-        ("cov", "cov[ones[5], ones[5]]"),
-        ("ttest", "ttest[ones[5], ones[5]]"),
-        ("anova", "anova[ones[5], ones[5], ones[5]]"),
-    ] {
-        let rust = transpile(&format!("use math\nuse math.stats\nx = {call}\nlog[x]\n"));
-        let f = format!("_math_stats_{name}(");
-        assert!(rust.contains(&format!("fn {f}")), "{name}: the module's function is defined\n{rust}");
-        assert!(rust.matches(&f).count() >= 2, "{name}: the module's function is called\n{rust}");
-        assert!(!rust.contains(&format!("crow_runtime::stats::{name}(")), "{name}: no Rust statistic\n{rust}");
-    }
-}
-
 // ===== File System Builtins =====
 
 #[test]

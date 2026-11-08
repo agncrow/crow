@@ -343,7 +343,7 @@ impl TypeContext {
             self.vars.insert(v.clone(), Ty::List(Box::new(typed)));
         }
         // a builtin written in Crow called through its module's name
-        // (`math.nn.relu[…]`)
+        // (`web.auth.sign[…]`)
         if let Some((m, f)) = Self::module_path(callee) {
             let real = self.module_aliases.get(&m).cloned().unwrap_or(m);
             self.note_crow_row(&real, &f, arg_types);
@@ -388,7 +388,7 @@ impl TypeContext {
     }
 
     /// A call's module path and name, where the callee is qualified:
-    /// `m.f` and `a.b.f` (`math.nn.relu`).
+    /// `m.f` and `a.b.f` (`web.auth.sign`).
     pub(crate) fn module_path(callee: &Expr) -> Option<(String, String)> {
         let Expr::FieldAccess { object, field } = callee else { return None };
         match object.as_ref() {

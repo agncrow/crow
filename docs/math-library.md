@@ -2,7 +2,7 @@
 
 Crow is a data science language. The math library must be powerful enough to build deep learning frameworks like PyTorch from scratch, including distributed training and GPU computing. The math runtime is pure Rust: CPU math is backed by `faer` (fastest pure Rust linear algebra), GPU compute by `wgpu` (cross-platform WebGPU), and the tensor type is our own. (The C a Crow program can link lies outside the math, each bundled with its crate: SQLite, the mimalloc allocator, TLS's `ring` and Parquet's `zstd` — spec, Design Note "what stays native, and why".)
 
-This document is the design, written before the build. What runs today is the spec's `math` section and the book's pages for `math`, `math.stats` and `math.nn`; a part of the design that was not built is marked *proposed* below, and the examples are written as the language runs them.
+This document is the design, written before the build. What runs today is the spec's `math` section and the book's page for `math` (the statistics and the networks are the pie repository's packages, github.com/agncrow/pie); a part of the design that was not built is marked *proposed* below, and the examples are written as the language runs them.
 
 ## Layers
 
@@ -356,8 +356,8 @@ One `math` library with sub-modules:
 
 ```
 use math                --- core: arrays, ops, linalg, random, FFT and filters, sparse arrays
-use math.stats          --- statistics, hypothesis tests, distribution fitting
-use math.nn             --- activations, loss functions, a linear layer
+use stats          --- statistics, hypothesis tests, distribution fitting
+use nn             --- activations, loss functions, a linear layer
 ```
 
 `use math` gives you arrays, element-wise ops, linear algebra, random draws, signal processing and sparse arrays — everything needed for most work; `grad`, `gpu[]` and `cpu[]` are the core's and need no import. Sub-modules are imported only when needed.
@@ -585,7 +585,7 @@ These are algorithms on top of primitives — pure Crow code.
 | Time series (rolling, autocorr) | Slicing + reductions |
 | Set operations (union, intersect) | Sort + unique |
 
-Several are written in Crow now. The activations, the losses and a linear layer are `math.nn`, the statistics `math.stats`, each a formula over the math builtins. The repository's packages hold more: a nanoGPT trained by `grad` (`gpt`), models from least squares to gradient boosting with k-means and PCA among them (`models`), and scipy.optimize's minimisers and root finders (`optimize`), each held to its Python reference.
+Several are written in Crow now. The activations, the losses and the layers are pie's `nn` package, the statistics its `stats`, each a formula over the math builtins. The repository's packages hold more: a nanoGPT trained by `grad` (`gpt`), models from least squares to gradient boosting with k-means and PCA among them (`models`), and scipy.optimize's minimisers and root finders (`optimize`), each held to its Python reference.
 
 ### Autograd Design
 
@@ -776,13 +776,13 @@ for i in range[1000]
 log['w = `w`, b = `b`']
 ```
 
-A function `grad` differentiates takes tensors, or numbers alone: `w` and `b` are tensors of one number here, beside the data.
+Over tensors every tensor parameter is differentiated (`w` and `b` are tensors of one number here, beside the data), and a parameter of another kind beside them — a number, a list, a record of layers — is a constant of the run.
 
 ### Neural Network (2-Layer)
 
 ```
 use math
-use math.nn
+use nn
 
 w1 = randn[784, 128] * 0.01
 b1 = zeros[128]
@@ -790,21 +790,21 @@ w2 = randn[128, 10] * 0.01
 b2 = zeros[10]
 
 fn model[w1, b1, w2, b2, x]
-  h = relu[x * w1 + b1]
+  h = nn.relu[x * w1 + b1]
   return h * w2 + b2
 
 fn loss[w1, b1, w2, b2, x, y]
-  return crossentropy[model[w1, b1, w2, b2, x], y]
+  return nn.crossentropy[model[w1, b1, w2, b2, x], y]
 
 dloss = grad[loss]
 ```
 
-`relu` and `crossentropy` are `math.nn`'s, each a formula written in Crow over the math builtins (`relu[x]` is `clip[x, 0.0, inf]`), and `y` holds each row's class. *Proposed:* the weights held in one map (`map[w1 = …, b1 = …]`), which `grad` takes as one parameter and map arithmetic updates in one line; today `grad` takes tensors or numbers alone, a parameter each.
+`relu` and `crossentropy` are pie's `nn`'s, each a formula written in Crow over the math builtins (`relu[x]` is `clip[x, 0.0, inf]`), and `y` holds each row's class. *Proposed:* the weights held in one map (`map[w1 = …, b1 = …]`), which `grad` takes as one parameter and map arithmetic updates in one line; today a weight is a tensor each, or every weight one vector read by positions, as pie's `nn` holds a model (`theta`, the layers beside it a constant of the run).
 
 ### Training Loop with Batching
 
 ```
-use math, math.nn
+use math, nn
 
 images = load['mnist_x.csv']             --- a row of 784 pixels per image
 labels = flatten[load['mnist_y.csv']]    --- the digit each one shows
@@ -815,8 +815,8 @@ w2 = randn[128, 10] * 0.01
 b2 = zeros[10]
 
 fn loss[w1, b1, w2, b2, x, y]
-  h = relu[x * w1 + b1]
-  return crossentropy[h * w2 + b2, y]
+  h = nn.relu[x * w1 + b1]
+  return nn.crossentropy[h * w2 + b2, y]
 
 batches = int[len[labels] / 32]
 
@@ -839,7 +839,7 @@ for epoch in range[10]
 ### GPU Training
 
 ```
-use math, math.nn
+use math, nn
 
 gpu[]
 
@@ -848,7 +848,7 @@ b1 = zeros[128]
 data = uniform[0.0, 1.0, 32, 784]
 
 --- tensors made after gpu[] live on the GPU, and their arithmetic runs there
-h = relu[data * w1 + b1]
+h = nn.relu[data * w1 + b1]
 ```
 
 ### Distributed Training
@@ -884,7 +884,7 @@ fn two_heads[x, q0, k0, v0, o0, q1, k1, v1, o1]
   return attention[x * q0, x * k0, x * v0] * o0 + attention[x * q1, x * k1, x * v1] * o1
 ```
 
-The heads are summed through their slices of the output projection, the same numbers as concatenating them and projecting, as `packages/gpt` computes them; `math.nn`'s `softmax` normalises a whole tensor, so the softmax over each row is written out. *Proposed:* tensors of three axes in a product, for every head at once.
+The heads are summed through their slices of the output projection, the same numbers as concatenating them and projecting, as pie's `gpt` package computes them; `nn`'s `softmax` normalises a whole tensor, so the softmax over each row is written out. *Proposed:* tensors of three axes in a product, for every head at once.
 
 No classes, no decorators, no `self`, no `nn.Module`. Just functions on arrays. `grad[f]` turns any function into its gradient. GPU is a directive, not a code rewrite. Processes are the launch's, not a framework's (the gradient sync between them is proposed).
 
@@ -908,7 +908,7 @@ How easy is it to write ML code?
 Crow 2-layer neural network, as it runs today — 15 lines (the design's 10 held the weights in one map and updated them with one line of map arithmetic, which is proposed):
 
 ```
-use math, math.nn
+use math, nn
 
 w1 = randn[784, 128] * 0.01
 b1 = zeros[128]
@@ -916,8 +916,8 @@ w2 = randn[128, 10] * 0.01
 b2 = zeros[10]
 
 fn loss[w1, b1, w2, b2, x, y]
-  h = relu[x * w1 + b1]
-  return crossentropy[h * w2 + b2, y]
+  h = nn.relu[x * w1 + b1]
+  return nn.crossentropy[h * w2 + b2, y]
 
 dloss = grad[loss]
 for batch in batches

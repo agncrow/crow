@@ -1913,6 +1913,12 @@ impl IrInterp {
     }
 
     fn assign_in_place(&mut self, var: &str, expr: &Expr) -> Result<bool, String> {
+        // (a traced run's operations are the tape's: `outs = concat[outs,
+        // h]` of a traced tensor is the kernel's call, which records it,
+        // never the row's take path, which knows no traced value)
+        if self.tracing {
+            return Ok(false);
+        }
         let (name, args, named) = match expr {
             Expr::Call { target: Target::Runtime(name), args, .. } => (name.rsplit('.').next().unwrap_or(name), args, None),
             Expr::Call { target: Target::Row(row), args, .. } if row.module.is_empty() => (row.name, args, Some(*row)),
@@ -2398,7 +2404,7 @@ impl IrInterp {
             return self.bare_call(crate::table::written_name(row), vals);
         }
         if crate::autograd_bridge::any_traced(&vals) {
-            return crate::autograd_bridge::call(crate::table::written_name(row), &vals);
+            return crate::autograd_bridge::call(row, &vals);
         }
         if row.module.is_empty() {
             // (only a row whose failure is a value reads the trace: for the
@@ -2417,8 +2423,8 @@ impl IrInterp {
         // a traced value's length is read through the kernel's side, as
         // every call on one is (a function grad differentiates had read
         // its tensor's length through the row, which does not take one)
-        if matches!(v.value, Value::Traced(_)) {
-            return crate::autograd_bridge::call("len", std::slice::from_ref(v));
+        if let Value::Traced(t) = &v.value {
+            return Ok(CrowValue::ok(Value::Int(crow_runtime::core::len_tensor(&t.value))));
         }
         match target {
             Target::Row(row) => (row.call)(std::slice::from_ref(v), trace),
@@ -2434,7 +2440,7 @@ impl IrInterp {
         // as the row says: the row the values' kinds pick
         let name = RUNTIME_TABLE.iter().find(|(_, r)| *r == path).map(|(b, _)| *b).unwrap_or(path).to_string();
         if name != "log" && crate::autograd_bridge::any_traced(&vals) {
-            return crate::autograd_bridge::call(&name, &vals);
+            return crate::autograd_bridge::call_named(&name, &vals);
         }
         if let Some(answer) = self.web_response(&name, &vals) {
             return answer;
@@ -2541,7 +2547,7 @@ impl IrInterp {
         // a value a function grad differentiates computes with: the
         // autograd kernel's builtin, recorded on the tape
         if name != "log" && crate::autograd_bridge::any_traced(&vals) {
-            return crate::autograd_bridge::call(name, &vals);
+            return crate::autograd_bridge::call_named(name, &vals);
         }
         // a dual number a function grad differentiates carries takes the
         // derivative's own form — before a module's row would take a
@@ -3075,27 +3081,43 @@ impl IrInterp {
     /// Forward-mode differentiation: the function once per parameter with
     /// that parameter a dual (x, 1) and the others (x, 0).
     fn grad_call(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
-        let nparams = self.fns.get(name).map(|f| f.params.len()).ok_or_else(|| format!("unknown function '{}'", name))?;
-        if nparams != vals.len() {
-            return Err(format!("grad[{}][] expects {} args, got {}", name, nparams, vals.len()));
+        let params: Vec<Ty> = self.fns.get(name).map(|f| f.params.iter().map(|(_, t)| t.clone()).collect()).ok_or_else(|| format!("unknown function '{}'", name))?;
+        if params.len() != vals.len() {
+            return Err(format!("grad[{}][] expects {} args, got {}", name, params.len(), vals.len()));
         }
         // handed tensors, the function is one of tensors: run once on
-        // traced leaves, its number differentiated backwards over the tape
+        // traced leaves, its number differentiated backwards over the tape.
+        // The leaves are its tensor parameters; one of another kind beside
+        // them (a record of layers, a rate) is a constant of the run, as the
+        // compiled copy takes it (spec, Automatic Differentiation)
         if vals.iter().any(|a| matches!(a.value, Value::NumArray(_) | Value::Traced(_))) {
-            let inputs: Vec<crow_runtime::tensor::CrowTensor> = vals
-                .iter()
-                .map(|a| match &a.value {
-                    Value::NumArray(t) => Ok(t.as_ref().clone()),
-                    Value::Traced(t) => Ok(t.value.clone()),
-                    Value::Int(n) => Ok(crow_runtime::tensor::CrowTensor::scalar(*n as f64)),
-                    Value::Float(x) => Ok(crow_runtime::tensor::CrowTensor::scalar(*x)),
-                    other => Err(format!("grad[{}][] takes numbers or tensors, got {}", name, other.type_name())),
-                })
-                .collect::<Result<_, _>>()?;
+            let leaf = |t: &Ty, a: &CrowValue| match t.payload() {
+                Ty::Tensor(..) => true,
+                Ty::Unknown => matches!(a.value, Value::NumArray(_) | Value::Traced(_)),
+                _ => false,
+            };
+            let mut inputs: Vec<crow_runtime::tensor::CrowTensor> = Vec::new();
+            for (t, a) in params.iter().zip(&vals) {
+                if !leaf(t, a) {
+                    continue;
+                }
+                inputs.push(match &a.value {
+                    Value::NumArray(t) => t.as_ref().clone(),
+                    Value::Traced(t) => t.value.clone(),
+                    Value::Int(n) => crow_runtime::tensor::CrowTensor::scalar(*n as f64),
+                    Value::Float(x) => crow_runtime::tensor::CrowTensor::scalar(*x),
+                    other => return Err(format!("grad[{}][] takes numbers or tensors, got {}", name, other.type_name())),
+                });
+            }
+            let held: Vec<Option<CrowValue>> = params.iter().zip(&vals).map(|(t, a)| (!leaf(t, a)).then(|| a.clone())).collect();
             let fname = name.to_string();
             let was = std::mem::replace(&mut self.tracing, true);
             let answer = crate::autograd_bridge::gradient(inputs, |leaves| {
-                let args: Vec<CrowValue> = leaves.iter().map(|l| crate::autograd_bridge::wrap(l.clone())).collect();
+                let mut leaves = leaves.iter();
+                let args: Vec<CrowValue> = held
+                    .into_iter()
+                    .map(|h| h.unwrap_or_else(|| leaves.next().map(|l| crate::autograd_bridge::wrap(l.clone())).unwrap_or_else(|| CrowValue::ok(Value::Done))))
+                    .collect();
                 let out = self.call_user(&fname, args)?;
                 if out.is_error() {
                     return Err(format!("grad[{}][]: the function answered an error — {}", fname, out.reason()));

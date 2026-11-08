@@ -1492,17 +1492,7 @@ impl<'a> Lowerer<'a> {
             }
             return;
         }
-        // not a module the program has: the last name of one whose functions
-        // are called by their own (`stats.mean` for math.stats's), or a slip
-        // in a module's name
-        if let Some(full) = crate::modules::MODULES.iter().filter(|m| m.registry).map(|m| m.path).find(|m| m.contains('.') && m.rsplit('.').next() == Some(module)) {
-            match providers.first() {
-                Some(m) if m == full => self.refuse(format!("'{}' is {}, whose functions are called by their own names: add `use {}`, then {}[…]", module, full, full, field)),
-                Some(m) => self.refuse(format!("{}[] is {}'s, called by its own name: add `use {}`, then {}[…]", field, m, m, field)),
-                None => self.refuse(format!("'{}' is {}, whose functions are called by their own names: add `use {}`", module, full, full)),
-            }
-            return;
-        }
+        // not a module the program has: a slip in a module's name
         let near = self.near(module, importable());
         self.refuse(format!("undefined module or variable '{}'{}", module, near));
     }

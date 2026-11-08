@@ -1,0 +1,30 @@
+--- Inside a function grad differentiates, a tensor is read as it is
+--- outside: a slice of its items, the numbers at a tensor of positions
+--- (one read twice gets both shares), a matrix's row, a number counted
+--- from the end, and two tensors joined along either axis — each reached
+--- by the gradient, in both modes (an index had been refused there, and
+--- `slice` and `concat` were not differentiable). The numbers are
+--- PyTorch's in float64, to the last digit.
+use math
+
+fn f[theta, x]
+    w = reshape[slice[theta, 0, 6], 2, 3]
+    b = theta[tensor[[6, 7, 6]]]
+    row = w[1]
+    k = theta[-1]
+    joined = concat[flatten[w], b]
+    side = concat[w, reshape[b, 1, 3]]
+    wide = concat[w, w, axis = 1]
+    return sum[joined .* joined] + sum[row] * k + sum[side * transpose[side]] + sum[wide .* wide] + sum[x * w]
+
+theta = sin[tensor[range[9]] * 0.37 + 0.1] * 0.5
+x = [[0.5, -1.0], [1.5, 0.25]]
+log[f[theta, x]]
+grads = grad[f][theta, x]
+log[grads[0]]
+log[grads[1]]
+--- a read of no parameter is a constant: the gradient of what is not
+--- read is zero
+fn first_two[t]
+    return sum[slice[t, 0, 2]]
+log[grad[first_two][[1.0, 2.0, 3.0, 4.0]]]

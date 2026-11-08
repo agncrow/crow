@@ -55,24 +55,67 @@ pub(super) fn settle(program: &mut Program) -> Vec<(String, String)> {
             if !traced.contains(&f.name) {
                 continue;
             }
-            // parameters: all tensors, none a record or a list; a number
-            // beside a tensor is two kinds
+            // parameters: the tensors, differentiated, and beside them
+            // constants of the run — a number, a bool, text, a list, a map,
+            // a record (a model's layers, a rate) — which take no gradient
             if tensor_targets.contains(&f.name) {
-                let kinds: Vec<&str> = f.params.iter().map(|(_, t)| kind_word(t)).collect();
-                if kinds.iter().any(|k| *k != "a tensor") {
-                    let line = first_line(&f.body);
-                    refusals.push((f.name.clone(), format!(
-                        "line {}: grad[{}]: a function grad differentiates takes tensors, or numbers alone — {} takes {}",
-                        line, f.name, f.name, kinds.join(", ")
-                    )));
+                for (p, t) in &f.params {
+                    if !constant_kind(t) {
+                        let line = first_line(&f.body);
+                        refusals.push((f.name.clone(), format!(
+                            "line {}: grad[{}]: a parameter beside the tensors is a constant of the run — a number, a bool, text, a list, a map or a record — and '{}' is {}",
+                            line, f.name, p, kind_word(t)
+                        )));
+                    }
                 }
             }
             let mut line = first_line(&f.body);
             check_block(&f.name, &mut f.body, &mut line, &mut refusals);
+            in_order(&mut f.body);
         }
         part.traced = traced;
     }
     refusals
+}
+
+/// Every loop of a traced body runs in order — a collecting loop's, and a
+/// loop inside one, included: the tape is the thread's own, so a round run
+/// on another thread records nothing, and its share of the gradient is
+/// lost with no word (a collecting loop's rounds had been shared across
+/// the cores, and the compiled copy did not build).
+fn in_order(block: &mut Block) {
+    for s in block.iter_mut() {
+        match s {
+            Stmt::For { body, parallel, .. } => {
+                *parallel = false;
+                in_order(body);
+            }
+            Stmt::While { body, .. } => in_order(body),
+            Stmt::If { then, els, .. } => {
+                in_order(then);
+                if let Some(e) = els {
+                    in_order(e);
+                }
+            }
+            _ => {}
+        }
+    }
+    visit_block_mut(block, &mut |e| {
+        if let Expr::ForExpr { parallel, body, .. } = e {
+            *parallel = false;
+            in_order(body);
+        }
+    });
+}
+
+/// A parameter a function differentiated over tensors may take beside them:
+/// a tensor, differentiated, or a value of a kind that is a constant of the
+/// run (spec, Automatic Differentiation).
+fn constant_kind(t: &Ty) -> bool {
+    matches!(
+        t.payload(),
+        Ty::Tensor(..) | Ty::Int | Ty::Big | Ty::Float | Ty::Bool | Ty::Str | Ty::List(_) | Ty::Map(..) | Ty::Record(_) | Ty::OptRecord(_)
+    )
 }
 
 fn kind_word(t: &Ty) -> &'static str {
@@ -85,6 +128,8 @@ fn kind_word(t: &Ty) -> &'static str {
         Ty::Map(..) => "a map",
         Ty::Record(_) | Ty::OptRecord(_) => "a record",
         Ty::Frame(_) => "a frame",
+        Ty::Fn(..) | Ty::Fns(_) => "a function",
+        Ty::Handle(_) => "a handle",
         _ => "a value of a kind grad does not differentiate",
     }
 }
@@ -169,6 +214,15 @@ fn reached_from(part: &Part, name: &str) -> BTreeSet<String> {
     seen
 }
 
+/// Whether the call runs on the tape: its row declares a kernel for that
+/// many arguments (`table::tape_of`), or a row of its name does.
+fn taped(target: &Target, name: &str, n: usize) -> bool {
+    match target {
+        Target::Row(row) => crate::table::tape_of(row, n).is_some(),
+        _ => crate::table::tape_named(name, n).is_some(),
+    }
+}
+
 fn traced_value(e: &Expr) -> bool {
     matches!(e.ty().payload(), Ty::Tensor(..) | Ty::Float)
 }
@@ -213,11 +267,20 @@ fn check_expr(fname: &str, e: &Expr, line: usize, refusals: &mut Vec<(String, St
             match target {
                 Target::User(_) => {}
                 _ if is_grad(e) => refuse("calls grad, and a function grad differentiates cannot".to_string()),
-                // (the rows say which builtins a traced value may reach:
-                // differentiated, or read and never differentiated, and the
-                // constructors of the tape's constants)
-                _ if traced_arg && !crate::table::has(&name, crate::table::Prop::Differentiable) && !crate::table::has(&name, crate::table::Prop::Constructs) => {
-                    refuse(format!("calls `{}`, which is not differentiable — a function grad differentiates may use {}", name, crate::table::with(crate::table::Prop::Differentiable).join(", ")))
+                // (the rows say which builtins a traced value may reach: a
+                // row that declares its kernel on the tape — differentiated,
+                // or read and never differentiated — and the constructors of
+                // the tape's constants)
+                _ if traced_arg && !taped(target, &name, args.len()) && !crate::table::has(&name, crate::table::Prop::Constructs) => {
+                    // (a name differentiated at another count of arguments
+                    // says the count: `max` of a tensor is, of two numbers not)
+                    let taped = crate::table::taped();
+                    let what = match args.len() {
+                        _ if !taped.contains(&name.as_str()) => format!("`{}`", name),
+                        1 => format!("`{}` with one argument", name),
+                        n => format!("`{}` with {} arguments", name, n),
+                    };
+                    refuse(format!("calls {}, which is not differentiable — a function grad differentiates may use {}", what, taped.join(", ")))
                 }
                 _ => {}
             }
@@ -234,8 +297,16 @@ fn check_expr(fname: &str, e: &Expr, line: usize, refusals: &mut Vec<(String, St
             }
         }
         Expr::Index { base, indices, .. } => {
+            // a tensor's index is differentiated: a row or a number by a
+            // whole number, the numbers at a tensor of positions
+            // (crow_runtime::autograd's `at` and `gather`); a position of
+            // any other kind is no position of a tensor's
             if matches!(base.ty().payload(), Ty::Tensor(..)) {
-                refuse("indexes a tensor, which is not differentiable — compute with the tensor whole".to_string());
+                for i in indices {
+                    if !matches!(i.ty().payload(), Ty::Int | Ty::Tensor(..)) {
+                        refuse(format!("indexes a tensor by {}, and a tensor's position is a whole number or a tensor of them", kind_word(&i.ty())));
+                    }
+                }
             }
             check_expr(fname, base, line, refusals);
             for i in indices {
@@ -243,8 +314,12 @@ fn check_expr(fname: &str, e: &Expr, line: usize, refusals: &mut Vec<(String, St
             }
         }
         Expr::Binary { op, l, r, .. } => {
-            if matches!(op.as_str(), "eq" | "ne" | "gt" | "lt" | "gte" | "lte") && (matches!(l.ty().payload(), Ty::Tensor(..)) || matches!(r.ty().payload(), Ty::Tensor(..))) {
-                refuse(format!("compares tensors with `{}`, which is not differentiable (a comparison of two numbers decides, with no gradient through it)", op));
+            // a tensor compared with a number is its mask, a constant of
+            // the tape (`where` reads it, the gradient reaches neither
+            // side through it); two tensors compared are one truth of
+            // their numbers, which no gradient reads
+            if matches!(op.as_str(), "eq" | "ne" | "gt" | "lt" | "gte" | "lte") && matches!(l.ty().payload(), Ty::Tensor(..)) && matches!(r.ty().payload(), Ty::Tensor(..)) {
+                refuse(format!("compares two tensors with `{}`, which is not differentiable (compare a tensor with a number for its mask)", op));
             }
             if op == "mod" && (traced_value(l) || traced_value(r)) {
                 refuse("uses `%`, which is not differentiable".to_string());

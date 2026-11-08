@@ -144,7 +144,7 @@ impl TypeContext {
             }
         }
         // An element-wise math function over a plain number is a number
-        if crate::modules::math::SCALAR_UNARY.contains(&name) && args.len() == 1 && self.registry.has_bare_function(name) {
+        if crate::table::maps_a_number(name) && args.len() == 1 && self.registry.has_bare_function(name) {
             let t = arg_ty(&args[0]);
             let t = if let Ty::Result(i) = t { *i } else { t };
             if matches!(t, Ty::Int | Ty::Float) { return Ty::Float; }
@@ -732,7 +732,9 @@ impl TypeContext {
                 _ => None,
             };
             let one = Ty::Tensor(Box::new(Ty::Float), dims);
-            let ret = if n == 1 { one } else { Ty::List(Box::new(one)) };
+            // (one gradient per tensor parameter: a parameter of another
+            // kind beside them is a constant of the run, with none)
+            let ret = if shapes.len() == 1 { one } else { Ty::List(Box::new(one)) };
             return Some(Ty::Fn(param_types, Box::new(ret)));
         }
         let param_types = vec![Ty::Float; n];

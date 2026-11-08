@@ -5,9 +5,7 @@ Every module ships with the compiler: `use` it and its names are there in both e
 | Module | Import | Names | Page |
 |---|---|---|---|
 | Core builtins | `(none)` | 81 | [Core builtins](core.md) |
-| math | `use math` | 104 | [math](math.md) |
-| math.stats | `use math.stats` | 13 | [math.stats](math-stats.md) |
-| math.nn | `use math.nn` | 8 | [math.nn](math-nn.md) |
+| math | `use math` | 106 | [math](math.md) |
 | io | `use io` | 2 | [io](io.md) |
 | sys | `use sys` | 112 | [sys](sys.md) |
 | frame | `use frame` | 21 | [frame](frame.md) |
