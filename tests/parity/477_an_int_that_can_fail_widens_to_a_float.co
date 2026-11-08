@@ -1,0 +1,24 @@
+--- A variable first given an int that can fail (the round of a sum over a
+--- held failure) and later a float holds a float that can fail, as one
+--- first given a plain int holds a float: the declaration had kept the
+--- int, the float was assigned into it, and the lowered program disagreed
+--- with itself (Kite's visible range, 2026-11-07)
+fn clamped[text, most]
+    x = float[text]
+    to = round[x + 0.5]
+    if to gt most
+        to = most
+    to
+
+fn last_given[text, most]
+    x = float[text]
+    to = round[x]
+    to = most
+    to
+
+log[clamped['2.4', 10.0]]
+log[clamped['12.4', 10.0]]
+log[last_given['2.4', 1.5]]
+log[type[clamped['2.4', 10.0]]]
+r = clamped['nope', 10.0]
+log[r.ok]

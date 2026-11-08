@@ -1,0 +1,25 @@
+--- A parameter every call hands `[]`, copied into a local the body then
+--- gives a list of floats (`p = params`, then `p = defaults[name]`),
+--- holds floats, and so does a parameter handed on to it: it had stayed a list of nothing, compiled as text beside
+--- the local's floats, and the compiled program did not build (Kite's
+--- indicators, 2026-11-07)
+use math
+
+fn defaults[name]
+    if name eq 'MA'
+        return [5.0, 10.0]
+    [1.0]
+
+fn made[name, params]
+    p = params
+    if len[p] eq 0
+        p = defaults[name]
+    sum[p]
+
+--- (and so does a parameter handed on to it, as the facade's is)
+fn indicator[name, params]
+    made[name, params]
+
+log[made['MA', []]]
+log[made['EMA', []]]
+log[indicator['MA', []]]

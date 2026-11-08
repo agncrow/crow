@@ -1,0 +1,21 @@
+--- A function whose every return hands on nothing answers nothing even
+--- where it can fail (a style read by `float` inside): a variable may hold
+--- that answer, to ask whether it failed (parity 370), but a field holds a
+--- value of its kind, and nothing is none — refused as `log[…]`'s answer
+--- is. It had run interpreted, the field holding `done`, and the compiled
+--- program had not built (Kite's axis width, 2026-11-07)
+struct Axis[w]
+
+fn size_of[t]
+    v = float[t]
+    v
+
+fn widest[xs]
+    size = size_of['12']
+    out = 0.0
+    for x in xs
+        out = max[out, size]
+
+a = Axis[1.5]
+a.w = widest[[1, 2]]
+log[a.w]

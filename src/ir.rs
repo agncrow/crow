@@ -434,6 +434,11 @@ pub enum Stmt {
     /// it to the row moved and write the answer back, so a list held in a
     /// list, under a map's key or in a record's field grows where it lies
     /// (spec, Arrays) — decided once, by the lowering's `grown_in_place`.
+    /// So is a call of a function of the program's given the place first
+    /// (`c.verts = quad[c.verts, x]`), its answer of the place's kind and
+    /// nothing of it able to fail: the interpreter hands the function the
+    /// place's value moved, and the compiled program does where the
+    /// function takes it by value (`emit_field_through_call`).
     SetPath { var: String, path: Vec<PathStep>, expr: Expr, taken: bool },
     /// The only write to a fact.
     Store { fact: String, expr: Expr },
@@ -1106,6 +1111,61 @@ pub fn reading_lent(b: &[Stmt], lent: &[&str]) -> Block {
     out
 }
 
+/// `vs = c.f` — a local given a field of a record local — where the
+/// block next writes that field whole (`c.f = …`) and nothing between
+/// reads the record but through its other fields, writes into the field,
+/// or leaves the block (a return, a break or continue, a failure handed
+/// on), nor does the write's own value: the field's value may be taken out
+/// of the record rather than shared with it, so the writes to `vs` between
+/// grow it where it lies. The record and the field; None where the block
+/// is of another shape. Both backends ask (the emitter's
+/// `field_taken_at`, the prepared interpreter's `block_stmts`): Lory's
+/// `line` had copied every vertex the canvas held for each line it drew,
+/// in both modes (Kite, 2026-11-07).
+pub fn field_taken_at(block: &[Stmt], i: usize) -> Option<(&str, &str)> {
+    let (v, expr) = match block.get(i)? {
+        Stmt::Let { var, expr, .. } | Stmt::Set { var, expr } => (var, expr),
+        _ => return None,
+    };
+    let Expr::Field { base, name: f, ty } = expr else { return None };
+    let (Expr::Local(c, ct) | Expr::Move(c, ct)) = base.as_ref() else { return None };
+    if c == v || !matches!(ct, Ty::Record(_)) || !matches!(ty, Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes | Ty::Tensor(..)) {
+        return None;
+    }
+    // (whether statements read the record other than through another of
+    // its fields, write into the taken field, or leave the block)
+    let of_c = |b: &Expr| matches!(b, Expr::Local(n, _) | Expr::Move(n, _) if n == c);
+    let touches = |stmts: &[Stmt]| {
+        let (mut all, mut others) = (0, 0);
+        visit_block(stmts, &mut |x| match x {
+            Expr::Local(n, _) | Expr::Move(n, _) if n == c => all += 1,
+            Expr::Field { base, name, .. } if name != f && of_c(base) => others += 1,
+            _ => {}
+        });
+        let mut leaves = false;
+        visit_stmts(stmts, &mut |s| {
+            leaves |= matches!(s, Stmt::Return(_) | Stmt::Break | Stmt::Continue | Stmt::Propagate { .. })
+                || matches!(s, Stmt::SetPath { var, path, .. } if var == c && matches!(path.first(), Some(PathStep::Field(g)) if g == f));
+        });
+        all > others || leaves
+    };
+    let mut j = i + 1;
+    loop {
+        let s = block.get(j)?;
+        if let Stmt::SetPath { var, path, expr: val, .. } = s
+            && var == c
+            && matches!(path.as_slice(), [PathStep::Field(g)] if g == f)
+        {
+            // (the write's own value reads nothing of the field either)
+            return (!touches(&[Stmt::Do(val.clone())])).then_some((c.as_str(), f.as_str()));
+        }
+        if touches(std::slice::from_ref(s)) {
+            return None;
+        }
+        j += 1;
+    }
+}
+
 /// Every statement in a block, nested blocks included.
 pub fn visit_stmts(b: &[Stmt], f: &mut dyn FnMut(&Stmt)) {
     for s in b {
@@ -1314,6 +1374,9 @@ impl Borrows<'_> {
                 self.expr(l, false);
                 self.expr(r, false);
             }
+            // (a record's field read borrows the record: what it keeps is
+            // the field, which a lent record's read copies)
+            Expr::Field { base, .. } if matches!(base.ty(), Ty::Record(_) | Ty::OptRecord(_)) => self.expr(base, true),
             Expr::Field { base, .. } | Expr::Meta { base, .. } => self.expr(base, false),
             // text made of pieces reads each
             Expr::Interp(pieces) => {

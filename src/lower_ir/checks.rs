@@ -856,17 +856,27 @@ impl<'a> Lowerer<'a> {
     /// The call a value is the answer of, where that call answers nothing:
     /// a row whose answer its row declares as none (`Kind::Unit`; a form's
     /// kinds are no contract), or a function of the program's that returns
-    /// no value. Its name as the program wrote it.
-    pub(super) fn answers_nothing(&self, x: &Expr) -> Option<String> {
+    /// no value. Its name as the program wrote it. With `failure_too`, a
+    /// function that answers nothing or a failure counts too: a variable may
+    /// hold that to ask whether it failed (parity 370), a field or an item
+    /// may not, since nothing is no value of the kind it holds (Kite's axis
+    /// width: `a.w = widest[…]` ran interpreted, holding `done`, and did not
+    /// build compiled).
+    pub(super) fn answers_nothing(&self, x: &Expr, failure_too: bool) -> Option<String> {
         match x {
             Expr::Call { target: Target::Row(row), ty: Ty::Unit, .. } | Expr::Effect { row: Some(row), ty: Ty::Unit, .. } => {
                 (row.path != crate::table::IN_FORM && matches!(row.ret, crate::table::Kind::Unit)).then(|| crate::table::form(row.name))
             }
-            Expr::Call { target: Target::User(f), ty: Ty::Unit, .. } => {
-                self.fn_answers_nothing(f, &mut BTreeSet::new()).then(|| format!("{}[]", crate::lower::shown(crate::ir::copy_base(f))))
+            Expr::Call { target: Target::User(f), ty, .. } if Self::nothing_or(ty, failure_too) => {
+                self.fn_answers_nothing(f, failure_too, &mut BTreeSet::new()).then(|| format!("{}[]", crate::lower::shown(crate::ir::copy_base(f))))
             }
             _ => None,
         }
+    }
+
+    /// Nothing — or, with `failure_too`, a failure in place of nothing.
+    fn nothing_or(t: &Ty, failure_too: bool) -> bool {
+        matches!(t, Ty::Unit) || (failure_too && matches!(t, Ty::Result(inner) if matches!(inner.as_ref(), Ty::Unit)))
     }
 
     /// Whether a function of the program's answers nothing: its type is
@@ -875,9 +885,9 @@ impl<'a> Lowerer<'a> {
     /// body's last call is its implicit return, and of nothing it is no
     /// value). A return of anything else is a value whose type is not
     /// known yet, never nothing.
-    fn fn_answers_nothing(&self, f: &str, seen: &mut BTreeSet<String>) -> bool {
+    fn fn_answers_nothing(&self, f: &str, failure_too: bool, seen: &mut BTreeSet<String>) -> bool {
         let Some(sig) = self.ctx.functions.get(f) else { return false };
-        if !matches!(sig.return_type, Ty::Unit) {
+        if !Self::nothing_or(&sig.return_type, failure_too) {
             return false;
         }
         // (a function returning its own call answers what its other
@@ -904,7 +914,7 @@ impl<'a> Lowerer<'a> {
         returned(&sig.body, &mut values);
         values.into_iter().all(|e| match e {
             A::Call { callee, .. } => match callee.as_ref() {
-                A::Ident(g) if self.ctx.functions.contains_key(g) => self.fn_answers_nothing(g, seen),
+                A::Ident(g) if self.ctx.functions.contains_key(g) => self.fn_answers_nothing(g, failure_too, seen),
                 A::Ident(g) => {
                     let mut rows = crate::table::rows_named(g).peekable();
                     rows.peek().is_some() && rows.all(|r| r.path != crate::table::IN_FORM && matches!(r.ret, crate::table::Kind::Unit))
@@ -921,13 +931,23 @@ impl<'a> Lowerer<'a> {
     /// program reads, shown as `done`; after `y = 1.0` the lowered program
     /// had disagreed with itself, an internal error.) True when refused.
     pub(super) fn refuse_nothing_held(&mut self, place: &str, x: &Expr) -> bool {
+        self.refuse_nothing_held_as(place, x, false)
+    }
+
+    /// The same for a field or an item, which holds a value of its kind:
+    /// a function's answer of nothing or a failure is refused there too.
+    pub(super) fn refuse_nothing_in_place(&mut self, place: &str, x: &Expr) -> bool {
+        self.refuse_nothing_held_as(place, x, true)
+    }
+
+    fn refuse_nothing_held_as(&mut self, place: &str, x: &Expr, failure_too: bool) -> bool {
         // (a collecting loop's item is its body's last line: one that
         // answers nothing — `log[i]` — is no item, and the modes had
         // disagreed, `[]` interpreted and `[done, done, done]` compiled;
         // Rosetta Code, Longest common subsequence)
         if let Expr::ForExpr { body, .. } = x
             && let Some(Stmt::Do(last)) = body.iter().rev().find(|s| !matches!(s, Stmt::Line(_)))
-            && let Some(call) = self.answers_nothing(last)
+            && let Some(call) = self.answers_nothing(last, false)
         {
             self.refuse(format!("a collecting loop's last line is its item, and {} answers nothing, which {} cannot hold — end the body with the value to collect", call, place));
             return true;
@@ -959,7 +979,7 @@ impl<'a> Lowerer<'a> {
             self.v.line = line;
             return true;
         }
-        let Some(call) = self.answers_nothing(x) else { return false };
+        let Some(call) = self.answers_nothing(x, failure_too) else { return false };
         self.refuse(format!("{} answers nothing, which {} cannot hold — call it on a line of its own", call, place));
         true
     }

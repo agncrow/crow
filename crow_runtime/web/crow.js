@@ -109,11 +109,18 @@ const Crow = (() => {
       if (a === '@framebuffer') return target;
       const colon = a.indexOf(':');
       if (colon > 6 && a.startsWith('base64') && ARRAYS[a.slice(6, colon)]) {
-        const raw = atob(a.slice(colon + 1));
-        const buf = new Uint8Array(raw.length);
-        for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+        // (decoded by the browser where it can: a byte at a time in script,
+        // a frame's vertices had been a fifth of the frame)
+        let buf;
+        if (typeof Uint8Array.fromBase64 === 'function') {
+          buf = Uint8Array.fromBase64(a.slice(colon + 1));
+        } else {
+          const raw = atob(a.slice(colon + 1));
+          buf = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+        }
         const T = ARRAYS[a.slice(6, colon)];
-        return new T(buf.buffer, 0, Math.floor(buf.length / T.BYTES_PER_ELEMENT));
+        return new T(buf.buffer, buf.byteOffset, Math.floor(buf.length / T.BYTES_PER_ELEMENT));
       }
       if (colon > 0 && ARRAYS[a.slice(0, colon)]) {
         const body = a.slice(colon + 1).trim();
@@ -415,10 +422,28 @@ const Crow = (() => {
     canvas.addEventListener('pointercancel', pointer('up'));
     canvas.addEventListener('pointerleave', pointer('leave'));
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    canvas.addEventListener('dblclick', (e) => {
+      const [x, y] = at_of(e);
+      input.push(Object.assign({ type: 'double', id: 'dbl', device: 'mouse', x, y, button: e.button }, mods(e)));
+    });
+    // (a wheel's device: `trackpad` for a swipe of a trackpad or of a
+    // touch mouse, `mouse` for a wheel's notches. No browser says which, so
+    // its deltas tell: lines or pages are a wheel's; macOS writes a notch
+    // as a multiple of 4.000244140625 pixels (as Mapbox's scroll handler
+    // reads it), Windows and Linux as a large delta with a `wheelDelta` a
+    // multiple of 120; a delta across is a trackpad's, and so is any other.
+    // A pinch is a wheel with Ctrl held, as browsers report it.)
+    const wheel_device = (e) => {
+      if (e.deltaMode !== 0) return 'mouse';
+      if (e.deltaX !== 0) return 'trackpad';
+      if (e.deltaY !== 0 && e.deltaY % 4.000244140625 === 0) return 'mouse';
+      if (e.wheelDeltaY && e.wheelDeltaY % 120 === 0 && Math.abs(e.deltaY) >= 50) return 'mouse';
+      return 'trackpad';
+    };
     canvas.addEventListener('wheel', (e) => {
       const [x, y] = at_of(e);
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? canvas.height : 1;
-      input.push(Object.assign({ type: 'wheel', x, y, dx: e.deltaX * unit, dy: e.deltaY * unit }, mods(e)));
+      input.push(Object.assign({ type: 'wheel', x, y, dx: e.deltaX * unit, dy: e.deltaY * unit, device: wheel_device(e) }, mods(e)));
       e.preventDefault();
     }, { passive: false });
     window.addEventListener('keydown', (e) => {

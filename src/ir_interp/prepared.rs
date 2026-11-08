@@ -284,8 +284,11 @@ enum Ins {
     /// else — a map's key, a frame's column, a session's state, a failed
     /// local — the walker reads, as it always has (`how`: the expression
     /// and the locals it names). A record's field had been a walker
-    /// fallback, the record copied whole to read it.
-    Field { d: R, base: R, name: Box<str>, how: Box<(Expr, Env)> },
+    /// fallback, the record copied whole to read it. `take`: the field's
+    /// value taken out of the record, which the block writes back before
+    /// it reads the field again (`ir::field_taken_at`), so the local it is
+    /// given grows where it lies.
+    Field { d: R, base: R, name: Box<str>, how: Box<(Expr, Env)>, take: bool },
     /// `Tree[l, r, false]`: a record of its fields' values, computed into
     /// registers in their declaration's order, each put where the layout
     /// every value of the record shares holds it (resolved at the first
@@ -698,9 +701,43 @@ impl Comp {
     }
 
     fn block_stmts(&mut self, b: &[Stmt]) {
-        for s in b {
+        for (i, s) in b.iter().enumerate() {
             self.temps = [0; 3];
+            if let Some((c, f)) = crate::ir::field_taken_at(b, i)
+                && self.taken_field(s, c, f)
+            {
+                continue;
+            }
             self.stmt(s);
+        }
+    }
+
+    /// `vs = c.f` where the block writes the field back whole before
+    /// anything reads it again (`ir::field_taken_at`, the rule the emitter
+    /// reads too): the field's value taken out of the record into the
+    /// local's register, so the local's writes grow it where it lies — read,
+    /// the value was shared with the record, and the first push copied it
+    /// whole (Lory's `line`: every vertex the canvas held, for each line
+    /// drawn). False where the statement is compiled as any other: a
+    /// record or a local held in no register of the body's.
+    fn taken_field(&mut self, s: &Stmt, c: &str, f: &str) -> bool {
+        let Some(base) = self.resolve(c) else { return false };
+        match s {
+            Stmt::Let { var, ty, expr } => {
+                let d = self.peek(var);
+                let env = self.env();
+                self.emit(Ins::Field { d, base, name: f.into(), how: Box::new((expr.clone(), env)), take: true });
+                let bound = self.declare(var, scalar(ty), RKind::of_local(ty));
+                debug_assert_eq!(bound, d);
+                true
+            }
+            Stmt::Set { var, expr } => {
+                let Some(d) = self.resolve(var) else { return false };
+                let env = self.env();
+                self.emit(Ins::Field { d, base, name: f.into(), how: Box::new((expr.clone(), env)), take: true });
+                true
+            }
+            _ => false,
         }
     }
 
@@ -1235,7 +1272,7 @@ impl Comp {
                 let (Expr::Local(v, _) | Expr::Move(v, _)) = unwrapped(base) else { return self.eval(e, d) };
                 let Some(b) = self.resolve(v) else { return self.eval(e, d) };
                 let env = self.env();
-                self.emit(Ins::Field { d, base: b, name: name.as_str().into(), how: Box::new((e.clone(), env)) });
+                self.emit(Ins::Field { d, base: b, name: name.as_str().into(), how: Box::new((e.clone(), env)), take: false });
             }
             Expr::Index { base, indices, ty } => {
                 if let [index] = indices.as_slice()
@@ -1914,7 +1951,18 @@ impl IrInterp {
                     }
                     regs[*d as usize].assign(CrowValue::ok(Value::StructInstance(Arc::new(crate::value::StructInstance::with_layout(shape.0, vals)))));
                 }
-                Ins::Field { d, base, name, how } => {
+                Ins::Field { d, base, name, how, take } => {
+                    if *take {
+                        let b = &mut regs[*base as usize];
+                        if b.is_ok()
+                            && let Value::StructInstance(si) = &mut b.value
+                            && let Some(slot) = Arc::make_mut(si).get_mut(name)
+                        {
+                            let v = std::mem::replace(slot, CrowValue::done());
+                            regs[*d as usize].assign(v);
+                            return pc + 1;
+                        }
+                    }
                     let b = &regs[*base as usize];
                     if b.is_ok()
                         && let Value::StructInstance(si) = &b.value
@@ -2281,6 +2329,29 @@ mod tests {
         assert_ne!(vars[0], vars[1], "{:?}", code);
         assert!(!format!("{:?}", code).contains("Eval {"), "{:?}", code);
     }
+
+    /// A record's field read into a local the body writes back whole (`vs
+    /// = c.verts` … `c.verts = vs`) is taken out of the record (`Ins::Field
+    /// { take }`), and one handed to a program's function and written back
+    /// (`c.verts = quad[c.verts, …]`) is marked taken by the lowering, in a
+    /// body and not at the top level: shared with the record, each had
+    /// copied the whole list at its first push — Lory's canvas, ten
+    /// seconds a frame of a chart interpreted (Kite; parity 480). A read of
+    /// the field between, or a return before the write, keeps the share.
+    #[test]
+    fn a_record_field_written_back_is_taken() {
+        let src = std::fs::read_to_string("tests/parity/480_a_record_field_handed_on_and_written_back_is_taken.co").expect("parity 480");
+        let takes = |name: &str| prepare(&lowered_fn(&src, name)).code.iter().any(|i| matches!(i, Ins::Field { take: true, .. }));
+        assert!(takes("line"), "line");
+        assert!(!takes("peeked") && !takes("early"), "peeked, early");
+        let marked = |name: &str| lowered_fn(&src, name).body.iter().any(|s| matches!(s, Stmt::SetPath { taken: true, .. }));
+        assert!(marked("rect") && marked("first_drawn") && marked("mixed"), "rect, first_drawn, mixed");
+        let stmts = crate::build(&src).expect("parses");
+        let program = crate::ir_interp::prepare(&stmts, "t").expect("lowers").0;
+        let top = &program.parts[0].main;
+        assert!(top.iter().any(|s| matches!(s, Stmt::SetPath { taken: false, .. })), "the top level's write: {:?}", top);
+        assert!(!top.iter().any(|s| matches!(s, Stmt::SetPath { taken: true, .. })), "the top level's write: {:?}", top);
+    }
 }
 
 // ── The typed program (step 4) ─────────────────────────────────────────
@@ -2593,7 +2664,7 @@ fn reads_writes(ins: &Ins) -> (Vec<R>, Vec<R>) {
             r.push(*base);
             (r, vec![*d])
         }
-        Ins::Field { d, base, .. } => (vec![*base], vec![*d]),
+        Ins::Field { d, base, take, .. } => (vec![*base], if *take { vec![*d, *base] } else { vec![*d] }),
         Ins::Record { d, fields, .. } => (fields.iter().map(|(r, _)| *r).collect(), vec![*d]),
         Ins::CopyItem { dst, di, src, si, .. } => {
             let mut r = rs(&[*di, *si]);
@@ -2959,7 +3030,7 @@ fn typed(p: &Body) -> Option<Typed> {
                 let reads: Vec<R> = fields.iter().map(|(r, _)| *r).collect();
                 wrap(&reads, &[*d])
             }
-            Ins::Field { d, base, how, .. } => {
+            Ins::Field { d, base, how, take, .. } => {
                 let mut reads = vec![*base];
                 crate::ir::visit_expr(&how.0, &mut |e| {
                     if let Expr::Local(n, _) | Expr::Move(n, _) = e
@@ -2970,6 +3041,8 @@ fn typed(p: &Body) -> Option<Typed> {
                 });
                 if reads.iter().any(|r| lk(*r)) {
                     lend(ins)
+                } else if *take {
+                    wrap(&reads, &[*d, *base])
                 } else {
                     wrap(&reads, &[*d])
                 }

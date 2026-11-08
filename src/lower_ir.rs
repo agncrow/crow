@@ -890,6 +890,10 @@ struct Lowerer<'a> {
     /// known yet, by the function it is of: the holder's items are what
     /// the local settles on (`settled`).
     items_of: Vec<(String, String, String)>,
+    /// The locals first given an open parameter as it is (`p = params`,
+    /// `params` handed only `[]`), as (function, local, parameter): what
+    /// the local settles on is the parameter's too (`settled`).
+    copies_of: Vec<(String, String, String)>,
     /// The loops under way whose variable walks a record's field of a list
     /// of nothing known yet (`for a in b.asks` while `asks` was given `[]`):
     /// the variable, the record and the field. An item pushed onto a list
@@ -981,6 +985,11 @@ struct Lowerer<'a> {
     /// x.ok`'s body, `if x.ok`'s else): a return of one hands back its
     /// failure, never its value's type.
     failed: Vec<String>,
+    /// The top level's variables as this round declared them, by name: the
+    /// type of each one's first assignment met in the round (the passes
+    /// that learn types read the top level a statement at a time, and keep
+    /// its variables from round to round — `top_landed`).
+    top_declared: HashMap<String, Ty>,
 }
 
 /// `map[keys, values]` of a tensor: the tensor as a list of the item kind,
@@ -1093,6 +1102,7 @@ impl<'a> Lowerer<'a> {
             yields: HashSet::new(),
             grad_of: HashMap::new(),
             items_of: Vec::new(),
+            copies_of: Vec::new(),
             walking_fields: Vec::new(),
             differentiating: false,
             handed_to_row: None,
@@ -1125,6 +1135,7 @@ impl<'a> Lowerer<'a> {
             returns_seen: HashMap::new(),
             returns_none: HashSet::new(),
             failed: Vec::new(),
+            top_declared: HashMap::new(),
         }
     }
 
@@ -1458,6 +1469,19 @@ impl<'a> Lowerer<'a> {
             && self.ctx.functions.contains_key(n)
         {
             self.ctx.call_edges.insert((self.current_fn.clone(), n.clone()));
+            // (an open parameter of this function handed on as it is — a
+            // list handed only `[]` — is noted: once inference has settled,
+            // one no call typed holds what the callee's parameter holds
+            // (`default_open_params`): a facade's `params` passed on to `made`
+            // had stayed a list of nothing, compiled as text; Kite, parity
+            // 478)
+            for (i, a) in args.iter().enumerate() {
+                let A::Ident(v) = a else { continue };
+                let open = |t: &Ty| matches!(t, Ty::List(e) | Ty::Map(_, e) if matches!(e.as_ref(), Ty::Unknown));
+                if self.ctx.vars.get(v).is_some_and(open) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(p, _)| p == v)) {
+                    self.ctx.handed_on.insert((self.current_fn.clone(), v.clone(), n.clone(), i));
+                }
+            }
             for (i, a) in args.iter().enumerate() {
                 if !matches!(types.get(i), Some(Ty::Unknown)) {
                     continue;
@@ -2406,25 +2430,34 @@ impl<'a> Lowerer<'a> {
     /// first, into a temporary, as `taken_in_place` does for a whole
     /// variable.
     fn grown_in_place(&mut self, var: &str, path: &[PathStep], expr: Expr) -> (Vec<Stmt>, Expr, bool) {
+        let place_first = |args: &[Expr]| {
+            args.first().is_some_and(|first| {
+                let place = first.ty();
+                !place.is_result() && matches!(place.payload(), Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes | Ty::Tensor(..)) && reads_place(first, var, path)
+            }) && path.iter().all(|p| match p {
+                PathStep::Index(i) => crate::ir::quiet(i),
+                PathStep::Field(_) => true,
+            })
+        };
         let found = match &expr {
-            Expr::Call { target: Target::Row(row), args, ty, propagates }
-                if row.grows_in_place()
-                    && args.first().is_some_and(|first| {
-                        let place = first.ty();
-                        !place.is_result()
-                            && matches!(place.payload(), Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes | Ty::Tensor(..))
-                            && reads_place(first, var, path)
-                    })
-                    && path.iter().all(|p| match p {
-                        PathStep::Index(i) => crate::ir::quiet(i),
-                        PathStep::Field(_) => true,
-                    }) =>
+            Expr::Call { target: Target::Row(row), args, ty, propagates } if row.grows_in_place() && place_first(args) => Some((Target::Row(*row), args.clone(), ty.clone(), *propagates)),
+            // (and a function of the program's given the place first, whose
+            // answer, of the place's kind, cannot fail and whose arguments
+            // cannot either, so that nothing fails between the take and the
+            // write back — `c.verts = quad[c.verts, x, c.clip]`: Lory's
+            // canvas had copied its whole list of vertices for each shape
+            // drawn, ten seconds a frame of a chart interpreted; Kite,
+            // 2026-11-07. Only in a body: a stop inside the function ends
+            // the body's locals with it, where a notebook's next cell reads
+            // what the top level holds)
+            Expr::Call { target: Target::User(g), args, ty, propagates }
+                if self.at != Where::Top && place_first(args) && !ty.is_result() && args.first().is_some_and(|first| first.ty() == *ty) && args.iter().all(|a| !a.ty().is_result()) =>
             {
-                Some((*row, args.clone(), ty.clone(), *propagates))
+                Some((Target::User(g.clone()), args.clone(), ty.clone(), *propagates))
             }
             _ => None,
         };
-        let Some((row, args, ty, propagates)) = found else { return (Vec::new(), expr, false) };
+        let Some((target, args, ty, propagates)) = found else { return (Vec::new(), expr, false) };
         // (every other argument a plain read where the write runs: one that
         // computes — or reads the variable — is computed first, into a
         // temporary, so the place is taken only once nothing is left to run
@@ -2449,7 +2482,7 @@ impl<'a> Lowerer<'a> {
             }
             kept.push(Expr::Local(t, at));
         }
-        (out, Expr::Call { target: Target::Row(row), args: kept, ty, propagates }, true)
+        (out, Expr::Call { target, args: kept, ty, propagates }, true)
     }
 
     /// The frame a path holds — a variable's (`xs`), or a record's field's
@@ -2669,6 +2702,7 @@ impl<'a> Lowerer<'a> {
                     // the call scan settles the variable once its value's
                     // calls are read, with the value's type
                     let held = self.held_by_fact(name, kept(&expr));
+                    let held = self.top_landed(name, held);
                     self.ctx.note_scanned_assign(name, held.clone());
                     self.ctx.note_scanned_value(name, value);
                     self.rebind(name, &held);
@@ -2783,7 +2817,7 @@ impl<'a> Lowerer<'a> {
                     self.check_top_write(&root);
                 }
                 let expr = self.lower_expr(value)?;
-                if self.pass == Pass::Final && self.refuse_nothing_held(&format!("the field '{}'", field), &expr) {
+                if self.pass == Pass::Final && self.refuse_nothing_in_place(&format!("the field '{}'", field), &expr) {
                     return Ok(Vec::new());
                 }
                 if self.pass != Pass::Final {
@@ -2828,7 +2862,7 @@ impl<'a> Lowerer<'a> {
                         Some(root) => format!("an item of '{}'", crate::lower::shown(&root)),
                         None => "an item".to_string(),
                     };
-                    if self.refuse_nothing_held(&place, &expr) {
+                    if self.refuse_nothing_in_place(&place, &expr) {
                         return Ok(Vec::new());
                     }
                 }
@@ -3988,8 +4022,15 @@ impl<'a> Lowerer<'a> {
         // (a variable holding a float that can fail takes an int as a
         // float too: `cur = loss[…]`, then `cur = 2`)
         let holds_float = matches!(self.ctx.vars.get(name), Some(Ty::Float)) || matches!(self.ctx.vars.get(name), Some(Ty::Result(inner)) if matches!(inner.as_ref(), Ty::Float));
+        // (and an int that can fail, given to a variable that settles on a
+        // float, lands as a float that can fail, its failure kept: `to =
+        // round[x + n]` of a held failure `x`, then `to = n`, had declared
+        // the int and been given the float — the lowered program disagreed
+        // with itself; Kite's visible range)
         let expr = if holds_float && expr.ty() == Ty::Int {
             Expr::Convert { how: Convert::IntToFloat, expr: Box::new(expr), ty: Ty::Float }
+        } else if holds_float && matches!(expr.ty(), Ty::Result(inner) if *inner == Ty::Int) {
+            Expr::Convert { how: Convert::IntToFloat, expr: Box::new(expr), ty: Ty::Result(Box::new(Ty::Float)) }
         } else {
             expr
         };
@@ -4189,11 +4230,24 @@ impl<'a> Lowerer<'a> {
         let ty = self.held_by_fact(name, kept(&expr));
         let store = self.is_fact(name) && self.sees_facts();
         self.note_held(name, &ty, store);
-        let settled = if self.ctx.fresh_binding(name) {
+        let ty = self.top_landed(name, ty);
+        let fresh = self.ctx.fresh_binding(name);
+        if fresh
+            && self.pass != Pass::Final
+            && let Expr::Local(p, pt) | Expr::Move(p, pt) = &expr
+            && matches!(pt, Ty::List(i) | Ty::Map(_, i) if matches!(i.as_ref(), Ty::Unknown))
+            && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(n, _)| n == p))
+        {
+            let link = (self.current_fn.clone(), name.to_string(), p.clone());
+            if !self.copies_of.contains(&link) {
+                self.copies_of.push(link);
+            }
+        }
+        let settled = if fresh {
             ty.clone()
         } else {
             let existing = self.ctx.vars.get(name).cloned().unwrap_or(Ty::Unknown);
-            crate::type_infer::settle::settle(&existing, ty.clone(), self.ctx.body_assigned.is_some())
+            crate::type_infer::settle::settle(&existing, ty.clone(), self.ctx.held_here(name))
         };
         self.ctx.vars.insert(name.to_string(), settled.clone());
         // (a holder this local was pushed onto before its items were known
@@ -4211,11 +4265,61 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+        // (and a parameter this local was first given as it was — a list
+        // handed only `[]`, copied and given floats: `p = params`, then `p =
+        // defaults[name]` — is noted with what the copy settles on: once
+        // inference has settled, one no call typed holds it
+        // (`default_open_params`; Kite's `made`, parity 478))
+        if settled.is_concrete() {
+            let params: Vec<String> = self.copies_of.iter().filter(|(f, l, _)| *f == self.current_fn && l == name).map(|(_, _, p)| p.clone()).collect();
+            // (a vector of numbers is a list of them to a list: `[]` handed
+            // where the body's own numbers are a tensor)
+            let as_list = match &settled {
+                Ty::Tensor(e, d) if d.as_ref().is_none_or(|d| d.len() <= 1) && matches!(e.as_ref(), Ty::Int | Ty::Float) => Ty::List(e.clone()),
+                t => t.clone(),
+            };
+            for p in params {
+                self.ctx.copied_kinds.insert((self.current_fn.clone(), p), as_list.clone());
+            }
+        }
         self.rebind(name, &ty);
         if !store && !self.declared(name) {
             self.scopes.last_mut().unwrap().insert(name.to_string());
         }
         Stmt::Set { var: name.to_string(), expr }
+    }
+
+    /// A top-level variable's value, in a pass that learns types, landed as
+    /// the final pass lands it: a variable whose declaration holds no error
+    /// refuses a later value that can fail where it is assigned, and holds
+    /// its payload (spec, Reassignment), as a body's variable does
+    /// (`settle::consumed`). The top level is read a statement at a time
+    /// and its variables are kept from round to round, so the failure had
+    /// been joined into the variable, and the next round read the lines
+    /// above the assignment with a variable that can fail: Kite's points
+    /// made of `k` above `k = kite.update[c, k, …]` (whose canvas can fail)
+    /// were points that can fail, the function handed them was copied for
+    /// them, and its copy refused Kite's own code. At the declaration, a
+    /// failure an earlier round joined in is let go the same way.
+    fn top_landed(&mut self, name: &str, ty: Ty) -> Ty {
+        if self.at != Where::Top || self.is_fact(name) {
+            return ty;
+        }
+        if self.declared(name) {
+            return match (self.top_declared.get(name), &ty) {
+                (Some(first), Ty::Result(payload)) if crate::type_infer::settle::refuses_failed(first, payload) => payload.as_ref().clone(),
+                _ => ty,
+            };
+        }
+        self.top_declared.insert(name.to_string(), ty.clone());
+        if !ty.is_result()
+            && let Some(Ty::Result(inner)) = self.ctx.vars.get(name)
+            && crate::type_infer::settle::refuses_failed(&ty, inner)
+        {
+            let inner = inner.as_ref().clone();
+            self.ctx.vars.insert(name.to_string(), inner);
+        }
+        ty
     }
 
     /// What a provisional lowering's assignment says of the variable's
@@ -4252,10 +4356,10 @@ impl<'a> Lowerer<'a> {
                 self.note_held(n, t, store);
             }
         }
-        let in_body = self.ctx.body_assigned.is_some();
         for (n, t) in names.iter().zip(types) {
             let existing = self.ctx.vars.get(n).cloned().unwrap_or(Ty::Unknown);
-            self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, in_body));
+            let at = self.ctx.held_here(n);
+            self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, at));
         }
         for n in names {
             let store = self.is_fact(n) && self.sees_facts();
@@ -4286,10 +4390,10 @@ impl<'a> Lowerer<'a> {
             let x = self.lower_expr(v)?;
             types.push(read(&x));
         }
-        let in_body = self.ctx.body_assigned.is_some();
         for (n, t) in names.iter().zip(types) {
             let existing = self.ctx.vars.get(n).cloned().unwrap_or(Ty::Unknown);
-            self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, in_body));
+            let at = self.ctx.held_here(n);
+            self.ctx.vars.insert(n.clone(), crate::type_infer::settle::settle(&existing, t, at));
         }
         for n in names {
             let store = self.is_fact(n) && self.sees_facts();
@@ -8270,7 +8374,8 @@ fn infer_once(ctx: &mut TypeContext, stmts: &[S]) {
     // with it so — a value walked out of it reaches the functions it is
     // handed to as text too, which the next look types in turn
     for _ in 0..4 {
-        if !ctx.default_unknown_params() {
+        let open = ctx.default_open_params();
+        if !ctx.default_unknown_params() && !open {
             break;
         }
         for _ in 0..8 {
@@ -8631,6 +8736,10 @@ fn declared_as(first: &Ty, settled: Option<&Ty>) -> Ty {
     }
     if *first == Ty::Int && matches!(settled, Some(Ty::Float)) {
         return Ty::Float;
+    }
+    // (an int that can fail first, a float later: a float that can fail)
+    if matches!(first, Ty::Result(inner) if **inner == Ty::Int) && matches!(settled, Some(t) if t.payload() == &Ty::Float) {
+        return Ty::Result(Box::new(Ty::Float));
     }
     // whole numbers first held as a tensor, a list of ints later: a list of
     // ints from the declaration (type_infer::settle)

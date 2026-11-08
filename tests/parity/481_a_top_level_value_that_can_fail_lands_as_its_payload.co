@@ -1,0 +1,41 @@
+--- A top-level variable declared with a value that cannot fail, given
+--- later a value that can (`b = update[c, b]`, `c` read from a parsed
+--- value), holds the value's payload (spec, Reassignment), in every round
+--- of inference as in the final pass: the failure had been joined into the
+--- variable, the next round read the lines above with a `b` that can fail,
+--- `point[b, 1.5]` made points that can fail, the record built of them
+--- held them, and a function reading the field refused its own plain
+--- list (`cannot reassign 'pts' from array[result[P]] to array[P]`;
+--- Kite's points above `k = kite.update[c, k, …]`, 2026-11-07)
+struct P [i, v]
+struct Box [n, pts]
+
+fn made[n]
+    json['{"n": `n`}']
+
+fn begin[frame]
+    0 + frame.n
+
+fn point[b, v]
+    P[b.n, v]
+
+fn add[b, pts]
+    Box[b.n, pts]
+
+fn update[c, b]
+    b.n = b.n + c
+    b
+
+fn points_or[b, v]
+    pts = b.pts
+    if len[pts] eq 0
+        pts = [P[0, v]]
+    pts
+
+b = Box[0, []]
+log[points_or[b, 2.5]]
+b = add[b, [point[b, 1.5]]]
+c = begin[made[3]]
+b = update[c, b]
+log[b.n]
+log[points_or[b, 2.5]]

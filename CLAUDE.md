@@ -1645,3 +1645,32 @@ steps on every push and must be green — all but Magpie's suite (the
   `CrowDisplay::failure`). tests/web_target.rs draws a triangle in
   headless Chrome (`--use-angle=swiftshader`) and reads its pixels; the
   Lory package (agncrow/lory) is the engine built on it.
+- A value that can fail, assigned to a variable whose first value could
+  not, lands as its payload (spec, Reassignment), and what "first" means
+  depends on where the variable is: at the top level, the round's own
+  first assignment (`Lowerer::top_landed`: the fixpoint meets the
+  declaration again with last round's type in hand); in a body, the
+  local's known type; a parameter always (`settle::Held::Param`: a failed
+  argument never enters a function). Read by its known type alone, a
+  parameter no call had typed yet — every function in round 1 — held the
+  failure for the rest of its body. A record built from it kept a field
+  that can fail ever after, since a field's type only joins. The top
+  level read that field back while its own first value was still unknown
+  (`made`'s record three calls deep), and Kite's points then refused
+  their own plain list (parity 481, 482; Kite's `framed`, 2026-11-07).
+  `propagates` on a call of a program's function says a failed ARGUMENT
+  is the call's value, not that the function can fail (true of nearly
+  every call). A rule that wants "cannot fail" reads the answer's type
+  and the arguments': the field take below first required `propagates:
+  false` and never fired.
+- A record's field handed first to a program's function and written back
+  (`c.verts = quad[c.verts, …]`) is a `taken` SetPath (`grown_in_place`'s
+  `Target::User` arm). It needs an answer of the place's kind that cannot
+  fail and no argument that can, and it applies only in a body: at the
+  top level, a stop inside the function would leave the field empty for a
+  notebook's next cell. `vs = c.f` … `c.f = vs` is `ir::field_taken_at`,
+  which the emitter (`std::mem::take`), the prepared form (`Ins::Field {
+  take }`) and the walker (`taken_field`) each ask. Read rather than
+  taken, the field's list was shared with the record, and its first push
+  copied it whole: Lory's canvas ran a frame a second compiled and ten
+  seconds interpreted (Kite, 2026-11-07; parity 480).

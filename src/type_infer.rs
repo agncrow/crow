@@ -496,6 +496,14 @@ pub struct TypeContext {
     /// callee, the parameter's place): what is held as text where it is
     /// compiled (`default_unknown_params`).
     pub text_items: std::collections::BTreeSet<(String, String, usize)>,
+    /// An open parameter handed on as it is to another function, as
+    /// (caller, parameter, callee, the callee's place): one no call typed
+    /// takes the callee's parameter's type (`default_open_params`).
+    pub handed_on: std::collections::BTreeSet<(String, String, String, usize)>,
+    /// An open parameter a local was first given as it is (`p = params`),
+    /// by (function, parameter): what the local settled on, which a
+    /// parameter no call typed takes (`default_open_params`).
+    pub copied_kinds: BTreeMap<(String, String), Ty>,
     /// The functions handed as a value whose answer the parameter that
     /// takes them says: a list of numbers there is the answer's form, never
     /// a guess an earlier round made (`finish_body`'s reform keeps it).
@@ -659,6 +667,8 @@ impl TypeContext {
             fn_defaults: BTreeMap::new(),
             first_call_line: BTreeMap::new(),
             text_items: std::collections::BTreeSet::new(),
+            handed_on: std::collections::BTreeSet::new(),
+            copied_kinds: BTreeMap::new(),
             answers_by_use: std::collections::BTreeSet::new(),
             call_edges: std::collections::BTreeSet::new(),
             module_calls: BTreeMap::new(),
@@ -1413,6 +1423,43 @@ impl TypeContext {
         changed
     }
 
+    /// A parameter still a list or map of nothing once inference has
+    /// settled — every call hands it `[]` — holds what the body makes of
+    /// it: what a local first given it as it is settled on (`p = params`,
+    /// then `p = defaults[name]`), or the kind of the parameter it is
+    /// handed on to as it is (a facade's `params` passed to `made`).
+    /// Typed as text, as the compiled program holds a list of nothing, it
+    /// had met the copy's floats and not built (Kite; parity 478). After
+    /// inference, never during it: a parameter its calls type later keeps
+    /// their type (`crossval`'s rows). Whether any changed.
+    pub(crate) fn default_open_params(&mut self) -> bool {
+        let open = |t: &Ty| matches!(t, Ty::List(e) | Ty::Map(_, e) if matches!(e.as_ref(), Ty::Unknown));
+        let mut wanted: Vec<(String, String, Ty)> = Vec::new();
+        for ((f, p), t) in &self.copied_kinds {
+            wanted.push((f.clone(), p.clone(), t.clone()));
+        }
+        for (caller, param, callee, i) in &self.handed_on {
+            if let Some((_, t)) = self.functions.get(callee).and_then(|sig| sig.params.get(*i)) {
+                wanted.push((caller.clone(), param.clone(), t.clone()));
+            }
+        }
+        let mut changed = false;
+        for (f, param, held) in wanted {
+            if !held.is_concrete() {
+                continue;
+            }
+            if let Some(sig) = self.functions.get_mut(&f)
+                && let Some((_, t)) = sig.params.iter_mut().find(|(p, _)| *p == param)
+                && open(t)
+                && t.compatible(&held)
+            {
+                *t = t.unify(&held);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     /// Every clone the monomorphization pass made.
     pub(crate) fn clone_names(&self) -> Vec<String> {
         self.specializations.values().flat_map(|v| v.iter().map(|(_, m)| m.clone())).collect()
@@ -1573,6 +1620,17 @@ impl TypeContext {
     /// — and a standard module's function, inlined, has locals of its own:
     /// one named like a fact of the program is still its local (llm's
     /// `rows = []` in `embed` had taken a fact `rows = 0`'s int).
+    /// Where an assignment to `name` lands (`settle::consumed`): at the top
+    /// level, in a local of the body being read, or in one of its
+    /// parameters.
+    pub(crate) fn held_here(&self, name: &str) -> settle::Held {
+        if self.body_assigned.is_none() {
+            return settle::Held::Top;
+        }
+        let param = self.current_fn_name.as_deref().and_then(|f| self.functions.get(f)).is_some_and(|sig| sig.params.iter().any(|(p, _)| p == name));
+        if param { settle::Held::Param } else { settle::Held::Local }
+    }
+
     pub(crate) fn fresh_binding(&mut self, name: &str) -> bool {
         let is_ui = self.is_ui;
         let own = self.current_fn_name.as_deref().is_some_and(crate::modules::is_crow_fn);

@@ -1,0 +1,90 @@
+--- A record's field handed to a function that keeps it, its answer written
+--- back to the field (`c.verts = quad[c.verts, …]`), or read into a local
+--- and written back (`vs = c.verts` … `c.verts = vs`), is taken out of the
+--- record where it lies, and a record handed whole to a function that keeps
+--- it is handed, not lent and copied there: both modes had copied the
+--- field, or the record, at every call — Lory's canvas, every vertex drawn
+--- before each box: a frame a second compiled, ten seconds a frame
+--- interpreted (Kite, 2026-11-07). What reads the field before the write
+--- reads it as it was, a path that leaves before the write leaves the
+--- field whole, the record handed beside its own field is handed as it
+--- was, and the top level, whose values a notebook's next cell reads, is
+--- written as it always was.
+struct Canvas[verts, clip, name]
+
+fn quad[vs, x, clip]
+    vs = push[vs, x + clip[0]]
+    vs
+
+fn rect[c, x]
+    c.verts = quad[c.verts, x, c.clip]
+    c
+
+fn counted[vs, n]
+    push[vs, 1.0 * n]
+
+fn twice[c]
+    c.verts = counted[c.verts, len[c.verts]]
+    c
+
+fn line[c, x]
+    vs = c.verts
+    vs = push[vs, x]
+    vs = push[vs, x + c.clip[1]]
+    c.verts = vs
+    c
+
+fn peeked[c]
+    vs = c.verts
+    seen = len[c.verts]
+    vs = push[vs, 1.0 * seen]
+    c.verts = vs
+    c
+
+fn early[c, x]
+    vs = c.verts
+    vs = push[vs, x]
+    if x gt 100.0
+        return c
+    c.verts = vs
+    c
+
+fn sized[vs, c]
+    push[vs, 1.0 * len[c.verts]]
+
+fn mixed[c, x]
+    c.verts = sized[c.verts, c]
+    c.verts = quad[c.verts, x, c.clip]
+    c
+
+fn first_drawn[cs, x]
+    cs[0].verts = quad[cs[0].verts, x, cs[0].clip]
+    cs
+
+fn boxed[c, x]
+    if x lt 0.0
+        return c
+    rect[c, x]
+
+c = Canvas[[], [0.5, 1.0], 'one']
+for i in range[5]
+    c = boxed[c, 1.0 * i]
+c = twice[c]
+c = line[c, 7.0]
+c = peeked[c]
+c = early[c, 200.0]
+c = early[c, 3.0]
+log[c.verts]
+d = c
+d = rect[d, 9.0]
+log[len[c.verts]]
+log[len[d.verts]]
+log[d.name]
+e = mixed[c, 4.0]
+log[e.verts]
+cs = [Canvas[[1.0], [0.25, 0.0], 'a'], Canvas[[], [0.75, 0.0], 'b']]
+cs = first_drawn[cs, 2.0]
+log[cs[0].verts]
+log[cs[1].verts]
+c.verts = quad[c.verts, 11.0, c.clip]
+log[len[c.verts]]

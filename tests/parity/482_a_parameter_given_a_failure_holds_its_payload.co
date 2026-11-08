@@ -1,0 +1,83 @@
+--- A parameter given a value that can fail (`k = update[c, k]`, `c` a
+--- number read from text) holds the value's payload, whatever its type is
+--- known as yet: a failed argument never enters a function, so the
+--- parameter's first value could not fail (spec, Reassignment). Read by
+--- its known type alone, a parameter no call had typed yet — every function
+--- in the first round of inference — held the failure for the rest of its
+--- body; the record built of it there (`Shown[…, k]`) kept a field that can
+--- fail ever after; the top level read the field back while its own first
+--- value was still unknown (`k = s.k`, `made`'s record three calls deep);
+--- the point made of it could fail, the overlay's points held it, and a
+--- function reading them refused its own plain list (`cannot reassign 'pts'
+--- from result[array[result[P]]] to array[P]`; Kite's `framed`, 2026-11-07).
+struct P [i, v]
+struct O [name, points]
+struct K [n, os]
+struct Shown [c, k]
+
+fn index_at[k, t]
+    k.n + int[t]
+
+fn point[k, t, v]
+    P[index_at[k, t], v]
+
+fn kept_level[pts, pt]
+    if len[pts] eq 0
+        return error['no points']
+    push[pts, P[pt.i, pts[0].v]]
+
+fn for_drawing[name, pts, pt]
+    if name eq 'level'
+        return kept_level[pts, pt]
+    push[pts, pt]
+
+fn update[c, k]
+    for i in range[len[k.os]]
+        o = k.os[i]
+        if len[o.points] gt 0
+            pt = point[k, c, 1.0]
+            o.points = for_drawing[o.name, o.points, pt]
+            k.os[i] = o
+    k
+
+fn draw[c, k]
+    c + len[k.os]
+
+fn framed[k, t]
+    c = float['`t`000']
+    k = update[c, k]
+    Shown[draw[c, k], k]
+
+fn made[n]
+    begun[n]
+
+fn begun[n]
+    fresh[n]
+
+fn overlay[k, name, pts]
+    k.os = push[k.os, O[name, pts]]
+    k
+
+fn clicked[k, v]
+    o = k.os[0]
+    pt = point[k, 0.0, v]
+    pts = o.points
+    if len[pts] eq 0
+        pts = [pt]
+    else
+        pts = for_drawing[o.name, pts, pt]
+    o.points = pts
+    k.os[0] = o
+    k
+
+fn fresh[n]
+    K[n, []]
+
+k = made[0]
+s = framed[k, 0]
+k = s.k
+k = overlay[k, 'line', [point[k, 1.0, 2.5]]]
+k = clicked[k, 3.5]
+s = framed[k, 1]
+log[s.c]
+log[s.k.os[0].points]

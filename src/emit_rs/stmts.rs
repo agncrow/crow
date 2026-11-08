@@ -548,9 +548,60 @@ impl Emitter {
     // ── statements ──────────────────────────────────────────────────
 
     pub(crate) fn emit_block(&mut self, block: &[Stmt]) {
-        for s in block {
-            self.emit_stmt(s);
+        for (i, s) in block.iter().enumerate() {
+            match self.field_taken_at(block, i) {
+                Some(taken) => self.emit_stmt(&taken),
+                None => self.emit_stmt(s),
+            }
         }
+    }
+
+    /// `vs = c.verts` where the block next writes that field whole (`c.verts
+    /// = vs`) and nothing between reads it (`ir::field_taken_at`, the rule
+    /// the interpreter reads too): the field is taken out of the record
+    /// (`std::mem::take`), where reading it had copied it. Lory's `line`
+    /// copied every vertex the canvas held for each line it drew, and a
+    /// chart of 500 candles drew six frames a second (Kite, 2026-11-07).
+    /// The statement, its value the taken field, once the take is printed;
+    /// None where the block is of another shape, or the local or the
+    /// record is held in a form of the emitter's own.
+    fn field_taken_at(&mut self, block: &[Stmt], i: usize) -> Option<Stmt> {
+        let (c, f) = crate::ir::field_taken_at(block, i)?;
+        let (v, expr, let_ty) = match &block[i] {
+            Stmt::Let { var, ty, expr } => (var, expr, Some(ty)),
+            Stmt::Set { var, expr } => (var, expr, None),
+            _ => return None,
+        };
+        if (self.facts_in_state && (self.reactive_vars.contains_key(c) || self.reactive_vars.contains_key(v)))
+            || self.static_handle_vars.contains(c)
+            || self.ref_params.contains(c)
+            || self.borrowed(c)
+            || self.plain_vecs.contains(v)
+            || self.text_builders.contains_key(v)
+        {
+            return None;
+        }
+        if !matches!(self.local_ty(c)?.text(), Ty::Record(_)) {
+            return None;
+        }
+        let field_ty = self.tt(expr);
+        if !matches!(field_ty, Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes | Ty::Tensor(..)) {
+            return None;
+        }
+        let held = match let_ty {
+            Some(t) => as_inferred(t).text(),
+            None => self.local_ty(v)?.text(),
+        };
+        if held != field_ty {
+            return None;
+        }
+        self.line(&format!("let _fk = std::mem::take(&mut {}.{});", c, Self::rust_field(f)));
+        self.declare("_fk", field_ty.clone());
+        let taken = Expr::Move("_fk".to_string(), expr.ty());
+        Some(match &block[i] {
+            Stmt::Let { var, ty, .. } => Stmt::Let { var: var.clone(), ty: ty.clone(), expr: taken },
+            _ => Stmt::Set { var: v.clone(), expr: taken },
+        })
     }
 
     /// A block in a scope of its own.
@@ -892,6 +943,9 @@ impl Emitter {
         {
             return;
         }
+        if self.emit_field_through_call(var, path, expr) {
+            return;
+        }
         if self.plain_vecs.contains(var)
             && let [PathStep::Index(i)] = path
         {
@@ -913,7 +967,10 @@ impl Emitter {
         // (any local the IR reads again: a text written into a list, then
         // read, had been moved by the write, E0382; Rosetta Code, Best
         // shuffle)
-        let copied = matches!(expr, Expr::Local(..) | Expr::Field { .. });
+        // (and a last read of a local the function does not own — a
+        // record parameter lent, `k.bars = b`: printed bare, the field had
+        // been given a reference, E0308; Kite's `set_bars`, parity 479)
+        let copied = matches!(expr, Expr::Local(..) | Expr::Field { .. }) || (matches!(expr, Expr::Move(..)) && !self.moved_local(expr));
         let mut val = if copied { self.owned_expr(expr) } else { self.expr(expr) };
         if in_facts {
             self.line("{");
@@ -1194,6 +1251,91 @@ impl Emitter {
         let val = self.owned_expr(&call);
         self.scopes.pop();
         self.line_after(&found, &format!("{{ {} {} let _nv = {}; {} }}", head, take, val, write));
+        true
+    }
+
+    /// `c.verts = quad[c.verts, x, c.clip]`: a record's field handed to a
+    /// function of the program's that takes it by value, and its answer
+    /// written back to that field. The field is taken out of the record
+    /// (`std::mem::take`), handed on moved and the answer written back,
+    /// where reading it had copied the field at every call: Lory's canvas
+    /// copied its whole list of vertices for each rectangle drawn, and a
+    /// chart of 500 candles drew one frame a second (Kite, 2026-11-07). Any
+    /// other argument that computes, or reads the field, is computed first,
+    /// in its order, into a temporary, so nothing reads the field while it
+    /// is out; reading a place acts on nothing, so the effects keep their
+    /// order. False where the write is of another shape, which then copies
+    /// as before.
+    fn emit_field_through_call(&mut self, var: &str, path: &[PathStep], expr: &Expr) -> bool {
+        let [PathStep::Field(f)] = path else { return false };
+        let Expr::Call { target: Target::User(g), args, ty: call_ty, propagates } = expr else { return false };
+        // (a call whose arguments cannot fail: one that can is the call's
+        // value where it fails, which this path does not print)
+        if args.iter().any(|a| a.ty().is_result()) {
+            return false;
+        }
+        if (self.facts_in_state && self.reactive_vars.contains_key(var))
+            || self.static_handle_vars.contains(var)
+            || self.plain_vecs.contains(var)
+            || self.text_builders.contains_key(var)
+            || self.ref_params.contains(var)
+            || self.borrowed(var)
+        {
+            return false;
+        }
+        if !matches!(self.local_ty(var).unwrap_or(Ty::Unknown).text(), Ty::Record(_)) {
+            return false;
+        }
+        let of_var = |b: &Expr| matches!(b, Expr::Local(n, _) | Expr::Move(n, _) if n == var);
+        let places: Vec<usize> = args.iter().enumerate().filter(|(_, a)| matches!(a, Expr::Field { base, name, .. } if name == f && of_var(base))).map(|(i, _)| i).collect();
+        let [k] = places[..] else { return false };
+        // (a place whose value has an empty one to leave behind, of the
+        // very type the call answers: written back as it is)
+        let field_ty = self.tt(&args[k]);
+        let answer_ty = self.tt(expr);
+        if !matches!(field_ty, Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes | Ty::Tensor(..)) || answer_ty != field_ty {
+            return false;
+        }
+        // (the function keeps what it is given: one that only reads it
+        // borrows it where it lies, and copies nothing)
+        let Some(param) = self.fns.get(g).and_then(|callee| callee.params.get(k)).map(|(p, _)| p.clone()) else { return false };
+        if self.by_ref_params.get(g).is_some_and(|lent| lent.contains(&param)) {
+            return false;
+        }
+        // whether an argument reads the variable other than through another
+        // of its fields
+        let reads_var = |e: &Expr| {
+            let (mut all, mut others) = (0, 0);
+            crate::ir::visit_expr(e, &mut |x| match x {
+                Expr::Local(n, _) | Expr::Move(n, _) if n == var => all += 1,
+                Expr::Field { base, name, .. } if name != f && of_var(base) => others += 1,
+                _ => {}
+            });
+            all > others
+        };
+        let mut head = String::new();
+        let mut given = Vec::new();
+        self.scopes.push(Default::default());
+        for (i, a) in args.iter().enumerate() {
+            if i == k {
+                given.push(Expr::Move("_tk".to_string(), a.ty()));
+            } else if crate::ir::quiet(a) && !reads_var(a) {
+                given.push(a.clone());
+            } else {
+                let t = format!("_ta{}", i);
+                let text = self.owned_expr(a);
+                head.push_str(&format!("let {} = {}; ", t, text));
+                let at = self.tt(a);
+                self.declare(&t, at);
+                given.push(Expr::Move(t, a.ty()));
+            }
+        }
+        self.declare("_tk", field_ty);
+        let call = Expr::Call { target: Target::User(g.clone()), args: given, ty: call_ty.clone(), propagates: *propagates };
+        let val = self.owned_expr(&call);
+        self.scopes.pop();
+        let field = Self::rust_field(f);
+        self.line(&format!("{{ {}let _tk = std::mem::take(&mut {}.{}); {}.{} = {}; }}", head, var, field, var, field, val));
         true
     }
 

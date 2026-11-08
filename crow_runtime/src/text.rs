@@ -344,13 +344,33 @@ pub fn repeat(s: &str, n: i64) -> Result<String, String> {
 }
 
 /// A pattern compiled, or what is wrong with it on one line: the regex
-/// crate draws the pattern over several, and a stop is one line.
+/// crate draws the pattern over several, and a stop is one line. A
+/// pattern is compiled once per thread and kept (at most `KEPT`
+/// patterns): a program's patterns are its literals, called again and
+/// again — Kite read a colour with two `sub`s at every draw, and
+/// compiling them was a tenth of each frame (2026-11-07).
 pub(crate) fn compile(pattern: &str) -> Result<regex::Regex, String> {
-    regex::Regex::new(pattern).map_err(|e| {
+    const KEPT: usize = 256;
+    thread_local! {
+        static COMPILED: std::cell::RefCell<std::collections::HashMap<String, regex::Regex>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    if let Some(re) = COMPILED.with(|kept| kept.try_borrow().ok().and_then(|kept| kept.get(pattern).cloned())) {
+        return Ok(re);
+    }
+    let re = regex::Regex::new(pattern).map_err(|e| {
         let said = e.to_string();
         let why = said.lines().last().unwrap_or("").trim().trim_start_matches("error: ");
         format!("invalid regex '{}': {}", pattern, why)
-    })
+    })?;
+    COMPILED.with(|kept| {
+        if let Ok(mut kept) = kept.try_borrow_mut() {
+            if kept.len() >= KEPT {
+                kept.clear();
+            }
+            kept.insert(pattern.to_string(), re.clone());
+        }
+    });
+    Ok(re)
 }
 
 /// `matches[text, pattern]`.

@@ -1008,13 +1008,48 @@ impl IrInterp {
     // ── statements ──────────────────────────────────────────────────
 
     fn exec_stmts(&mut self, b: &[Stmt]) -> Result<Flow, String> {
-        for s in b {
+        for (i, s) in b.iter().enumerate() {
+            if matches!(s, Stmt::Let { expr: Expr::Field { .. }, .. } | Stmt::Set { expr: Expr::Field { .. }, .. })
+                && self.in_function()
+                && let Some((c, f)) = crate::ir::field_taken_at(b, i)
+                && self.taken_field(s, c, f)
+            {
+                continue;
+            }
             match self.exec_stmt(s)? {
                 Flow::Next => {}
                 other => return Ok(other),
             }
         }
         Ok(Flow::Next)
+    }
+
+    /// `vs = c.verts` where the block writes `c.verts` back whole before
+    /// anything else reads it (`ir::field_taken_at`): the field's value
+    /// taken out of the record, as the prepared form's `Ins::Field { take
+    /// }` takes it, so the pushes onto `vs` between grow it where it lies —
+    /// read, it had been shared with the record and the first push copied
+    /// it whole (Lory's `line`). Only in a body, whose locals a stop ends
+    /// with it: a notebook's next cell reads what the top level holds.
+    fn taken_field(&mut self, s: &Stmt, c: &str, f: &str) -> bool {
+        let (var, fresh) = match s {
+            Stmt::Let { var, .. } => (var, true),
+            Stmt::Set { var, .. } => (var, false),
+            _ => return false,
+        };
+        let Some(root) = self.slot(c) else { return false };
+        if root.is_error() {
+            return false;
+        }
+        let Value::StructInstance(si) = &mut root.value else { return false };
+        let Some(slot) = std::sync::Arc::make_mut(si).get_mut(f) else { return false };
+        let v = std::mem::replace(slot, CrowValue::done());
+        if fresh {
+            self.bind(var, v);
+        } else {
+            self.assign(var, v);
+        }
+        true
     }
 
     fn exec_block(&mut self, b: &[Stmt]) -> Result<Flow, String> {
@@ -1805,6 +1840,11 @@ impl IrInterp {
     /// where it lies. A failed argument goes the ordinary way (spec,
     /// Auto-Propagation), the place untouched.
     fn grown_in_place(&mut self, var: &str, path: &[PathStep], expr: &Expr) -> Result<bool, String> {
+        if let Expr::Call { target: Target::User(name), args, .. } = expr
+            && !args.is_empty()
+        {
+            return self.taken_through(var, path, name, args);
+        }
         let Expr::Call { target: Target::Row(row), args, .. } = expr else { return Ok(false) };
         if !row.grows_in_place() || args.is_empty() {
             return Ok(false);
@@ -1836,6 +1876,39 @@ impl IrInterp {
         // was given — so it goes straight back into the slot; a stop in the
         // row ends the program there, as the compiled one's does)
         *slot = (row.take)(vals, &trace)?;
+        Ok(true)
+    }
+
+    /// `c.verts = quad[c.verts, x]`, marked taken by the lowering: the
+    /// place's value taken out and handed to the program's function moved,
+    /// its answer written back where the place lies — read, the value had
+    /// been shared with the record, and the function's first push copied
+    /// it whole (Lory's canvas, a copy of every vertex for each shape
+    /// drawn). The function sees none of the caller's locals, so nothing
+    /// reads the place while it is out; the path's positions are computed
+    /// once, as the lowering made them quiet.
+    fn taken_through(&mut self, var: &str, path: &[PathStep], name: &str, args: &[Expr]) -> Result<bool, String> {
+        let mut idx = Vec::new();
+        for p in path {
+            if let PathStep::Index(i) = p {
+                idx.push(self.eval(i)?);
+            }
+        }
+        let rest = self.eval_args(&args[1..])?;
+        if rest.iter().any(|r| r.is_error()) {
+            return Ok(false);
+        }
+        let root = self.slot(var).ok_or_else(|| format!("undefined variable '{}'", var))?;
+        if root.is_error() {
+            return Err(format!("cannot set an item of an error value — {}", root.reason()));
+        }
+        let taken = std::mem::replace(path_slot(&mut root.value, path, &idx)?, CrowValue::done());
+        let mut vals = Vec::with_capacity(1 + rest.len());
+        vals.push(taken);
+        vals.extend(rest);
+        let answer = self.call_user(name, vals)?;
+        let root = self.slot(var).ok_or_else(|| format!("undefined variable '{}'", var))?;
+        *path_slot(&mut root.value, path, &idx)? = answer;
         Ok(true)
     }
 

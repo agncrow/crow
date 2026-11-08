@@ -12,12 +12,35 @@ use super::*;
 /// list of numbers there, and a record built from it typed its field as a
 /// list that could fail). Only in a body, where the first assignment binds
 /// afresh: at the top level the fixpoint meets a declaration again, its own
-/// last type in hand.
-pub(crate) fn consumed(existing: &Ty, value: Ty, in_body: bool) -> Ty {
+/// last type in hand, so the lowering tells the declaration apart there by
+/// the round's own first assignment (`Lowerer::top_landed`). A parameter
+/// holds no error whatever its type is known as yet: its first value is
+/// the argument, and a failed argument never enters a function (spec,
+/// Auto-Propagation). Read by its known type alone, a parameter no call had
+/// typed yet — every function in the first round — held the failure of its
+/// reassignment for the rest of the body, and a record built of it there
+/// kept a field that can fail ever after: Kite's `framed[k, …]`, `k =
+/// kite.update[c, k, …]` of a canvas that can fail (parity 482).
+pub(crate) fn consumed(existing: &Ty, value: Ty, at: Held) -> Ty {
     match value {
-        Ty::Result(inner) if in_body && !matches!(existing, Ty::Unknown | Ty::Result(_)) => *inner,
+        // (an error of no value, `error[…]`, says nothing of the parameter)
+        Ty::Result(inner) if at == Held::Param && matches!(inner.as_ref(), Ty::Unit) => existing.clone(),
+        Ty::Result(inner) if at == Held::Param => *inner,
+        Ty::Result(inner) if at == Held::Local && !matches!(existing, Ty::Unknown | Ty::Result(_)) => *inner,
         other => other,
     }
+}
+
+/// Where a variable is assigned, as `consumed` reads it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Held {
+    /// at the top level, whose variables inference keeps from round to
+    /// round
+    Top,
+    /// a local of the body being read
+    Local,
+    /// a parameter of the body being read
+    Param,
 }
 
 /// The type a variable settles on after a later assignment: what it held,
@@ -30,8 +53,8 @@ pub(crate) fn consumed(existing: &Ty, value: Ty, in_body: bool) -> Ty {
 /// a variable into a later value's form while its declaration kept the
 /// first (finch's `ep_start = [0.0]`, given a record's list in a handler,
 /// did not build; nor did `t = map[a = [1.5]]` given a list).
-pub(crate) fn settle(existing: &Ty, value: Ty, in_body: bool) -> Ty {
-    let value = consumed(existing, value, in_body);
+pub(crate) fn settle(existing: &Ty, value: Ty, at: Held) -> Ty {
+    let value = consumed(existing, value, at);
     // whole numbers held as a tensor (a literal, `q = [1]`) given a list of
     // ints the body builds (`q = big_mul[q, k]`, its limbs pushed one by
     // one) hold a list of ints from the declaration on: the tensor's form
@@ -63,8 +86,9 @@ pub(crate) fn settle(existing: &Ty, value: Ty, in_body: bool) -> Ty {
             };
             Ty::List(Box::new(item))
         }
-        // (a map's values, held either way, keep the map's form too)
-        (Ty::Map(kh, held), Ty::Map(kj, joined)) => Ty::Map((*kh).unify(kj).unwrap_or(*kh), Box::new(settle(held, *joined, false))),
+        // (a map's values, held either way, keep the map's form too; a
+        // value is no variable, and what it joins is kept as it is)
+        (Ty::Map(kh, held), Ty::Map(kj, joined)) => Ty::Map((*kh).unify(kj).unwrap_or(*kh), Box::new(settle(held, *joined, Held::Top))),
         (_, joined) => joined,
     }
 }

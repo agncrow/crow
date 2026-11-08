@@ -1,0 +1,19 @@
+--- A record parameter the body only keeps in a field of another record
+--- (`k.bars = b`) is copied there: lent to the function, the field had
+--- been given the reference, and the compiled program did not build
+--- (Kite's `set_bars`, 2026-11-07)
+struct Bars [c]
+struct Chart [bars, n]
+
+fn set_bars[k, b, n]
+    k.bars = b
+    k.n = n
+    k
+
+fn data[k, b]
+    set_bars[k, b, 2]
+
+k = Chart[Bars[[1.0]], 0]
+k = data[k, Bars[[1.0, 2.0]]]
+log[k.n]
+log[k.bars.c]

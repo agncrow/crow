@@ -1,0 +1,3 @@
+k37_a_fallible_function_that_answers_nothing_held.co:20:7: widest[] answers nothing, which the field 'w' cannot hold — call it on a line of its own
+  20 │ a.w = widest[[1, 2]]
+     │       ^^^^^^

@@ -6,7 +6,7 @@ edition = "2024"
 
 [dependencies]
 regex = "1.12.3"
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 # only what writes an IPC stream: arrow's csv and json readers are not used
 arrow = { version = "60.0.0", default-features = false, features = ["ipc"], optional = true }
 bytemuck = { version = "1.25.0", features = ["derive"], optional = true }

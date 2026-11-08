@@ -1,0 +1,18 @@
+--- A number in JSON is read as the float its digits name, as a literal
+--- and `float[text]` read it: `52.878225597009084` (what JavaScript writes
+--- for a sum of prices) had been read one bit off, as 52.87822559700909,
+--- in both modes — serde_json's fast reader is not correctly rounded, so
+--- an indicator held to klinecharts' JSON answers differed in the last
+--- digit at a fifth of its bars
+j = json['[52.878225597009084, -1.9343529411765061, 0.1538235294117953, 2.2250738585072014e-308, 1.7976931348623157e308, 0.30000000000000004]']
+want = [52.878225597009084, -1.9343529411765061, 0.1538235294117953, float['2.2250738585072014e-308'], float['1.7976931348623157e308'], 0.30000000000000004]
+for i in range[len[want]]
+    got = 0.0 + j[i]
+    log[got eq want[i]]
+    log[got eq float['`want[i]`']]
+back = json[encode[want]]
+same = 0
+for i in range[len[want]]
+    if 0.0 + back[i] eq want[i]
+        same = same + 1
+log[same]

@@ -2623,6 +2623,32 @@ fn a_loop_item_from_a_column_with_missing_cells_can_fail_in_the_width_pass() {
     assert!(out.contains("let _c = &_t1; if !_c.ok"), "{}", out);
 }
 
+/// A record's field handed to a function that keeps it and written back
+/// (`c.verts = quad[c.verts, …]`), or read into a local and written back
+/// (`vs = c.verts` … `c.verts = vs`), is taken out of the record, and a
+/// record a function keeps whole is handed, not lent: each had copied the
+/// whole list at every call (Lory's canvas, Kite's frame a second; parity
+/// 480). A read of the field before the write, or a path leaving before
+/// it, keeps the copy.
+#[test]
+fn a_record_field_handed_on_and_written_back_is_taken() {
+    let rust = transpile(&std::fs::read_to_string("tests/parity/480_a_record_field_handed_on_and_written_back_is_taken.co").unwrap());
+    let body = |name: &str| {
+        let start = rust.find(&format!("fn {}(", name)).unwrap_or_else(|| panic!("no fn {} in {}", name, rust));
+        rust[start..start + rust[start..].find("\n}\n").unwrap()].to_string()
+    };
+    assert!(body("rect").contains("let _tk = std::mem::take(&mut c.verts); c.verts = quad(_tk,"), "{}", body("rect"));
+    // (the length read first, into a temporary, then the field taken)
+    let twice = body("twice");
+    let read = twice.find("crow_runtime::core::len(&(c.verts)[..]);");
+    let take = twice.find("let _tk = std::mem::take(&mut c.verts); c.verts = counted(_tk, _t");
+    assert!(read.is_some() && take.is_some() && read < take, "{}", twice);
+    assert!(body("line").contains("let _fk = std::mem::take(&mut c.verts);"), "{}", body("line"));
+    assert!(!body("peeked").contains("std::mem::take"), "{}", body("peeked"));
+    assert!(!body("early").contains("std::mem::take"), "{}", body("early"));
+    assert!(body("boxed").starts_with("fn boxed(c: Canvas,") && !body("boxed").contains("c.clone()"), "{}", body("boxed"));
+}
+
 /// A list held in a list, under a map's key or in a record's field grows
 /// where it lies: `xs[i] = push[xs[i], v]` takes the item out of its slot,
 /// pushes onto it moved and writes it back (ir::Stmt::SetPath, `taken`),

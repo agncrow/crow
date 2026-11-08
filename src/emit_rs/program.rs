@@ -446,8 +446,14 @@ impl Emitter {
                 // a function called through a value, whose signature is the
                 // function type that holds it: one taking a record of a list
                 // had not built)
+                // (and only where the body keeps no more of it than its
+                // fields — `ir::lendable_params`, as for a list: one handed
+                // whole to a function that keeps it, or returned, had been
+                // lent and copied there whole at every call, where its
+                // caller's last read could have moved it — Lory's canvas,
+                // each box drawn copying every vertex drawn before it)
                 if let Ty::Record(s) | Ty::OptRecord(s) = t {
-                    if plain && !self.struct_is_copy(s) && !changed.contains(p) {
+                    if plain && !self.struct_is_copy(s) && !changed.contains(p) && lendable.get(&n).and_then(|v| v.get(i)).copied().unwrap_or(false) {
                         refs.insert(p.clone());
                     }
                 // (bytes too: a hash of four bytes called per byte of a 50

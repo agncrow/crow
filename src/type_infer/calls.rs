@@ -700,7 +700,7 @@ impl TypeContext {
             self.vars.insert(name.to_string(), ty);
         } else {
             let existing = self.vars.get(name).cloned().unwrap_or(Ty::Unknown);
-            self.vars.insert(name.to_string(), settle::settle(&existing, ty, self.body_assigned.is_some()));
+            self.vars.insert(name.to_string(), settle::settle(&existing, ty, self.held_here(name)));
         }
     }
 
