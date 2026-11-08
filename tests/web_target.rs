@@ -38,6 +38,26 @@ fn chrome() -> Option<PathBuf> {
         .find(|p| p.exists())
 }
 
+/// The title the page at `port` leaves once it has run, from the DOM a
+/// headless Chrome dumps (WebGL2 through SwiftShader, a software renderer
+/// on every machine), or what Chrome said where it showed no page. On
+/// Linux Chrome runs without its sandbox: Ubuntu 24.04, GitHub's runner,
+/// restricts the unprivileged user namespaces the sandbox is made of, and
+/// the page is the test's own, served from the test's own directory.
+fn title_after(chrome: PathBuf, dir: &Path, port: u16) -> String {
+    let mut c = Command::new(chrome);
+    c.args(["--headless=new", "--no-first-run", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--virtual-time-budget=5000", "--window-size=240,240", "--dump-dom"]);
+    if cfg!(target_os = "linux") {
+        c.arg("--no-sandbox");
+    }
+    let out = c.arg(format!("--user-data-dir={}", dir.join("profile").display())).arg(format!("http://127.0.0.1:{}/check.html", port)).output().unwrap();
+    let dom = String::from_utf8_lossy(&out.stdout);
+    match dom.split("<title>").nth(1).and_then(|t| t.split("</title>").next()) {
+        Some(title) => title.to_string(),
+        None => format!("no page ({}): {}", out.status, String::from_utf8_lossy(&out.stderr).trim()),
+    }
+}
+
 #[test]
 fn a_program_reaching_a_file_is_refused_for_the_web_naming_what_it_reaches() {
     let dir = scratch("refused");
@@ -147,15 +167,7 @@ fn a_program_built_for_the_web_draws_what_it_paints() {
     };
     std::fs::write(page.join("check.html"), CHECK).unwrap();
     let port = serve(page);
-    let profile = dir.join("profile");
-    let dumped = Command::new(chrome)
-        .args(["--headless=new", "--no-first-run", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--virtual-time-budget=5000", "--window-size=240,240", "--dump-dom"])
-        .arg(format!("--user-data-dir={}", profile.display()))
-        .arg(format!("http://127.0.0.1:{}/check.html", port))
-        .output()
-        .unwrap();
-    let dom = String::from_utf8_lossy(&dumped.stdout);
-    let title = dom.split("<title>").nth(1).and_then(|t| t.split("</title>").next()).unwrap_or("").to_string();
+    let title = title_after(chrome, &dir, port);
     assert!(title.starts_with("centre 255,128,0,255 corner 0,0,255,255"), "{}", title);
     assert!(title.contains("log:top level ran"), "{}", title);
     let _ = std::fs::remove_dir_all(&dir);
@@ -207,15 +219,7 @@ fn a_pointer_a_test_gives_is_where_the_next_frame_says_it_is() {
     let page = dir.join("pointer_web");
     std::fs::write(page.join("check.html"), POINTER_CHECK).unwrap();
     let port = serve(page);
-    let profile = dir.join("profile");
-    let dumped = Command::new(chrome)
-        .args(["--headless=new", "--no-first-run", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--virtual-time-budget=5000", "--window-size=240,240", "--dump-dom"])
-        .arg(format!("--user-data-dir={}", profile.display()))
-        .arg(format!("http://127.0.0.1:{}/check.html", port))
-        .output()
-        .unwrap();
-    let dom = String::from_utf8_lossy(&dumped.stdout);
-    let title = dom.split("<title>").nth(1).and_then(|t| t.split("</title>").next()).unwrap_or("").to_string();
+    let title = title_after(chrome, &dir, port);
     assert_eq!(title, "said pointer 40 50 false|pointer 41 51 true|pointer 60 70 true", "{}", title);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -267,14 +271,6 @@ fn a_frame_says_whether_a_headset_can_be_entered_and_entering_none_is_said() {
     let page = dir.join("vr_web");
     std::fs::write(page.join("check.html"), VR_CHECK).unwrap();
     let port = serve(page);
-    let profile = dir.join("profile");
-    let dumped = Command::new(chrome)
-        .args(["--headless=new", "--no-first-run", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--virtual-time-budget=5000", "--window-size=240,240", "--dump-dom"])
-        .arg(format!("--user-data-dir={}", profile.display()))
-        .arg(format!("http://127.0.0.1:{}/check.html", port))
-        .output()
-        .unwrap();
-    let dom = String::from_utf8_lossy(&dumped.stdout);
-    let title = dom.split("<title>").nth(1).and_then(|t| t.split("</title>").next()).unwrap_or("").to_string();
+    let title = title_after(chrome, &dir, port);
     assert_eq!(title, "said vr false|vr false|vr false|said vr", "{}", title);
 }
