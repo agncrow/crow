@@ -1,0 +1,12 @@
+--- a package of one file: three exports and the helper two of them share
+fn hello[name]
+    return 'hello, `name`'
+
+fn loud[s]
+    return _shout[s]
+
+fn quiet[s]
+    return lower[_shout[s]]
+
+fn _shout[s]
+    return '`upper[s]`!'

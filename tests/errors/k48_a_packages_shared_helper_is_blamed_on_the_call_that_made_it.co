@@ -1,0 +1,5 @@
+--- a package's helper two exports share is blamed on the export whose call made the refused copy: `loud` reaches `_shout` first, with text, and `quiet` with an int — the refusal names `greet.quiet` at its line
+use greet
+
+log[greet.loud['ada']]
+log[greet.quiet[5]]

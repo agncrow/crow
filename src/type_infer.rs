@@ -1421,7 +1421,8 @@ impl TypeContext {
     }
 
     /// Whether `from`'s body calls `to`, through the bodies of the standard
-    /// modules' functions it calls: a refusal inside a module's own helper,
+    /// modules' and the packages' functions it calls (`foreign_code`): a
+    /// refusal inside a module's own helper,
     /// which no program calls, names the module function the program
     /// called that reaches it (lower_ir/checks.rs, `refuse`).
     /// The program's call that reaches the module function `copy` (a
@@ -1443,7 +1444,7 @@ impl TypeContext {
                 if *callee != t || *line == 0 {
                     continue;
                 }
-                if crate::modules::is_crow_fn(caller) {
+                if crate::foreign_code(caller) {
                     todo.push(caller.clone());
                 } else {
                     let found = (crate::ir::copy_base(&t).to_string(), *line);
@@ -1469,7 +1470,7 @@ impl TypeContext {
             if called.contains(to) {
                 return true;
             }
-            todo.extend(called.into_iter().filter(|c| crate::modules::is_crow_fn(c)));
+            todo.extend(called.into_iter().filter(|c| crate::foreign_code(c)));
         }
         false
     }

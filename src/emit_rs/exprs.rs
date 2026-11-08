@@ -3579,7 +3579,7 @@ impl Emitter {
     /// this line (inside such a function the note already holds the
     /// program's line).
     pub(crate) fn at_call_line(&mut self, callee: &str, call: String) -> String {
-        if (crate::modules::is_crow_fn(callee) || crate::from_dependency(callee)) && !self.caller_line {
+        if crate::foreign_code(callee) && !self.caller_line {
             self.needs_crow_runtime = true;
             format!("{{ crow_runtime::stops::at_line({}); {} }}", self.current_line, call)
         } else {

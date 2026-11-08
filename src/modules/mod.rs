@@ -404,7 +404,7 @@ fn inlined_names() -> &'static std::collections::HashSet<String> {
 /// A function's own name past the copies made of it: a traced copy
 /// (`_traced_f`), a copy per signature (`f__2`), a value's adapter
 /// (`f__handed`).
-fn inlined_base(name: &str) -> &str {
+pub(crate) fn inlined_base(name: &str) -> &str {
     let name = name.strip_prefix("_traced_").unwrap_or(name);
     let name = name.strip_suffix("__handed").unwrap_or(name);
     match name.rsplit_once("__") {

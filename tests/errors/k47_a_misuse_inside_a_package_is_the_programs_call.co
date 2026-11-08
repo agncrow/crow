@@ -1,0 +1,5 @@
+--- a misuse inside a package is the program's call's: the int handed to `loud` meets `upper` in its helper, and is refused at the program's line naming `greet.loud` as the program writes it (it had been refused at the package's own line, crow_modules/greet/main.co, naming nothing the program wrote)
+use greet
+
+log[greet.hello['ada']]
+log[greet.loud[5]]

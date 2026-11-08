@@ -1,0 +1,3 @@
+k48_a_packages_shared_helper_is_blamed_on_the_call_that_made_it.co:5:1: in greet.quiet: upper[] takes text, got an int
+  5 │ log[greet.quiet[5]]
+    │ ^^^^^^^^^^^^^^^^^^^

@@ -2014,9 +2014,12 @@ fn cmd_install() {
 /// example's `crow check` had reported the vectors package's `cosine` of
 /// two lengths six times).
 pub(crate) fn from_dependency(fn_name: &str) -> bool {
-    // (a package linked into crow_modules is recorded by its path as the
-    // program names it, absolute where the link leaves the project)
-    EXPANSION_PARTS.with(|p| p.borrow().iter().any(|(prefix, rel)| fn_name.starts_with(prefix.as_str()) && rel.split('/').any(|c| c == "crow_modules")))
+    // (by what the dependency's files declare, as the expansion brought
+    // them — a copy's or a traced copy's by the function it copies — never
+    // by a prefix alone, which a program's own function can begin with:
+    // the program's `greet_twice` beside the package greet had been taken
+    // for the package's, its refusal placed in the package's file)
+    DEPENDENCY_DECLS.with(|d| d.borrow().contains(crate::modules::inlined_base(fn_name)))
 }
 
 /// A refusal made inside an imported part's function, placed in the part:
@@ -2025,7 +2028,8 @@ pub(crate) fn from_dependency(fn_name: &str) -> bool {
 /// lowering's. `None` for the entry's own code.
 pub(crate) fn placed_in_part(fn_name: &str, msg: &str) -> Option<String> {
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
-    let prefix = parts.keys().filter(|prefix| !fn_name.is_empty() && fn_name.starts_with(prefix.as_str())).max_by_key(|prefix| prefix.len())?;
+    let prefix = part_prefix_of_declaration(fn_name).filter(|prefix| parts.contains_key(prefix))?;
+    let prefix = &prefix;
     let refined = EXPANSION_FILES
         .with(|f| f.borrow().get(prefix).cloned())
         .and_then(|path| std::fs::read_to_string(path).ok())
@@ -3241,6 +3245,13 @@ mod derive_fix_tests {
         });
         let facts: std::collections::BTreeSet<String> =
             ["myna_models_model_name", "myna_models_new_model_name", "myna_notebooks_current", "myna_models_current"].iter().map(|s| s.to_string()).collect();
+        PART_DECLS.with(|d| {
+            let mut d = d.borrow_mut();
+            for f in &facts {
+                let prefix = if f.starts_with("myna_models_") { "myna_models_" } else { "myna_notebooks_" };
+                d.insert(f.clone(), prefix.to_string());
+            }
+        });
         assert_eq!(crate::derive::address_fact("model_name", &facts).as_deref(), Some("myna_models_model_name"));
         assert_eq!(crate::derive::address_fact("new_model_name", &facts).as_deref(), Some("myna_models_new_model_name"));
         assert_eq!(crate::derive::address_fact("notebooks.current", &facts).as_deref(), Some("myna_notebooks_current"));
@@ -3249,6 +3260,7 @@ mod derive_fix_tests {
         assert_eq!(crate::derive::address_fact("current", &facts), None);
         assert_eq!(crate::derive::address_fact("nothing", &facts), None);
         EXPANSION_PARTS.with(|p| p.borrow_mut().clear());
+        PART_DECLS.with(|d| d.borrow_mut().clear());
     }
 
     #[test]
@@ -3768,10 +3780,8 @@ fn attribute_to_parts(errors: &[(String, Option<String>)]) -> String {
     errors
         .iter()
         .map(|(msg, owner)| {
-            let prefix = owner.as_ref().and_then(|o| {
-                parts.keys().filter(|prefix| o.starts_with(prefix.as_str())).max_by_key(|prefix| prefix.len())
-            });
-            match prefix {
+            let prefix = owner.as_deref().and_then(part_prefix_of_declaration).filter(|prefix| parts.contains_key(prefix));
+            match prefix.as_ref() {
                 Some(prefix) => {
                     let refined = files
                         .get(prefix)
@@ -3948,18 +3958,17 @@ fn format_location(filename: &str, issue: &checker::Issue, fn_lines: &std::colle
     filename.to_string()
 }
 
-/// The module prefix of the part a declaration came from (the longest
-/// that fits); none for the entry file's own. Inside that part's
-/// functions its own facts and derivations carry the prefix, so a name
-/// without it is never the part's own.
+/// The module prefix of the part a declaration came from; none for the
+/// entry file's own. Inside that part's functions its own facts and
+/// derivations carry the prefix, so a name without it is never the part's
+/// own. Read from what each part declares, as the expansion brought it — a
+/// copy's by the function it copies — never from a prefix alone, which a
+/// program's own name can begin with: the program's `greet_twice` beside
+/// the package greet had been taken for the package's, and its refusal
+/// placed in the package's file.
 pub(crate) fn part_prefix_of_declaration(name: &str) -> Option<String> {
-    EXPANSION_PARTS.with(|p| {
-        p.borrow()
-            .iter()
-            .filter(|(prefix, _)| name.starts_with(prefix.as_str()))
-            .max_by_key(|(prefix, _)| prefix.len())
-            .map(|(prefix, _)| prefix.clone())
-    })
+    let base = crate::modules::inlined_base(name);
+    PART_DECLS.with(|d| d.borrow().get(base).cloned()).filter(|prefix| name.starts_with(prefix.as_str()))
 }
 
 /// Whether a function is a part's whose own file does not import ui: an
@@ -3972,16 +3981,11 @@ pub(crate) fn part_without_ui(name: &str) -> bool {
     part_prefix_of_declaration(name).is_some_and(|prefix| !PARTS_WITH_UI.with(|u| u.borrow().contains(&prefix)))
 }
 
-/// The part file a declaration came from, by its module prefix (the
-/// longest that fits); none for the entry file's own.
+/// The part file a declaration came from, by its module prefix; none for
+/// the entry file's own.
 fn file_of_declaration(name: &str) -> Option<String> {
-    EXPANSION_PARTS.with(|p| {
-        p.borrow()
-            .iter()
-            .filter(|(prefix, _)| name.starts_with(prefix.as_str()))
-            .max_by_key(|(prefix, _)| prefix.len())
-            .map(|(_, file)| file.clone())
-    })
+    let prefix = part_prefix_of_declaration(name)?;
+    EXPANSION_PARTS.with(|p| p.borrow().get(&prefix).cloned())
 }
 
 /// `crow check --show`: the app as a tree; `--show name`: one declaration's
@@ -5193,6 +5197,9 @@ pub(crate) fn expand_module_imports_checked(
     SCHEMA_DIR.with(|d| *d.borrow_mut() = Some(project_root(source_dir).join(".crow").join("schema")));
     let mut ex = ModuleExpansion::default();
     let mut body = expand_into(stmts, source_dir, &mut ex, visited);
+    // what each part declares, read from here on (`separate_part_locals`
+    // below; set again last, after each part validated alone set its own)
+    PART_DECLS.with(|d| *d.borrow_mut() = ex.part_decls.clone());
     if !ex.refused.is_empty() {
         return Err(ex.refused.join("\n"));
     }
@@ -5266,6 +5273,9 @@ pub(crate) fn expand_module_imports_checked(
     UNRESOLVED_USES.with(|u| *u.borrow_mut() = ex.unresolved);
     AMBIGUOUS_USES.with(|u| *u.borrow_mut() = ex.ambiguous);
     ENTRY_SPELLED.with(|s| *s.borrow_mut() = ex.spelled);
+    HIDDEN_HELPERS.with(|h| *h.borrow_mut() = ex.hidden);
+    DEPENDENCY_DECLS.with(|d| *d.borrow_mut() = ex.dependency_decls);
+    PART_DECLS.with(|d| *d.borrow_mut() = ex.part_decls);
     // the standard modules only a part imports: the entry's own imports
     // are what its names resolve against
     let entry_has: std::collections::BTreeSet<String> = stmts
@@ -5868,17 +5878,56 @@ struct ModuleExpansion {
     /// how the entry writes each declaration of a part it imports, by its
     /// prefixed name (`lib_tools_greet` is `tools.greet`), for its refusals
     spelled: std::collections::BTreeMap<String, String>,
+    /// a package's helpers an import from outside the package does not
+    /// bring, by the importer's spelling and the helper's name: the package
+    hidden: std::collections::BTreeMap<(String, String), String>,
+    /// every declaration of a dependency's file (a package's, under
+    /// crow_modules/), by its prefixed name
+    dependency_decls: std::collections::HashSet<String>,
+    /// every declaration of a part, by its prefixed name: the part's
+    /// prefix (`lib_tools_greet` is `lib_tools_`'s)
+    part_decls: std::collections::BTreeMap<String, String>,
 }
 
-/// The entry's spelling of each declaration an import of its brings, noted
-/// where the entry makes the import (a part's own imports are spelled in
-/// the part, validated alone).
-fn note_spelled(ex: &mut ModuleExpansion, spelling: &str, names: &std::collections::BTreeMap<String, String>) {
+/// What an import brings the file that makes it: the imported file's
+/// declarations, less a package's helpers where the importer is outside
+/// the package — a name that begins with an underscore is its package's
+/// own, reached from the package's own files alone (spec, Importing), so a
+/// program's `llm._talk_of` is refused for that and not rewritten to the
+/// helper (it had run). The entry's spelling of each declaration is noted
+/// for its refusals (a part's own imports are spelled in the part,
+/// validated alone).
+fn brought(
+    ex: &mut ModuleExpansion,
+    source_dir: &std::path::Path,
+    file_path: &std::path::Path,
+    spelling: &str,
+    names: &std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
     if ex.depth == 0 {
         for (name, prefixed) in names {
             ex.spelled.insert(prefixed.clone(), format!("{}.{}", spelling, name));
         }
     }
+    // (by the directories as the paths reach them, a link followed: a
+    // package's own files reach each other through its link or its own path)
+    let canon = |p: std::path::PathBuf| std::fs::canonicalize(&p).unwrap_or(p);
+    let package = package_dir(file_path.parent().unwrap_or(source_dir)).map(canon);
+    let Some(package) = package.filter(|p| package_dir(source_dir).map(canon).as_ref() != Some(p)) else {
+        return names.clone();
+    };
+    let shown = package_dir(file_path.parent().unwrap_or(source_dir))
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| package.display().to_string());
+    let mut kept = std::collections::BTreeMap::new();
+    for (name, prefixed) in names {
+        if name.starts_with('_') {
+            ex.hidden.insert((spelling.to_string(), name.clone()), shown.clone());
+        } else {
+            kept.insert(name.clone(), prefixed.clone());
+        }
+    }
+    kept
 }
 
 thread_local! {
@@ -5901,6 +5950,40 @@ thread_local! {
     /// How the entry writes each declaration of a part it imports
     /// (`ModuleExpansion::spelled`). Set when a program is expanded.
     pub(crate) static ENTRY_SPELLED: std::cell::RefCell<std::collections::BTreeMap<String, String>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+    /// A package's helpers a file outside the package names, by its
+    /// spelling and the helper's name: the package (`ModuleExpansion::
+    /// hidden`). Set when a program is expanded.
+    pub(crate) static HIDDEN_HELPERS: std::cell::RefCell<std::collections::BTreeMap<(String, String), String>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+    /// Every declaration of a dependency's file, by its prefixed name
+    /// (`ModuleExpansion::dependency_decls`), which `from_dependency` reads.
+    /// Set when a program is expanded.
+    pub(crate) static DEPENDENCY_DECLS: std::cell::RefCell<std::collections::HashSet<String>> = std::cell::RefCell::new(std::collections::HashSet::new());
+    /// Every declaration of a part, by its prefixed name: the part's
+    /// prefix (`ModuleExpansion::part_decls`), which
+    /// `part_prefix_of_declaration` reads. Set when a program is expanded.
+    pub(crate) static PART_DECLS: std::cell::RefCell<std::collections::BTreeMap<String, String>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+/// Code that is not the program's own, read in its own scope: a standard
+/// module's function written in Crow, or a dependency's (a package under
+/// `crow_modules/`). A misuse inside it is refused at the program's line,
+/// naming the function the program called (spec, Importing; section 13).
+pub(crate) fn foreign_code(name: &str) -> bool {
+    crate::modules::is_crow_fn(name) || from_dependency(name)
+}
+
+/// The function the program called, as it writes it: a standard module's
+/// by its own name (`chat`), a part's or a package's by the entry's
+/// spelling (`llm.chat`), a copy by the function it copies.
+pub(crate) fn called_as(name: &str) -> String {
+    let base = crate::modules::written_as(name);
+    if let Some(spelled) = ENTRY_SPELLED.with(|s| s.borrow().get(&base).cloned()) {
+        return spelled;
+    }
+    match part_prefix_of_declaration(&base) {
+        Some(prefix) => base[prefix.len()..].to_string(),
+        None => base,
+    }
 }
 
 /// The entry's refusal names a part's declaration as the entry writes it
@@ -6013,7 +6096,7 @@ fn expand_into(
         // Expanded already, through another importer: one copy, this
         // file's spelling of it
         if let Some(names) = ex.done.get(&canon).cloned() {
-            note_spelled(ex, &spelling, &names);
+            let names = brought(ex, source_dir, &file_path, &spelling, &names);
             imported.push((spelling, names));
             expanded.push(stmt.clone());
             continue;
@@ -6211,8 +6294,16 @@ fn expand_into(
             }
         }
         ex.written.insert(canon.clone(), mod_dir.to_path_buf());
+        // (a dependency's file is one the program reaches through
+        // crow_modules/, at any depth)
+        if EXPANSION_PARTS.with(|p| p.borrow().get(&format!("{}_", prefix)).is_some_and(|rel| rel.split('/').any(|c| c == "crow_modules"))) {
+            ex.dependency_decls.extend(local_names.values().cloned());
+        }
+        for prefixed in local_names.values() {
+            ex.part_decls.insert(prefixed.clone(), format!("{}_", prefix));
+        }
         ex.done.insert(canon, local_names.clone());
-        note_spelled(ex, &spelling, &local_names);
+        let local_names = brought(ex, source_dir, &file_path, &spelling, &local_names);
         imported.push((spelling, local_names));
         // Keep the original statement (including Use, so the compiler knows about it)
         expanded.push(stmt.clone());

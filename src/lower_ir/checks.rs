@@ -311,8 +311,9 @@ impl<'a> Lowerer<'a> {
 
     /// An error at the line being lowered, owned by the declaration it is
     /// in. Inside a standard module's function written in Crow, inlined
-    /// behind its prefix, the refusal names the function the program
-    /// called (`in relu: clip[] takes numbers, got an int`): the line is
+    /// behind its prefix, or a dependency's (a package's), the refusal
+    /// names the function the program called (`in relu: clip[] takes
+    /// numbers, got an int`, `in llm.chat: len[] takes …`): the line is
     /// the program's, and the formula's innards are not what it wrote.
     /// Inside a module's own helper, which no program calls, it names the
     /// module function the program called whose body reaches the helper
@@ -323,15 +324,17 @@ impl<'a> Lowerer<'a> {
         }
         // (inside a standard module's function, the line is the program's:
         // its first call of the function, since the module's line is none
-        // of the program's)
-        let (msg, line) = if crate::modules::is_crow_fn(&self.current_fn) {
+        // of the program's; inside a package's, the program's too — the
+        // package's line is its own file's, and its own tests hold it)
+        let foreign = crate::foreign_code(&self.current_fn);
+        let (msg, line) = if foreign {
             let base = crate::ir::copy_base(&self.current_fn).to_string();
             // (the module's functions are inlined after the program's
             // statements, so the program's call of this one is lowered
             // first: its line is on record; the scan's note is the fallback)
             // (a call from inside a module's function carries no line of
             // the program's: only the program's own calls place it)
-            let called_at = self.call_lines.iter().find(|((caller, callee), _)| !crate::modules::is_crow_fn(caller) && crate::ir::copy_base(callee) == base).map(|(_, l)| *l);
+            let called_at = self.call_lines.iter().find(|((caller, callee), _)| !crate::foreign_code(caller) && crate::ir::copy_base(callee) == base).map(|(_, l)| *l);
             // (the program's call whose chain of module calls made THIS copy,
             // first: a helper two exports share is blamed on the export whose
             // call it was refused under — `lookup` had answered for a list
@@ -352,18 +355,21 @@ impl<'a> Lowerer<'a> {
                     let mut reaching: Vec<(String, usize)> = self
                         .call_lines
                         .iter()
-                        .filter(|((caller, callee), _)| !crate::modules::is_crow_fn(caller) && crate::modules::is_crow_fn(callee))
+                        .filter(|((caller, callee), _)| !crate::foreign_code(caller) && crate::foreign_code(callee))
                         .map(|((_, callee), l)| (crate::ir::copy_base(callee).to_string(), *l))
                         .collect();
                     reaching.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
                     reaching.into_iter().find(|(f, _)| self.ctx.reaches(f, &base)).unwrap_or((base, self.v.line))
                 }
             };
-            (format!("in {}: {}", crate::modules::written_as(&named), msg), line)
+            (format!("in {}: {}", crate::called_as(&named), msg), line)
         } else {
             (msg, self.v.line)
         };
-        self.v.errors.push((format!("line {}: {}", line, msg), self.v.decl.clone()));
+        // (blamed on the program's call, the refusal is the program's: a
+        // package's declaration would place it in the package's file)
+        let owner = if foreign { None } else { self.v.decl.clone() };
+        self.v.errors.push((format!("line {}: {}", line, msg), owner));
     }
 
     /// The refusals made inside a module's helper before its caller's body
@@ -373,7 +379,7 @@ impl<'a> Lowerer<'a> {
         for (i, copy, bare) in std::mem::take(&mut self.v.blamed) {
             if let Some((export, line)) = self.ctx.program_call_reaching(&copy) {
                 if let Some(slot) = self.v.errors.get_mut(i) {
-                    slot.0 = format!("line {}: in {}: {}", line, crate::modules::written_as(&export), bare);
+                    slot.0 = format!("line {}: in {}: {}", line, crate::called_as(&export), bare);
                 }
             }
         }
@@ -1457,6 +1463,18 @@ impl<'a> Lowerer<'a> {
         !self.defined(module) && (self.defined(&prefixed) || self.ctx.vars.contains_key(&prefixed) || self.ctx.functions.contains_key(&prefixed))
     }
 
+    /// A package's helper named from a file outside the package: a name
+    /// that begins with an underscore is its package's own, reached from
+    /// the package's own files alone (spec, Importing), and the expansion
+    /// does not bring it. Refused once, where it is named.
+    pub(super) fn refuse_package_helper(&mut self, module: &str, field: &str) -> bool {
+        let Some(package) = crate::HIDDEN_HELPERS.with(|h| h.borrow().get(&(module.to_string(), field.to_string())).cloned()) else {
+            return false;
+        };
+        self.refuse(format!("'{}' is the {} package's own — a name that begins with an underscore is reached from the package's own files alone: call what it exports", field, package));
+        true
+    }
+
     /// A call through a module's name, `m.f[…]`.
     pub(super) fn check_module_call(&mut self, module: &str, field: &str) {
         // (a name the program declares is its own value, whatever a part's
@@ -1465,6 +1483,9 @@ impl<'a> Lowerer<'a> {
         // the value, as the lowering reads it; a part's `use math as m` had
         // refused the program's `m.abs[…]`, "add `use math`", parity 499)
         if self.declared(module) {
+            return;
+        }
+        if self.refuse_package_helper(module, field) {
             return;
         }
         let prefixed = format!("{}_{}", module, field);

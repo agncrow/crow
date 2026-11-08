@@ -1,0 +1,3 @@
+k49_a_programs_function_named_with_a_packages_prefix_is_its_own.co:5:12: upper[] takes text, got an int
+  5 │     return upper[n]
+    │            ^^^^^

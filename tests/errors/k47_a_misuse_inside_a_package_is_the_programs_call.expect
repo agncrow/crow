@@ -1,0 +1,3 @@
+k47_a_misuse_inside_a_package_is_the_programs_call.co:5:1: in greet.loud: upper[] takes text, got an int
+  5 │ log[greet.loud[5]]
+    │ ^^^^^^^^^^^^^^^^^^

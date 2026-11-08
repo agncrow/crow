@@ -5565,6 +5565,14 @@ impl<'a> Lowerer<'a> {
                 Expr::Call { target: Target::Row(crate::table::column_read()), args: vec![base, name], ty, propagates: carried }
             }
             A::FieldAccess { object, field } => {
+                // (a package's helper named from outside the package, as a
+                // value, is that mistake alone)
+                if let A::Ident(m) = object.as_ref()
+                    && !self.defined(m)
+                    && self.refuse_package_helper(m, field)
+                {
+                    return Ok(Expr::Const(Const::Int(0), Ty::Unknown));
+                }
                 // `m.x` where `m` is no variable names what a part declares:
                 // `m` is not read as one
                 let member = matches!(object.as_ref(), A::Ident(m) if self.names_module_member(m, field));
@@ -8330,7 +8338,7 @@ impl<'a> Lowerer<'a> {
         // a test file whose one test wrote through magpie and whose other
         // only read had been refused, in the reading test, for the
         // sequencer's `put_rows` the writing test reached)
-        if (crate::modules::is_crow_fn(&self.current_fn) || crate::from_dependency(&self.current_fn)) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(_, t)| *t == Ty::Unknown)) {
+        if crate::foreign_code(&self.current_fn) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(_, t)| *t == Ty::Unknown)) {
             return;
         }
         // a function copied per signature has no one type to be held at

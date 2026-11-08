@@ -1,0 +1,7 @@
+k46_a_packages_helper_is_its_own.co:6:11: '_shout' is the greet package's own — a name that begins with an underscore is reached from the package's own files alone: call what it exports
+  6 │ log[greet._shout['ada']]
+    │           ^^^^^^
+k46_a_packages_helper_is_its_own.co:7:11: '_shout' is the greet package's own — a name that begins with an underscore is reached from the package's own files alone: call what it exports
+  7 │ f = greet._shout
+    │           ^^^^^^
+2 mistakes

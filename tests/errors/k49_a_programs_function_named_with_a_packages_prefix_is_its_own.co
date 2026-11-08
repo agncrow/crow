@@ -1,0 +1,8 @@
+--- a program's own function whose name begins with a package's prefix is the program's own: its misuse is refused in its body, at its line (it had been taken for the package's by its prefix alone, and the refusal placed in crow_modules/greet/main.co)
+use greet
+
+fn greet_twice[n]
+    return upper[n]
+
+log[greet.loud['a']]
+log[greet_twice[5]]
