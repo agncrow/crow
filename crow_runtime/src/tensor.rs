@@ -301,13 +301,19 @@ impl CrowTensor {
                 };
                 // (the view's own offset and strides read the storage: a
                 // slice or a transpose of a tensor on the GPU had been read
-                // as the storage itself — `transpose[m]` as `m`)
-                let data = gpu_buf.to_f64(ctx);
+                // as the storage itself — `transpose[m]` as `m`; only the
+                // run the view reads comes back, where the whole buffer had
+                // for every slice of a parameter vector)
+                if self.is_empty() {
+                    return CrowTensor::from_vec(Vec::new(), self.shape.clone());
+                }
+                let span = self.extent();
+                let data: Vec<f64> = gpu_buf.read(ctx, self.offset, span).iter().map(|&x| f64::from(x)).collect();
                 CrowTensor {
                     data: Arc::new(TensorStorage::Cpu(data)),
                     shape: self.shape.clone(),
                     strides: self.strides.clone(),
-                    offset: self.offset,
+                    offset: 0,
                 }
             }
         }
@@ -321,6 +327,12 @@ impl CrowTensor {
         match self.data.as_ref() {
             TensorStorage::Gpu(_) => self.clone(),
             TensorStorage::Cpu(_) => {
+                // (an empty tensor has no numbers to compute on, and stays
+                // here: one put on the GPU could not be read back, since
+                // wgpu maps no empty slice — parity 520)
+                if self.is_empty() {
+                    return self.clone();
+                }
                 let Some(ctx) = crate::gpu::GpuContext::get() else {
                     return self.clone();
                 };
@@ -351,22 +363,200 @@ impl CrowTensor {
         self
     }
 
-    /// The GPU buffer, when the tensor is on the GPU and is the whole of it
-    /// in row-major order. A view of one — a slice, a transpose — reads its
-    /// numbers through its offset and strides on the CPU: a kernel takes a
-    /// buffer as one row-major run, and a transposed matrix had been
-    /// multiplied, and its `exp` taken, as the matrix it was taken from.
-    pub fn gpu_buffer(&self) -> Option<&GpuBuffer> {
+    /// The numbers from the view's first to its last in the storage: as
+    /// many as a read of the view must bring back.
+    fn extent(&self) -> usize {
+        if self.is_empty() {
+            return 0;
+        }
+        1 + self.shape.iter().zip(&self.strides).map(|(n, s)| n.saturating_sub(1) * s).sum::<usize>()
+    }
+
+    /// A scalar the GPU can take beside a tensor: one an f32 holds (an
+    /// infinity, or a number past f32's range, stays off the GPU, as a
+    /// tensor holding one would round it there).
+    fn scalar_fits(s: f64) -> bool {
+        (s as f32).is_finite()
+    }
+
+    /// The GPU, when this tensor lies there (an operation meeting it runs
+    /// there too).
+    fn gpu_here(&self) -> Option<(&'static GpuContext, &GpuBuffer)> {
         match self.data.as_ref() {
-            TensorStorage::Gpu(buf) if self.offset == 0 && self.is_contiguous() && buf.count() == self.len() => Some(buf),
-            _ => None,
+            TensorStorage::Gpu(buf) => GpuContext::get().map(|ctx| (ctx, buf)),
+            TensorStorage::Cpu(_) => None,
         }
     }
 
-    /// A scalar the GPU's scalar operation can take: one an f32 holds
-    /// (written into its shader as a literal, which no infinity is).
-    fn scalar_fits(s: f64) -> bool {
-        (s as f32).is_finite()
+    /// The GPU, when any of the operands lies there.
+    fn gpu_of(operands: &[&CrowTensor]) -> Option<&'static GpuContext> {
+        if operands.iter().any(|t| t.is_gpu()) { GpuContext::get() } else { None }
+    }
+
+    /// This tensor's numbers on the GPU, as a kernel reads them over an
+    /// answer of `shape`: its own buffer through its offset and strides
+    /// where it lies there, its numbers uploaded where it lies on the CPU
+    /// (an operand on the CPU met beside one on the GPU is brought to it,
+    /// as an operation's answer stays where its operands are) — broadcast,
+    /// a dimension it lacks or holds once read with a stride of 0.
+    fn on_gpu_over(&self, ctx: &GpuContext, shape: &[usize]) -> Option<(Held<'_>, gpu::Layout)> {
+        let (held, offset, strides) = match self.data.as_ref() {
+            TensorStorage::Gpu(buf) => (Held::Own(buf), self.offset, self.strides.clone()),
+            TensorStorage::Cpu(_) => {
+                if !ctx.holds(self.len()) {
+                    return None;
+                }
+                (Held::Up(GpuBuffer::from_f64(ctx, &self.numbers())), 0, Self::row_major_strides(&self.shape))
+            }
+        };
+        if self.ndim() > shape.len() {
+            return None;
+        }
+        let lead = shape.len() - self.ndim();
+        let laid = (0..shape.len())
+            .map(|d| if d < lead || (self.shape[d - lead] == 1 && shape[d] != 1) { 0 } else { strides[d - lead] })
+            .collect();
+        Some((held, gpu::Layout { offset, strides: laid }))
+    }
+
+    /// A tensor of `shape` made of a GPU buffer the kernels wrote in order.
+    fn from_gpu(buf: GpuBuffer, shape: Vec<usize>) -> CrowTensor {
+        CrowTensor { data: Arc::new(TensorStorage::Gpu(buf)), strides: Self::row_major_strides(&shape), shape, offset: 0 }
+    }
+
+    /// An element-wise operation on the GPU over an answer of `shape`, its
+    /// operands tensors (where they lie, broadcast) or numbers — none
+    /// where the kernels cannot take it, and the CPU computes it.
+    fn on_gpu(ctx: &GpuContext, op: gpu::Op, shape: &[usize], operands: &[Side<'_>]) -> Option<CrowTensor> {
+        let mut held = Vec::with_capacity(operands.len());
+        for side in operands {
+            held.push(match side {
+                Side::Tensor(t) => Some(t.on_gpu_over(ctx, shape)?),
+                Side::Number(x) => {
+                    if !Self::scalar_fits(*x) {
+                        return None;
+                    }
+                    None
+                }
+            });
+        }
+        let kernel_operands: Vec<gpu::Operand<'_>> = operands
+            .iter()
+            .zip(&held)
+            .map(|(side, h)| match (side, h) {
+                (_, Some((buf, layout))) => gpu::Operand::Numbers(buf.buffer(), layout.clone()),
+                (Side::Number(x), None) => gpu::Operand::Number(*x as f32),
+                (Side::Tensor(_), None) => gpu::Operand::Number(0.0),
+            })
+            .collect();
+        let out = gpu::elementwise(ctx, op, shape, &kernel_operands)?;
+        Some(Self::from_gpu(out, shape.to_vec()))
+    }
+
+    /// The tensor broadcast to `shape` (each dimension it lacks or holds
+    /// once repeated): read with strides of 0 on the GPU where it lies
+    /// there, zeros of the shape plus it on the CPU.
+    pub fn broadcast_to(&self, shape: &[usize]) -> CrowTensor {
+        if let Some((ctx, _)) = self.gpu_here()
+            && let Some(t) = Self::on_gpu(ctx, gpu::Op::Copy, shape, &[Side::Tensor(self)])
+        {
+            return t;
+        }
+        CrowTensor::zeros(shape.to_vec()).add(self)
+    }
+
+    /// The tensor laid out in order on the GPU, where it lies there: itself
+    /// where it already is, else its numbers copied in order on the device.
+    fn gpu_in_order(&self) -> Option<CrowTensor> {
+        let (ctx, buf) = self.gpu_here()?;
+        if self.is_contiguous() && self.offset == 0 && buf.count() == self.len() {
+            return Some(self.clone());
+        }
+        let layout = gpu::Layout { offset: self.offset, strides: self.strides.clone() };
+        let out = gpu::elementwise(ctx, gpu::Op::Copy, &self.shape, &[gpu::Operand::Numbers(buf, layout)])?;
+        Some(Self::from_gpu(out, self.shape.clone()))
+    }
+
+    /// Tensors laid into one tensor of `shape` on the GPU, each through its
+    /// layout there (a join's or a stack's parts, a slice's gradient in
+    /// its whole): where any part lies on the GPU, the others brought to
+    /// it. None where the kernels cannot take it.
+    fn gpu_laid(ctx: &GpuContext, shape: &[usize], parts: &[(&CrowTensor, gpu::Layout)]) -> Option<CrowTensor> {
+        let n = Self::numel(shape);
+        if !ctx.holds(n) {
+            return None;
+        }
+        // (parts that cover the whole — a join, a stack — write every
+        // number of it; a part laid into a larger whole leaves zeros)
+        let covered = parts.iter().map(|(part, _)| part.len()).sum::<usize>() == n;
+        let out = if covered { GpuBuffer::output(ctx, n) } else { GpuBuffer::zeros(ctx, n) };
+        for (part, to) in parts {
+            if part.is_empty() {
+                continue;
+            }
+            let (held, from) = part.on_gpu_over(ctx, &part.shape)?;
+            if !gpu::place(ctx, held.buffer(), &from, &out, to, &part.shape) {
+                return None;
+            }
+        }
+        Some(Self::from_gpu(out, shape.to_vec()))
+    }
+
+    /// Tensors of one shape stacked along a new `axis` into one of `shape`
+    /// on the GPU, where any of them lies there.
+    fn gpu_stacked(items: &[CrowTensor], axis: usize, shape: &[usize]) -> Option<CrowTensor> {
+        let ctx = Self::gpu_of(&items.iter().collect::<Vec<_>>())?;
+        let strides = Self::row_major_strides(shape);
+        let mut inner = strides.clone();
+        inner.remove(axis);
+        let parts: Vec<(&CrowTensor, gpu::Layout)> = items.iter().enumerate().map(|(i, t)| (t, gpu::Layout { offset: i * strides[axis], strides: inner.clone() })).collect();
+        Self::gpu_laid(ctx, shape, &parts)
+    }
+
+    /// The tensor of `shape` holding zeros but for `part`, laid at the
+    /// place `at` names along each axis — where the part lies (a slice's
+    /// gradient in the zeros of its whole).
+    pub fn laid_into(shape: &[usize], at: &[usize], part: &CrowTensor) -> CrowTensor {
+        let strides = Self::row_major_strides(shape);
+        let offset: usize = at.iter().zip(&strides).map(|(a, s)| a * s).sum();
+        if let Some(ctx) = Self::gpu_of(&[part])
+            && part.ndim() == shape.len()
+            && let Some(t) = Self::gpu_laid(ctx, shape, &[(part, gpu::Layout { offset, strides: strides.clone() })])
+        {
+            return t;
+        }
+        let mut data = vec![0.0; Self::numel(shape)];
+        let numbers = part.to_vec();
+        let part_strides = Self::row_major_strides(&part.shape);
+        for (flat, &v) in numbers.iter().enumerate() {
+            let mut remaining = flat;
+            let mut place = offset;
+            for d in 0..part.ndim() {
+                let i = remaining / part_strides[d];
+                remaining %= part_strides[d];
+                place += i * strides[d];
+            }
+            data[place] = v;
+        }
+        Self::from_vec(data, shape.to_vec())
+    }
+
+    /// The matrix product on the GPU, where either matrix lies there (the
+    /// other brought to it), each read through its own offset and strides:
+    /// a transposed weight is never copied. None where the kernel cannot
+    /// take it, and the CPU computes it.
+    pub(crate) fn gpu_matmul(&self, other: &CrowTensor) -> Option<CrowTensor> {
+        let ctx = Self::gpu_of(&[self, other])?;
+        if self.ndim() != 2 || other.ndim() != 2 {
+            return None;
+        }
+        let (m, k, n) = (self.shape[0], self.shape[1], other.shape[1]);
+        let (a, a_at) = self.on_gpu_over(ctx, &self.shape)?;
+        let (b, b_at) = other.on_gpu_over(ctx, &other.shape)?;
+        let at = gpu::Matrix { offset: a_at.offset, row: a_at.strides[0], col: a_at.strides[1] };
+        let bt = gpu::Matrix { offset: b_at.offset, row: b_at.strides[0], col: b_at.strides[1] };
+        let out = gpu::matmul(ctx, a.buffer(), at, b.buffer(), bt, m, k, n)?;
+        Some(Self::from_gpu(out, vec![m, n]))
     }
 
     /// Create a CrowTensor from a GpuBuffer with a given shape.
@@ -441,20 +631,30 @@ impl CrowTensor {
 
     /// Get a single element by flat index (row-major order).
     pub fn get_flat(&self, flat_idx: usize) -> f64 {
+        // (one number of a tensor on the GPU is read back alone: the whole
+        // buffer had come back for each)
+        if let Some((ctx, buf)) = self.gpu_here() {
+            let place = self.offset + self.place_of(flat_idx);
+            return buf.read(ctx, place, 1).first().map_or(f64::NAN, |&x| f64::from(x));
+        }
         let cpu = self.cpu_data();
         if self.is_contiguous() {
             return cpu[self.offset + flat_idx];
         }
-        // Convert flat index to multi-dimensional indices
+        cpu[self.offset + self.place_of(flat_idx)]
+    }
+
+    /// Where the number at a flat (row-major) index lies past the view's
+    /// offset: its index along each dimension by that dimension's stride.
+    fn place_of(&self, flat_idx: usize) -> usize {
         let mut remaining = flat_idx;
-        let mut physical = self.offset;
-        for d in 0..self.ndim() {
-            let stride_rm = Self::row_major_strides(&self.shape);
-            let idx = remaining / stride_rm[d];
-            remaining %= stride_rm[d];
-            physical += idx * self.strides[d];
+        let mut place = 0;
+        for d in (0..self.ndim()).rev() {
+            let size = self.shape[d].max(1);
+            place += (remaining % size) * self.strides[d];
+            remaining /= size;
         }
-        cpu[physical]
+        place
     }
 
     // ── Creation ────────────────────────────────────────────────────
@@ -721,6 +921,9 @@ impl CrowTensor {
                 strides: Self::row_major_strides(&new_shape),
                 offset: self.offset,
             }
+        } else if let Some(laid) = self.gpu_in_order() {
+            // a view of a tensor on the GPU laid out in order there
+            laid.reshape(new_shape)
         } else {
             // Must copy to make contiguous first
             let data = self.to_vec();
@@ -842,35 +1045,40 @@ impl CrowTensor {
 
     // Convenience element-wise ops
 
-    /// Build a CrowTensor from a GpuBuffer, inheriting shape from self.
-    fn from_gpu_buffer(&self, buf: GpuBuffer) -> CrowTensor {
-        CrowTensor {
-            data: Arc::new(TensorStorage::Gpu(buf)),
-            shape: self.shape.clone(),
-            strides: Self::row_major_strides(&self.shape),
-            offset: 0,
-        }
-    }
-
-    /// GPU-dispatched binary op, or CPU fallback.
-    fn gpu_binary_or_cpu(&self, other: &CrowTensor, op: gpu::BinaryOp, cpu_fn: impl Fn(f64, f64) -> f64) -> CrowTensor {
-        // the GPU kernel takes two buffers of one shape; two shapes that
-        // broadcast are the CPU's (the kernel asserted one length: a panic)
-        if let (Some(a_buf), Some(b_buf), true) = (self.gpu_buffer(), other.gpu_buffer(), self.shape == other.shape) {
-            if let Some(ctx) = GpuContext::get() {
-                let out = gpu::gpu_elementwise_binary(ctx, a_buf, b_buf, op);
-                return self.from_gpu_buffer(out);
+    /// An operation of two tensors, broadcast: on the GPU where either lies
+    /// there (the other brought to it), else each pair of numbers by
+    /// `cpu_fn`. The kernel had taken two whole buffers of one shape, and a
+    /// bias added to a batch's rows, a view of a parameter vector, had run
+    /// on the CPU.
+    fn gpu_binary_or_cpu(&self, other: &CrowTensor, op: gpu::Op, cpu_fn: impl Fn(f64, f64) -> f64) -> CrowTensor {
+        if let Some(ctx) = Self::gpu_of(&[self, other]) {
+            let shape = if self.shape == other.shape { self.shape.clone() } else { Self::broadcast_shape(&self.shape, &other.shape) };
+            if let Some(t) = Self::on_gpu(ctx, op, &shape, &[Side::Tensor(self), Side::Tensor(other)]) {
+                return t;
             }
         }
         self.zip_with(other, cpu_fn)
     }
 
-    /// GPU-dispatched unary op, or CPU fallback.
-    fn gpu_unary_or_cpu(&self, op: gpu::UnaryOp, cpu_fn: impl Fn(f64) -> f64) -> CrowTensor {
-        if let Some(buf) = self.gpu_buffer() {
-            if let Some(ctx) = GpuContext::get() {
-                let out = gpu::gpu_elementwise_unary(ctx, buf, op);
-                return self.from_gpu_buffer(out);
+    /// An operation of each number of the tensor: on the GPU where it lies
+    /// there, read through its own offset and strides, else by `cpu_fn`.
+    pub(crate) fn gpu_unary_or_cpu(&self, op: gpu::Op, cpu_fn: impl Fn(f64) -> f64) -> CrowTensor {
+        if let Some((ctx, _)) = self.gpu_here()
+            && let Some(t) = Self::on_gpu(ctx, op, &self.shape, &[Side::Tensor(self)])
+        {
+            return t;
+        }
+        self.map(cpu_fn)
+    }
+
+    /// An operation of each number of the tensor and a number: on the GPU
+    /// where the tensor lies there and an f32 holds the number, else by
+    /// `cpu_fn`. `number_first` puts the number on the left (`s / x`).
+    fn gpu_scalar_or_cpu(&self, op: gpu::Op, s: f64, number_first: bool, cpu_fn: impl Fn(f64) -> f64) -> CrowTensor {
+        if let Some((ctx, _)) = self.gpu_here() {
+            let sides = if number_first { [Side::Number(s), Side::Tensor(self)] } else { [Side::Tensor(self), Side::Number(s)] };
+            if let Some(t) = Self::on_gpu(ctx, op, &self.shape, &sides) {
+                return t;
             }
         }
         self.map(cpu_fn)
@@ -916,193 +1124,230 @@ impl CrowTensor {
     }
 
     pub fn add(&self, other: &CrowTensor) -> CrowTensor {
-        self.gpu_binary_or_cpu(other, gpu::BinaryOp::Add, |a, b| a + b)
+        self.gpu_binary_or_cpu(other, gpu::Op::Add, |a, b| a + b)
     }
 
     pub fn sub(&self, other: &CrowTensor) -> CrowTensor {
-        self.gpu_binary_or_cpu(other, gpu::BinaryOp::Sub, |a, b| a - b)
+        self.gpu_binary_or_cpu(other, gpu::Op::Sub, |a, b| a - b)
     }
 
     pub fn mul(&self, other: &CrowTensor) -> CrowTensor {
-        self.gpu_binary_or_cpu(other, gpu::BinaryOp::Mul, |a, b| a * b)
+        self.gpu_binary_or_cpu(other, gpu::Op::Mul, |a, b| a * b)
     }
 
     pub fn div(&self, other: &CrowTensor) -> CrowTensor {
-        self.gpu_binary_or_cpu(other, gpu::BinaryOp::Div, |a, b| a / b)
+        self.gpu_binary_or_cpu(other, gpu::Op::Div, |a, b| a / b)
     }
 
     pub fn neg(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu(gpu::UnaryOp::Neg, |x| -x)
+        self.gpu_unary_or_cpu(gpu::Op::Neg, |x| -x)
     }
 
     pub fn abs(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu(gpu::UnaryOp::Abs, |x| x.abs())
+        self.gpu_unary_or_cpu(gpu::Op::Abs, |x| x.abs())
     }
 
     pub fn exp(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu(gpu::UnaryOp::Exp, |x| x.exp())
+        self.gpu_unary_or_cpu(gpu::Op::Exp, |x| x.exp())
     }
 
     pub fn log(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu(gpu::UnaryOp::Log, |x| x.ln())
+        self.gpu_unary_or_cpu(gpu::Op::Log, |x| x.ln())
     }
 
     pub fn log2(&self) -> CrowTensor {
-        self.map(|x| x.log2())
+        self.gpu_unary_or_cpu(gpu::Op::Log2, |x| x.log2())
     }
 
     pub fn log10(&self) -> CrowTensor {
-        self.map(|x| x.log10())
+        self.gpu_unary_or_cpu(gpu::Op::Log10, |x| x.log10())
     }
 
     /// ln(1 + x), exact where x is near 0 (where `ln[1 + x]` loses x).
     pub fn log1p(&self) -> CrowTensor {
-        self.map(|x| x.ln_1p())
+        self.gpu_unary_or_cpu(gpu::Op::Log1p, |x| x.ln_1p())
     }
 
     /// exp(x) − 1, exact where x is near 0.
     pub fn expm1(&self) -> CrowTensor {
-        self.map(|x| x.exp_m1())
+        self.gpu_unary_or_cpu(gpu::Op::Expm1, |x| x.exp_m1())
     }
 
     pub fn sqrt(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu(gpu::UnaryOp::Sqrt, |x| x.sqrt())
+        self.gpu_unary_or_cpu(gpu::Op::Sqrt, |x| x.sqrt())
     }
 
     pub fn sin(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu(gpu::UnaryOp::Sin, |x| x.sin())
+        self.gpu_unary_or_cpu(gpu::Op::Sin, crate::math::sine)
     }
 
     pub fn cos(&self) -> CrowTensor {
-        self.gpu_unary_or_cpu(gpu::UnaryOp::Cos, |x| x.cos())
+        self.gpu_unary_or_cpu(gpu::Op::Cos, crate::math::cosine)
     }
 
     pub fn pow(&self, exponent: &CrowTensor) -> CrowTensor {
-        // pow not available as GPU shader yet — fall back to CPU
-        self.zip_with(exponent, |a, b| a.powf(b))
+        self.gpu_binary_or_cpu(exponent, gpu::Op::Pow, |a, b| a.powf(b))
+    }
+
+    /// Every element to a power: `t ^ s` and `t .^ s`, as `pow` of the
+    /// number's tensor answers.
+    pub fn pow_scalar(&self, s: f64) -> CrowTensor {
+        self.gpu_scalar_or_cpu(gpu::Op::Pow, s, false, |x| x.powf(s))
     }
 
     /// Add a scalar to every element.
     pub fn add_scalar(&self, s: f64) -> CrowTensor {
-        if let Some(buf) = self.gpu_buffer().filter(|_| Self::scalar_fits(s)) {
-            if let Some(ctx) = GpuContext::get() {
-                let out = gpu::gpu_scalar_op(ctx, buf, s as f32, gpu::ScalarOp::Add);
-                return self.from_gpu_buffer(out);
-            }
-        }
-        self.map(|x| x + s)
+        self.gpu_scalar_or_cpu(gpu::Op::Add, s, false, |x| x + s)
     }
 
     /// Multiply every element by a scalar.
     pub fn mul_scalar(&self, s: f64) -> CrowTensor {
-        if let Some(buf) = self.gpu_buffer().filter(|_| Self::scalar_fits(s)) {
-            if let Some(ctx) = GpuContext::get() {
-                let out = gpu::gpu_scalar_op(ctx, buf, s as f32, gpu::ScalarOp::Mul);
-                return self.from_gpu_buffer(out);
-            }
-        }
-        self.map(|x| x * s)
+        self.gpu_scalar_or_cpu(gpu::Op::Mul, s, false, |x| x * s)
     }
 
-    /// Subtract a scalar from every element: on the GPU as `add_scalar` of
-    /// its negative, which is the same number (`x - s` and `x + -s` round
-    /// alike) — the interpreter had added the negative there and the
-    /// compiled program subtracted on the CPU, and a tensor on the GPU
-    /// answered two ways.
+    /// Subtract a scalar from every element: on the GPU as on the CPU, one
+    /// function both modes call — the interpreter had added the negative
+    /// there and the compiled program subtracted on the CPU, and a tensor
+    /// on the GPU answered two ways.
     pub fn sub_scalar(&self, s: f64) -> CrowTensor {
-        if self.gpu_buffer().is_some() {
-            return self.add_scalar(-s);
-        }
-        self.map(|x| x - s)
+        self.gpu_scalar_or_cpu(gpu::Op::Sub, s, false, |x| x - s)
     }
 
-    /// A scalar divided by every element, `s / x`: the scalar made a tensor
-    /// of the shape and divided where the tensor lies, as `./` divides two
+    /// A scalar divided by every element, `s / x`, where the tensor lies
     /// (both modes call this: the compiled program had divided on the CPU
     /// where the interpreter divided on the GPU).
     pub fn scalar_div(&self, s: f64) -> CrowTensor {
-        if self.gpu_buffer().is_some() && Self::scalar_fits(s) {
-            // (the scalar's tensor placed where this one lies, whatever
-            // `gpu[]` said: placement follows the tensor)
-            return CrowTensor::from_vec(vec![s; self.len()], self.shape.clone()).to_gpu().div(self);
-        }
-        self.map(|x| s / x)
+        self.gpu_scalar_or_cpu(gpu::Op::Div, s, true, |x| s / x)
     }
 
     /// Divide every element by a scalar: each number divided, as `x / s`
     /// divides one. (A multiply by `1 / s` rounds twice — `[3.0] / 2.5` had
     /// been `1.2000000000000002`, where numpy and the scalar are `1.2`.)
     pub fn div_scalar(&self, s: f64) -> CrowTensor {
-        self.map(|x| x / s)
+        self.gpu_scalar_or_cpu(gpu::Op::Div, s, false, |x| x / s)
+    }
+
+    /// Each number compared with `s`: 1 where the comparison holds, 0
+    /// where it does not — the mask a gradient multiplies by (a clip's
+    /// inside), where the tensor lies.
+    pub fn compared(&self, cmp: Compare, s: f64) -> CrowTensor {
+        let (op, f): (gpu::Op, fn(f64, f64) -> bool) = match cmp {
+            Compare::Gt => (gpu::Op::Gt, |x, s| x > s),
+            Compare::Lt => (gpu::Op::Lt, |x, s| x < s),
+            Compare::Ge => (gpu::Op::Ge, |x, s| x >= s),
+            Compare::Le => (gpu::Op::Le, |x, s| x <= s),
+        };
+        self.gpu_scalar_or_cpu(op, s, false, |x| if f(x, s) { 1.0 } else { 0.0 })
     }
 
     // ── Additional element-wise math ────────────────────────────────────
 
     pub fn sign(&self) -> CrowTensor {
-        self.map(|x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 })
+        self.gpu_unary_or_cpu(gpu::Op::Sign, |x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 })
     }
 
     pub fn floor(&self) -> CrowTensor {
-        self.map(|x| x.floor())
+        self.gpu_unary_or_cpu(gpu::Op::Floor, |x| x.floor())
     }
 
     pub fn ceil(&self) -> CrowTensor {
-        self.map(|x| x.ceil())
+        self.gpu_unary_or_cpu(gpu::Op::Ceil, |x| x.ceil())
     }
 
     pub fn round(&self) -> CrowTensor {
-        self.map(|x| x.round())
+        self.gpu_unary_or_cpu(gpu::Op::Round, |x| x.round())
     }
 
     pub fn clip(&self, lo: f64, hi: f64) -> CrowTensor {
+        if let Some((ctx, _)) = self.gpu_here() {
+            // (a bound past f32's range, an infinity, is held as f32's
+            // largest number, which every finite number there passes:
+            // relu is `clip[x, 0.0, inf]`, and the infinity had kept every
+            // relu of a network on the GPU off it, its numbers read back
+            // and sent again at each)
+            let edge = f64::from(f32::MAX);
+            let sides = [Side::Tensor(self), Side::Number(lo.max(-edge)), Side::Number(hi.min(edge))];
+            if let Some(t) = Self::on_gpu(ctx, gpu::Op::Clip, &self.shape, &sides) {
+                return t;
+            }
+        }
         self.map(|x| x.max(lo).min(hi))
     }
 
     pub fn modulo(&self, other: &CrowTensor) -> CrowTensor {
-        self.zip_with(other, |a, b| a % b)
+        self.gpu_binary_or_cpu(other, gpu::Op::Mod, |a, b| a % b)
     }
 
     pub fn modulo_scalar(&self, s: f64) -> CrowTensor {
-        self.map(|x| x % s)
+        self.gpu_scalar_or_cpu(gpu::Op::Mod, s, false, |x| x % s)
     }
 
     // ── Trigonometry ────────────────────────────────────────────────────
 
     pub fn tan(&self) -> CrowTensor {
-        // (a string op once named a shader the GPU did not have: `tan` of a
-        // tensor on the GPU panicked)
-        self.gpu_unary_or_cpu(gpu::UnaryOp::Tan, |x| x.tan())
+        self.gpu_unary_or_cpu(gpu::Op::Tan, |x| x.tan())
     }
 
     pub fn asin(&self) -> CrowTensor {
-        self.map(|x| x.asin())
+        self.gpu_unary_or_cpu(gpu::Op::Asin, |x| x.asin())
     }
 
     pub fn acos(&self) -> CrowTensor {
-        self.map(|x| x.acos())
+        self.gpu_unary_or_cpu(gpu::Op::Acos, |x| x.acos())
     }
 
     pub fn atan(&self) -> CrowTensor {
-        self.map(|x| x.atan())
+        self.gpu_unary_or_cpu(gpu::Op::Atan, |x| x.atan())
     }
 
     pub fn atan2(&self, other: &CrowTensor) -> CrowTensor {
-        self.zip_with(other, |a, b| a.atan2(b))
+        self.gpu_binary_or_cpu(other, gpu::Op::Atan2, |a, b| a.atan2(b))
     }
 
     pub fn sinh(&self) -> CrowTensor {
-        self.map(|x| x.sinh())
+        self.gpu_unary_or_cpu(gpu::Op::Sinh, |x| x.sinh())
     }
 
     pub fn cosh(&self) -> CrowTensor {
-        self.map(|x| x.cosh())
+        self.gpu_unary_or_cpu(gpu::Op::Cosh, |x| x.cosh())
     }
 
     pub fn tanh(&self) -> CrowTensor {
-        self.map(|x| x.tanh())
+        self.gpu_unary_or_cpu(gpu::Op::Tanh, |x| x.tanh())
     }
 }
 
+/// A comparison of each number with one (`CrowTensor::compared`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Compare {
+    Gt,
+    Lt,
+    Ge,
+    Le,
+}
+
+/// A tensor's numbers on the GPU for one kernel: its own buffer, or one its
+/// numbers were uploaded into for the kernel.
+enum Held<'a> {
+    Own(&'a GpuBuffer),
+    Up(GpuBuffer),
+}
+
+impl Held<'_> {
+    fn buffer(&self) -> &GpuBuffer {
+        match self {
+            Held::Own(b) => b,
+            Held::Up(b) => b,
+        }
+    }
+}
+
+/// An operand of an element-wise operation: a tensor, or a number beside
+/// one.
+enum Side<'a> {
+    Tensor(&'a CrowTensor),
+    Number(f64),
+}
 
 // ── Reductions ──────────────────────────────────────────────────────────
 
@@ -1145,12 +1390,14 @@ impl CrowTensor {
 
     /// Sum all elements.
     pub fn sum(&self) -> f64 {
-        if let Some(buf) = self.gpu_buffer() {
-            if let Some(ctx) = GpuContext::get() {
-                return gpu::gpu_sum(ctx, buf);
+        if let Some((ctx, _)) = self.gpu_here() {
+            // (summed on the device, the view's own numbers laid in order
+            // there first: the buffer a view shares holds others)
+            if let Some(laid) = self.gpu_in_order()
+                && let Some((_, buf)) = laid.gpu_here()
+            {
+                return gpu::sum(ctx, buf, laid.len());
             }
-        }
-        if self.is_gpu() {
             return self.to_cpu().sum();
         }
         let cpu = self.cpu_data();
@@ -1161,6 +1408,33 @@ impl CrowTensor {
         } else {
             self.reduce(0.0, |a, b| a + b)
         }
+    }
+
+    /// The sum of all elements as a tensor of no dimensions, left on the
+    /// GPU where the tensor lies there (a loss a gradient is taken of,
+    /// which nothing reads as a number), else `sum`'s number.
+    pub fn sum_tensor(&self) -> CrowTensor {
+        if let Some((ctx, _)) = self.gpu_here()
+            && let Some(laid) = self.gpu_in_order()
+            && let Some((_, buf)) = laid.gpu_here()
+            && let Some(one) = gpu::total(ctx, buf, laid.len())
+        {
+            return Self::from_gpu(one, vec![]);
+        }
+        CrowTensor::scalar(self.sum())
+    }
+
+    /// The mean of all elements as a tensor of no dimensions, on the GPU
+    /// where the tensor lies there, else `mean`'s number.
+    pub fn mean_tensor(&self) -> CrowTensor {
+        let n = self.len();
+        if n > 0 && self.is_gpu() {
+            let total = self.sum_tensor();
+            if total.is_gpu() {
+                return total.div_scalar(n as f64);
+            }
+        }
+        CrowTensor::scalar(self.mean())
     }
 
     /// Mean of all elements.
@@ -1251,8 +1525,11 @@ impl CrowTensor {
         let mut new_shape: Vec<usize> = self.shape.clone();
         let _axis_size = new_shape.remove(axis);
         if new_shape.is_empty() {
-            // Reducing a 1D tensor to scalar
-            return CrowTensor::scalar(self.sum());
+            // a vector summed to a number (left on the GPU where it lies)
+            return self.sum_tensor();
+        }
+        if let Some(t) = self.gpu_reduced(gpu::Reduce::Sum, axis, &new_shape) {
+            return t;
         }
         let out_n = Self::numel(&new_shape);
         let mut data = vec![0.0; out_n];
@@ -1283,8 +1560,18 @@ impl CrowTensor {
         self.sum_axis(axis).div_scalar(axis_size)
     }
 
-    /// Generic reduction along an axis with an initial value and combining function.
-    fn reduce_axis(&self, axis: usize, init: f64, f: impl Fn(f64, f64) -> f64) -> CrowTensor {
+    /// A reduction along an axis on the GPU, where the tensor lies there:
+    /// read through its own offset and strides, the answer of the shape
+    /// `kept` left on the device. None where the kernel cannot take it.
+    fn gpu_reduced(&self, op: gpu::Reduce, axis: usize, kept: &[usize]) -> Option<CrowTensor> {
+        let (ctx, buf) = self.gpu_here()?;
+        let out = gpu::reduce_axis(ctx, op, buf, self.offset, &self.shape, &self.strides, axis)?;
+        Some(Self::from_gpu(out, kept.to_vec()))
+    }
+
+    /// Generic reduction along an axis with an initial value and combining
+    /// function (`op` on the GPU, where the tensor lies there).
+    fn reduce_axis(&self, axis: usize, op: gpu::Reduce, init: f64, f: impl Fn(f64, f64) -> f64) -> CrowTensor {
         assert!(axis < self.ndim(), "reduce_axis: axis {} out of range", axis);
         let mut new_shape: Vec<usize> = self.shape.clone();
         let _axis_size = new_shape.remove(axis);
@@ -1292,6 +1579,9 @@ impl CrowTensor {
             let data = self.to_vec();
             let result = data.iter().copied().fold(init, &f);
             return CrowTensor::scalar(result);
+        }
+        if let Some(t) = self.gpu_reduced(op, axis, &new_shape) {
+            return t;
         }
         let out_n = Self::numel(&new_shape);
         let mut data = vec![init; out_n];
@@ -1317,17 +1607,17 @@ impl CrowTensor {
 
     /// Max along a given axis (NaN where the numbers reduced hold one).
     pub fn max_axis(&self, axis: usize) -> CrowTensor {
-        self.reduce_axis(axis, f64::NEG_INFINITY, nan_max)
+        self.reduce_axis(axis, gpu::Reduce::Max, f64::NEG_INFINITY, nan_max)
     }
 
     /// Min along a given axis (NaN where the numbers reduced hold one).
     pub fn min_axis(&self, axis: usize) -> CrowTensor {
-        self.reduce_axis(axis, f64::INFINITY, nan_min)
+        self.reduce_axis(axis, gpu::Reduce::Min, f64::INFINITY, nan_min)
     }
 
     /// Product along a given axis.
     pub fn prod_axis(&self, axis: usize) -> CrowTensor {
-        self.reduce_axis(axis, 1.0, |a, b| a * b)
+        self.reduce_axis(axis, gpu::Reduce::Prod, 1.0, |a, b| a * b)
     }
 
     // ── Sorting & Selection ────────────────────────────────────────────
@@ -1394,6 +1684,13 @@ impl CrowTensor {
 
     /// Conditional selection: where cond is nonzero, take from self, else from other.
     pub fn where_cond(&self, on_true: &CrowTensor, on_false: &CrowTensor) -> CrowTensor {
+        if self.shape == on_true.shape
+            && self.shape == on_false.shape
+            && let Some(ctx) = Self::gpu_of(&[self, on_true, on_false])
+            && let Some(t) = Self::on_gpu(ctx, gpu::Op::Where, &self.shape, &[Side::Tensor(self), Side::Tensor(on_true), Side::Tensor(on_false)])
+        {
+            return t;
+        }
         let cond = self.to_vec();
         let a = on_true.to_vec();
         let b = on_false.to_vec();
@@ -1413,16 +1710,128 @@ impl CrowTensor {
     /// from the end), or the reason one is outside — the same words as
     /// `xs[i]`, in both modes (the kernel asserted it: a panic).
     pub fn try_gather(&self, indices: &CrowTensor) -> Result<CrowTensor, String> {
+        let at = self.positions_read(indices)?;
+        Ok(self.gathered_at(indices, &at))
+    }
+
+    /// Where each of the positions reads this tensor's numbers, checked:
+    /// a whole number, a negative one counted from the end, inside the
+    /// tensor — checked here, where they are read, on the GPU too, so a
+    /// position past the end stops the program at its line in the same
+    /// words wherever the numbers lie.
+    pub fn positions_read(&self, indices: &CrowTensor) -> Result<Vec<usize>, String> {
+        let n = self.len();
+        indices.numbers().iter().map(|&i| crate::stops::item(Self::position(i)?, n)).collect()
+    }
+
+    /// The numbers at `at` (`positions_read` of `indices`), shaped like
+    /// the positions: on the GPU where the source or the positions lie
+    /// there.
+    pub fn gathered_at(&self, indices: &CrowTensor, at: &[usize]) -> CrowTensor {
+        if let Some(ctx) = Self::gpu_of(&[self, indices])
+            && let Some(t) = self.gpu_gathered(ctx, at, &indices.shape)
+        {
+            return t;
+        }
         // (read where the numbers lie: a copy of the whole source had been
         // made at every gather, 32 MB to read three numbers of 4,000,000;
         // Rosetta Code, Facial detection in a photo)
         let src = self.numbers();
-        let idx = indices.numbers();
-        let mut data = Vec::with_capacity(idx.len());
-        for &i in idx.iter() {
-            data.push(src[crate::stops::item(Self::position(i)?, src.len())?]);
+        let data: Vec<f64> = at.iter().filter_map(|&p| src.get(p).copied()).collect();
+        Self::from_vec(data, indices.shape.clone())
+    }
+
+    /// A gather on the GPU, where the source or the positions lie there:
+    /// the source read where it lies (laid in order first where it is a
+    /// view that is not), the answer left there. None for no positions,
+    /// whose answer is the CPU's empty tensor.
+    fn gpu_gathered(&self, ctx: &GpuContext, at: &[usize], shape: &[usize]) -> Option<CrowTensor> {
+        if at.is_empty() {
+            return None;
         }
-        Ok(Self::from_vec(data, indices.shape.clone()))
+        let src = match self.data.as_ref() {
+            TensorStorage::Gpu(_) if self.is_contiguous() => self.clone(),
+            TensorStorage::Gpu(_) => self.gpu_in_order()?,
+            TensorStorage::Cpu(_) => self.to_gpu(),
+        };
+        let (_, buf) = src.gpu_here()?;
+        let at: Vec<u32> = at.iter().map(|&p| u32::try_from(p).ok()).collect::<Option<_>>()?;
+        let out = gpu::gather(ctx, buf, src.offset, &at)?;
+        Some(Self::from_gpu(out, shape.to_vec()))
+    }
+
+    /// Where along `axis` each slice's extreme lies (`Reduce::Max` or
+    /// `Reduce::Min`: the first place holding it), as positions of the
+    /// tensor read in order, found on the GPU where the tensor lies there.
+    pub(crate) fn gpu_extreme_places(&self, axis: usize, op: gpu::Reduce) -> Option<GpuBuffer> {
+        let (ctx, buf) = self.gpu_here()?;
+        gpu::extreme_places(ctx, op, buf, self.offset, &self.shape, &self.strides, axis)
+    }
+
+    /// Zeros of `shape` and g's k-th number at the place `at[k]` names
+    /// (places the device holds, none named twice), on the GPU where g
+    /// lies there: an extreme's gradient along an axis.
+    pub(crate) fn gpu_scattered_once(g: &CrowTensor, at: &GpuBuffer, shape: &[usize]) -> Option<CrowTensor> {
+        let (ctx, _) = g.gpu_here()?;
+        let n = Self::numel(shape);
+        if n == 0 || at.count() != g.len() {
+            return None;
+        }
+        let g = if g.is_contiguous() { g.clone() } else { g.gpu_in_order()? };
+        let (_, buf) = g.gpu_here()?;
+        let out = gpu::scatter_once_at(ctx, buf, g.offset, n, at)?;
+        Some(Self::from_gpu(out, shape.to_vec()))
+    }
+
+    /// A gather's gradient on the GPU, where `g` lies there: zeros of
+    /// `shape`, each number the sum of g's numbers read from it (`at[k]`
+    /// the number g's k-th was read from), in the order they were read.
+    /// Numbers read at most once — a head's out of a layer's output, the
+    /// target's logit — are written where they lie; read more often — an
+    /// embedding's rows — each is summed by its own thread over the places
+    /// that read it, so the answer is the same at every run.
+    pub(crate) fn gpu_scattered(g: &CrowTensor, at: &[usize], shape: &[usize]) -> Option<CrowTensor> {
+        let (ctx, _) = g.gpu_here()?;
+        let n = Self::numel(shape);
+        if n == 0 || at.len() != g.len() {
+            return None;
+        }
+        let g = if g.is_contiguous() { g.clone() } else { g.gpu_in_order()? };
+        let (_, buf) = g.gpu_here()?;
+        let mut seen = vec![0u64; n.div_ceil(64)];
+        let mut once = true;
+        for &p in at {
+            let word = seen.get_mut(p / 64)?;
+            let bit = 1u64 << (p % 64);
+            if *word & bit != 0 {
+                once = false;
+                break;
+            }
+            *word |= bit;
+        }
+        let out = if once {
+            let at: Vec<u32> = at.iter().map(|&p| u32::try_from(p).ok()).collect::<Option<_>>()?;
+            gpu::scatter_once(ctx, buf, g.offset, n, &at)?
+        } else {
+            // (a counting sort of g's places by the number each was read
+            // from, each number's places in the order read)
+            let mut starts = vec![0u32; n + 1];
+            for &p in at {
+                *starts.get_mut(p + 1)? += 1;
+            }
+            for j in 0..n {
+                starts[j + 1] += starts[j];
+            }
+            let mut next = starts.clone();
+            let mut reads = vec![0u32; at.len()];
+            for (k, &p) in at.iter().enumerate() {
+                let slot = next.get_mut(p)?;
+                *reads.get_mut(*slot as usize)? = u32::try_from(k).ok()?;
+                *slot += 1;
+            }
+            gpu::scatter(ctx, buf, g.offset, n, &starts, &reads)?
+        };
+        Some(Self::from_gpu(out, shape.to_vec()))
     }
 
     /// A position a tensor of positions holds: a whole number (a tensor's
@@ -1537,12 +1946,15 @@ impl CrowTensor {
                 return Err("all inner arrays must be the same length".to_string());
             }
         }
+        let mut shape = vec![items.len()];
+        shape.extend_from_slice(&first_shape);
+        if let Some(t) = Self::gpu_stacked(items, 0, &shape) {
+            return Ok(t);
+        }
         let mut data = Vec::with_capacity(items.len() * Self::numel(&first_shape));
         for t in items {
             data.extend_from_slice(&t.to_vec());
         }
-        let mut shape = vec![items.len()];
-        shape.extend_from_slice(&first_shape);
         Ok(Self::from_vec(data, shape))
     }
 
@@ -1585,6 +1997,16 @@ impl CrowTensor {
                     "concat: shapes must match on all axes except concat axis (axis {}: {} vs {})", d, self.shape[d], other.shape[d]);
             }
         }
+        let mut new_shape = self.shape.clone();
+        new_shape[axis] = self.shape[axis] + other.shape[axis];
+        if let Some(ctx) = Self::gpu_of(&[self, other]) {
+            // (each part laid into the join where it lies on the device)
+            let strides = Self::row_major_strides(&new_shape);
+            let at = |start: usize| gpu::Layout { offset: start * strides[axis], strides: strides.clone() };
+            if let Some(t) = Self::gpu_laid(ctx, &new_shape, &[(self, at(0)), (other, at(self.shape[axis]))]) {
+                return t;
+            }
+        }
         if self.ndim() == 1 {
             let mut data = self.to_vec();
             data.extend_from_slice(&other.to_vec());
@@ -1592,8 +2014,6 @@ impl CrowTensor {
             return Self::from_vec(data, vec![len]);
         }
         // General N-D concat
-        let mut new_shape = self.shape.clone();
-        new_shape[axis] = self.shape[axis] + other.shape[axis];
         let out_n = Self::numel(&new_shape);
         let mut data = vec![0.0; out_n];
         let out_strides = Self::row_major_strides(&new_shape);
@@ -1638,6 +2058,9 @@ impl CrowTensor {
         // New shape: insert tensors.len() at position axis
         let mut new_shape = base_shape.to_vec();
         new_shape.insert(axis, tensors.len());
+        if let Some(t) = Self::gpu_stacked(tensors, axis, &new_shape) {
+            return t;
+        }
         let mut data = Vec::with_capacity(Self::numel(&new_shape));
         if axis == 0 {
             // Simple: just concatenate all data

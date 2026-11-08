@@ -1,0 +1,56 @@
+--- A list whose items no line of its own function gives, and whose item
+--- meets a number, holds what its callers hand it: a guess of numbers
+--- waits until the rounds settle, since in an early round the caller's
+--- list of tensors is not typed yet. The list a tensor's square and its
+--- doubling were pushed onto had been guessed a list of numbers in the
+--- first round, by its item read by position (`xs[i] .* 2.0`) or walked
+--- (`k .* 2.0`) and met by a number, and its pushes of tensors were
+--- refused in both modes (pie's recurrent layers); a local list made by
+--- a call typed later waits the same way. A list no caller ever types
+--- still takes the number's kind (parity 502).
+use math
+
+fn doubled[xs]
+    out = []
+    for i in range[len[xs]]
+        out = push[out, xs[i] .* 2.0]
+    return out
+
+fn halved[xs]
+    out = []
+    for k in xs
+        out = push[out, k ./ 2.0]
+    return out
+
+fn made[x]
+    ps = []
+    ps = push[ps, x]
+    ps = push[ps, x .* x]
+    return ps
+
+fn shifted[x]
+    ps = made[x]
+    out = []
+    for k in ps
+        out = push[out, k + 1.0]
+    return out
+
+fn spread[x]
+    ps = []
+    ps = push[ps, x]
+    ps = push[ps, x .* x]
+    return sum[doubled[ps][1]] + sum[halved[ps][0]]
+
+fn below[xs, n]
+    count = 0
+    for i in range[len[xs]]
+        if xs[i] lte n
+            count = count + 1
+    return count
+
+x = tensor[[1.0, 2.0]]
+log[spread[x]]
+log[shifted[x][1]]
+log[grad[spread][x]]
+log[below[[], 2.5]]
+log[below[[1.0, 4.0, 2.0], 2.5]]

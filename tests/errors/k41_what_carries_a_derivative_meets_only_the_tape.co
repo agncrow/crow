@@ -1,0 +1,14 @@
+--- `grad` traces what carries a derivative, and only that is held to what
+--- the tape differentiates: text of a tensor's size carries none and is
+--- any builtin's (parity 510), while text of the loss's own number is
+--- refused
+use math
+
+fn loss[x]
+    size = str[len[x]]
+    total = str[sum[x]]
+    if size eq '2'
+        return sum[x .* x]
+    return sum[x]
+
+log[grad[loss][tensor[[1.0, 2.0]]]]

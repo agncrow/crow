@@ -1,0 +1,24 @@
+--- Inside a function `grad` differentiates, a list of lists holds traced
+--- tensors as a list does, and a record holding them shows as the record
+--- does, its numbers read off the tape. Compiled, a list of lists of them
+--- had not built (the traced form went one list deep), and neither had
+--- `log` of the record (its traced twin showed nothing), where the
+--- interpreter ran both. By hand: d/dx (Σ 2x + Σ x²) = 2 + 2x.
+use math
+struct State [h, c]
+
+fn grid[x]
+    rows = []
+    for i in range[2]
+        rows = push[rows, push[push[[], x .* 2.0], x .* x]]
+    return sum[rows[1][0]] + sum[rows[0][1]]
+
+fn shown[x]
+    s = State[x .* 2.0, x .* x]
+    log[s]
+    log[s.h]
+    return sum[s.h] + sum[s.c]
+
+x = tensor[[1.0, 2.0]]
+log[grad[grid][x]]
+log[grad[shown][x]]

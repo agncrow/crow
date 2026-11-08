@@ -1027,10 +1027,10 @@ suites (the `./test.sh` lines), which run here only.
   choice's values (a select's options, a radio's value, in elements and in
   markup) and refuses another, unless a free input binds the same fact.
 - `tests/self/reference.py`'s keys are the cases' `what`: a module's row
-  by the path it is imported from and its name (`math.stats.median`,
+  by the path it is imported from and its name (`web.auth.sign`,
   `math.abs` for the tensor form), a core row by its bare name (`encode`,
   `sub`, `hash`, `fraction` — one name for several rows, told apart by
-  arity or kind) — not the row's id (`stats.median`, `math.abs_t`), which
+  arity or kind) — not the row's id (`math.abs_t`), which
   the agreement-only list is keyed by. A reference that answers within a
   tolerance returns `Near` (8 ulps) or `Close` (1e-9 of the answer's
   largest number); a size no case could hold is `Skip`, or numpy raises and
@@ -1673,3 +1673,72 @@ suites (the `./test.sh` lines), which run here only.
   taken, the field's list was shared with the record, and its first push
   copied it whole: Lory's canvas ran a frame a second compiled and ten
   seconds interpreted (Kite, 2026-11-07; parity 480).
+- A function `grad` differentiates runs on traced values (`ir::Part.traced`),
+  and what carries a derivative inside it is decided once
+  (`ir::carries_derivative` over `Part.active`: the parameters a call
+  hands one and what is made of them; `can_carry_derivative` of a type —
+  a whole number, a truth and text never do). The check (lower_ir/grad.rs)
+  holds only what carries one to the differentiable rows, so a table of
+  positions built from sizes meets any builtin (parity 510, errors
+  k41/k42); the compiled copy (emit_rs/traced.rs) gives a list or a record
+  its traced form only where it carries one — `Vec<Traced>` at any depth,
+  a record's twin `_Traced_<R>` — converted by `_TracedForm`/`_PlainForm`
+  (blanket impls for `Vec` and `CrowResult`, so a new holder of values
+  needs its impl there or the copy does not build), a twin's default by
+  `_Placeholder`, a twin's display only where its record shows
+  (`struct_kernel_displayable`: a record holding a function has none,
+  parity 518). A value that can fail in a traced copy holds a traced
+  payload (`CrowResult<Traced>`): every default, unwrap and wrap of one
+  goes through `payload_default`/`payload_form`/`result_form`, and an
+  operator beside one binds its sides and answers the failure before the
+  kernel (`traced_binary`, then `traced_op`); a growing form's row
+  (`floor` is `__floor_big`) answers the whole number of the values read,
+  as an int (parity 519). A list of traced values made a tensor is on the
+  tape (`Tape::Stack`, `autograd::from_elements`, the interpreter's
+  `on_tape`; parity 517), and `log` is a `Tape::Read` row that prints the
+  tape's values (514). A list of no kind whose item meets a number takes
+  that kind only once the rounds settle (`items_wished`/`items_settled`):
+  an early round's guess of numbers refused a caller's tensors (513).
+- Package code shares the program's bare names (Vijay's decision, kept
+  2026-11-07): a part's bare call of a name its program also defines
+  reaches the program's at the same arity, so a package writes a module's
+  function qualified (`math.tanh`). A rule that made a part's bare calls
+  its own modules' broke the part refusals' placement and was undone.
+- Under `gpu[]` a tensor computed from one on the GPU stays there
+  (2026-11-08, pie's nn): `tensor[…]` and a frame made a tensor are
+  placed (`maybe_to_gpu`), an operation meeting a GPU tensor runs there
+  through `CrowTensor::on_gpu` (a CPU operand uploaded, a view read by its
+  offset and strides, a broadcast by strides of 0), and grad's backward
+  forms are device forms (`autograd::local`, `inside`, `filled`). A CPU
+  tensor never meets the GPU's code, so a program without `gpu[]` keeps
+  the CPU's digits. A number goes to a kernel as data and must fit f32
+  (`scalar_fits`): relu's `clip[x, 0.0, inf]` had taken the CPU at every
+  layer until infinite bounds were held as f32's largest number. Every
+  read is a round trip (~1.5 ms): a sum or a mean differentiated stays on
+  the device (`sum_tensor`, `gpu::total`), where a `sum()` had read each
+  step's loss back twice. Dispatches are recorded into one compute pass,
+  64 a submission (`Pending`, `forget_lifetime`; a pass per dispatch had
+  cost 60 µs each), and a buffer let go is kept for the next of its size
+  (`Pool`, `GpuBuffer::output`: wgpu zero-fills every new buffer). A
+  pooled buffer is written only by recorded commands, never
+  `queue.write_buffer` (which runs before the batch still pending that
+  reads the buffer's old numbers); uploads make fresh buffers. Metal
+  compiles WGSL with fast math: a NaN test is `v != v` folded to false and
+  a select of the larger number becomes a max that drops NaN — read NaN
+  from its bits (`nan()` in the reductions). A gather (`t[positions]`)
+  checks its positions on the CPU where they are read (`positions_read`,
+  the same stop in the same words on either device) and runs where the
+  numbers lie; its gradient is `gpu_scattered` — a place read once
+  written where it lies, a place read more often summed by its own thread
+  over a counting sort of what read it, in the order read, so no float
+  atomics and the same digits every run — and an extreme's along an axis
+  finds its places on the device (`extreme_places`). A buffer read back
+  keeps its numbers (`GpuBuffer.host`, the whole of a small one), and a
+  small upload keeps what it was made of: a sampler reading 59 logits one
+  at a time had made 11,600 round trips in a few steps of gpt, and each
+  submission's tracker is dropped at the next poll (`drop_in_place
+  <Tracker>` near the top of a profile is reads, not work). Measure with
+  the ignored benches (`cargo test -p crow_runtime --features gpu
+  --release --lib gpu::tests::bench -- --ignored --nocapture`) on a quiet
+  machine: under other sessions' suites a CPU-only step had doubled
+  between two runs.

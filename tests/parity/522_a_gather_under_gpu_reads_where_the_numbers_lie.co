@@ -1,0 +1,40 @@
+--- Under gpu[] a tensor read at a tensor of positions is read on the GPU,
+--- where its numbers lie, the positions checked where they are read (a
+--- position past the end stops the program in the same words on either
+--- device: spec, GPU Support), and grad's backward pass stays there too:
+--- a gather's gradient summed back where each number was read (a place
+--- read twice, as an embedding reads its rows), and an extreme's gradient
+--- along an axis laid at the first place holding it (a tie in a row) —
+--- in both modes. Each had read its tensor back to the CPU: pie's gpt ran
+--- 35 s for 40 steps under gpu[], 8 s since. Where no GPU answers, every
+--- tensor stays on the CPU and both modes agree there.
+use math
+
+struct Reads [at]
+
+fn shown[v]
+    out = []
+    for x in v
+        out = push[out, fmt[x, decimals = 4]]
+    return join[out, ' ']
+
+fn picked[w, r]
+    x = w[r.at]
+    return sum[x .* x]
+
+fn softened[x]
+    top = reshape[max[x, 1], 2, 1]
+    return sum[exp[x - top]] + sum[min[x, 0]]
+
+gpu[]
+w = tensor[[[0.5, -1.0, 2.0], [1.5, 0.25, -0.75]]]
+r = Reads[tensor[[5.0, 0.0, 5.0, -1.0, 2.0]]]
+log[shown[w[r.at]]]
+g = grad[picked][w, r]
+log[shown[flatten[g]]]
+x = tensor[[[1.0, 3.0, 3.0], [-2.0, 0.5, -2.0]]]
+log[fmt[softened[x], decimals = 4]]
+d = grad[softened][x]
+log[shown[flatten[d]]]
+--- where a GPU answers, each is on it; where none does, each is on the CPU
+log[w[r.at].device eq w.device and g.device eq w.device and d.device eq x.device]

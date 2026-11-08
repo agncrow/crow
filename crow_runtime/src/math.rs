@@ -484,6 +484,26 @@ fn sign_of(x: f64) -> f64 {
     }
 }
 
+/// The sine of a number, a libm call of its own. LLVM fuses a sine and a
+/// cosine of one value into one call wherever it sees both
+/// (`__sincos_stret` on Apple's platforms), and that call answers the last
+/// digit differently from `sin` now and then: a release build, where the
+/// two calls of `sin[t]` and `cos[t]` are inlined into the program's
+/// function, had printed other sines than `crow run -i` and `crow run`
+/// (tests/sine_alone.rs). Never inlined, so no build sees the pair; every
+/// sine and cosine the runtime and a generated program compute go through
+/// these two.
+#[inline(never)]
+pub fn sine(x: f64) -> f64 {
+    x.sin()
+}
+
+/// The cosine of a number, a libm call of its own (`sine` says why).
+#[inline(never)]
+pub fn cosine(x: f64) -> f64 {
+    x.cos()
+}
+
 macro_rules! elementwise {
     ($($number:ident, $tensor:ident, $rule:expr, $method:ident;)*) => {
         $(
@@ -507,8 +527,8 @@ elementwise! {
     log10_n, log10_t, |x| x.log10(), log10;
     log1p_n, log1p_t, |x| x.ln_1p(), log1p;
     expm1_n, expm1_t, |x| x.exp_m1(), expm1;
-    sin_n, sin_t, |x| x.sin(), sin;
-    cos_n, cos_t, |x| x.cos(), cos;
+    sin_n, sin_t, sine, sin;
+    cos_n, cos_t, cosine, cos;
     tan_n, tan_t, |x| x.tan(), tan;
     asin_n, asin_t, |x| x.asin(), asin;
     acos_n, acos_t, |x| x.acos(), acos;
@@ -890,21 +910,23 @@ pub fn stack_rows(t: &CrowTensor) -> Result<CrowTensor, String> {
     stack_rows_axis(t, 0)
 }
 
-/// `tensor[t]` of a tensor or a list of numbers.
+/// `tensor[t]` of a tensor or a list of numbers: placed on the GPU under
+/// `gpu[]`, as every constructor is (a program's tensors made of lists had
+/// stayed on the CPU, and a network trained under `gpu[]` ran there).
 pub fn tensor(t: &CrowTensor) -> CrowTensor {
-    t.clone()
+    t.clone().maybe_to_gpu()
 }
 
 /// `tensor[df]`: a frame's numeric columns as a matrix.
 pub fn tensor_of_frame(f: &CrowFrame) -> Result<CrowTensor, String> {
     let (data, rows, cols) = crate::frame::frame_to_tensor_data(f, None)?;
-    Ok(CrowTensor::from_vec(data, vec![rows, cols]))
+    Ok(CrowTensor::from_vec(data, vec![rows, cols]).maybe_to_gpu())
 }
 
 /// `tensor[df, columns]`.
 pub fn tensor_of_columns(f: &CrowFrame, cols: &[String]) -> Result<CrowTensor, String> {
     let (data, rows, n) = crate::frame::frame_to_tensor_data(f, Some(cols))?;
-    Ok(CrowTensor::from_vec(data, vec![rows, n]))
+    Ok(CrowTensor::from_vec(data, vec![rows, n]).maybe_to_gpu())
 }
 
 #[cfg(test)]

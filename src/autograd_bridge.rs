@@ -10,7 +10,7 @@ use crate::ast::{BinOp, UnaryOp};
 use crate::value::*;
 use crow_runtime::autograd::{self, Traced};
 use crow_runtime::tensor::CrowTensor;
-use crate::table::{Row, Tape};
+use crate::table::{Kind, Row, Tape};
 
 /// A traced value as the interpreter holds it.
 pub fn wrap(t: Traced) -> CrowValue {
@@ -22,6 +22,63 @@ pub fn any_traced(vals: &[CrowValue]) -> bool {
     vals.iter().any(|v| matches!(v.value, Value::Traced(_)))
 }
 
+/// Whether a list holds a traced value, at any depth: a list a function
+/// `grad` differentiates built of its traced numbers or tensors.
+pub fn holds_traced(items: &[CrowValue]) -> bool {
+    items.iter().any(|i| match &i.value {
+        Value::Traced(_) => true,
+        Value::Array(xs) => holds_traced(xs),
+        _ => false,
+    })
+}
+
+/// Whether a builtin's call runs on the tape: a traced value is handed,
+/// or a list of them to a row that lays a list's tensors out (`stack`,
+/// `Tape::Stack`) or takes a tensor where the list is handed (`tensor[[x[0],
+/// x[1]]]`, the tensor of the list's items) — a row that holds or reads a
+/// list takes one holding traced values as it takes any list (`push`,
+/// `len`).
+pub fn on_tape(row: Option<&'static Row>, name: &str, vals: &[CrowValue]) -> bool {
+    if any_traced(vals) {
+        return true;
+    }
+    let listed: Vec<usize> = vals.iter().enumerate().filter(|(_, v)| matches!(&v.value, Value::Array(items) if holds_traced(items))).map(|(i, _)| i).collect();
+    if listed.is_empty() {
+        return false;
+    }
+    let found = match row {
+        Some(r) => crate::table::tape_of(r, vals.len()).map(|t| (r, t)),
+        None => crate::table::tape_named(name, vals.len()),
+    };
+    match found {
+        Some((_, Tape::Stack(..))) => true,
+        Some((r, tape)) if !matches!(tape, Tape::Hold | Tape::Read) => listed.iter().any(|&i| matches!(r.params.get(i), Some(Kind::Tensor))),
+        _ => false,
+    }
+}
+
+/// A list's items as traced values, a list among them made the tensor of
+/// its own items first; an item that failed is the reason, in the words a
+/// list of plain numbers stops with.
+fn traced_items(items: &[CrowValue]) -> Result<Vec<Traced>, String> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| match &item.value {
+            _ if item.is_error() => Err(format!("item {} of the list failed: {}", i, item.reason())),
+            Value::Array(xs) => autograd::from_elements(&traced_items(xs)?),
+            other => traced_of(other),
+        })
+        .collect()
+}
+
+/// A list holding traced numbers or tensors handed where a tensor is taken
+/// (`tensor[items]`): the tensor of its items, on the tape — each item's
+/// gradient its slice (`autograd::from_elements`).
+pub fn elements(items: &[CrowValue]) -> Result<CrowValue, String> {
+    Ok(wrap(autograd::from_elements(&traced_items(items)?)?))
+}
+
 /// A value as a traced one: a traced value itself, a tensor or a number
 /// as a constant; anything else is the reason.
 pub fn traced_of(v: &Value) -> Result<Traced, String> {
@@ -31,6 +88,9 @@ pub fn traced_of(v: &Value) -> Result<Traced, String> {
         Value::Float(x) => Ok(Traced::number(*x)),
         Value::Int(n) => Ok(Traced::number(*n as f64)),
         Value::Dual(x, _) => Ok(Traced::number(*x)),
+        // (a list of traced numbers or tensors where a tensor is taken: the
+        // tensor of its items, on the tape)
+        Value::Array(items) => autograd::from_elements(&traced_items(items)?),
         other => Err(format!("grad: {} is not differentiable — a function grad differentiates computes with numbers and tensors", other.type_name())),
     }
 }
@@ -102,6 +162,17 @@ fn run(tape: Tape, row: &Row, name: &str, vals: &[CrowValue]) -> Result<CrowValu
             }
         }
         Tape::Same => wrap(one(0)?),
+        // (a list holds the traced value as it holds any value)
+        Tape::Hold => (row.call)(vals, "")?,
+        // a list's tensors side by side, the axis after the list
+        Tape::Stack(_, f) => {
+            let items = match vals.first().map(|v| &v.value) {
+                Some(Value::Array(xs)) => traced_items(xs)?,
+                _ => return Err(format!("{}[] takes a list of tensors", name)),
+            };
+            let axis = if vals.len() > 1 { int(1)? } else { 0 };
+            wrap(f(&items, axis)?)
+        }
         Tape::Whole => {
             let x = one(0)?.as_number().ok_or_else(|| format!("{}[] takes a number", name))?;
             CrowValue::ok(Value::Int(x as i64))

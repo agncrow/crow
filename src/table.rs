@@ -605,6 +605,13 @@ pub enum Tape {
     Same,
     /// a traced number's whole part, an int (`int[x]`)
     Whole,
+    /// the value held as an item, never computed with: a list holds a
+    /// traced value as it holds any (`push`: a recurrent layer's outputs,
+    /// one a step), and the derivative reaches it where it is read back
+    Hold,
+    /// a list's tensors side by side along a new axis, the int after the
+    /// list where one is written (`stack`)
+    Stack(&'static str, fn(&[Traced], i64) -> Result<Traced, String>),
 }
 
 impl Tape {
@@ -615,7 +622,7 @@ impl Tape {
             // (the value itself: a row's later arguments only say how it is
             // checked — the rank and the function's name a copy's hand-off
             // checks it by)
-            Tape::Same => n == row.params.len(),
+            Tape::Same | Tape::Hold | Tape::Stack(..) => n == row.params.len(),
             Tape::Axis(..) => n == 2,
             Tape::Bounds(..) | Tape::Span(..) | Tape::Choose(..) => n == 3,
             Tape::Join(..) => n == 2 || n == 3,
@@ -628,8 +635,8 @@ impl Tape {
     /// that call none).
     pub fn path(&self) -> String {
         match self {
-            Tape::Map(p, _) | Tape::Axis(p, _) | Tape::Bounds(p, _) | Tape::Join(p, _) | Tape::Span(p, _) | Tape::Choose(p, _) | Tape::Shape(p, _) => p.replace(' ', ""),
-            Tape::Read | Tape::Same | Tape::Whole => String::new(),
+            Tape::Map(p, _) | Tape::Axis(p, _) | Tape::Bounds(p, _) | Tape::Join(p, _) | Tape::Span(p, _) | Tape::Choose(p, _) | Tape::Shape(p, _) | Tape::Stack(p, _) => p.replace(' ', ""),
+            Tape::Read | Tape::Same | Tape::Whole | Tape::Hold => String::new(),
         }
     }
 }
@@ -2199,7 +2206,7 @@ pub static ROWS: &[Row] = &[
     // no row takes is refused before the program runs: compiled, `has` of a
     // list and `len` of a number did not build, and `contains` of a record
     // did not compare.
-    Row { props: &[Prop::Differentiable], range: IntRange::Count, ..row!("core.len", "", "len", crow_runtime::core::len, (Seq) -> Int, never) },
+    Row { tape: Some(Tape::Read), props: &[Prop::Differentiable], range: IntRange::Count, ..row!("core.len", "", "len", crow_runtime::core::len, (Seq) -> Int, never) },
     Row { props: &[Prop::Differentiable], range: IntRange::Count, ..row!("core.len_text", "", "len", crow_runtime::core::len_text, (Str) -> Int, never) },
     Row { props: &[Prop::Differentiable], range: IntRange::Count, ..maprow!("core.len_map", "len", crow_runtime::core::len_map, (MapRef) -> Int, never, maps::len, maps::len_taken) },
     Row { props: &[Prop::Differentiable], range: IntRange::Count, ..row!("core.len_column", "", "len", crow_runtime::core::len_column, (Column) -> Int, never) },
@@ -2232,7 +2239,7 @@ pub static ROWS: &[Row] = &[
     Row { taken: Some("crow_runtime::core::slice_taken"), take: lists::slice_taken, ..row!("core.slice", "", "slice", crow_runtime::core::slice, (Seq, Int, Int) -> List, never) },
     row!("core.slice_str", "", "slice", crow_runtime::core::slice_str, (Str, Int, Int) -> Str, never),
     Row { tape: tape!(Span, crow_runtime::autograd::slice), shape: Shape::Like(0, Dim::Open), props: &[Prop::Differentiable], ..row!("core.slice_tensor", "", "slice", crow_runtime::core::slice_tensor, (Tensor, Int, Int) -> Tensor, never) },
-    Row { props: &[Prop::InPlace], ..row!("core.push", "", "push", crow_runtime::core::push, (List, Item) -> List, never) },
+    Row { tape: Some(Tape::Hold), props: &[Prop::InPlace], ..row!("core.push", "", "push", crow_runtime::core::push, (List, Item) -> List, never) },
     Row { shape: Shape::Like(0, Dim::Open), props: &[Prop::InPlace], ..row!("core.push_row", "", "push", crow_runtime::core::push_row, (Tensor, Tensor) -> Tensor, stops) },
     // (given the tensor — `x = push[move x, n]` — it grows where it lies)
     Row { shape: Shape::Dims(&[Dim::Open]), taken: Some("crow_runtime::core::push_number_taken"), props: &[Prop::InPlace], take: tensors::push_number_taken, ..row!("core.push_number", "", "push", crow_runtime::core::push_number, (Tensor, Float) -> Tensor, stops) },
@@ -2303,7 +2310,11 @@ pub static ROWS: &[Row] = &[
     row!("text.decode", "", "decode", crow_runtime::text::decode_as, (Str, Str) -> Str, value "parse"),
     // log: the values as they show, one display for both modes (compiled,
     // an error without a value among several did not build)
-    Row { props: &[Prop::Differentiable, Prop::Does(crate::effects::Effect::Console)], ..row!("display.log", "", "log", crow_runtime::display::log, (Shows) -> Unit, never) },
+    // (inside a function `grad` differentiates, `log` prints a traced
+    // value's numbers, read off the tape: the interpreter had stopped
+    // there, "`log` is not differentiable", where the compiled program
+    // printed and the spec says it prints — parity 514)
+    Row { tape: Some(Tape::Read), props: &[Prop::Differentiable, Prop::Does(crate::effects::Effect::Console)], ..row!("display.log", "", "log", crow_runtime::display::log, (Shows) -> Unit, never) },
     maprow!("core.map_new", "map", crow_runtime::core::map_new, () -> MapOf, never, maps::new, maps::new_taken),
     // a plain number's math (on the dual numbers a function grad
     // differentiates, each keeps the derivative's own form)
@@ -2590,9 +2601,9 @@ pub static ROWS: &[Row] = &[
     Row { tape: tape!(Map, crow_runtime::autograd::expm1), shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.expm1_t", "math", "expm1", crow_runtime::math::expm1_t, (Tensor) -> Tensor, never) },
     Row { tape: tape!(Map, crow_runtime::autograd::log10), dual: Some(|a| (a.log10(), 1.0 / (a * std::f64::consts::LN_10))), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log10_n", "math", "log10", crow_runtime::math::log10_n, (Float) -> Float, never) },
     Row { tape: tape!(Map, crow_runtime::autograd::log10), shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.log10_t", "math", "log10", crow_runtime::math::log10_t, (Tensor) -> Tensor, never) },
-    Row { tape: tape!(Map, crow_runtime::autograd::sin), dual: Some(|a| (a.sin(), a.cos())), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sin_n", "math", "sin", crow_runtime::math::sin_n, (Float) -> Float, never) },
+    Row { tape: tape!(Map, crow_runtime::autograd::sin), dual: Some(|a| (crow_runtime::math::sine(a), crow_runtime::math::cosine(a))), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sin_n", "math", "sin", crow_runtime::math::sin_n, (Float) -> Float, never) },
     Row { tape: tape!(Map, crow_runtime::autograd::sin), shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.sin_t", "math", "sin", crow_runtime::math::sin_t, (Tensor) -> Tensor, never) },
-    Row { tape: tape!(Map, crow_runtime::autograd::cos), dual: Some(|a| (a.cos(), -a.sin())), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cos_n", "math", "cos", crow_runtime::math::cos_n, (Float) -> Float, never) },
+    Row { tape: tape!(Map, crow_runtime::autograd::cos), dual: Some(|a| (crow_runtime::math::cosine(a), -crow_runtime::math::sine(a))), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cos_n", "math", "cos", crow_runtime::math::cos_n, (Float) -> Float, never) },
     Row { tape: tape!(Map, crow_runtime::autograd::cos), shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.cos_t", "math", "cos", crow_runtime::math::cos_t, (Tensor) -> Tensor, never) },
     Row { tape: tape!(Map, crow_runtime::autograd::tan), dual: Some(|a| (a.tan(), 1.0 + a.tan() * a.tan())), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tan_n", "math", "tan", crow_runtime::math::tan_n, (Float) -> Float, never) },
     Row { tape: tape!(Map, crow_runtime::autograd::tan), shape: Shape::Same(0), props: &[Prop::Differentiable, Prop::Dual], ..row!("math.tan_t", "math", "tan", crow_runtime::math::tan_t, (Tensor) -> Tensor, never) },
@@ -2659,8 +2670,8 @@ pub static ROWS: &[Row] = &[
     Row { shape: Shape::Dims(&[Dim::Open]), ..row!("math.spmv", "math", "spmv", crow_runtime::math::spmv, (Sparse, Tensor) -> Tensor, stops) },
     Row { shape: Shape::Same(1), ..row!("math.solve_sparse", "math", "solve", crow_runtime::math::solve_sparse, (Sparse, Tensor) -> Tensor, stops) },
     Row { shape: Shape::Same(1), ..row!("math.solve", "math", "solve", crow_runtime::math::solve, (Tensor, Tensor) -> Tensor, stops) },
-    Row { shape: Shape::Stacked(0), ..row!("math.stack", "math", "stack", crow_runtime::math::stack, (Tensors) -> Tensor, stops) },
-    Row { shape: Shape::Restacked(0), options: &[("axis", Preset::Asked)], ..row!("math.stack_axis", "math", "stack", crow_runtime::math::stack_axis, (Tensors, Int) -> Tensor, stops) },
+    Row { tape: Some(Tape::Stack("crow_runtime::autograd::stack", crow_runtime::autograd::stack)), shape: Shape::Stacked(0), props: &[Prop::Differentiable], ..row!("math.stack", "math", "stack", crow_runtime::math::stack, (Tensors) -> Tensor, stops) },
+    Row { tape: Some(Tape::Stack("crow_runtime::autograd::stack", crow_runtime::autograd::stack)), shape: Shape::Restacked(0), options: &[("axis", Preset::Asked)], props: &[Prop::Differentiable], ..row!("math.stack_axis", "math", "stack", crow_runtime::math::stack_axis, (Tensors, Int) -> Tensor, stops) },
     Row { shape: Shape::Stacked(0), ..row!("math.stack_rows", "math", "stack", crow_runtime::math::stack_rows, (Tensor) -> Tensor, stops) },
     Row { shape: Shape::Restacked(0), ..row!("math.stack_rows_axis", "math", "stack", crow_runtime::math::stack_rows_axis, (Tensor, Int) -> Tensor, stops) },
     Row { shape: Shape::Dims(&[Dim::Open, Dim::Open]), props: &[Prop::Constructs], ..row!("math.tensor_of_frame", "math", "tensor", crow_runtime::math::tensor_of_frame, (Frame) -> Tensor, stops) },
@@ -3147,6 +3158,14 @@ pub fn runtime_rows(name: &str) -> impl Iterator<Item = &'static Row> {
     rows_named(name).filter(move |r| r.name == name && table.contains(&(*r as *const Row)))
 }
 
+/// The forms of a name (`FORMS`, by their own name), in the table's order,
+/// read from the index: the lowering asks for them at every call it
+/// resolves, as it asks for `runtime_rows`.
+pub fn forms_named(name: &str) -> impl Iterator<Item = &'static Row> {
+    let table = FORMS.as_ptr_range();
+    rows_named(name).filter(move |r| r.name == name && table.contains(&(*r as *const Row)))
+}
+
 /// A module's rows of a name, the forms included.
 /// Whether the builtin of this name runs its function under a name's lock
 /// (`Prop::Revises`): the backends' question, answered by the form's row.
@@ -3389,7 +3408,7 @@ pub fn core(name: &str) -> Option<&'static Row> {
 /// it picks; a call it leaves by name (an argument of unknown kind, a
 /// parsed value) has its row picked from the values as the program runs.
 pub fn core_row(name: &str, args: &[Arg]) -> Option<&'static Row> {
-    ROWS.iter().filter(|r| r.module.is_empty() && r.name == name).find(|r| takes(r, args))
+    runtime_rows(name).filter(|r| r.module.is_empty()).find(|r| takes(r, args))
 }
 
 /// Whether a form of the name says it answers its failure as a value
@@ -3407,11 +3426,11 @@ pub fn form_fails(name: &str) -> bool {
 /// candidate: `text['abc']` under `use sys` alone is sys's row's to
 /// refuse, and had printed a bare `text(…)` no crate declares.
 pub fn other_form_takes(module: &str, name: &str, args: &[Arg], loaded: &dyn Fn(&str) -> bool) -> bool {
-    FORMS.iter().any(|r| r.name == name && !r.module.is_empty() && r.module != module && loaded(r.module) && takes(r, args))
+    forms_named(name).any(|r| !r.module.is_empty() && r.module != module && loaded(r.module) && takes(r, args))
 }
 
 pub fn form_answer(name: &str, args: &[Arg]) -> Option<&'static Row> {
-    FORMS.iter().filter(|r| r.name == name && r.props.contains(&Prop::Answers)).find(|r| takes(r, args))
+    forms_named(name).filter(|r| r.props.contains(&Prop::Answers)).find(|r| takes(r, args))
 }
 
 /// The function parameters of a row of the name taking this many
@@ -3520,7 +3539,8 @@ pub const READ_FIRST: &str = " — a value whose type the program does not know 
 pub fn refusal(modules: &[&str], name: &str, args: &[Arg]) -> Option<String> {
     // (a form that declares its kinds — a function parameter, its answer —
     // is checked as a runtime row is)
-    let rows: Vec<&Row> = ROWS.iter().chain(FORMS.iter().filter(|r| checked_form(r))).filter(|r| r.name == name && modules.contains(&r.module)).collect();
+    let forms = FORMS.as_ptr_range();
+    let rows: Vec<&Row> = rows_named(name).filter(|r| r.name == name && modules.contains(&r.module) && (!forms.contains(&(*r as *const Row)) || checked_form(r))).collect();
     if rows.is_empty() || rows.iter().any(|r| takes_known(r, args)) {
         return None;
     }
@@ -4071,11 +4091,11 @@ pub fn module_of_bare(name: &str, providers: &[&str], kinds: &[Arg], loaded: &dy
 }
 
 pub fn row_taking(module: &str, name: &str, args: &[Arg]) -> Option<&'static Row> {
-    ROWS.iter().find(|r| r.module == module && r.name == name && takes(r, args))
+    runtime_rows(name).find(|r| r.module == module && takes(r, args))
 }
 
 pub fn module(module: &str, name: &str, args: &[Arg]) -> Option<&'static Row> {
-    let named = || ROWS.iter().filter(move |r| r.module == module && r.name == name);
+    let named = || runtime_rows(name).filter(move |r| r.module == module);
     named()
         .find(|r| takes(r, args))
         .or_else(|| named().find(|r| spans(r.params, args.len(), r.name).is_ok()))
@@ -4086,7 +4106,7 @@ pub fn module(module: &str, name: &str, args: &[Arg]) -> Option<&'static Row> {
 /// takes, naming every count the name takes (`rsi[] takes 2 or 4
 /// arguments, got 3`); none when a row takes it.
 pub fn miscounted(module: &str, name: &str, argc: usize) -> Option<String> {
-    let rows: Vec<&Row> = ROWS.iter().filter(|r| r.module == module && r.name == name).collect();
+    let rows: Vec<&Row> = runtime_rows(name).filter(|r| r.module == module).collect();
     if rows.is_empty() || rows.iter().any(|r| spans(r.params, argc, name).is_ok()) {
         return None;
     }
@@ -4488,6 +4508,43 @@ mod tests {
         assert!(stamps("read") && !stamps("sqrt") && has("push", Prop::InPlace) && !has("sqrt", Prop::InPlace));
     }
 
+    /// A row's written name is read from an index, and is the name a scan
+    /// of the table finds: the growing form's row is named by the row that
+    /// grows into it (`__floor_big` is `floor`), any other by its own.
+    #[test]
+    fn a_rows_written_name_is_read_without_a_scan_of_the_table() {
+        let scan = |row: &'static Row| -> &'static str {
+            if !row.written.is_empty() {
+                return row.written;
+            }
+            ROWS.iter().find(|r| big_form(r.id).is_some_and(|b| std::ptr::eq(b, row))).map_or(row.name, |r| r.name)
+        };
+        for row in ROWS.iter().chain(FORMS.iter()) {
+            assert_eq!(written_name(row), scan(row), "row {}", row.id);
+        }
+        let floor_big = ROWS.iter().find(|r| r.id == "core.__floor_big").expect("floor's growing form");
+        assert_eq!(written_name(floor_big), "floor");
+        let rows: Vec<&'static Row> = ROWS.iter().take(200).collect();
+        let began = std::time::Instant::now();
+        let mut read = 0usize;
+        for _ in 0..20 {
+            for r in &rows {
+                read += written_name(r).len();
+            }
+        }
+        let by_index = began.elapsed();
+        let began = std::time::Instant::now();
+        let mut scanned = 0usize;
+        for _ in 0..20 {
+            for r in &rows {
+                scanned += scan(r).len();
+            }
+        }
+        let by_scan = began.elapsed();
+        assert_eq!(read, scanned);
+        assert!(by_index * 10 < by_scan, "the index took {:?} where a scan took {:?}", by_index, by_scan);
+    }
+
     /// Every row is reachable: no earlier row of its name and module takes
     /// every argument it takes, or the first-fit lookup would never reach
     /// it (`str[column]` had been listed after the form that shows any
@@ -4619,11 +4676,42 @@ pub fn big_form(id: &str) -> Option<&'static Row> {
 /// of any size, and `floor[x]` of one became the growing form, which no
 /// dual reaches (the interpreter did not run it, the compiled program cast
 /// the dual to a float).
+/// Worked out once for every row and read by the row's place in `ROWS`:
+/// the interpreter asks it of every call a differentiated function makes
+/// with a traced value, and a scan of the table for each row's growing
+/// form (a scan in turn) had been three fifths of a GPT's training
+/// interpreted.
 pub fn written_name(row: &'static Row) -> &'static str {
     if !row.written.is_empty() {
         return row.written;
     }
-    ROWS.iter().find(|r| big_form(r.id).is_some_and(|b| std::ptr::eq(b, row))).map_or(row.name, |r| r.name)
+    static NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    let names = NAMES.get_or_init(|| {
+        let mut place: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
+        for (i, r) in ROWS.iter().enumerate() {
+            place.entry(r.id).or_insert(i);
+        }
+        let mut names: Vec<&'static str> = ROWS.iter().map(|r| r.name).collect();
+        let mut named = vec![false; ROWS.len()];
+        // (the first row whose growing form a row is names it, as a scan
+        // in the table's order finds it)
+        for r in ROWS.iter() {
+            let Some(big) = place.get(r.id).and_then(|&first| ROWS[first].big) else { continue };
+            if let Some(&at) = place.get(big)
+                && !named[at]
+            {
+                names[at] = r.name;
+                named[at] = true;
+            }
+        }
+        names
+    });
+    let size = std::mem::size_of::<Row>();
+    let (at, start) = (row as *const Row as usize, ROWS.as_ptr() as usize);
+    if size > 0 && at >= start && at < start + std::mem::size_of_val(ROWS) {
+        return names[(at - start) / size];
+    }
+    row.name
 }
 
 /// The name a program writes for an effect's name (bare, or with its

@@ -283,10 +283,65 @@ pub struct Part {
     /// belong to (the part's prefix; "" for the entry's own): what a part
     /// does before anything runs (a connection it opens, a page it serves).
     pub main_effects: std::collections::BTreeMap<String, Vec<String>>,
-    /// The functions `grad` differentiates over tensors, and those they
-    /// reach: run on traced values, copied over them when compiled, left
-    /// alone by the fusion pass (lower_ir::grad).
+    /// The functions `grad` differentiates over tensors, and those a call
+    /// hands a value that carries a derivative: run on traced values,
+    /// copied over them when compiled, left alone by the fusion pass
+    /// (lower_ir::grad).
     pub traced: std::collections::BTreeSet<String>,
+    /// The names of each traced function that carry a derivative
+    /// (`carries_derivative`): the parameters a call hands one, and the
+    /// locals computed from them. The compiled copy holds a list or a
+    /// record of them in its traced form, and a call none of them reaches
+    /// is the plain one.
+    pub active: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+}
+
+/// Whether a value of the type can hold a number `grad` differentiates: a
+/// number, a tensor, or a record, a list or a map that can hold one. A
+/// whole number, a truth and text cannot: `len[x]`, `x.shape` and `x gt
+/// 0.0` are constants of the tape, and so is what is made of them.
+pub fn can_carry_derivative(t: &Ty) -> bool {
+    match t.payload() {
+        Ty::Float | Ty::Tensor(..) | Ty::Record(_) | Ty::OptRecord(_) | Ty::Unknown => true,
+        Ty::List(i) | Ty::Map(_, i) => can_carry_derivative(i),
+        _ => false,
+    }
+}
+
+/// Whether an expression of a traced function carries a derivative, given
+/// the names that do (`Part.active`): its value can hold a number, and it
+/// is made from such a name — through any operator, call, field, index or
+/// literal. A function's answer depends only on what it is handed (it sees
+/// no top-level name), so a call none of whose arguments carries one
+/// carries none. One rule, read by the check (lower_ir::grad) and the
+/// compiled copy.
+pub fn carries_derivative(e: &Expr, names: &std::collections::BTreeSet<String>) -> bool {
+    if !can_carry_derivative(&e.ty()) {
+        return false;
+    }
+    match e {
+        Expr::Local(n, _) | Expr::Move(n, _) => names.contains(n),
+        Expr::Call { args, .. } => args.iter().any(|a| carries_derivative(a, names)),
+        Expr::Convert { expr, .. } | Expr::Unary { expr, .. } | Expr::Field { base: expr, .. } | Expr::Meta { base: expr, .. } => carries_derivative(expr, names),
+        Expr::Binary { l, r, .. } => carries_derivative(l, names) || carries_derivative(r, names),
+        Expr::Index { base, indices, .. } => carries_derivative(base, names) || indices.iter().any(|i| carries_derivative(i, names)),
+        Expr::ListLit(items, _) => items.iter().any(|i| carries_derivative(i, names)),
+        Expr::MapLit(pairs, _) => pairs.iter().any(|(_, v)| carries_derivative(v, names)),
+        Expr::RecordLit { fields, .. } => fields.iter().any(|f| carries_derivative(f, names)),
+        Expr::ForExpr { iter, body, .. } => carries_derivative(iter, names) || yields_derivative(body, names),
+        _ => false,
+    }
+}
+
+/// Whether a collecting loop's body yields an item that carries a
+/// derivative: its last line, or the last line of a branch it ends in (a
+/// value let go before it is no item).
+pub fn yields_derivative(block: &[Stmt], names: &std::collections::BTreeSet<String>) -> bool {
+    match block.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
+        Some(Stmt::Do(e)) => carries_derivative(e, names),
+        Some(Stmt::If { then, els, .. }) => yields_derivative(then, names) || els.as_ref().is_some_and(|e| yields_derivative(e, names)),
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -56,9 +56,10 @@ impl CrowTensor {
         self.map(gamma_scalar)
     }
 
-    /// Element-wise error function.
+    /// Element-wise error function (on the GPU where the tensor lies
+    /// there: a GELU's).
     pub fn erf(&self) -> CrowTensor {
-        self.map(erf_scalar)
+        self.gpu_unary_or_cpu(crate::gpu::Op::Erf, erf_scalar)
     }
 
     /// Bessel function J_n(x) element-wise. `n` is the integer order.

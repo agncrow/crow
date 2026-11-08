@@ -1,0 +1,19 @@
+--- `log` inside a function `grad` differentiates prints what it is handed,
+--- a traced number or tensor as its numbers, in a helper too (spec,
+--- Automatic Differentiation: "`log` inside `f` prints the value"). The
+--- interpreter had stopped there, "`log` is not differentiable", where the
+--- compiled program printed: the row of `log` reads the tape's values now.
+use math
+
+fn scaled[v]
+    log[v]
+    return v .* 2.0
+
+fn loss[x]
+    s = sum[x .* x]
+    log[s]
+    log[x]
+    log['the loss is `s`']
+    return s + sum[scaled[x]]
+
+log[grad[loss][tensor[[1.0, 2.0]]]]

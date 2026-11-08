@@ -151,28 +151,29 @@ impl Emitter {
                     if self.emitting_dual {
                         return inner;
                     }
-                    // (and so is the traced number `floor` of a traced one is)
-                    if self.emitting_traced && self.traced_whole(expr) {
-                        return inner;
-                    }
-                    // an int that grows: its nearest float
+                    // an int that grows: its nearest float; any other int,
+                    // the float it is. In a traced copy, a constant of the
+                    // tape: a whole number carries no derivative (`floor` of
+                    // a traced number is the IR's whole number there, which
+                    // a position or `min` of ints reads — it had been a
+                    // traced number only this conversion took: parity 519)
                     let big = matches!(Self::inner(&self.tt(expr)), Ty::Big);
-                    if big && matches!(ty, Ty::Result(_)) {
-                        return format!("{{ let _r = &({}); CrowResult {{ ok: _r.ok, value: (_r.value).to_f64(), reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: _r.captured }} }}", inner);
-                    }
-                    if big {
-                        return format!("({}).to_f64()", inner);
-                    }
-                    if self.emitting_traced {
-                        format!("crow_runtime::autograd::Traced::number(({}) as f64)", inner)
-                    } else if matches!(ty, Ty::Result(_)) {
+                    let float = |v: &str| if big { format!("({}).to_f64()", v) } else { format!("(({}) as f64)", v) };
+                    if matches!(ty, Ty::Result(_)) {
                         // a value that can fail, converted as one: its payload
                         // converted, its failure kept (a conversion typed plain
                         // reads the payload the propagation unwrapped)
-                        format!("{{ let _r = {}; CrowResult {{ ok: _r.ok, value: (_r.value as f64), reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}", inner)
-                    } else {
-                        format!("(({}) as f64)", inner)
+                        let value = self.payload_form(&float("_r.value"), &Ty::Float);
+                        return if big {
+                            format!("{{ let _r = &({}); CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: _r.captured }} }}", inner, value)
+                        } else {
+                            format!("{{ let _r = {}; CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}", inner, value)
+                        };
                     }
+                    if self.emitting_traced {
+                        return format!("crow_runtime::autograd::Traced::number({})", float(&inner));
+                    }
+                    float(&inner)
                 }
                 Convert::IntsToFloats => {
                     let inner = self.owned_expr(expr);
@@ -239,18 +240,32 @@ impl Emitter {
                     let inner = self.expr(expr);
                     let ints = matches!(ty.payload(), Ty::List(e) if **e == Ty::Int);
                     let as_list = if ints { ".to_vec().into_iter().map(|x| x as i64).collect::<Vec<i64>>()" } else { ".to_vec()" };
+                    // (a traced copy holds a tensor traced, or plain where
+                    // nothing made it traced: its numbers are read where
+                    // they lie either way — `.to_vec()` of a traced
+                    // parameter had not built; parity 515)
+                    let traced = self.emitting_traced;
+                    let numbers = |v: &str| if traced { format!("crow_runtime::autograd::TensorOf::tensor_of(&({}))", v) } else { format!("({})", v) };
                     // (a tensor that can fail: its payload converted, its
                     // failure kept — it had been left a tensor in a result
                     // of a list, which did not build)
                     if matches!(ty, Ty::Result(_)) && matches!(self.tt(expr), Ty::Result(p) if matches!(p.as_ref(), Ty::Tensor(..))) {
-                        return format!("{{ let _r = {}; CrowResult {{ ok: _r.ok, value: (_r.value){}, reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}", inner, as_list);
+                        return format!("{{ let _r = {}; CrowResult {{ ok: _r.ok, value: {}{}, reason: _r.reason, kind: _r.kind, trace: _r.trace, captured: _r.captured }} }}", inner, numbers("_r.value"), as_list);
                     }
                     if !matches!(self.tt(expr), Ty::Tensor(..)) {
                         return inner;
                     }
-                    format!("({}){}", inner, as_list)
+                    format!("{}{}", numbers(&inner), as_list)
                 }
                 Convert::ToTensor => {
+                    // (a list holding traced numbers or tensors, in a function
+                    // `grad` differentiates: the tensor of its items on the
+                    // tape — emit_rs/traced.rs)
+                    let held = as_inferred(&self.tt(expr));
+                    if self.carries(expr) && self.held_traced(&held) {
+                        let inner = self.expr(expr);
+                        return self.traced_elements(&inner, &held);
+                    }
                     // (an empty list literal where a tensor is held — a map's
                     // value, a list's item — is the empty tensor: `vec![]`
                     // names no item type to map over)
@@ -1209,6 +1224,8 @@ impl Emitter {
                 _ => (self.operand(e), format!("_un_{}.value.clone()", ctr)),
             };
             let turned = match op {
+                // (a traced number's or tensor's minus is the kernel's)
+                "neg" if self.traced_payload(&ty) => format!("crow_runtime::autograd::neg({})", Self::tr(&payload)),
                 "neg" if matches!(ty, Ty::Tensor(..) | Ty::Big | Ty::Decimal | Ty::Fraction) => format!("({}).neg()", payload),
                 "neg" if matches!(ty, Ty::Int) => format!("crow_runtime::stops::neg({}).unwrap_or_else(|e| crow_stop({}, e))", payload, self.line_now()),
                 "neg" => format!("(-({}))", payload),
@@ -1216,7 +1233,7 @@ impl Emitter {
                 _ if matches!(&ty, Ty::List(i) if matches!(i.as_ref(), Ty::Bool)) => format!("{}.iter().map(|_b| !*_b).collect::<Vec<bool>>()", payload),
                 _ => format!("(!({}))", payload),
             };
-            let default_val = ty.default_rust_value();
+            let default_val = self.payload_default(&ty);
             return format!(
                 "{{ let _un_{c} = &({}); if !_un_{c}.ok {{ CrowResult {{ ok: false, value: {}, reason: _un_{c}.reason.clone(), kind: _un_{c}.kind.clone(), trace: _un_{c}.trace.clone(), captured: 0.0 }} }} else {{ CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} }}",
                 inner,
@@ -1412,6 +1429,10 @@ impl Emitter {
                 return format!("crow_runtime::autograd::at({}, ({}) as i64){}", Self::tr(&b), idx, self.or_stop());
             }
             Ty::Tensor(el, dims) => {
+                // (a traced copy's tensor read as the numbers it holds — a
+                // whole number of a tensor of them — where they lie, in
+                // either form the copy holds it: parity 515)
+                let b = if self.emitting_traced { format!("(*crow_runtime::autograd::TensorOf::tensor_of(&({})))", b) } else { b };
                 if matches!(idx_ty, Some(Ty::Tensor(..))) {
                     return format!("{}.try_gather(&{}){}", b, idx, self.or_stop());
                 }
@@ -1437,7 +1458,9 @@ impl Emitter {
                 format!("{{ let _i = {}; crow_runtime::core::number_at(&{}, _i).unwrap_or_else(|e| crow_stop({}, e)){} }}", idx, b, line, cast)
             }
             Ty::List(el) => {
-                let suffix = if Self::is_copy_type(el) { "" } else { ".clone()" };
+                // (a list that carries a derivative holds traced values,
+                // which are no Copy: emit_rs/traced.rs)
+                let suffix = if Self::is_copy_type(el) && !self.carries(base) { "" } else { ".clone()" };
                 format!("{{ let _i = {}; let _v = &{}; _v[{}]{} }}", idx, b, self.index_at("_i", "_v.len()"), suffix)
             }
             // a character, read with what is known of the text's start (a
@@ -1641,7 +1664,7 @@ impl Emitter {
         if matches!(oinner, Ty::Tensor(..)) {
             let t = if matches!(oty, Ty::Result(_)) { format!("{}.value.clone()", obj) } else { obj.clone() };
             match field {
-                "shape" => return format!("{}.shape().iter().map(|&s| s as i64).collect::<Vec<i64>>()", if self.emitting_traced { format!("({}).value", Self::tr(&t)) } else { t.to_string() }),
+                "shape" => return format!("{}.shape().iter().map(|&s| s as i64).collect::<Vec<i64>>()", if self.emitting_traced { format!("crow_runtime::autograd::TensorOf::tensor_of(&({}))", t) } else { t.to_string() }),
                 "dtype" => return "\"float\".to_string()".to_string(),
                 "device" => return format!("if {}.is_gpu() {{ \"gpu\".to_string() }} else {{ \"cpu\".to_string() }}", t),
                 "grad" => return "\"none\".to_string()".to_string(),
@@ -1796,9 +1819,41 @@ impl Emitter {
 
     // ── literals ────────────────────────────────────────────────────
 
+    /// Whether a literal's item is a constant: a number written, its minus,
+    /// a conversion of one, or a literal list of them.
+    fn constant_item(e: &Expr) -> bool {
+        match e {
+            Expr::Const(..) => true,
+            Expr::Unary { expr, .. } | Expr::Convert { expr, .. } => Self::constant_item(expr),
+            Expr::ListLit(items, _) => items.iter().all(Self::constant_item),
+            _ => false,
+        }
+    }
+
     fn list_lit(&mut self, items: &[Expr], ty: &Ty) -> String {
         let lt = as_inferred(ty).text();
         if let Ty::Tensor(..) = &lt {
+            // (a literal whose numbers carry a derivative, in a function
+            // `grad` differentiates — `[[x[0], x[1]], [x[1] * x[0], 3.0]]` —
+            // is the tensor of its items on the tape, each a traced value:
+            // its items had been printed as the plain copy's, and did not
+            // build; parity 517. So is one holding a number the copy
+            // computes or is handed, which carries none but is a traced
+            // value there, as every number of the copy is: `[s, s * 2.0]`
+            // had been printed as plain numbers; parity 519)
+            let whole = matches!(&lt, Ty::Tensor(e, _) if matches!(e.as_ref(), Ty::Int));
+            let held = |me: &Self, i: &Expr| me.carries(i) || (me.emitting_traced && !whole && !Self::constant_item(i));
+            if !items.is_empty() && items.iter().any(|i| held(self, i)) {
+                self.needs_crow_runtime = true;
+                let elems: Vec<String> = items
+                    .iter()
+                    .map(|i| {
+                        let s = self.expr(i);
+                        format!("crow_runtime::autograd::AsTraced::traced(&({})).into_owned()", s)
+                    })
+                    .collect();
+                return format!("crow_runtime::autograd::from_elements(&[{}]){}", elems.join(", "), self.or_stop());
+            }
             if !items.is_empty() {
                 let elem_is_tensor = items.iter().any(|i| matches!(self.tt(i), Ty::Tensor(..)));
                 self.needs_crow_runtime = true;
@@ -1817,7 +1872,6 @@ impl Emitter {
                 let was = std::mem::replace(&mut self.emitting_traced, false);
                 // (a computed whole number in a vector of whole numbers is held
                 // exactly, or stops past 2^53, as the interpreter does)
-                let whole = matches!(&lt, Ty::Tensor(e, _) if matches!(e.as_ref(), Ty::Int));
                 let vals: Vec<String> = items
                     .iter()
                     .map(|i| {
@@ -1839,6 +1893,7 @@ impl Emitter {
         }
         // a list of results holds a plain item as a result that did not fail
         let of_results = matches!(&lt, Ty::List(inner) if matches!(inner.as_ref(), Ty::Result(_)));
+        let traced_items = self.held_traced(&lt) && items.iter().any(|i| self.carries(i));
         let vals: Vec<String> = if let Ty::Fn(_, _) = &inner_type {
             let ft = inner_type.to_rust_type();
             items.iter().map(|i| format!("{} as {}", self.expr(i), ft)).collect()
@@ -1851,6 +1906,9 @@ impl Emitter {
                     let s = self.owned_expr(i);
                     match &lt {
                         Ty::List(item) if of_results => self.as_item(s, &self.tt(i), item),
+                        // (a list of a traced copy's that carries a
+                        // derivative holds each item in its traced form)
+                        Ty::List(item) if traced_items => self.traced_form(&s, item),
                         _ => s,
                     }
                 })
@@ -1947,6 +2005,10 @@ impl Emitter {
             None => return format!("compile_error!(\"unknown struct '{}'\")", name),
         };
         let mut inits = Vec::new();
+        // (in a traced copy, a record that carries a derivative is its twin,
+        // each field in its traced form; one that carries none is plain, its
+        // numbers read: emit_rs/traced.rs)
+        let twin = self.emitting_traced && self.traced_records.contains(name) && fields.iter().any(|f| self.carries(f));
         for ((fname, fty), e) in def.fields.iter().zip(fields.iter()) {
             // a variable read before its last use is copied into the field
             // (`Tape[ts, cs, cs, cs, vs]` moved `cs` three times); the last,
@@ -1993,8 +2055,19 @@ impl Emitter {
                 // fallible comparison)
                 let owned = self.as_item(owned, &self.tt(e), &crate::lower_ir::as_inferred(fty));
                 let owned = Self::as_items(owned, &self.tt(e), &crate::lower_ir::as_inferred(fty));
+                let field_ty = crate::lower_ir::as_inferred(fty);
+                let owned = if twin {
+                    self.traced_form(&owned, &field_ty)
+                } else if self.emitting_traced {
+                    self.plain_form(&owned, &field_ty)
+                } else {
+                    owned
+                };
                 inits.push(format!("{}: {}", Self::rust_field(fname), owned));
             }
+        }
+        if twin {
+            return format!("_Traced_{} {{ {} }}", name, inits.join(", "));
         }
         format!("{} {{ {} }}", name, inits.join(", "))
     }
@@ -2780,7 +2853,9 @@ impl Emitter {
 
     #[allow(clippy::too_many_arguments)]
     fn propagation_block(&self, idx: &[usize], orig: &[String], held: &[bool], hoisted: &[(usize, String, String)], inner: &str, inner_type: &Ty, already: bool, stop_as: Option<String>) -> String {
-        let default_val = inner_type.default_rust_value();
+        // (in a traced copy, a number or a tensor is traced, a failed one's
+        // placeholder included: emit_rs/traced.rs)
+        let default_val = self.payload_default(inner_type);
         let trace = self.trace_format_expr();
         let error_result = |i: usize| -> String {
             if let Some(who) = &stop_as {
@@ -2811,9 +2886,9 @@ impl Emitter {
             }
         }
         let mut result = if already {
-            inner
+            self.result_form(&inner, inner_type)
         } else {
-            format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", inner)
+            format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", self.payload_form(&inner, inner_type))
         };
         // every argument bound in its place, then the leftmost failure is
         // the call's value
@@ -2999,16 +3074,6 @@ impl Emitter {
         matches!(Self::inner(t), Ty::Float | Ty::Tensor(..))
     }
 
-    /// A growing form's call a traced copy answers by the name the program
-    /// wrote (`floor` of a traced number is a traced number, not the whole
-    /// number the IR types it as).
-    fn traced_whole(&self, e: &Expr) -> bool {
-        match Self::raw(e) {
-            Expr::Call { target: Target::Row(row), args, .. } => crate::table::written_name(row) != row.name && args.iter().any(|a| Self::traced_type(&self.tt(a))),
-            _ => false,
-        }
-    }
-
     /// A value as the autograd kernel's operand (`&Traced`): a traced value
     /// borrowed, a plain number or tensor — an int, a list's item, a
     /// global's — as a constant (crow_runtime::autograd::AsTraced).
@@ -3032,16 +3097,53 @@ impl Emitter {
         if !Self::traced_type(&lt) && !Self::traced_type(&rt) {
             return None;
         }
-        let both_tensors = matches!(Self::inner(&lt), Ty::Tensor(..)) && matches!(Self::inner(&rt), Ty::Tensor(..));
-        let l = self.traced_operand(left);
-        let r = self.traced_operand(right);
+        let (lti, rti) = (Self::inner(&lt), Self::inner(&rt));
+        // (a list beside a tensor — a shape compared with a literal of whole
+        // numbers, `given eq [1]` — compares by value as outside the copy:
+        // the kernel takes numbers and tensors, and had read the list as a
+        // number; parity 519)
+        if matches!(lti, Ty::List(_)) || matches!(rti, Ty::List(_)) {
+            return None;
+        }
+        let (l_res, r_res) = (matches!(lt, Ty::Result(_)), matches!(rt, Ty::Result(_)));
+        if !l_res && !r_res {
+            let l = self.traced_operand(left);
+            let r = self.traced_operand(right);
+            return Some(self.traced_op(op, &l, &lti, &r, &rti).0);
+        }
+        // an operand that can fail: both bound, the left first, and the
+        // leftmost failure is the operator's value, as outside the copy (the
+        // failed value had been handed to the kernel, which takes none, and
+        // the program had not built: parity 519)
+        let c = self.binop_counter;
+        self.binop_counter += 1;
+        let l = self.operand(left);
+        let r = self.operand(right);
+        let side = |res: bool, s: &str| if res { format!("_tb{s}_{c}.value") } else { format!("(*_tb{s}_{c})") };
+        let (value, payload) = self.traced_op(op, &Self::tr(&side(l_res, "l")), &lti, &Self::tr(&side(r_res, "r")), &rti);
+        let default = self.payload_default(&payload);
+        let mut result = format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", value);
+        for (res, s) in [(r_res, "r"), (l_res, "l")] {
+            if res {
+                result = format!("if !_tb{s}_{c}.ok {{ CrowResult {{ ok: false, value: {default}, reason: _tb{s}_{c}.reason.clone(), kind: _tb{s}_{c}.kind.clone(), trace: _tb{s}_{c}.trace.clone(), captured: 0.0 }} }} else {{ {result} }}");
+            }
+        }
+        Some(format!("{{ let _tbl_{c} = &({l}); let _tbr_{c} = &({r}); {result} }}"))
+    }
+
+    /// A traced operator over its operands as the kernel takes them
+    /// (`&Traced`), with the kind of what it answers: a number or a tensor
+    /// on the tape, or a comparison's truth or mask.
+    fn traced_op(&mut self, op: &str, l: &str, lt: &Ty, r: &str, rt: &Ty) -> (String, Ty) {
+        let (l_t, r_t) = (matches!(lt, Ty::Tensor(..)), matches!(rt, Ty::Tensor(..)));
+        let answer = if l_t { lt.clone() } else if r_t { rt.clone() } else { Ty::Float };
         let stop = self.or_stop();
         let f = match op {
             "add" => "add",
             "sub" => "sub",
-            "mul" if both_tensors => "matmul",
+            "mul" if l_t && r_t => "matmul",
             "mul" | "elemmul" => "mul",
-            "div" if both_tensors => return Some("compile_error!(\"use ./ for element-wise tensor division\")".to_string()),
+            "div" if l_t && r_t => return ("compile_error!(\"use ./ for element-wise tensor division\")".to_string(), answer),
             "div" | "elemdiv" => "div",
             "pow" | "elempow" => "pow",
             "eq" | "ne" | "gt" | "lt" | "gte" | "lte" => {
@@ -3055,23 +3157,24 @@ impl Emitter {
                 };
                 // a tensor beside a number is its mask (a matrix's rows of
                 // truths), a constant of the tape, as it is untraced
-                let (l_t, r_t) = (matches!(Self::inner(&lt), Ty::Tensor(..)), matches!(Self::inner(&rt), Ty::Tensor(..)));
                 if l_t != r_t {
-                    let (t, n, tt) = if l_t { (&l, &r, Self::inner(&lt)) } else { (&r, &l, Self::inner(&rt)) };
+                    let (t, n, tt) = if l_t { (l, r, lt) } else { (r, l, rt) };
                     let each = if l_t { format!("_v {} _s", sign) } else { format!("_s {} _v", sign) };
-                    let depth = tt.mask_of().truths_depth();
+                    let mask = tt.mask_of();
+                    let depth = mask.truths_depth();
                     let body = format!("let _s = ({}).as_number().unwrap_or(f64::NAN); let _t = &({}).value; let _f: Vec<bool> = _t.to_vec().iter().map(|&_v| {}).collect();", n, t, each);
-                    return Some(if depth >= 2 {
+                    let s = if depth >= 2 {
                         format!("{{ {} crow_runtime::mask::shaped::<{}>(_f, _t.shape()) }}", body, Self::truths_type(depth))
                     } else {
                         format!("{{ {} _f }}", body)
-                    });
+                    };
+                    return (s, mask);
                 }
-                return Some(format!("(({}).as_number().unwrap_or(f64::NAN) {} ({}).as_number().unwrap_or(f64::NAN))", l, sign, r));
+                return (format!("(({}).as_number().unwrap_or(f64::NAN) {} ({}).as_number().unwrap_or(f64::NAN))", l, sign, r), Ty::Bool);
             }
-            other => return Some(format!("compile_error!(\"grad: `{}` is not differentiable\")", other)),
+            other => return (format!("compile_error!(\"grad: `{}` is not differentiable\")", other), answer),
         };
-        Some(format!("crow_runtime::autograd::{}({}, {}){}", f, l, r, stop))
+        (format!("crow_runtime::autograd::{}({}, {}){}", f, l, r, stop), answer)
     }
 
     /// A call inside a function's traced copy: a differentiable builtin
@@ -3081,25 +3184,78 @@ impl Emitter {
     /// call neither takes nor answers a traced value (a range, text).
     fn traced_dispatch(&mut self, target: &Target, name: &str, args: &[Expr], arg_strs: &[String], whole: &Expr) -> Option<String> {
         if let Target::User(n) = target {
-            if self.traced_functions.contains(n) {
+            // (a call none of whose arguments carries a derivative is the
+            // plain one, below, whatever else calls the function traced)
+            if self.traced_functions.contains(n) && args.iter().any(|a| self.carries(a)) {
+                // the callee's lists and records a derivative is handed in
+                // take their traced form (emit_rs/traced.rs)
+                let active = self.part.active.get(n).cloned().unwrap_or_default();
+                let params: Vec<(String, Ty)> = self.fns.get(n).map(|f| f.params.iter().map(|(p, t)| (p.clone(), as_inferred(t))).collect()).unwrap_or_default();
                 let passed: Vec<String> = args
                     .iter()
                     .zip(arg_strs)
-                    .map(|(a, s)| {
+                    .enumerate()
+                    .map(|(i, (a, s))| {
                         if Self::traced_type(&self.tt(a)) {
-                            let raw = self.expr(a);
+                            // (an argument that can fail is read where the
+                            // call's propagation bound it: printed again, it
+                            // had been the value that can fail itself, which
+                            // the copy's parameter does not take; parity 519)
+                            let raw = if s.starts_with("_prop_") { s.clone() } else { self.expr(a) };
                             format!("crow_runtime::autograd::AsTraced::traced(&({})).into_owned()", raw)
+                        } else if let Some((p, t)) = params.get(i).filter(|(p, t)| active.contains(p) && self.held_traced(t)) {
+                            let _ = p;
+                            if self.carries(a) { s.clone() } else { self.traced_form(s, t) }
                         } else {
                             s.clone()
                         }
                     })
                     .collect();
-                let call = format!("_traced_{}({})", Self::rust_fn_name(n), passed.join(", "));
+                let mut call = format!("_traced_{}({})", Self::rust_fn_name(n), passed.join(", "));
+                // (an answer of a list or a record held in its traced form
+                // where the call carries a derivative, the copy's answer
+                // plain where its body makes it of constants)
+                let answer = as_inferred(&self.tt(whole));
+                if self.held_traced(&answer) && !self.traced_answers.contains(n) {
+                    call = self.traced_form(&call, &answer);
+                }
                 return Some(self.at_call_line(n, call));
             }
-            return None;
+            // a function no call hands a value that carries a derivative
+            // (lower_ir/grad.rs: a table of positions built from sizes) is
+            // its plain copy, on the values read, its answer a constant of
+            // the tape
+            let values = self.untraced_args(args, arg_strs);
+            let inner = self.dispatch_plain(target, name, args, &values, whole);
+            return Some(self.as_constant(whole, inner));
+        }
+        // a list holding traced tensors laid side by side (`stack`,
+        // `table::Tape::Stack`): the list in its traced form, its own kernel
+        if let Some(list) = args.first().filter(|a| self.carries(a)) {
+            let n = args.len();
+            let tape = match target {
+                Target::Row(row) => crate::table::tape_of(row, n),
+                _ => crate::table::tape_named(name, n).map(|(_, t)| t),
+            };
+            if let Some(crate::table::Tape::Stack(path, _)) = tape {
+                let _ = list;
+                let axis = if n > 1 { format!("({}) as i64", arg_strs.get(1).cloned().unwrap_or_default()) } else { "0".to_string() };
+                self.needs_crow_runtime = true;
+                return Some(format!("{}(&({}), {}){}", path.replace(' ', ""), arg_strs.first().cloned().unwrap_or_default(), axis, self.or_stop()));
+            }
         }
         let traced_arg = args.iter().any(|x| Self::traced_type(&self.tt(x)));
+        // a growing form's whole number (`floor[s]` of a traced number):
+        // the IR's int, which carries no derivative — the row's own call on
+        // the values read
+        if let Target::Row(row) = target
+            && traced_arg
+            && crate::table::written_name(row) != row.name
+            && !crate::ir::can_carry_derivative(&self.tt(whole))
+        {
+            let values = self.untraced_args(args, arg_strs);
+            return Some(self.dispatch_plain(target, name, args, &values, whole));
+        }
         if !traced_arg {
             let wrap = match Self::inner(&self.tt(whole)) {
                 Ty::Float if !matches!(self.tt(whole), Ty::Result(_)) => "crow_runtime::autograd::Traced::number",
@@ -3126,7 +3282,13 @@ impl Emitter {
             _ => crate::table::tape_named(name, n),
         };
         let Some((row, tape)) = tape else {
-            return Some(format!("compile_error!(\"grad: `{}` is not differentiable\")", name));
+            // a builtin no value that carries a derivative reaches (the
+            // check refuses one that does: lower_ir/grad.rs) — a position
+            // made a float, pushed onto a table — is the row's own call on
+            // the values read, its answer a constant of the tape
+            let values = self.untraced_args(args, arg_strs);
+            let inner = self.dispatch_plain(target, name, args, &values, whole);
+            return Some(self.as_constant(whole, inner));
         };
         let path = tape.path();
         Some(match tape {
@@ -3162,7 +3324,66 @@ impl Emitter {
             }
             Tape::Same => format!("({}).clone()", a(0)),
             Tape::Whole => format!("(({}).as_number().unwrap_or(0.0) as i64)", a(0)),
+            // (a list that carries no derivative, laid out: the row's own
+            // call, its answer a constant — one that carries is the arm above)
+            Tape::Stack(..) => {
+                let values = self.untraced_args(args, arg_strs);
+                let inner = self.dispatch_plain(target, name, args, &values, whole);
+                self.as_constant(whole, inner)
+            }
+            // a list holding a traced value (`outs = push[outs, h]`): the
+            // list in its traced form, the item made one (emit_rs/traced.rs)
+            Tape::Hold => {
+                if !self.carries(whole) {
+                    let values = self.untraced_args(args, arg_strs);
+                    let inner = self.dispatch_plain(target, name, args, &values, whole);
+                    return Some(self.as_constant(whole, inner));
+                }
+                let list_ty = as_inferred(&self.tt(&args[0]));
+                let item_ty = match &list_ty {
+                    Ty::List(i) => i.as_ref().clone(),
+                    other => other.clone(),
+                };
+                let list = if self.carries(&args[0]) { plain(0) } else { self.traced_form(&plain(0), &list_ty) };
+                // (the item owned: a number or a tensor borrowed and made
+                // traced, a list or a record read for the last time or
+                // copied — `h` is read again by the next round)
+                let item = match &item_ty {
+                    Ty::Float | Ty::Tensor(..) => format!("crow_runtime::autograd::AsTraced::traced(&({})).into_owned()", plain(1)),
+                    _ => {
+                        let owned = self.owned_expr(&args[1]);
+                        self.traced_form(&owned, &item_ty)
+                    }
+                };
+                format!("crow_runtime::core::push({}, {})", list, item)
+            }
         })
+    }
+
+    /// The arguments of a call no value that carries a derivative reaches,
+    /// read out of the traced copy: a number's value, a tensor's numbers,
+    /// any other value as it is.
+    fn untraced_args(&self, args: &[Expr], arg_strs: &[String]) -> Vec<String> {
+        args.iter()
+            .zip(arg_strs)
+            .map(|(x, s)| match self.tt(x) {
+                Ty::Float => format!("(({}).as_number().unwrap_or(f64::NAN))", Self::tr(s)),
+                Ty::Tensor(..) => format!("(({}).value.clone())", Self::tr(s)),
+                _ => s.clone(),
+            })
+            .collect()
+    }
+
+    /// A plain call's answer where the traced copy holds a traced value: a
+    /// number or a tensor as a constant of the tape, any other as it is.
+    fn as_constant(&self, whole: &Expr, inner: String) -> String {
+        match self.tt(whole) {
+            Ty::Float => format!("crow_runtime::autograd::Traced::number({})", inner),
+            Ty::Tensor(..) => format!("crow_runtime::autograd::Traced::from({})", inner),
+            // (one that can fail, its payload so: emit_rs/traced.rs)
+            Ty::Result(t) => self.result_form(&inner, &t),
+            _ => inner,
+        }
     }
 
     /// A call printed as it is outside a traced copy (a constructor's

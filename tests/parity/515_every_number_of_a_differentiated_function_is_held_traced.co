@@ -1,0 +1,46 @@
+--- Inside a function `grad` differentiates, every number and tensor of
+--- the copy is held traced, whatever made it: a number read out of a
+--- record's list, a literal of whole numbers, a slice of one, and one
+--- handed to a helper. Compiled, none of these had built where the
+--- interpreter ran them (pie's multi-head attention): a local first given
+--- a plain value was given a traced one later (`p = layer.floats[0]`, then
+--- `p = 0.0`; `wd = [2, 3, 4]`, then `wd = slice[wd, 1, len[wd]]`), and a
+--- tensor of whole numbers the copy held traced was read as a plain one
+--- (a parameter handed to `counted`, which takes a list; `wd[0]`). By
+--- hand: scaled = Σx·p·n + wd[0] + len[wd] = 3·0.5·2 + 3 + 2 = 8, its
+--- gradient p·n = 1 for each of x's numbers; out of training p is 0.
+use math
+struct Layer [floats, training]
+
+fn counted[xs]
+    xs = push[xs, 1]
+    return len[xs]
+
+fn scaled[x, layer, other]
+    p = layer.floats[0]
+    if not layer.training
+        p = 0.0
+    wd = [2, 3, 4]
+    if sum[x] gt 100.0
+        wd = [3, 4]
+    wd = slice[wd, 1, len[wd]]
+    n = counted[other]
+    return sum[x] * p * float[n] + float[wd[0]] + float[len[wd]]
+
+fn outer[x, layer]
+    return scaled[x, layer, [0]]
+
+--- (the layer's numbers a list, grown as a model's are)
+fn layer_of[training]
+    floats = []
+    for f in [0.5, 0.25]
+        floats = push[floats, f]
+    return Layer[floats, training]
+
+x = tensor[[1.0, 2.0]]
+on = layer_of[true]
+off = layer_of[false]
+log[outer[x, on]]
+log[outer[x, off]]
+log[grad[outer][x, on]]
+log[grad[outer][x, off]]

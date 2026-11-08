@@ -194,6 +194,9 @@ impl Emitter {
         // gradient targets over numbers: their parameters and value are
         // floats; over tensors (the IR's `traced`), a copy over traced values
         self.traced_functions = self.part.traced.clone();
+        if !self.traced_functions.is_empty() {
+            self.settle_traced_records();
+        }
         let blocks = self.all_blocks();
         let mut grads = BTreeSet::new();
         for b in &blocks {
@@ -888,6 +891,9 @@ impl Emitter {
             if !matches!(s.name.as_str(), "CrowFindResult" | "CrowShell" | "CrowReply" | "CrowAnswer") {
                 self.emit_struct(s);
             }
+        }
+        if !self.traced_functions.is_empty() {
+            self.emit_traced_forms();
         }
 
         // functions; the original of a specialized function is never
@@ -1895,8 +1901,10 @@ impl Emitter {
         self.line("fn log10(self) -> CrowDual { CrowDual { real: self.real.log10(), dual: self.dual / (self.real * std::f64::consts::LN_10) } }");
         self.line("fn log1p(self) -> CrowDual { CrowDual { real: self.real.ln_1p(), dual: self.dual / (1.0 + self.real) } }");
         self.line("fn expm1(self) -> CrowDual { CrowDual { real: self.real.exp_m1(), dual: self.dual * self.real.exp() } }");
-        self.line("fn sin(self) -> CrowDual { CrowDual { real: self.real.sin(), dual: self.dual * self.real.cos() } }");
-        self.line("fn cos(self) -> CrowDual { CrowDual { real: self.real.cos(), dual: -self.dual * self.real.sin() } }");
+        // (each through the runtime's own call, so no build fuses the pair:
+        // `crow_runtime::math::sine` says why)
+        self.line("fn sin(self) -> CrowDual { CrowDual { real: crow_runtime::math::sine(self.real), dual: self.dual * crow_runtime::math::cosine(self.real) } }");
+        self.line("fn cos(self) -> CrowDual { CrowDual { real: crow_runtime::math::cosine(self.real), dual: -self.dual * crow_runtime::math::sine(self.real) } }");
         self.line("fn tan(self) -> CrowDual { let t = self.real.tan(); CrowDual { real: t, dual: self.dual * (1.0 + t * t) } }");
         self.line("fn asin(self) -> CrowDual { CrowDual { real: self.real.asin(), dual: self.dual / (1.0 - self.real * self.real).sqrt() } }");
         self.line("fn acos(self) -> CrowDual { CrowDual { real: self.real.acos(), dual: -self.dual / (1.0 - self.real * self.real).sqrt() } }");

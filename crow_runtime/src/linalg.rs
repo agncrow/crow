@@ -61,7 +61,7 @@ impl CrowTensor {
     }
 
     /// Matrix multiplication: self (m×k) * other (k×n) → (m×n).
-    /// Dispatches to GPU if both tensors are on GPU, otherwise uses CPU (faer).
+    /// On the GPU where either matrix lies there, otherwise on the CPU (faer).
     pub fn matmul(&self, other: &CrowTensor) -> CrowTensor {
         let shape_a = self.shape();
         let shape_b = other.shape();
@@ -73,15 +73,10 @@ impl CrowTensor {
             shape_a[0], shape_a[1], shape_b[0], shape_b[1]
         );
 
-        // GPU path: if both tensors are on GPU, use the GPU matmul shader
-        if let (Some(a_buf), Some(b_buf)) = (self.gpu_buffer(), other.gpu_buffer()) {
-            if let Some(ctx) = crate::gpu::GpuContext::get() {
-                let m = shape_a[0] as u32;
-                let k = shape_a[1] as u32;
-                let n = shape_b[1] as u32;
-                let out_buf = crate::gpu::gpu_matmul(ctx, a_buf, b_buf, m, k, n);
-                return CrowTensor::from_gpu_with_shape(out_buf, vec![m as usize, n as usize]);
-            }
+        // GPU path: where either matrix lies on the GPU, each read where it
+        // lies (a transposed weight is not copied first)
+        if let Some(c) = self.gpu_matmul(other) {
+            return c;
         }
 
         // CPU path: use faer

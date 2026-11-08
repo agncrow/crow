@@ -1,0 +1,45 @@
+--- Under gpu[] a tensor made of a list is placed on the GPU, and what a
+--- network computes stays there: an operation meeting a tensor on the CPU
+--- (brought to the GPU), a bias broadcast over a batch's rows, the matrix
+--- product of a transposed weight read where it lies, a reduction along an
+--- axis, a join, a mask under `where`, a power, and grad's backward pass
+--- through tanh and the slices of one vector of parameters — in both
+--- modes (spec, GPU Support). `tensor[…]` had stayed on the CPU, every
+--- operation meeting a view or two shapes had run there, and a network
+--- trained under gpu[] never reached the GPU (pie's nn). Where no GPU
+--- answers, every tensor stays on the CPU and both modes agree there.
+use math
+
+struct Batch [x, y]
+
+fn shown[t]
+    out = []
+    for v in flatten[t]
+        out = push[out, fmt[v, decimals = 4]]
+    return join[out, ' ']
+
+fn loss[theta, b]
+    w = reshape[slice[theta, 0, 6], 2, 3]
+    bias = slice[theta, 6, 8]
+    h = tanh[b.x * transpose[w] + bias]
+    return sum[(h - b.y) .* (h - b.y)]
+
+gpu[]
+x = tensor[[[1.0, 2.0, 3.0], [0.5, -1.0, 2.0]]]
+w = tensor[[[0.1, -0.2, 0.3], [0.4, 0.5, -0.6]]]
+y = x * transpose[w] + tensor[[0.01, -0.02]]
+log[shown[y]]
+log[shown[sum[y, 0]]]
+log[shown[max[y, 1]]]
+log[shown[concat[y, y]]]
+log[shown[where[y gt 0.0, y, y * 0.0]]]
+log[shown[y .^ 2.0]]
+log[shown[exp[y - max[y]] / sum[exp[y - max[y]]]]]
+log[fmt[mean[y], decimals = 4]]
+theta = tensor[[0.1, -0.2, 0.3, 0.4, 0.5, -0.6, 0.01, -0.02]]
+b = Batch[x, tensor[[[0.5, -0.5], [0.25, 0.0]]]]
+log[fmt[loss[theta, b], decimals = 4]]
+g = grad[loss][theta, b]
+log[shown[g]]
+--- where a GPU answers, each is on it; where none does, each is on the CPU
+log[x.device eq y.device and y.device eq g.device and g.device eq theta.device]

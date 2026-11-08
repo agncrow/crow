@@ -3,3 +3,12 @@ use math as m
 
 fn twice[x]
     return m.abs[x] * 2.0
+
+--- (parity 509) math's constants through the alias, beside the program's
+--- own `m`
+fn turned[pct]
+    return m.cos[m.pi * pct]
+
+fn spun[pct]
+    x = m.pi * pct
+    return m.sin[x]

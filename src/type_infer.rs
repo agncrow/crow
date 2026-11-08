@@ -476,6 +476,16 @@ pub struct TypeContext {
     /// (`lower_ir::fill_wished_fields`), never in a round where a field's
     /// makers are not typed yet (parity 508).
     pub field_wishes: BTreeMap<(String, String), (usize, Ty)>,
+    /// Whether an item of a list of no kind — a parameter's, a local's, a
+    /// record's field's — met a number before the rounds settled (`k lte
+    /// n`, `xs[i] * 2.0`): the list takes the number's kind only once they
+    /// have (`items_settled`), since a list of no kind in an early round
+    /// may be one a caller's later round types — a list of tensors guessed
+    /// a list of numbers had refused its own pushes (parity 513).
+    pub items_wished: bool,
+    /// The rounds have settled: an item of a list still of no kind that
+    /// meets a number gives the list its kind where it is met.
+    pub items_settled: bool,
     /// The functions a dispatch is applying by name (lower_ir/named.rs): a
     /// group's member is called where the group was handed, though a
     /// standard module's function cannot name the program's (`calls_fn`).
@@ -508,6 +518,10 @@ pub struct TypeContext {
     /// (caller, parameter, callee, the callee's place): one no call typed
     /// takes the callee's parameter's type (`default_open_params`).
     pub handed_on: std::collections::BTreeSet<(String, String, String, usize)>,
+    /// An open parameter placed as it is in a record's field, as
+    /// (function, parameter, record, the field's place): one no call typed
+    /// takes the field's type (`default_open_params`).
+    pub fielded: std::collections::BTreeSet<(String, String, String, usize)>,
     /// An open parameter a local was first given as it is (`p = params`),
     /// by (function, parameter): what the local settled on, which a
     /// parameter no call typed takes (`default_open_params`).
@@ -672,6 +686,8 @@ impl TypeContext {
             grad_forced: std::collections::BTreeSet::new(),
             param_reads: BTreeMap::new(),
             field_wishes: BTreeMap::new(),
+            items_wished: false,
+            items_settled: false,
             applying: Vec::new(),
             fn_fields: BTreeMap::new(),
             stale_answers: std::collections::BTreeSet::new(),
@@ -680,6 +696,7 @@ impl TypeContext {
             first_call_line: BTreeMap::new(),
             text_items: std::collections::BTreeSet::new(),
             handed_on: std::collections::BTreeSet::new(),
+            fielded: std::collections::BTreeSet::new(),
             copied_kinds: BTreeMap::new(),
             answers_by_use: std::collections::BTreeSet::new(),
             call_edges: std::collections::BTreeSet::new(),
@@ -732,6 +749,8 @@ impl TypeContext {
     /// Before any body: the program's tables, declarations and handlers,
     /// and a derivation's name read as a variable of its body's type.
     pub(crate) fn begin_inference(&mut self, stmts: &[Stmt]) {
+        self.items_wished = false;
+        self.items_settled = false;
         self.is_ui = self.is_ui || stmts.iter().any(|st| matches!(st, Stmt::Use { path, .. } if path == "ui" || path == "web.ui"));
         self.collect_ddl(stmts);
         self.collect_declarations(stmts);
@@ -1508,8 +1527,11 @@ impl TypeContext {
     /// A parameter still a list or map of nothing once inference has
     /// settled — every call hands it `[]` — holds what the body makes of
     /// it: what a local first given it as it is settled on (`p = params`,
-    /// then `p = defaults[name]`), or the kind of the parameter it is
-    /// handed on to as it is (a facade's `params` passed to `made`).
+    /// then `p = defaults[name]`), the kind of the parameter it is handed
+    /// on to as it is (a facade's `params` passed to `made`), or the kind
+    /// of the record's field it is placed in as it is (`_sampler`'s
+    /// `indices`, a field whose items the body's pushes type; pie's
+    /// nn.data, parity 523).
     /// Typed as text, as the compiled program holds a list of nothing, it
     /// had met the copy's floats and not built (Kite; parity 478). After
     /// inference, never during it: a parameter its calls type later keeps
@@ -1523,6 +1545,11 @@ impl TypeContext {
         for (caller, param, callee, i) in &self.handed_on {
             if let Some((_, t)) = self.functions.get(callee).and_then(|sig| sig.params.get(*i)) {
                 wanted.push((caller.clone(), param.clone(), t.clone()));
+            }
+        }
+        for (f, param, rec, i) in &self.fielded {
+            if let Some((_, t)) = self.structs.get(rec).and_then(|r| r.fields.get(*i)) {
+                wanted.push((f.clone(), param.clone(), t.clone()));
             }
         }
         let mut changed = false;

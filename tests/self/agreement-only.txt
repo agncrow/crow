@@ -101,7 +101,6 @@ memory.canonical	no reference yet: add its answer to tests/self/reference.py, or
 memory.forget	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 memory.recall	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 memory.remember	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-stats.anova	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 sys.accept	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.address	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.alive	the standard library's own layer: bytes, streams and protocols no reference models yet

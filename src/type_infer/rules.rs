@@ -891,6 +891,23 @@ impl TypeContext {
         found.next().is_none().then_some(one)
     }
 
+    /// A standard module's constant named through its path or an alias
+    /// (`math.pi`, `m.pi` after `use math as m`): its value's kind, where
+    /// the module holds a constant of that name. Whether the name is the
+    /// module there, and not a variable, is the caller's to say: the
+    /// lowering asks by its scopes (`qualified_type`).
+    pub(crate) fn module_constant_type(&self, mod_name: &str, field: &str) -> Option<Ty> {
+        let real = self.module_aliases.get(mod_name).map(|s| s.as_str()).unwrap_or(mod_name);
+        let module = crate::modules::module_by_path(real)?;
+        let (_, v) = module.constants().into_iter().find(|(n, _)| *n == field)?;
+        Some(match v.value {
+            crate::value::Value::Int(_) => Ty::Int,
+            crate::value::Value::Bool(_) => Ty::Bool,
+            crate::value::Value::Str(_) => Ty::Str,
+            _ => Ty::Float,
+        })
+    }
+
     pub(crate) fn field_type(&self, object: &Expr, obj_type: Ty, field: &str) -> Ty {
         // Json object field access stays Json (dynamic values)
         {
@@ -1003,18 +1020,9 @@ impl TypeContext {
         // decimal one, which did not build (pie's lr_scheduler)
         if let Expr::Ident(mod_name) = object
             && !self.vars.contains_key(mod_name)
+            && let Some(t) = self.module_constant_type(mod_name, field)
         {
-            let real = self.module_aliases.get(mod_name).map(|s| s.as_str()).unwrap_or(mod_name);
-            if let Some(module) = crate::modules::module_by_path(real)
-                && let Some((_, v)) = module.constants().into_iter().find(|(n, _)| *n == field)
-            {
-                return match v.value {
-                    crate::value::Value::Int(_) => Ty::Int,
-                    crate::value::Value::Bool(_) => Ty::Bool,
-                    crate::value::Value::Str(_) => Ty::Str,
-                    _ => Ty::Float,
-                };
-            }
+            return t;
         }
         // Module variable access: module.var → look up module_var
         if let Expr::Ident(mod_name) = object {

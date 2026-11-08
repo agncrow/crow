@@ -1,0 +1,31 @@
+--- `grad` traces what carries a derivative: a function's tensors, and
+--- what a call computes from them. A table of positions built with `push`
+--- from a tensor's sizes carries none, inside the function differentiated
+--- or in a helper handed only sizes, so it meets any builtin there (a
+--- convolution's positions had been refused as not differentiable:
+--- `push` of a float, `str` of a size, `max` of two numbers). A value
+--- that carries one is still held to the differentiable list (errors
+--- k41). By hand: d/dx Σ(flipped .* w) = w reversed, and d/dx Σ x·s = s.
+use math
+
+fn reversed_positions[n]
+    out = []
+    for i in range[n]
+        out = push[out, float[n - 1 - i]]
+    return out
+
+fn loss[x]
+    n = len[x]
+    scale = float[n] / 2.0
+    weights = []
+    for i in range[n]
+        weights = push[weights, max[float[i] * scale, 0.5]]
+    label = str[n]
+    flipped = x[tensor[reversed_positions[n]]]
+    if label eq '3'
+        return sum[flipped .* tensor[weights]] + sum[x * scale]
+    return sum[x]
+
+g = grad[loss]
+log[g[tensor[[1.0, 2.0, 4.0]]]]
+log[g[tensor[[1.0, 2.0]]]]

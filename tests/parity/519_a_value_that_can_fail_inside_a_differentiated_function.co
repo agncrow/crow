@@ -1,0 +1,85 @@
+--- Inside a function `grad` differentiates, a value that can fail holds
+--- a traced number or tensor as every number of the traced copy is held,
+--- and `floor` of a traced number is the whole number it is. Compiled,
+--- none of these had built where the interpreter ran them (pie's spatial
+--- cases, whose sizes are read from parsed text): an operator beside a
+--- value that can fail handed the failure to the kernel; a helper's answer
+--- that can fail held a plain tensor beside a traced one; `floor` of a
+--- traced number was a traced number where `min` of ints and a list of
+--- positions took an int; a literal of numbers the copy computes was
+--- printed as plain numbers; a record a call answers where an argument
+--- can fail had a plain record's placeholder beside the traced one; a
+--- shape compared with a literal of whole numbers was read as a number.
+--- And a failure the function answers stops at `grad`, in the
+--- interpreter's words, compiled too. By hand: d/dx Σ x²·n = 2nx; d/dx
+--- Σ x²c = 2xc and d/dc = x²; positions [0, 0, 1] of [1, 2, 3] give
+--- [4, 4, 0]; d/dx Σ x·[s, 2s] = [3, 6]; d/dx Σ (x² + 2x) = 2x + 2.
+use math
+struct Dims [a]
+struct Pair [h, c]
+
+fn sizes[given]
+    out = []
+    for d in json[given]
+        out = push[out, int[d]]
+    return out
+
+fn scaled[x, s]
+    n = int[s]
+    return sum[x .* x] * float[n]
+
+fn laid[v, dims]
+    return reshape[v, dims[0], dims[1]]
+
+fn applied[d, x]
+    m = laid[x, d.a]
+    return flatten[m .* m]
+
+fn probe[d, x, c]
+    return sum[applied[d, x] .* c]
+
+fn picked[x, k]
+    at = []
+    for i in range[3]
+        j = min[floor[float[i] * k], 2]
+        at = push[at, j]
+    total = 0.0
+    for j in at
+        total = total + x[j] * x[j]
+    return total
+
+fn weighed[x, s]
+    w = tensor[[s, s * 2.0]]
+    m = tensor[[[s, 1.0], [2.0, s]]]
+    return sum[x .* w] + sum[m]
+
+fn cell[a, b]
+    return Pair[a .* b, a + b]
+
+fn through[d, x]
+    p = cell[laid[x, d.a], laid[x, d.a]]
+    return sum[flatten[p.h]] + sum[flatten[p.c]]
+
+fn checked[x]
+    given = x.shape
+    if not (given eq [4] or given eq [2, 2])
+        halt['a vector of four or a matrix of two by two, got `given`']
+    return sum[x .* x]
+
+d = Dims[sizes['[2, 2]']]
+x = tensor[[1.0, 2.0, 3.0, 4.0]]
+c = tensor[[1.0, 1.0, 2.0, 2.0]]
+log[grad[scaled][tensor[[1.0, 2.0]], '3']]
+g = grad[probe][d, x, c]
+log[g[0]]
+log[g[1]]
+log[picked[tensor[[1.0, 2.0, 3.0]], 0.75]]
+log[grad[picked][tensor[[1.0, 2.0, 3.0]], 0.75]]
+log[weighed[tensor[[1.0, 2.0]], 3.0]]
+log[grad[weighed][tensor[[1.0, 2.0]], 3.0]]
+log[through[d, x]]
+log[grad[through][d, x]]
+log[grad[checked][x]]
+--- a failure the function answers stops the program at `grad`
+log[grad[scaled][tensor[[1.0, 2.0]], 'abc']]
+log['not reached']

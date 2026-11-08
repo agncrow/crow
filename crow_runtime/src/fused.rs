@@ -163,7 +163,7 @@ fn shapes(node: &Node, operands: &[Operand], program: &str) -> Result<Option<Vec
 pub fn run(program: &str, operands: &[Operand]) -> Result<CrowTensor, String> {
     let root = parse(program, operands.len())?;
     let shape = shapes(&root, operands, program)?.ok_or_else(|| not_a_chain(program))?;
-    if operands.iter().any(|o| matches!(o, Operand::Tensor(t) if t.gpu_buffer().is_some())) {
+    if operands.iter().any(|o| matches!(o, Operand::Tensor(t) if t.is_gpu())) {
         return match by_operators(&root, operands)? {
             Value::Tensor(t) => Ok(t),
             Value::Number(_) => Err(not_a_chain(program)),

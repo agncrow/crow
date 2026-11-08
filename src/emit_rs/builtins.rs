@@ -340,9 +340,18 @@ impl Emitter {
                                 })
                                 .collect();
                             let (ret, pick) = if leaves.len() == 1 { ("crow_runtime::tensor::CrowTensor", "[0].clone()") } else { ("Vec<crow_runtime::tensor::CrowTensor>", "") };
+                            let call = format!("_traced_{}({})", Self::rust_fn_name(fname), passed.join(", "));
+                            // (a function that can fail answers its failure,
+                            // which stops the program in the interpreter's
+                            // words: parity 519)
+                            let answered = if matches!(as_inferred(&sig.ret), Ty::Result(_)) {
+                                format!("{{ let _r = {}; if _r.ok {{ Ok(_r.value) }} else {{ Err(format!(\"grad[{}][]: the function answered an error — {{}}\", _r.reason)) }} }}", call, fname)
+                            } else {
+                                format!("Ok({})", call)
+                            };
                             return Some(format!(
-                                "|{}| -> {} {{ crow_runtime::autograd::gradient(&[{}], |_l| Ok(_traced_{}({}))).unwrap_or_else(|e| crow_stop({}, e)){} }}",
-                                cps.join(", "), ret, leaves.join(", "), Self::rust_fn_name(fname), passed.join(", "), self.line_now(), pick
+                                "|{}| -> {} {{ crow_runtime::autograd::gradient(&[{}], |_l| {}).unwrap_or_else(|e| crow_stop({}, e)){} }}",
+                                cps.join(", "), ret, leaves.join(", "), answered, self.line_now(), pick
                             ));
                         }
                         let dual = format!("_dual_{}", Self::rust_fn_name(fname));

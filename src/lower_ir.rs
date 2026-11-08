@@ -890,6 +890,10 @@ struct Lowerer<'a> {
     /// known yet, by the function it is of: the holder's items are what
     /// the local settles on (`settled`).
     items_of: Vec<(String, String, String)>,
+    /// An item of a list of no kind pushed onto a local's list of no kind
+    /// yet, by (function, the local, where the item came from): the local's
+    /// kind once the body is through is the item's (`item_met`, parity 523).
+    pushed_kindless: Vec<(String, String, ItemFrom)>,
     /// The locals first given an open parameter as it is (`p = params`,
     /// `params` handed only `[]`), as (function, local, parameter): what
     /// the local settles on is the parameter's too (`settled`).
@@ -1102,6 +1106,7 @@ impl<'a> Lowerer<'a> {
             yields: HashSet::new(),
             grad_of: HashMap::new(),
             items_of: Vec::new(),
+            pushed_kindless: Vec::new(),
             copies_of: Vec::new(),
             walking_fields: Vec::new(),
             differentiating: false,
@@ -1319,6 +1324,23 @@ impl<'a> Lowerer<'a> {
         self.current_fn = name.to_string();
         self.ctx.registry.enter(&self.current_fn);
         let mut seen = self.provisional(Pass::Settle, Some(params), body);
+        // (a local the body pushed an item of a list of no kind onto, typed
+        // only by a later line — `out = push[out, s.indices[i]]` above
+        // `return Drawn[out, 0]` — gives the item's list its kind now the
+        // body is through: `item_met`, parity 523)
+        let pending: Vec<(String, ItemFrom)> = {
+            let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pushed_kindless).into_iter().partition(|(f, _, _)| f == name);
+            self.pushed_kindless = rest;
+            mine.into_iter().map(|(_, h, from)| (h, from)).collect()
+        };
+        for (holder, from) in pending {
+            if let Some(Ty::List(e)) = self.ctx.vars.get(&holder).map(|t| t.payload().clone())
+                && e.is_concrete()
+                && !matches!(e.payload(), Ty::Json)
+            {
+                self.wish_item(&from, *e);
+            }
+        }
         // (a local handed back before the line that typed it — `return xs`
         // of `xs = []` inside a `while true`, the push after — answers what
         // the local settled on: typed where it was met, the answer had
@@ -1496,6 +1518,23 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+        // (an open parameter of this function placed as it is in a record's
+        // field — a list handed only `[]` — is noted: once inference has
+        // settled, one no call typed holds what the field holds
+        // (`default_open_params`; pie's nn.data, `_sampler`'s `indices`,
+        // parity 523))
+        if let A::Ident(n) = callee
+            && self.ctx.structs.contains_key(n)
+            && !args.iter().any(|a| matches!(a, A::Named { .. }))
+        {
+            let open = |t: &Ty| matches!(t, Ty::List(e) | Ty::Map(_, e) if matches!(e.as_ref(), Ty::Unknown));
+            for (i, a) in args.iter().enumerate() {
+                let A::Ident(v) = a else { continue };
+                if self.ctx.vars.get(v).is_some_and(open) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(p, _)| p == v)) {
+                    self.ctx.fielded.insert((self.current_fn.clone(), v.clone(), n.clone(), i));
+                }
+            }
+        }
         // (the program's first call of a module's function: where a refusal
         // inside the module's copy is placed)
         if let A::Ident(n) = callee {
@@ -1549,6 +1588,7 @@ impl<'a> Lowerer<'a> {
             main: vec![],
             main_effects: BTreeMap::new(),
             traced: std::collections::BTreeSet::new(),
+            active: std::collections::BTreeMap::new(),
         };
         let fact_names: BTreeSet<String> = self.ctx.facts.clone();
         let written: BTreeSet<String> = facts_written_by_fns(stmts, &fact_names);
@@ -3930,10 +3970,105 @@ impl<'a> Lowerer<'a> {
     /// A parsed value handed to a parameter, or a parameter typed by
     /// nothing, read in the body as a kind: noted for the function's tool
     /// schema (`tool_schema`).
+    /// An item of a list never given one, met by a value of a kind — an
+    /// operator's number (`k lte epoch`, parity 502), or the list it is
+    /// pushed onto (`out = push[out, s.indices[i]]`, parity 523) — is that
+    /// kind, and the list it is walked or read from holds them: its place
+    /// takes the list — a parameter, a local, a record's field — once the
+    /// rounds settle (`items_wished`, `field_wishes`).
+    fn item_met(&mut self, side: &A, kind: Ty) {
+        if let Some(from) = self.item_from(side) {
+            self.wish_item(&from, kind);
+        }
+    }
+
+    /// The list an item of no kind is walked or read from (`item_met`): a
+    /// loop's variable over one, an item read by its position out of a
+    /// local's, a parameter's or a record's field's.
+    fn item_from(&self, side: &A) -> Option<ItemFrom> {
+        if let A::Ident(k) = side {
+            if self.v.unknown_items.contains(k) {
+                return self.v.item_of.get(k).cloned().map(ItemFrom::Place);
+            }
+            return None;
+        }
+        let A::Call { callee, args } = side else { return None };
+        if args.len() != 1 {
+            return None;
+        }
+        // (an item read by its position out of a list a local read from a
+        // record's field holds, or out of a parameter's: the field, or the
+        // parameter, takes the kind — `tops[i] * 2.0` of `tops =
+        // s.lists['max_lrs']`, the field given by a maker no call types;
+        // parity 508: the compiled program had held the item as nothing,
+        // `() * f64`)
+        if let A::Ident(xs) = callee.as_ref() {
+            if self.calls_fn(xs) {
+                return None;
+            }
+            let held = self.ctx.vars.get(xs).map(|t| t.payload().clone());
+            let kindless = matches!(&held, Some(Ty::List(e)) if **e == Ty::Unknown);
+            let param = self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(p, _)| p == xs));
+            if let Some((holder, field, depth)) = self.v.list_from.get(&(self.current_fn.clone(), xs.clone())).cloned()
+                && (kindless || held == Some(Ty::Unknown))
+                && let Some(rec) = self.record_of(&holder)
+            {
+                return Some(ItemFrom::Field(rec, field, depth));
+            }
+            return (param && kindless).then(|| ItemFrom::Place((xs.clone(), None)));
+        }
+        // (and one read by its position straight out of a record's field,
+        // `s.indices[i]`: the field takes the kind there)
+        let (holder, field, depth) = field_read(callee)?;
+        self.record_of(&holder).map(|rec| ItemFrom::Field(rec, field, depth))
+    }
+
+    /// The record a variable holds, or none.
+    fn record_of(&self, holder: &str) -> Option<String> {
+        match self.ctx.vars.get(holder).map(|t| t.payload().clone()) {
+            Some(Ty::Record(rec) | Ty::OptRecord(rec)) => Some(rec),
+            _ => None,
+        }
+    }
+
+    /// The list an item of no kind came from given `kind` (`item_met`): a
+    /// parameter's or a local's at once the rounds settle, a record's field
+    /// where its makers left the place of no kind (`field_wishes`; a
+    /// float's wish outweighs an int's).
+    fn wish_item(&mut self, from: &ItemFrom, kind: Ty) {
+        match from {
+            ItemFrom::Place(place) => self.items_are_once_settled(place, kind),
+            ItemFrom::Field(rec, field, depth) => {
+                let list = Ty::List(Box::new(kind.clone()));
+                let open = self.ctx.structs.get(rec).and_then(|s| s.fields.iter().find(|(f, _)| f == field)).is_some_and(|(_, t)| items_filled(t, *depth, &list).is_some());
+                if !open {
+                    return;
+                }
+                let wished = self.ctx.field_wishes.entry((rec.clone(), field.clone())).or_insert((*depth, list));
+                if wished.0 == *depth && kind == Ty::Float {
+                    wished.1 = Ty::List(Box::new(Ty::Float));
+                }
+            }
+        }
+    }
+
     /// The items of a list never given one are of the kind an operator met
     /// one with (`k lte epoch`): the list's place takes a list of them — the
     /// function's parameter, a local, a record's field. What a caller hands
     /// that parameter takes it in turn (`TypeContext::note_call`).
+    /// An item of a list of no kind — a parameter's, a local's, a record's
+    /// field's — met a number: the list holds the number's kind once the
+    /// rounds have settled, and is noted till then
+    /// (`TypeContext::items_wished`), since a list of no kind in an early
+    /// round may be one a caller or a maker types in a later one.
+    fn items_are_once_settled(&mut self, place: &(String, Option<String>), kind: Ty) {
+        if !self.ctx.items_settled {
+            self.ctx.items_wished = true;
+            return;
+        }
+        self.items_are(place, kind);
+    }
+
     fn items_are(&mut self, place: &(String, Option<String>), kind: Ty) {
         let list = Ty::List(Box::new(kind));
         let kindless = |t: &Ty| matches!(t, Ty::List(e) if **e == Ty::Unknown);
@@ -5121,39 +5256,7 @@ impl<'a> Lowerer<'a> {
                             kind @ (Ty::Int | Ty::Float) => kind.clone(),
                             _ => continue,
                         };
-                        if let A::Ident(k) = side
-                            && self.v.unknown_items.contains(k)
-                            && let Some(place) = self.v.item_of.get(k).cloned()
-                        {
-                            self.items_are(&place, kind.clone());
-                        }
-                        // (and an item read by its position out of a list a
-                        // local read from a record's field holds, or out of
-                        // a parameter's: the field, or the parameter, takes
-                        // the kind — `tops[i] * 2.0` of `tops =
-                        // s.lists['max_lrs']`, the field given by a maker no
-                        // call types; parity 508: the compiled program had
-                        // held the item as nothing, `() * f64`)
-                        if let A::Call { callee, args } = side
-                            && args.len() == 1
-                            && let A::Ident(xs) = callee.as_ref()
-                            && !self.calls_fn(xs)
-                        {
-                            let held = self.ctx.vars.get(xs).map(|t| t.payload().clone());
-                            let kindless = matches!(&held, Some(Ty::List(e)) if **e == Ty::Unknown);
-                            let param = self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(p, _)| p == xs));
-                            if let Some((holder, field, depth)) = self.v.list_from.get(&(self.current_fn.clone(), xs.clone())).cloned()
-                                && (kindless || held == Some(Ty::Unknown))
-                                && let Some(Ty::Record(rec) | Ty::OptRecord(rec)) = self.ctx.vars.get(&holder).map(|t| t.payload().clone())
-                            {
-                                let wished = self.ctx.field_wishes.entry((rec, field)).or_insert((depth, Ty::List(Box::new(kind.clone()))));
-                                if wished.0 == depth && kind == Ty::Float {
-                                    wished.1 = Ty::List(Box::new(Ty::Float));
-                                }
-                            } else if param && kindless {
-                                self.items_are(&(xs.clone(), None), kind);
-                            }
-                        }
+                        self.item_met(side, kind);
                     }
                 }
                 // `[]` compared is a list of the other side's kind, or of ints
@@ -7262,6 +7365,31 @@ impl<'a> Lowerer<'a> {
             // holder's items what the local settles on: met in order, the
             // holder had stayed a list of lists of nothing known, compiled
             // as lists of text; Rosetta Code, Brilliant numbers)
+            // (an item of a list of no kind pushed onto a list whose items
+            // are known — `out = push[out, s.indices[i]]`, the field given
+            // only `[]` where this program makes its records — is of their
+            // kind, and the list it is read from holds them (`item_met`);
+            // a list typed only by a later line — `return Drawn[out, 0]` —
+            // types it once the body is through (`pushed_kindless`). Held
+            // as text, the compiled program had pushed text onto a list of
+            // ints and not built; pie's nn.data, a loader with no subset
+            // sampler, parity 523)
+            if self.pass != Pass::Final
+                && name == "push"
+                && lowered.len() == 2
+                && let (Some(list), Some(item), Some(side)) = (lowered.first(), lowered.get(1), args.get(1))
+                && matches!(item.ty().payload(), Ty::Unknown)
+                && let Ty::List(e) = list.ty().payload().clone()
+                && let Some(from) = self.item_from(side)
+            {
+                if e.is_concrete() && !matches!(e.payload(), Ty::Json) {
+                    self.wish_item(&from, *e);
+                } else if self.pass == Pass::Settle
+                    && let Some(A::Ident(holder)) = args.first()
+                {
+                    self.pushed_kindless.push((self.current_fn.clone(), holder.clone(), from));
+                }
+            }
             if self.pass == Pass::Settle
                 && matches!(name.as_str(), "push" | "set")
                 && let (Some(Expr::Local(holder, _) | Expr::Move(holder, _)), Some(Expr::Local(item, t) | Expr::Move(item, t))) = (lowered.first(), lowered.last())
@@ -8114,8 +8242,22 @@ impl<'a> Lowerer<'a> {
         }
     }
 
-    /// The type of a value a module names, `m.x`.
+    /// The type of a value a module names, `m.x`: a module's constant
+    /// wherever the lowering reads `m` as the module (`is_module(m) &&
+    /// !declared(m)`). Inside a function the program's top-level names are
+    /// invisible, so a part's `m.pi` (its `use math as m`) is math's pi
+    /// beside a program's own top-level `m`: asked of inference's
+    /// variables, which hold the program's `m`, it had been typed as
+    /// nothing known, `m.cos[m.pi * x]` reached the decimal's cosine and
+    /// the compiled program did not build (pie's generator; parity 509).
     fn qualified_type(&self, object: &A, field: &str) -> Ty {
+        if let A::Ident(m) = object
+            && self.is_module(m)
+            && !self.declared(m)
+            && let Some(t) = self.ctx.module_constant_type(m, field)
+        {
+            return t;
+        }
         let object_type = match object {
             A::Ident(m) => self.ctx.ident_type(m).text(),
             _ => Ty::Unknown,
@@ -8682,7 +8824,19 @@ fn infer_once(ctx: &mut TypeContext, stmts: &[S]) {
     // kind (`field_wishes`): applied once the rounds settle, so a field an
     // early round had not typed yet — a tensor its makers type later — is
     // never filled, and the bodies are read again with it (parity 508)
-    if fill_wished_fields(ctx) {
+    // — and a parameter's or a local's list of no kind whose item met a
+    // number holds the number's kind, from the rounds after these on
+    // (`items_wished`: a list of no kind in an early round may be one a
+    // caller types later, parity 513)
+    for _ in 0..2 {
+        let filled = fill_wished_fields(ctx);
+        let wished = std::mem::take(&mut ctx.items_wished) && !ctx.items_settled;
+        if wished {
+            ctx.items_settled = true;
+        }
+        if !filled && !wished {
+            break;
+        }
         for _ in 0..8 {
             let round = ctx.signatures();
             ctx.sync_derive_types();
@@ -8824,6 +8978,16 @@ fn walked_place(e: &A) -> Option<(String, Option<String>)> {
         },
         _ => None,
     }
+}
+
+/// Where an item of a list of no kind lies (`Lowerer::item_from`): a
+/// parameter's or a local's list, or a record's field's (`Place`: the
+/// variable, and the field a loop walks), or a place `depth` positions or
+/// keys below a record's field (`Field`: the record, the field, the depth).
+#[derive(Clone, Debug)]
+enum ItemFrom {
+    Place((String, Option<String>)),
+    Field(String, String, usize),
 }
 
 /// The wished places of records' fields filled where the makers left them

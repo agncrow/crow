@@ -1,0 +1,41 @@
+--- A list in a function `grad` differentiates holds traced tensors as
+--- it holds any value: pushed one a step, read back by position, walked,
+--- measured, handed to a helper and answered by one, the derivative
+--- reaching each where it is read (a recurrent layer's outputs). The list
+--- had refused its `push`, and compiled it could not hold one. By hand:
+--- h₁ = x²+1, h₂ = x³+x+1, h₃ = x⁴+x²+x+1, so d/dx of Σh₁+Σh₂+Σh₃+Σh₂
+--- is 4x³+6x²+4x+3 — [17, 67] at [1, 2] — and the helpers' 2x+2x² gives
+--- 2+4x beside it.
+use math
+
+fn joined[pieces]
+    out = math.zeros[0]
+    for p in pieces
+        out = concat[out, p]
+    return out
+
+fn doubled[xs]
+    out = []
+    for i in range[len[xs]]
+        out = push[out, xs[i] .* 2.0]
+    return out
+
+fn stepped[x]
+    outs = []
+    h = x
+    for j in range[3]
+        h = h .* x + 1.0
+        outs = push[outs, h]
+    total = 0.0
+    for o in outs
+        total = total + sum[o]
+    return total + sum[outs[1]] + float[len[outs]]
+
+fn spread[x]
+    ps = []
+    ps = push[ps, x]
+    ps = push[ps, x .* x]
+    return sum[joined[doubled[ps]]]
+
+log[grad[stepped][tensor[[1.0, 2.0]]]]
+log[grad[spread][tensor[[1.0, 2.0]]]]

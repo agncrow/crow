@@ -1,0 +1,3 @@
+k41_what_carries_a_derivative_meets_only_the_tape.co:9:5: grad: loss calls `str`, which is not differentiable — a function grad differentiates may use len, slice, push, concat, log, abs, sqrt, floor, ceil, round, int, float, onehot, uniform, bernoulli, sum, mean, min, max, where, reshape, flatten, transpose, clip, exp, ln, log2, log1p, expm1, log10, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, sign, erf, stack, tensor
+  9 │     total = str[sum[x]]
+    │     ^^^^^^^^^^^^^^^^^^^

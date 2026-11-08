@@ -1,0 +1,51 @@
+--- Inside a function `grad` differentiates, a list of traced numbers or
+--- tensors made a tensor is one on the tape, each item's gradient its
+--- slice: `stack` of tensors along an axis (PyTorch's `torch.stack`), a
+--- list where a tensor is taken (`tensor[items]`, `sum[items]`), and a
+--- literal whose numbers carry a derivative. `stack` had been refused as
+--- not differentiable; `tensor[items]` had stopped interpreted ("a list
+--- of float is not a list of numbers") and not built compiled, as the
+--- literal had not (its numbers printed as constants). By hand, at x =
+--- [1, 2]: d/dx Σ [2x₀, x₁²]² = [8x₀, 4x₁³] = [8, 32]; Σ stack[2x, x²]² =
+--- Σ 4x² + x⁴, whose gradient is 8x + 4x³ = [12, 48].
+use math
+
+fn listed[x]
+    items = []
+    items = push[items, x[0] * 2.0]
+    items = push[items, x[1] * x[1]]
+    v = tensor[items]
+    return sum[v .* v]
+
+fn stacked[x]
+    rows = []
+    rows = push[rows, x .* 2.0]
+    rows = push[rows, x .* x]
+    m = stack[rows]
+    return sum[m .* m]
+
+fn columns[x]
+    rows = []
+    rows = push[rows, x .* 2.0]
+    rows = push[rows, x .* x]
+    m = stack[rows, axis = 1]
+    return sum[m[0] .* tensor[[1.0, 10.0]]] + sum[m[1] .* tensor[[100.0, 1000.0]]]
+
+fn grid[x]
+    m = tensor[[[x[0], x[1]], [x[1] * x[0], 3.0]]]
+    return sum[m .* m]
+
+fn reduced[x]
+    items = []
+    for i in range[len[x]]
+        items = push[items, x[i] * x[i]]
+    return sum[items] + mean[items] + max[items]
+
+x = tensor[[1.0, 2.0]]
+for f in [listed, stacked, columns, grid, reduced]
+    log[f[x]]
+log[grad[listed][x]]
+log[grad[stacked][x]]
+log[grad[columns][x]]
+log[grad[grid][x]]
+log[grad[reduced][x]]

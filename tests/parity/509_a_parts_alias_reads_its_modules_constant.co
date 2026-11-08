@@ -1,0 +1,13 @@
+--- A part's `use math as m` reads math's constants through the alias
+--- inside the part's functions, whatever the program names `m`: the
+--- program's top-level `m` is invisible there. Asked whether the program
+--- held a variable `m`, `m.pi` had been typed as nothing known beside the
+--- program's matrix `m`, `m.cos[m.pi * x]` reached the decimal's cosine
+--- and the compiled program did not build, where the interpreter ran
+--- (pie's generator, `use math as m`, under parity's `m = [[…]]`).
+use lib/aliased
+
+m = [[1.0, -2.0], [3.0, 0.5]]
+log[fmt[aliased.turned[0.25], decimals = 9]]
+log[fmt[aliased.spun[0.5], decimals = 9]]
+log[m]

@@ -1,0 +1,20 @@
+--- A function `grad` differentiates gives every record holding numbers a
+--- traced twin, and a twin shows as its record does — where its record
+--- shows: a record holding a function has no display. Compiled, every
+--- twin's display had been written, and a program with a record holding
+--- a function did not build (pie's nn example: its optimizer holds its
+--- schedule), where the interpreter ran it. By hand: w = [3, 6], and
+--- d/dw Σ w² = 2w = [6, 12]; halved[4] = 2.
+use math
+struct Step [scale, by]
+
+fn halved[x]
+    return x / 2.0
+
+fn loss[w]
+    return sum[w .* w]
+
+s = Step[3.0, halved]
+w = tensor[[1.0, 2.0]] .* s.scale
+log[grad[loss][w]]
+log[s.by[4.0]]

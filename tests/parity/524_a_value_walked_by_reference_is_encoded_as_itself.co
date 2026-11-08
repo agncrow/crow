@@ -1,0 +1,19 @@
+--- A value a loop walks by reference is encoded as itself, in both modes:
+--- a map's key walked by `for k in keys[m]` and a list's row walked by
+--- `for r in rows` had been handed to `encode` as a reference to one, and
+--- the compiled program had not built (pie's nn.safetensors, writing a
+--- file's metadata).
+m = map[b = 'two', a = 'one']
+pairs = []
+for k in keys[m]
+    pairs = push[pairs, '`encode[k]`:`encode[m[k]]`']
+log['{`join[pairs, \',\']`}']
+rows = [[1, 2], [3, 4]]
+for r in rows
+    log[encode[r]]
+fn meta[given]
+    out = []
+    for k in keys[given]
+        out = push[out, encode[k]]
+    return join[out, ' ']
+log[meta[map[x = '1', y = '2']]]

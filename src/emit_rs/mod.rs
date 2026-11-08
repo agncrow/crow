@@ -23,6 +23,7 @@ mod tests;
 mod ui;
 mod builders;
 mod texts;
+mod traced;
 mod vectors;
 
 /// What the build needs from the program besides its text: the crates
@@ -158,6 +159,15 @@ pub(crate) struct Emitter {
     /// Printing a function's traced copy: numbers and tensors are traced
     /// values, every operation the autograd kernel's.
     pub(crate) emitting_traced: bool,
+    /// The names of the traced copy being printed that carry a derivative
+    /// (the IR's `active`): a list or a record among them is held in its
+    /// traced form (emit_rs/traced.rs).
+    pub(crate) active_names: BTreeSet<String>,
+    /// The records with a twin, a traced form (emit_rs/traced.rs).
+    pub(crate) traced_records: BTreeSet<String>,
+    /// The traced copies whose answer is a list or a record in its traced
+    /// form.
+    pub(crate) traced_answers: BTreeSet<String>,
     pub(crate) web_handlers: HashSet<String>,
     pub(crate) live_render_fns: HashSet<String>,
     pub(crate) live_handle_fns: HashSet<String>,
@@ -288,6 +298,9 @@ impl Emitter {
             dual_helpers: BTreeSet::new(),
             traced_functions: BTreeSet::new(),
             emitting_traced: false,
+            active_names: BTreeSet::new(),
+            traced_records: BTreeSet::new(),
+            traced_answers: BTreeSet::new(),
             web_handlers: HashSet::new(),
             live_render_fns: HashSet::new(),
             live_handle_fns: HashSet::new(),

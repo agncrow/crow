@@ -132,6 +132,29 @@ impl AsTraced for CrowTensor {
     }
 }
 
+/// A tensor's numbers where they lie, in either form a traced copy holds a
+/// tensor in: a traced value's numbers, a plain tensor itself. The copy
+/// reads its numbers through this where they are wanted as they are — a
+/// whole number by position, a list's items — whichever form holds them
+/// (`wd[0]` of a literal of sizes, a parameter handed where a list of ints
+/// is taken: parity 515), and with no copy of a plain one, which `AsTraced`
+/// would make a constant of the tape first.
+pub trait TensorOf {
+    fn tensor_of(&self) -> &CrowTensor;
+}
+
+impl TensorOf for Traced {
+    fn tensor_of(&self) -> &CrowTensor {
+        &self.value
+    }
+}
+
+impl TensorOf for CrowTensor {
+    fn tensor_of(&self) -> &CrowTensor {
+        self
+    }
+}
+
 impl From<f64> for Traced {
     fn from(x: f64) -> Traced {
         Traced::number(x)
@@ -217,7 +240,9 @@ fn unbroadcast(g: &CrowTensor, shape: &[usize]) -> CrowTensor {
         g = g.sum_axis(0);
     }
     if shape.is_empty() {
-        return CrowTensor::scalar(g.sum());
+        // (left on the GPU where g lies: a number beside a tensor, a
+        // temperature dividing the logits, had read the gradient back)
+        return g.sum_tensor();
     }
     for d in 0..shape.len() {
         if shape[d] == 1 && g.shape()[d] != 1 {
@@ -280,7 +305,7 @@ pub fn pow(a: &Traced, b: &Traced) -> Result<Traced, String> {
     let node = record(vec![a.node, b.node], move |g| {
         // d/da = b a^(b-1); d/db = a^b ln a
         let da = g.mul(&bv).mul(&av.pow(&bv.sub_scalar(1.0)));
-        let db = g.mul(&out).mul(&av.map(f64::ln));
+        let db = g.mul(&out).mul(&local(&av, f64::ln, CrowTensor::log));
         vec![unbroadcast(&da, &sa), unbroadcast(&db, &sb)]
     });
     Ok(Traced::from(value, node))
@@ -321,16 +346,41 @@ pub fn flatten(a: &Traced) -> Traced {
 /// `sum[t]`: a number.
 pub fn sum(a: &Traced) -> Traced {
     let shape = a.value.shape().to_vec();
-    let node = record(vec![a.node], move |g| vec![CrowTensor::full(shape.clone(), g.sum())]);
-    Traced::from(CrowTensor::scalar(a.value.sum()), node)
+    let on_gpu = a.value.is_gpu();
+    let node = record(vec![a.node], move |g| vec![filled(g, &shape, None, on_gpu)]);
+    Traced::from(a.value.sum_tensor(), node)
 }
 
 /// `mean[t]`: a number.
 pub fn mean(a: &Traced) -> Traced {
     let shape = a.value.shape().to_vec();
     let n = a.value.len().max(1) as f64;
-    let node = record(vec![a.node], move |g| vec![CrowTensor::full(shape.clone(), g.sum() / n)]);
-    Traced::from(CrowTensor::scalar(a.value.mean()), node)
+    let on_gpu = a.value.is_gpu();
+    let node = record(vec![a.node], move |g| vec![filled(g, &shape, Some(n), on_gpu)]);
+    Traced::from(a.value.mean_tensor(), node)
+}
+
+/// The gradient of a sum over a tensor of `shape` (of a mean, divided by
+/// its `n`): the answer's gradient `g`, one number, at every place. Where
+/// `g` lies on the GPU it stays there, read with strides of 0 (read back as
+/// a number, it had been a round trip to the device at every step of a
+/// network's training); where the tensor summed lies there, the number is
+/// sent once (a tensor of the input's size had been made on the CPU and
+/// sent at the next operation).
+fn filled(g: &CrowTensor, shape: &[usize], n: Option<f64>, on_gpu: bool) -> CrowTensor {
+    if g.is_gpu() && g.len() == 1 {
+        let one = g.reshape(vec![]);
+        let one = match n {
+            Some(n) => one.div_scalar(n),
+            None => one,
+        };
+        return one.broadcast_to(shape);
+    }
+    let x = match n {
+        Some(n) => g.sum() / n,
+        None => g.sum(),
+    };
+    if on_gpu { CrowTensor::scalar(x).to_gpu().broadcast_to(shape) } else { CrowTensor::full(shape.to_vec(), x) }
 }
 
 /// `sum[t, axis = k]`.
@@ -360,12 +410,37 @@ fn spread(g: &CrowTensor, shape: &[usize], axis: usize) -> CrowTensor {
     let mut kept = shape.to_vec();
     kept[axis] = 1;
     let g = if g.ndim() == 0 { g.reshape(kept.clone()) } else { g.reshape(kept) };
+    if g.is_gpu() {
+        return g.broadcast_to(shape);
+    }
     CrowTensor::zeros(shape.to_vec()).add(&g)
 }
 
 fn unary(a: &Traced, value: CrowTensor, local: impl Fn() -> CrowTensor + 'static) -> Traced {
     let node = record(vec![a.node], move |g| vec![g.mul(&local())]);
     Traced::from(value, node)
+}
+
+/// A local derivative of each number of `t`: by `cpu`, number by number,
+/// where the tensor lies on the CPU (the digits it always had), and by the
+/// tensor operations `gpu` names where it lies on the GPU — a closure over
+/// numbers brought each step of a backward pass back to the CPU.
+fn local(t: &CrowTensor, cpu: impl Fn(f64) -> f64, gpu: impl Fn(&CrowTensor) -> CrowTensor) -> CrowTensor {
+    if t.is_gpu() { gpu(t) } else { t.map(cpu) }
+}
+
+/// 1 where `x` lies strictly between the bounds, 0 elsewhere, on the GPU
+/// (`clip`'s derivative there): a bound no f32 holds, an infinity, is no
+/// bound a number there passes.
+fn inside(t: &CrowTensor, lo: f64, hi: f64) -> CrowTensor {
+    use crate::tensor::Compare;
+    let above = (lo > f64::NEG_INFINITY).then(|| t.compared(Compare::Gt, lo));
+    let below = (hi < f64::INFINITY).then(|| t.compared(Compare::Lt, hi));
+    match (above, below) {
+        (Some(a), Some(b)) => a.mul(&b),
+        (Some(m), None) | (None, Some(m)) => m,
+        (None, None) => t.abs().compared(Compare::Ge, 0.0),
+    }
 }
 
 pub fn exp(a: &Traced) -> Traced {
@@ -376,24 +451,24 @@ pub fn exp(a: &Traced) -> Traced {
 
 pub fn ln(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.map(f64::ln), move || av.map(|x| 1.0 / x))
+    unary(a, a.value.log(), move || local(&av, |x| 1.0 / x, |t| t.scalar_div(1.0)))
 }
 
 pub fn sqrt(a: &Traced) -> Traced {
     let value = a.value.sqrt();
     let out = value.clone();
-    unary(a, value, move || out.map(|s| 0.5 / s))
+    unary(a, value, move || local(&out, |s| 0.5 / s, |t| t.scalar_div(0.5)))
 }
 
 pub fn tanh(a: &Traced) -> Traced {
     let value = a.value.tanh();
     let out = value.clone();
-    unary(a, value, move || out.map(|t| 1.0 - t * t))
+    unary(a, value, move || local(&out, |t| 1.0 - t * t, |t| t.mul(t).neg().add_scalar(1.0)))
 }
 
 pub fn abs(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.map(f64::abs), move || av.map(|x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 }))
+    unary(a, a.value.abs(), move || local(&av, |x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 }, CrowTensor::sign))
 }
 
 /// `sin[t]`, `cos[t]`, `tan[t]` and the inverse and hyperbolic ones, each
@@ -401,70 +476,70 @@ pub fn abs(a: &Traced) -> Traced {
 /// 1/(1+x²), cosh, sinh; `log2` and `log10` by 1/(x ln 2), 1/(x ln 10).
 pub fn sin(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.map(f64::sin), move || av.map(f64::cos))
+    unary(a, a.value.sin(), move || local(&av, crate::math::cosine, CrowTensor::cos))
 }
 
 pub fn cos(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.map(f64::cos), move || av.map(|x| -x.sin()))
+    unary(a, a.value.cos(), move || local(&av, |x| -crate::math::sine(x), |t| t.sin().neg()))
 }
 
 pub fn tan(a: &Traced) -> Traced {
-    let value = a.value.map(f64::tan);
+    let value = a.value.tan();
     let out = value.clone();
-    unary(a, value, move || out.map(|t| 1.0 + t * t))
+    unary(a, value, move || local(&out, |t| 1.0 + t * t, |t| t.mul(t).add_scalar(1.0)))
 }
 
 pub fn asin(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.map(f64::asin), move || av.map(|x| 1.0 / (1.0 - x * x).sqrt()))
+    unary(a, a.value.asin(), move || local(&av, |x| 1.0 / (1.0 - x * x).sqrt(), |t| t.mul(t).neg().add_scalar(1.0).sqrt().scalar_div(1.0)))
 }
 
 pub fn acos(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.map(f64::acos), move || av.map(|x| -1.0 / (1.0 - x * x).sqrt()))
+    unary(a, a.value.acos(), move || local(&av, |x| -1.0 / (1.0 - x * x).sqrt(), |t| t.mul(t).neg().add_scalar(1.0).sqrt().scalar_div(-1.0)))
 }
 
 pub fn atan(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.map(f64::atan), move || av.map(|x| 1.0 / (1.0 + x * x)))
+    unary(a, a.value.atan(), move || local(&av, |x| 1.0 / (1.0 + x * x), |t| t.mul(t).add_scalar(1.0).scalar_div(1.0)))
 }
 
 pub fn sinh(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.map(f64::sinh), move || av.map(f64::cosh))
+    unary(a, a.value.sinh(), move || local(&av, f64::cosh, CrowTensor::cosh))
 }
 
 pub fn cosh(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.map(f64::cosh), move || av.map(f64::sinh))
+    unary(a, a.value.cosh(), move || local(&av, f64::sinh, CrowTensor::sinh))
 }
 
 pub fn log2(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.map(f64::log2), move || av.map(|x| 1.0 / (x * std::f64::consts::LN_2)))
+    unary(a, a.value.log2(), move || local(&av, |x| 1.0 / (x * std::f64::consts::LN_2), |t| t.mul_scalar(std::f64::consts::LN_2).scalar_div(1.0)))
 }
 
 pub fn log10(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.map(f64::log10), move || av.map(|x| 1.0 / (x * std::f64::consts::LN_10)))
+    unary(a, a.value.log10(), move || local(&av, |x| 1.0 / (x * std::f64::consts::LN_10), |t| t.mul_scalar(std::f64::consts::LN_10).scalar_div(1.0)))
 }
 
 /// `log1p[t]`: d/dx ln(1 + x) = 1/(1 + x).
 pub fn log1p(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.log1p(), move || av.map(|x| 1.0 / (1.0 + x)))
+    unary(a, a.value.log1p(), move || local(&av, |x| 1.0 / (1.0 + x), |t| t.add_scalar(1.0).scalar_div(1.0)))
 }
 
 /// `expm1[t]`: d/dx (exp(x) − 1) = exp(x).
 pub fn expm1(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.expm1(), move || av.map(f64::exp))
+    unary(a, a.value.expm1(), move || local(&av, f64::exp, CrowTensor::exp))
 }
 
 /// `sign[t]`: piecewise constant, a constant of the tape (derivative 0).
 pub fn sign(a: &Traced) -> Traced {
-    Traced::constant(a.value.map(|x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 }))
+    Traced::constant(a.value.sign())
 }
 
 /// `clip[t, lo, hi]`: each element held within the bounds; the gradient
@@ -477,27 +552,27 @@ pub fn clip(a: &Traced, lo: &Traced, hi: &Traced) -> Result<Traced, String> {
         _ => return Err("clip: the bounds are numbers".to_string()),
     };
     let av = a.value.clone();
-    Ok(unary(a, a.value.clip(lo, hi), move || av.map(|x| if x > lo && x < hi { 1.0 } else { 0.0 })))
+    Ok(unary(a, a.value.clip(lo, hi), move || local(&av, |x| if x > lo && x < hi { 1.0 } else { 0.0 }, |t| inside(t, lo, hi))))
 }
 
 /// `erf[t]`: d/dx erf(x) = 2/√π · exp(−x²).
 pub fn erf(a: &Traced) -> Traced {
     let av = a.value.clone();
-    unary(a, a.value.erf(), move || av.map(|x| std::f64::consts::FRAC_2_SQRT_PI * (-x * x).exp()))
+    unary(a, a.value.erf(), move || local(&av, |x| std::f64::consts::FRAC_2_SQRT_PI * (-x * x).exp(), |t| t.mul(t).neg().exp().mul_scalar(std::f64::consts::FRAC_2_SQRT_PI)))
 }
 
 /// `floor[t]`, `ceil[t]`, `round[t]`: piecewise constant, so the answer is
 /// a constant of the tape (derivative 0, as for numbers).
 pub fn floor(a: &Traced) -> Traced {
-    Traced::constant(a.value.map(f64::floor))
+    Traced::constant(a.value.floor())
 }
 
 pub fn ceil(a: &Traced) -> Traced {
-    Traced::constant(a.value.map(f64::ceil))
+    Traced::constant(a.value.ceil())
 }
 
 pub fn round(a: &Traced) -> Traced {
-    Traced::constant(a.value.map(f64::round))
+    Traced::constant(a.value.round())
 }
 
 /// Where the extreme of each slice along `axis` lies, in the flat data:
@@ -535,21 +610,32 @@ fn extreme_positions(t: &CrowTensor, axis: usize, better: impl Fn(f64, f64) -> b
 
 /// A reduction to the extreme along an axis: the gradient reaches the
 /// element each slice's extreme was read from.
-fn extreme_axis(a: &Traced, axis: usize, value: CrowTensor, better: impl Fn(f64, f64) -> bool + 'static) -> Traced {
-    let (positions, _) = extreme_positions(&a.value, axis, better);
+fn extreme_axis(a: &Traced, axis: usize, value: CrowTensor, op: crate::gpu::Reduce, better: impl Fn(f64, f64) -> bool + 'static) -> Traced {
     let shape = a.value.shape().to_vec();
-    let node = record(vec![a.node], move |g| {
-        let mut d = vec![0.0; CrowTensor::numel(&shape)];
-        for (slot, g_slot) in g.to_vec().into_iter().enumerate() {
-            if let Some(&pos) = positions.get(slot) {
-                if let Some(cell) = d.get_mut(pos) {
-                    *cell += g_slot;
-                }
-            }
-        }
-        vec![CrowTensor::from_vec(d, shape.clone())]
-    });
+    // (found on the GPU where the tensor lies there, and the gradient laid
+    // there: every softmax's max had read its scores back to find them)
+    if let Some(at) = a.value.gpu_extreme_places(axis, op) {
+        let node = record(vec![a.node], move |g| match CrowTensor::gpu_scattered_once(g, &at, &shape) {
+            Some(d) => vec![d],
+            None => vec![laid_at(g, &at.places(), &shape)],
+        });
+        return Traced::from(value, node);
+    }
+    let (positions, _) = extreme_positions(&a.value, axis, better);
+    let node = record(vec![a.node], move |g| vec![laid_at(g, &positions, &shape)]);
     Traced::from(value, node)
+}
+
+/// Zeros of `shape` with g's numbers added at the places `positions`
+/// names, one each, on the CPU.
+fn laid_at(g: &CrowTensor, positions: &[usize], shape: &[usize]) -> CrowTensor {
+    let mut d = vec![0.0; CrowTensor::numel(shape)];
+    for (slot, g_slot) in g.to_vec().into_iter().enumerate() {
+        if let Some(cell) = positions.get(slot).and_then(|&pos| d.get_mut(pos)) {
+            *cell += g_slot;
+        }
+    }
+    CrowTensor::from_vec(d, shape.to_vec())
 }
 
 /// A reduction to the extreme of the whole tensor: a number, its gradient
@@ -588,7 +674,7 @@ pub fn max_axis(a: &Traced, axis: usize) -> Result<Traced, String> {
     if axis >= a.value.ndim() {
         return Err(format!("max: axis {} is outside a tensor of {} dimensions", axis, a.value.ndim()));
     }
-    Ok(extreme_axis(a, axis, a.value.max_axis(axis), |x, best| x > best))
+    Ok(extreme_axis(a, axis, a.value.max_axis(axis), crate::gpu::Reduce::Max, |x, best| x > best))
 }
 
 /// `min[t, axis = k]`.
@@ -596,7 +682,7 @@ pub fn min_axis(a: &Traced, axis: usize) -> Result<Traced, String> {
     if axis >= a.value.ndim() {
         return Err(format!("min: axis {} is outside a tensor of {} dimensions", axis, a.value.ndim()));
     }
-    Ok(extreme_axis(a, axis, a.value.min_axis(axis), |x, best| x < best))
+    Ok(extreme_axis(a, axis, a.value.min_axis(axis), crate::gpu::Reduce::Min, |x, best| x < best))
 }
 
 /// `t[positions]` of a tensor by a tensor of whole-number positions: the
@@ -607,12 +693,18 @@ pub fn min_axis(a: &Traced, axis: usize) -> Result<Traced, String> {
 /// A layer reads its weights out of one vector of parameters so, a
 /// convolution its windows, an embedding its rows.
 pub fn gather(a: &Traced, positions: &CrowTensor) -> Result<Traced, String> {
-    let value = a.value.try_gather(positions)?;
+    // (where each read lies, checked once and kept for the backward pass:
+    // positions on the GPU are read back once)
+    let at = a.value.positions_read(positions)?;
+    let value = a.value.gathered_at(positions, &at);
     let n = a.value.len();
     let shape = a.value.shape().to_vec();
-    // (where each read lies, settled once: the read above checked them)
-    let at: Vec<usize> = positions.numbers().iter().map(|&i| crate::stops::item(CrowTensor::position(i)?, n)).collect::<Result<_, _>>()?;
     let node = record(vec![a.node], move |g| {
+        if g.is_gpu()
+            && let Some(d) = CrowTensor::gpu_scattered(g, &at, &shape)
+        {
+            return vec![d];
+        }
         let mut d = vec![0.0; n];
         for (k, gk) in g.numbers().iter().enumerate() {
             if let Some(cell) = at.get(k).and_then(|&p| d.get_mut(p)) {
@@ -635,6 +727,14 @@ pub fn at(a: &Traced, i: i64) -> Result<Traced, String> {
         let r = crate::stops::row(i, shape[0])?;
         let width = value.len();
         let node = record(vec![a.node], move |g| {
+            if g.is_gpu() {
+                // (laid into the zeros of the whole where it lies)
+                let mut row = shape.clone();
+                row[0] = 1;
+                let mut place = vec![0; shape.len()];
+                place[0] = r;
+                return vec![CrowTensor::laid_into(&shape, &place, &g.reshape(row))];
+            }
             let mut d = vec![0.0; n];
             if let Some(cells) = d.get_mut(r * width..(r + 1) * width) {
                 cells.copy_from_slice(&g.numbers());
@@ -669,6 +769,15 @@ pub fn slice(a: &Traced, start: i64, end: i64) -> Traced {
     let width = CrowTensor::numel(&shape[1..]);
     let n = a.value.len();
     let node = record(vec![a.node], move |g| {
+        if g.is_gpu() {
+            // (a layer's weights read out of one vector of parameters: the
+            // gradient laid into the vector's zeros on the device)
+            let mut part = shape.clone();
+            part[0] = e - s;
+            let mut place = vec![0; shape.len()];
+            place[0] = s;
+            return vec![CrowTensor::laid_into(&shape, &place, &g.reshape(part))];
+        }
         let mut d = vec![0.0; n];
         if let Some(cells) = d.get_mut(s * width..e * width) {
             cells.copy_from_slice(&g.numbers());
@@ -690,6 +799,39 @@ pub fn concat(a: &Traced, b: &Traced, axis: i64) -> Result<Traced, String> {
     Ok(Traced::from(value, node))
 }
 
+/// A node whose gradient is split along `axis` among the items laid side
+/// by side there: each item's share is its slice of the axis, one position
+/// wide, in its own shape.
+fn split_back(ts: &[Traced], axis: usize) -> Option<usize> {
+    let shapes: Vec<Vec<usize>> = ts.iter().map(|t| t.value.shape().to_vec()).collect();
+    record(ts.iter().map(|t| t.node).collect(), move |g| {
+        shapes.iter().enumerate().map(|(i, s)| g.slice(axis, i, i + 1).reshape(s.clone())).collect()
+    })
+}
+
+/// `stack[ts]` and `stack[ts, axis = k]` of traced tensors — PyTorch's
+/// `torch.stack`: the tensors side by side along a new axis (0 unless
+/// named), as `math::stack_axis` lays them (its words where the shapes
+/// differ); each tensor's gradient is its slice of the new axis. A
+/// recurrent layer's outputs, one a step, are stacked so.
+pub fn stack(ts: &[Traced], axis: i64) -> Result<Traced, String> {
+    let values: Vec<CrowTensor> = ts.iter().map(|t| t.value.clone()).collect();
+    let value = crate::math::stack_axis(&values, axis)?;
+    let node = split_back(ts, usize::try_from(axis).unwrap_or(0));
+    Ok(Traced::from(value, node))
+}
+
+/// A list of traced numbers or tensors handed where a tensor is taken
+/// (`tensor[items]`): the tensor of its items along a first axis, as
+/// `CrowTensor::from_elements` makes one of plain items (its words where
+/// they differ in shape); each item's gradient is its slice.
+pub fn from_elements(ts: &[Traced]) -> Result<Traced, String> {
+    let values: Vec<CrowTensor> = ts.iter().map(|t| t.value.clone()).collect();
+    let value = CrowTensor::from_elements(&values)?;
+    let node = split_back(ts, 0);
+    Ok(Traced::from(value, node))
+}
+
 /// `where[cond, a, b]`: `a`'s number where the condition's is not 0 (a
 /// mask's true), `b`'s elsewhere — PyTorch's `torch.where`; the condition
 /// is a constant of the tape (a mask a comparison answers inside the
@@ -699,7 +841,12 @@ pub fn where_(cond: &CrowTensor, a: &Traced, b: &Traced) -> Result<Traced, Strin
     let value = crate::math::where_(cond, &a.value, &b.value)?;
     let held: Vec<f64> = cond.numbers().iter().map(|&c| if c != 0.0 { 1.0 } else { 0.0 }).collect();
     let (sa, sb) = (a.value.shape().to_vec(), b.value.shape().to_vec());
+    // (the condition's truths on the device beside a value there, once)
+    let mask = value.is_gpu().then(|| CrowTensor::from_vec(held.clone(), value.shape().to_vec()).to_gpu());
     let node = record(vec![a.node, b.node], move |g| {
+        if let Some(mask) = mask.as_ref().filter(|_| g.is_gpu()) {
+            return vec![g.mul(mask).reshape(sa.clone()), g.mul(&mask.neg().add_scalar(1.0)).reshape(sb.clone())];
+        }
         let g = g.numbers();
         let ga: Vec<f64> = g.iter().zip(&held).map(|(x, h)| x * h).collect();
         let gb: Vec<f64> = g.iter().zip(&held).map(|(x, h)| x * (1.0 - h)).collect();
@@ -809,6 +956,19 @@ mod tests {
             check("slice past the end", &[row.clone()], |x| Ok(sum(&mul(&slice(&x[0], -2, 9), &slice(&x[0], -2, 9))?)));
             check("concat", &[a.clone(), b.clone()], |x| Ok(sum(&mul(&concat(&x[0], &x[1], 0)?, &concat(&x[1], &x[0], 0)?)?)));
             check("concat axis 1", &[a.clone(), col.clone()], |x| Ok(sum(&mul(&concat(&x[0], &x[1], 1)?, &concat(&x[1], &x[0], 1)?)?)));
+            // (a stack along each axis, read against itself reversed, so
+            // each item's share differs; and a list made a tensor)
+            for axis in 0..3 {
+                check("stack", &[a.clone(), b.clone()], move |x| Ok(sum(&mul(&stack(&[x[0].clone(), x[1].clone()], axis)?, &stack(&[x[1].clone(), x[0].clone()], axis)?)?)));
+            }
+            check("elements", &[a.clone(), b.clone()], |x| {
+                let m = from_elements(&[x[0].clone(), x[1].clone(), x[0].clone()])?;
+                Ok(sum(&mul(&m, &from_elements(&[x[1].clone(), x[0].clone(), x[1].clone()])?)?))
+            });
+            check("elements of numbers", &[row.clone()], |x| {
+                let v = from_elements(&[at(&x[0], 0)?, at(&x[0], 1)?, at(&x[0], 0)?])?;
+                Ok(sum(&mul(&v, &v)?))
+            });
             let cond = a.map(|v| if v > 0.3 { 1.0 } else { 0.0 });
             check("where", &[a.clone(), b.clone()], |x| Ok(sum(&mul(&where_(&cond, &x[0], &x[1])?, &x[0])?)));
         }

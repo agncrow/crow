@@ -184,6 +184,16 @@ impl ToJson for str {
 /// numbers is a tensor there, whose whole numbers encode as ints (the
 /// compiled program had written `[1,2.0]` back where the interpreter wrote
 /// `[1,2]`).
+/// A value borrowed encodes as the value: an item a loop walks by
+/// reference — a map's key, a matrix's row, a list's record — is encoded as
+/// itself, as `CrowDisplay for &T` shows one (`encode[k]` of `for k in
+/// keys[m]` had not built compiled: pie's nn.safetensors writing a file's
+/// metadata; parity 524).
+impl<T: ToJson + ?Sized> ToJson for &T {
+    fn to_json(&self) -> serde_json::Value {
+        (**self).to_json()
+    }
+}
 impl ToJson for serde_json::Value {
     fn to_json(&self) -> serde_json::Value {
         use serde_json::Value;

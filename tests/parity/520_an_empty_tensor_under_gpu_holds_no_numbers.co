@@ -1,0 +1,15 @@
+--- an empty tensor under gpu[] stays on the CPU: shown, joined and added
+--- to itself it is the empty tensor in both modes (it had been put on the
+--- GPU, and reading it back mapped an empty buffer slice, which wgpu
+--- refuses: "buffer slices can not be empty" — every model of pie's under
+--- gpu[] stopped at its first empty tensor)
+use math
+gpu[]
+x = zeros[0]
+log[x]
+log[len[x]]
+log[concat[x, ones[3]]]
+log[x + x]
+y = tensor[[1.0, 2.0, 3.0]]
+log[slice[y, 1, 1] + slice[y, 2, 2]]
+log[y + y]

@@ -1,0 +1,45 @@
+--- A record's field given only `[]` where the program makes its
+--- records, whose items the program pushes onto a list of ints — read by
+--- position, walked, or read through a local — holds ints, and so does the
+--- maker's parameter that puts the `[]` there, in both modes. Held as
+--- text, as the compiled program holds a list of nothing, the field's
+--- items had been pushed as text onto a list of ints and the program had
+--- not built (pie's nn.data: a loader made with no subset sampler).
+struct Sampler [order_by, count, indices]
+struct Drawn [values, rest]
+
+fn sampler[order_by, count, indices]
+    return Sampler[order_by, count, indices]
+
+fn sequential[count]
+    return sampler['sequential', count, []]
+
+fn ordered[s]
+    if s.order_by eq 'subset'
+        out = []
+        for i in range[len[s.indices]]
+            out = push[out, s.indices[i]]
+        return Drawn[out, 0]
+    if s.order_by eq 'walked'
+        out = []
+        for x in s.indices
+            out = push[out, x]
+        return Drawn[out, 1]
+    if s.order_by eq 'held'
+        held = s.indices
+        out = []
+        for i in range[len[held]]
+            out = push[out, held[i]]
+        return Drawn[out, 2]
+    out = []
+    for k in range[s.count]
+        out = push[out, k * 2]
+    return Drawn[out, s.count]
+
+d = ordered[sequential[4]]
+log[d.values]
+log[d.rest]
+log[ordered[sampler['subset', 0, []]].values]
+log[ordered[sampler['walked', 0, []]].rest]
+log[ordered[sampler['held', 0, []]].rest]
+log[len[sequential[3].indices]]

@@ -1439,6 +1439,12 @@ impl IrInterp {
                     // CrowColumn::numbers reads them: a missing cell or a
                     // cell of text or a bool is the reason it has none
                     Convert::ToTensor => match &v.value {
+                        // a list holding traced numbers or tensors, inside a
+                        // function `grad` differentiates: the tensor of its
+                        // items on the tape, each item's gradient its slice
+                        // (it had stopped, "a list of float is not a list of
+                        // numbers", and not built compiled; parity 517)
+                        Value::Array(items) if v.is_ok() && crate::autograd_bridge::holds_traced(items) => crate::autograd_bridge::elements(items)?,
                         // a mask of a matrix's shape (its rows of bools, deeper
                         // for more axes) is a matrix of 1 and 0, or the reason
                         // its rows are not one length — the words of the
@@ -2403,7 +2409,7 @@ impl IrInterp {
         if vals.iter().any(|v| matches!(v.value, Value::Dual(..))) {
             return self.bare_call(crate::table::written_name(row), vals);
         }
-        if crate::autograd_bridge::any_traced(&vals) {
+        if crate::autograd_bridge::on_tape(Some(row), "", &vals) {
             return crate::autograd_bridge::call(row, &vals);
         }
         if row.module.is_empty() {
@@ -2439,7 +2445,7 @@ impl IrInterp {
         // a builtin with a row is its runtime function, read and dispatched
         // as the row says: the row the values' kinds pick
         let name = RUNTIME_TABLE.iter().find(|(_, r)| *r == path).map(|(b, _)| *b).unwrap_or(path).to_string();
-        if name != "log" && crate::autograd_bridge::any_traced(&vals) {
+        if crate::autograd_bridge::on_tape(None, &name, &vals) {
             return crate::autograd_bridge::call_named(&name, &vals);
         }
         if let Some(answer) = self.web_response(&name, &vals) {
@@ -2546,7 +2552,7 @@ impl IrInterp {
         }
         // a value a function grad differentiates computes with: the
         // autograd kernel's builtin, recorded on the tape
-        if name != "log" && crate::autograd_bridge::any_traced(&vals) {
+        if crate::autograd_bridge::on_tape(None, name, &vals) {
             return crate::autograd_bridge::call_named(name, &vals);
         }
         // a dual number a function grad differentiates carries takes the

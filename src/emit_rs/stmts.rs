@@ -372,15 +372,34 @@ impl Emitter {
         // the traced copy had taken it immutable, and the program did not
         // build: parity 242)
         let changed = Self::mutated_in(&f.body);
+        // (a list or a record a call hands a derivative in, and an answer
+        // that carries one, in its traced form: emit_rs/traced.rs)
+        let active = self.part.active.get(&f.name).cloned().unwrap_or_default();
         let params: Vec<String> = f
             .params
             .iter()
             .map(|(p, t)| {
                 let own = if changed.contains(p) { "mut " } else { "" };
-                if traced(t) { format!("{}{}: crow_runtime::autograd::Traced", own, p) } else { format!("{}{}: {}", own, p, as_inferred(t).to_rust_type()) }
+                if traced(t) {
+                    format!("{}{}: crow_runtime::autograd::Traced", own, p)
+                } else if active.contains(p) && self.held_traced(&as_inferred(t)) {
+                    format!("{}{}: {}", own, p, self.traced_rust_type(&as_inferred(t)))
+                } else {
+                    format!("{}{}: {}", own, p, as_inferred(t).to_rust_type())
+                }
             })
             .collect();
-        let ret = if traced(&f.ret) { "crow_runtime::autograd::Traced".to_string() } else { as_inferred(&f.ret).to_rust_type() };
+        let ret = if traced(&f.ret) {
+            "crow_runtime::autograd::Traced".to_string()
+        } else if matches!(as_inferred(&f.ret), Ty::Result(i) if traced(&i)) {
+            // (an answer that can fail holds a traced number or tensor:
+            // emit_rs/traced.rs, parity 519)
+            "CrowResult<crow_runtime::autograd::Traced>".to_string()
+        } else if self.traced_answers.contains(&f.name) {
+            self.traced_rust_type(&as_inferred(&f.ret))
+        } else {
+            as_inferred(&f.ret).to_rust_type()
+        };
         self.needs_crow_runtime = true;
         self.line("#[allow(unused_mut, unused_variables, non_snake_case, unreachable_code)]");
         self.line(&format!("fn _traced_{}({}) -> {} {{", Self::rust_fn_name(&f.name), params.join(", "), ret));
@@ -398,6 +417,7 @@ impl Emitter {
         self.returns_unit = false;
         self.cur_fn = f.name.clone();
         self.emitting_traced = true;
+        let names_were = std::mem::replace(&mut self.active_names, active);
         self.mutated = Self::mutated_in(&f.body);
         for (p, t) in &f.params {
             self.declare(p, as_inferred(t));
@@ -412,6 +432,7 @@ impl Emitter {
             self.emit_stmt(s);
         }
         self.emitting_traced = false;
+        self.active_names = names_were;
         let (scopes, refs, mutated, ret, unit, cur) = saved;
         self.scopes = scopes;
         self.ref_params = refs;
@@ -504,8 +525,10 @@ impl Emitter {
             if self.in_view() {
                 return format!("return CrowVNode::failed(&{v}.reason);", v = v);
             }
+            // (a traced copy's answer that can fail holds a traced number or
+            // tensor: emit_rs/traced.rs)
             let inner_default = match &ret {
-                Ty::Result(inner) => inner.default_rust_value(),
+                Ty::Result(inner) => self.payload_default(inner),
                 other => other.default_rust_value(),
             };
             let trace = self.trace_format_expr();
@@ -801,6 +824,7 @@ impl Emitter {
                 text = format!("Some(crow_runtime::link::new({}))", text);
             }
         }
+        let text = self.held_form(var, &as_inferred(ty), expr, text);
         let kw = if self.mutated.contains(var) { "let mut" } else { "let" };
         let in_live_callback = self.live_render_fns.contains(&self.cur_fn) || self.live_handle_fns.contains(&self.cur_fn) || self.views.contains(&self.cur_fn);
         if self.emitting_dual || self.emitting_traced || in_live_callback || matches!(t, Ty::Unknown) {
@@ -861,12 +885,15 @@ impl Emitter {
                 if existing.compatible(inner) || (matches!(existing, Ty::Float) && matches!(inner.as_ref(), Ty::Int)) {
                     let abort = self.refuse_at("_asg", &Decision::Assign(var.to_string()));
                     let cast = if matches!(existing, Ty::Float) && matches!(inner.as_ref(), Ty::Int) { " as f64" } else { "" };
-                    self.line(&format!("{{ let _asg = {}; if !_asg.ok {{ {} }} {} = _asg.value{}; }}", text, abort, var, cast));
+                    // (in the form the variable holds: traced in a traced copy)
+                    let value = self.held_form(var, &existing, expr, format!("_asg.value{}", cast));
+                    self.line(&format!("{{ let _asg = {}; if !_asg.ok {{ {} }} {} = {}; }}", text, abort, var, value));
                     return;
                 }
             }
             if matches!(existing, Ty::Float) && matches!(new_ty, Ty::Int) {
-                self.line(&format!("{} = ({}) as f64;", var, text));
+                let value = self.held_form(var, &existing, expr, format!("({}) as f64", text));
+                self.line(&format!("{} = {};", var, value));
                 return;
             }
             // a variable holding a record or none given 0, or a record
@@ -887,7 +914,8 @@ impl Emitter {
             if let Ty::Result(inner) = &existing {
                 if !matches!(new_ty, Ty::Result(_)) && (inner.compatible(&new_ty) || (matches!(inner.as_ref(), Ty::Float) && matches!(new_ty, Ty::Int))) {
                     let cast = if matches!(inner.as_ref(), Ty::Float) && matches!(new_ty, Ty::Int) { " as f64" } else { "" };
-                    self.line(&format!("{} = CrowResult {{ ok: true, value: ({}){}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }};", var, text, cast));
+                    let value = self.payload_form(&format!("({}){}", text, cast), inner);
+                    self.line(&format!("{} = CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }};", var, value));
                     return;
                 }
             }
@@ -895,6 +923,8 @@ impl Emitter {
                 self.fail(format!("cannot reassign '{}' from {} to {} — variable type cannot change", var, existing.crow_name(), new_ty.crow_name()));
             }
         }
+        let held = self.local_ty(var).map(|t| t.text()).unwrap_or_else(|| new_ty.clone());
+        let text = self.held_form(var, &held, expr, text);
         self.line(&format!("{} = {};", var, text));
     }
 
@@ -1360,6 +1390,15 @@ impl Emitter {
         }
         let mut text = self.owned_expr(e);
         let mut ety = self.tt(e);
+        // (a traced copy's answer of a list or a record that carries a
+        // derivative, in its traced form: emit_rs/traced.rs)
+        if self.emitting_traced
+            && self.traced_answers.contains(&self.cur_fn)
+            && !self.carries(e)
+            && let Some(ret) = self.cur_ret.clone()
+        {
+            text = self.traced_form(&text, &ret);
+        }
         // (a view's node returned by a function that answers markup is its
         // HTML, as one held where markup is held: `return cell[s]` of a
         // view had handed the node where text was answered, and the
@@ -1401,6 +1440,7 @@ impl Emitter {
                 } else {
                     text
                 };
+                let text = self.payload_form(&text, &inner);
                 self.line(&format!("return CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }};", text));
             } else if let Ty::Result(got) = &ety {
                 let known = |t: &Ty| !matches!(t, Ty::Unknown);
@@ -1411,9 +1451,10 @@ impl Emitter {
                     self.line(&format!(
                         "return {{ let _r = {}; CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: 0.0 }} }};",
                         text,
-                        inner.default_rust_value()
+                        self.payload_default(&inner)
                     ));
                 } else {
+                    let text = self.result_form(&text, &inner);
                     self.line(&format!("return {};", text));
                 }
             }
@@ -1542,7 +1583,7 @@ impl Emitter {
         // (a traced copy's number or tensor is a traced value, which is no
         // Copy: the item is the body's own clone — `for &p in parts` of a
         // collecting loop's traced numbers did not build)
-        let traced_item = self.emitting_traced && matches!(elem, Ty::Float | Ty::Tensor(..));
+        let traced_item = self.emitting_traced && (matches!(elem, Ty::Float | Ty::Tensor(..)) || (self.carries(iter) && self.held_traced(&elem)));
         let is_copy = Self::is_copy_type(&elem) && !traced_item;
         // in parallel as the lowering decided, on the cores `cpu[…]` allows
         // where the loop starts (a traced copy runs its loops in order: one

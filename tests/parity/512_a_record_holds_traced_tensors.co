@@ -1,0 +1,32 @@
+--- A record built in a function `grad` differentiates holds traced
+--- tensors in its fields, made by a helper and answered, read by its
+--- fields, kept in a list a step at a time (a recurrent cell's state, a
+--- layer's output beside its last state). The interpreter had held them;
+--- compiled, such a record did not build. By hand: c₁ = x³+1, c₂ =
+--- x⁴+x+1, h = 2c, so d/dx of Σh₁+Σh₂+Σc₁ is 8x³+9x²+2 — [19, 102] at
+--- [1, 2] — and a record of constants built beside them stays plain.
+use math
+
+struct State [h, c]
+
+struct Scale [by, at]
+
+fn step[x, s]
+    c = s.c .* x + 1.0
+    return State[c .* 2.0, c]
+
+fn loss[x]
+    s = State[x, x .* x]
+    k = Scale[float[len[x]], 0]
+    states = []
+    for j in range[2]
+        s = step[x, s]
+        states = push[states, s]
+    total = 0.0
+    for st in states
+        total = total + sum[st.h]
+    return total + sum[states[0].c] + k.by - k.by
+
+g = grad[loss]
+log[g[tensor[[1.0, 2.0]]]]
+log[step[tensor[[1.0, 2.0]], State[tensor[[0.5, 0.5]], tensor[[2.0, 3.0]]]].h]

@@ -1,0 +1,17 @@
+--- A helper's parameter carries a derivative where a call hands it one
+--- (`shown[sum[x]]`), and the helper is then held to what the tape
+--- differentiates, as the function differentiated is; the same helper
+--- handed a size alone (`shown[float[len[x]]]`) is any builtin's
+use math
+
+fn shown[v]
+    return str[v * 2.0]
+
+fn loss[x]
+    size = shown[float[len[x]]]
+    twice = shown[sum[x]]
+    if size eq '4'
+        return sum[x .* x]
+    return sum[x]
+
+log[grad[loss][tensor[[1.0, 2.0]]]]
