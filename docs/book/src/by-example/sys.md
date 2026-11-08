@@ -296,9 +296,10 @@ a = exchange_on[s, 'db.example.com:8123', 'POST', '/?default_format=TabSeparated
 log[a.status]
 ```
 
-A standard module that hands functions to a model, or runs one by its
-name, has two operations over functions (spec section 13, sys; the
-compiler lowers each to what inference knows, so both modes agree):
+A standard module or a package that hands functions to a model (Raven's
+`llm`), or runs one by its name, has two operations over functions (spec
+section 13, sys; the compiler lowers each to what inference knows, so
+both modes agree):
 `describe` answers a function's description — its name, the comment above
 it, its parameters with the word errors use for each kind and its default,
 what it answers — and `apply` calls a function with its arguments read by

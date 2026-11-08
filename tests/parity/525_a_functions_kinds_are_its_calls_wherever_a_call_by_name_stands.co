@@ -1,0 +1,32 @@
+--- a function's kinds are its calls', wherever a call by name stands: a
+--- description or an `apply` above the function's call had noted a call
+--- at the kinds its body guessed — a parsed value, for a parameter read by
+--- its fields — which the call below could not replace, so a copy was
+--- made at each, and `far` was described as taking a parsed value above
+--- its call and a record below it (found moving llm into a package of its
+--- own, 2026-11-07; errors k50 holds the apply)
+use sys
+
+struct Point [x, y]
+
+--- how far a point is from home
+fn far[p]
+    return p.x + p.y
+
+--- how near a point is
+fn near[p]
+    return p.x - p.y
+
+--- a count shown
+fn shown[n]
+    return 'n = `n`'
+
+tools = [far]
+for t in tools
+    log[describe[t].params[0].takes]
+log[apply[shown, json['{"n": 4}']]]
+log[far[Point[1.0, 2.0]]]
+log[near[Point[3.0, 1.0]]]
+log[shown[3]]
+log[describe[near].params[0].takes]
+log[describe[shown].params[0].takes]

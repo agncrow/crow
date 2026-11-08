@@ -15,7 +15,7 @@ Start here if you are new; jump to the reference if you already write Crow.
 
 | Document | What it is |
 |---|---|
-| [Crow by Example](book/src/by-example/index.md) | One verified program per feature area — numbers, strings, regex, files, JSON, the system, moments, math, gradients, stats, nn, io, doc, bits, frames, db, web, views, the `sys` layer, a model and its agent loop (`use llm`), MCP. The last chapter of Part I. |
+| [Crow by Example](book/src/by-example/index.md) | One verified program per feature area — numbers, strings, regex, files, JSON, the system, moments, math, gradients, stats, nn, io, doc, bits, frames, db, web, views, the `sys` layer. The last chapter of Part I. |
 | [The Standard Library](book/src/stdlib/index.md) | Generated reference: one page per module from the spec's tables, every function linked to the book pages whose verified blocks use it (`crow test --docs --write`). |
 | [feature-map.md](feature-map.md) | A quick lookup: what exists, where it is documented, and what was left out on purpose. |
 | [design-rules.md](design-rules.md) | **The design rules.** The nine principles, the implementation and documentation rules, and the feature workflow, numbered so the spec and the code can cite them. `CLAUDE.md` at the root points assistants here. |
@@ -54,9 +54,8 @@ These explain how Crow got here. They are kept for the reasoning; where a code s
 | [ui-framework.md](ui-framework.md) | The LiveView-style UI framework design, phase by phase (vision document; predates `view` blocks). [ui-demo-sketch.co](ui-demo-sketch.co) beside it is that design's mockup of a whole app, kept as a sketch: it never ran. |
 | [style-module-design.md](style-module-design.md) | The default stylesheet, the seven classes and eight tokens, and the `css/app.css` escape hatch. |
 | [derive-design.md](derive-design.md) | **Derivations, design round.** Values computed from facts and sources, recomputed when an input changes; freshness for external sources; keyed children; the finch simulation as the worked case. |
-| [llm-design.md](llm-design.md) | **A language model as a connection, design round.** `use llm`: `reach`, conversations and replies as parsed values, `chat`, a reply followed piece by piece, tools as functions whose schemas the compiler writes, `embed`; both wire formats. |
-| [rag-design.md](rag-design.md) | **A model's answer as a fixture, and a RAG app.** Request fixtures recorded and replayed in `request`'s own body; the vectors package held to faiss; `examples/rag`; what the build found. |
-| [agents-design.md](agents-design.md) | **Agents in `use llm`, design round.** The loop `act` with its limits, failed results and a frame of its steps; the gate `allow`; context (`keep`, `compact`); skills in the Agent Skills format; `use mcp` over HTTP and stdio, as client and server; subagents; traces and evals (`examples/agent`); durable runs, waiting on a decision. |
+| [Raven](https://github.com/agncrow/raven) | **What calls a language model, as packages.** `llm` and `mcp`, crow's standard modules until 2026-11-07, and their design notes (`llm-design.md`, `agents-design.md`), moved there with the agent and RAG examples. |
+| [rag-design.md](rag-design.md) | **A model's answer as a fixture, and a RAG app.** Request fixtures recorded and replayed in `request`'s own body; the vectors package held to faiss; `examples/rag` (Raven's since 2026-11-07, the vectors package Pie's); what the build found. |
 | [db-in-crow-design.md](db-in-crow-design.md) | **The database drivers written in Crow.** Postgres and ClickHouse on the `sys` layer, their rows decoded by kernels, measured against the native drivers before the move (2026-10-05). |
 | [distribution-design.md](distribution-design.md) | **One binary, the compiler on demand.** The one-line install and `crow upgrade`, the pinned toolchain and the runtime bundle fetched on the first compiled build, the release workflow and the fresh-machine job, the alpha checklist. |
 | [chart-module-design.md](chart-module-design.md) | The chart element: geometry kernel, budget, roadmap. |

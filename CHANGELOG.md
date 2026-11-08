@@ -7,7 +7,7 @@ history says the rest.
 
 ## Unreleased
 
-### Breaks
+### Breaking
 
 - `use math.stats` and `use math.nn` are gone, and so are the packages
   under `packages/` (gpt, models, optimize, symbolic, graph, retrieval,
@@ -17,6 +17,38 @@ history says the rest.
   then `nn.relu[x]`; `stats.anova` takes its groups as one list. The
   market package moved to finch. Crow keeps the tensor and the frame,
   their kernels, and `grad`.
+- `use llm` and `use mcp` are no longer standard modules. They are the
+  packages of Raven (github.com/agncrow/raven), installed as any
+  dependency (`deps = map[llm = 'github.com/agncrow/raven/packages/llm@v0.1.0']`
+  brings mcp with it) and called qualified (`llm.act[…]`,
+  `mcp.server[…]`). The agent and RAG examples, the design notes and the
+  packages' tests moved with them. Crow keeps the `sys` layer they stand
+  on: `describe` and `apply`, `request`, sockets and processes.
+- A package's top-level name that begins with one underscore is the
+  package's own, as a standard module's helper is: a file outside the
+  package that names it is refused, and told to call what the package
+  exports.
+
+### Fixed
+
+- A misuse of what a program hands a package's function is refused at
+  the program's line, naming the function as the program calls it
+  (`in greet.loud: upper[] takes text, got an int`), where it had been
+  placed in the package's file. A slip no call of the program's makes —
+  a name nothing declares, a reserved name given a variable, a function
+  of a module the package does not import — stays in the package's file,
+  at its line.
+- A part is held to the reserved names of its own imports alone, not to
+  those of what a part it imports imports. A refusal of the entry's call
+  of a part's function names the function and its parameters as the
+  entry writes them (`'tools.greet' has no parameter named 'nam'`).
+- A function's kinds are its calls' wherever a call by name stands: a
+  `describe` or an `apply` written above the function's call had typed
+  its parameters by the body's guess, so a tool taking a record was
+  described as taking a parsed value.
+- `args[]` answers the words after the source file whatever crow's
+  binary is named. A crow under another name had answered its own
+  arguments too, interpreted.
 
 ## v0.8.2 — 2026-11-07
 

@@ -1,38 +1,73 @@
 --- A process the program talks to is a socket of the standard library's
---- layer (spec, sys: `start`), and `server[command = …]` names an MCP
---- server run over its standard streams (spec, mcp: the stdio transport):
---- started at the first message and kept for the program's life, its
---- lines read as the protocol's messages. The same in both modes: a
---- process that echoes every line answers the request back, which is no
---- result; a command the shell does not find ends before answering (and
---- is started again at the next message); a shell loop that answers by
---- method is a server, its tools listed and called with a map and with a
---- parsed value; and a command beside a URL, a token with a command, and
---- nothing named are refused. (tests/mcp.rs runs a Crow client against a
---- Crow program serving over stdio, in both modes; the sh loop stands in
---- for a server here, so nothing is installed or reached.)
-use mcp
+--- layer (spec, sys: `start`): started at the first `start` of its
+--- command, through the shell, and kept for the program's life — the same
+--- process answers every later `start` of the command — its input written
+--- and its output read through its stream, and what a read took past a
+--- line's end put back for the next (`leftover`, `unread`). The same in
+--- both modes: a process that echoes every line answers it back, two
+--- lines sent at once read as two; a shell loop counting what it reads
+--- shows it is one process; closing its stream ends it, and the next
+--- `start` begins another; a command the shell does not find starts, and
+--- ends before it answers — seen at the first read — and is started
+--- again at the next. (Raven's mcp package runs its stdio transport on
+--- it, a Crow client against a Crow program serving over its standard
+--- streams; the shell stands in for a server here, so nothing is
+--- installed or reached.)
+use sys
 
-cat = server[command = '/bin/cat']
-log[cat.command]
-log[cat.url]
-got = catalog[cat]
-log[got.ok]
-log[got.kind]
-log[got.reason]
-log[tool[cat, 'echo', map[words = 'hi']].reason]
-gone = server[command = 'crow-no-such-server-278']
-log[catalog[gone].reason]
-log[discover[gone].reason]
-loop = server[command = 'while read -r line; do id=${line#*\"id\":}; id=${id# }; id=${id%%,*}; case $line in *tools/list*) echo "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"tools\": [{\"name\": \"echo\", \"description\": \"says its words back\", \"inputSchema\": {\"type\": \"object\", \"properties\": {\"words\": {\"type\": \"string\"}}, \"required\": [\"words\"]}}]}}";; *tools/call*) w=${line#*\"words\":}; w=${w# }; w=${w#\"}; w=${w%%\"*}; echo "{\"jsonrpc\": \"2.0\", \"id\": $id, \"result\": {\"content\": [{\"type\": \"text\", \"text\": \"echo: $w\"}], \"isError\": false}}";; *) echo "{\"jsonrpc\": \"2.0\", \"id\": $id, \"error\": {\"code\": -32601, \"message\": \"Method not found\"}}";; esac; done']
-listed = catalog[loop]
-log[len[listed]]
-log[listed[0].name]
-log[listed[0].description]
-log[listed[0].inputSchema.required[0]]
-log[tool[loop, 'echo', map[words = 'hi there']]]
-log[tool[loop, 'echo', json['{"words": "from a parsed value"}']]]
-log[discover[loop].reason]
-log[server['http://127.0.0.1:1/mcp', command = '/bin/cat'].reason]
-log[server[command = '/bin/cat', token = 't'].reason]
-log[server[].reason]
+--- the next line the process writes, its line break dropped and the rest
+--- kept for the next read; why, where none comes
+fn line_of[p]
+    st = stream_of[p]
+    have = leftover[p]
+    cut = find[have, bytes['\n']]
+    while cut lt 0
+        got = recv[st, 65536, 10.0]
+        if not got.ok
+            unread[p, have]
+            return error[got.reason, 'process']
+        if len[got] eq 0
+            return error['the process ended', 'process']
+        have = concat[have, got]
+        cut = find[have, bytes['\n']]
+    if cut + 1 lt len[have]
+        unread[p, slice[have, cut + 1, len[have]]]
+    return trim[text[slice[have, 0, cut], '?']]
+
+--- the lines sent to the command's process, and the first line it answers
+fn asked[command, lines]
+    p = start[command]
+    if not p.ok
+        return error[p.reason, 'process']
+    sent = send[stream_of[p], bytes['`lines`\n']]
+    if not sent.ok
+        return error[sent.reason, 'process']
+    return line_of[p]
+
+--- the next line the command's process writes, nothing sent
+fn heard[command]
+    p = start[command]
+    if not p.ok
+        return error[p.reason, 'process']
+    return line_of[p]
+
+--- the command's process ended: its input closed
+fn ended[command]
+    p = start[command]
+    if not p.ok
+        return error[p.reason, 'process']
+    return close[stream_of[p]]
+
+log[asked['/bin/cat', 'hello']]
+log[asked['/bin/cat', 'one\ntwo']]
+log[heard['/bin/cat']]
+counter = 'n=0; while read -r line; do n=$((n+1)); echo "$n: $line"; done'
+log[asked[counter, 'first']]
+log[asked[counter, 'second']]
+gone = ended[counter]
+log[gone.ok]
+log[asked[counter, 'after']]
+missing = 'crow-no-such-command-279'
+log[asked[missing, 'hi'].reason]
+log[asked[missing, 'again'].reason]
+log[heard[missing].ok]

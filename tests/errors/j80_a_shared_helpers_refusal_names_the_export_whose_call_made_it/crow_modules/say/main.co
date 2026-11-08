@@ -1,0 +1,14 @@
+--- a package of one file: two exports reaching a helper two levels down
+fn loud[system]
+    return _said[system, 'LOUD']
+
+fn quiet[system]
+    return _said[system, 'quiet']
+
+fn _said[system, how]
+    return '`how`: `_body_of[system]`'
+
+fn _body_of[system]
+    if len[system] gt 0
+        return system
+    return 'nothing'

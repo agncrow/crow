@@ -42,7 +42,6 @@
 //! (`agreement-only.txt`), and the forms of the language, read from
 //! `src/ast.rs`, no case reaches (`forms.txt`).
 
-mod llm;
 mod web;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -152,12 +151,9 @@ fn values() -> Vec<Val> {
         plain("sql", "'SELECT 1 AS n'"),
         Val { name: "conn".into(), expr: "connect['sqlite://:memory:']".into(), setup: Vec::new(), imports: vec!["db"] },
         Val { name: "pred".into(), expr: "self_true".into(), setup: Vec::new(), imports: vec![] },
-        // (a socket and a mailer to an address nothing answers; a model the
-        // empty replay answers in place of the network)
+        // (a socket and a mailer to an address nothing answers)
         Val { name: "socket".into(), expr: "socket['ws://127.0.0.1:9/self']".into(), setup: Vec::new(), imports: vec!["web.ws"] },
         Val { name: "mailer".into(), expr: "smtp['127.0.0.1', 9, 'u', 'p']".into(), setup: Vec::new(), imports: vec!["web.mail"] },
-        Val { name: "model".into(), expr: "reach['anthropic://claude-sonnet-5-5']".into(), setup: Vec::new(), imports: vec!["llm"] },
-        Val { name: "talk".into(), expr: "ask['hello']".into(), setup: Vec::new(), imports: vec!["llm"] },
         plain("record", "SelfP[1, 2]"),
         plain("fn", "self_double"),
         framed("frame", "sf"),
@@ -951,10 +947,8 @@ const WRITTEN: &[(&str, &str)] = &[
     ("text.decode", "decode['YWJj', 'base64']"),
     ("frame.window", "window[sf, 'a', 'sum', n = 2]"),
     ("frame.window_one", "window[sf, 'a', 'lag', n = 1]"),
-    // (an address nothing answers; the empty replay answers a model)
+    // (an address nothing answers)
     ("core.request", "request['http://127.0.0.1:9/self']"),
-    ("llm.chat", "chat[reach['anthropic://claude-sonnet-5-5'], ask['hello'], system = 'One word.']"),
-    ("llm.follow", "follow[reach['anthropic://claude-sonnet-5-5'], ask['hello'], system = 'One word.']"),
     // (a duration a case can wait out)
     ("core.sleep", "sleep[0.01]"),
     // (the layer's rows whose answer is the process's or the machine's —
@@ -1709,20 +1703,6 @@ impl Servers {
                 }
             });
         }
-        // (a model that speaks both wire formats: llm's rows; Anthropic's
-        // base is the model's too, so a model reached as anthropic:// asks
-        // this machine and nothing past it)
-        if let Ok(l) = std::net::TcpListener::bind("127.0.0.1:0") {
-            if let Ok(a) = l.local_addr() {
-                env.push(("CROW_SELF_LLM".to_string(), a.port().to_string()));
-                env.push(("ANTHROPIC_BASE_URL".to_string(), format!("http://127.0.0.1:{}", a.port())));
-            }
-            std::thread::spawn(move || {
-                for c in l.incoming().flatten() {
-                    std::thread::spawn(move || llm::serve_model(c));
-                }
-            });
-        }
         let pg = scratch_postgres(&dir.join("pg"));
         if let Some((_, port)) = &pg {
             env.push(("CROW_SELF_PG".to_string(), port.to_string()));
@@ -2438,7 +2418,6 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
     cases.extend(draw_cases());
     cases.extend(io_cases());
     cases.extend(grad_cases());
-    cases.extend(llm::llm_cases());
     cases.extend(web::auth_cases());
     // (the gpu family's cases are twins of the rows' and the forms': a word
     // naming its cases names their twins' rows)
@@ -2762,20 +2741,6 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                     &["web.ws.socket", "web.ws.send_text", "web.ws.recv_text", "web.ws.recv_for", "web.ws.close_socket"]
                 } else if id.starts_with("mail-live/") {
                     &["web.mail.smtp", "web.mail.mail"]
-                } else if let Some(name) = id.strip_prefix("llm/").or_else(|| id.strip_prefix("llm-live/")) {
-                    // (the llm family: the rows each case calls)
-                    match name {
-                        "ask" => &["llm.ask"],
-                        "ask-more" | "no-talk" => &["llm.ask", "llm.ask_more"],
-                        "said" | "said-no-reply" => &["llm.ask", "llm.said"],
-                        "told" | "told-no-call" => &["llm.ask", "llm.said", "llm.told"],
-                        "chat" | "chat-options" | "anthropic" | "refused" | "no-json" | "nobody" => &["llm.reach", "llm.ask", "llm.chat"],
-                        "tool" | "anthropic-tool" => &["llm.reach", "llm.ask", "llm.chat", "llm.said", "llm.told"],
-                        "follow" | "follow-tool" | "anthropic-follow" | "anthropic-follow-tool" => &["llm.reach", "llm.ask", "llm.follow", "llm.next_piece", "llm.whole"],
-                        "embed" | "anthropic-embed" => &["llm.reach", "llm.embed"],
-                        _ if name.starts_with("reach") => &["llm.reach"],
-                        _ => &[],
-                    }
                 } else if let Some(name) = id.strip_prefix("auth/") {
                     // (the auth family: a token signed, read, or both)
                     match name {
@@ -2844,8 +2809,6 @@ pub fn cmd_self_check(args: &[String]) -> i32 {
                 ("web.ws", "CROW_SELF_WS")
             } else if case.id.starts_with("mail-live/") {
                 ("web.mail", "CROW_SELF_SMTP")
-            } else if case.id.starts_with("llm-live/") {
-                ("llm", "CROW_SELF_LLM")
             } else if case.id.contains("postgres") {
                 ("db.postgres", "CROW_SELF_PG")
             } else {
@@ -3089,7 +3052,6 @@ fn agreement_reason(row: &str) -> String {
         "ui.layout" => "the layout table's CSS: no reference models it yet (the spec's layout vocabulary is the plan)".to_string(),
         "ui" | "ui.attr" | "ui.bool" => "an element no reference reads back yet".to_string(),
         "web.read" => "a way a route reads its request no reference answers yet".to_string(),
-        "llm" => "a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes".to_string(),
         "chart" => "an indicator: no reference yet (pandas's rolling and ewm are the plan)".to_string(),
         "sys" => "the standard library's own layer: bytes, streams and protocols no reference models yet".to_string(),
         "frame" => "frames: held to pandas by tests/parity/185, no reference per case yet".to_string(),

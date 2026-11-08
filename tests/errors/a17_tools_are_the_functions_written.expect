@@ -1,3 +1,3 @@
-a17_tools_are_the_functions_written.co:9:1: in chat: describe[] takes a function written, or one of a list of functions, got text
-  9 │ r = chat[m, ask['How warm is Lisbon?'], tools = ['weather']]
-    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+a17_tools_are_the_functions_written.co:9:5: describe[] takes a function written, or one of a list of functions, got text
+  9 │ d = describe['weather']
+    │     ^^^^^^^^

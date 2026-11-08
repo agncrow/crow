@@ -2,23 +2,24 @@
 --- them (docs/extending-crow.md, phase 2): a program's call of one — bare,
 --- by the module's path, by an alias, handed as a value, inside an
 --- interpolation — is the inlined function's call, typed by its use, a
---- copy per signature; its options are its defaults, and a value a
---- program holds crosses as itself (no JSON text at the door).
-use math
+--- copy per signature, and a value a program holds crosses as itself (no
+--- JSON text at the door). (Its lines over math.stats and math.nn moved
+--- with them to Pie, and its lines over llm — a module function's options
+--- as its defaults — with llm to Raven, 2026-11-07: no standard module's
+--- function written in Crow has options now, and a package's are a
+--- part's, errors k45.)
 use web, web.auth
-use llm
-use llm as l
-
-log[len[ask['one']]]
-log[len[llm.ask['two']]]
-log[len[l.ask['three']]]
-f = ask
-log[len[f['four']]]
-q = 'five'
-log['`len[ask[q]]`']
-log[len[asked[ask['six'], 'seven']]]
+use web.auth as a
 
 secret = 'a-secret-of-at-least-thirty-two-chars'
+log[len[split[sign[map[user = 'one'], secret], '.']]]
+log[len[split[web.auth.sign[map[user = 'two'], secret], '.']]]
+log[len[split[a.sign[map[user = 'three'], secret], '.']]]
+f = verify
+log[str[f[sign[map[user = 'four'], secret], secret].user]]
+q = sign[map[user = 'five'], secret]
+log['`str[verify[q, secret].user]`']
+
 t = sign[map[user = 'ada', role = 'admin'], secret]
 log[len[split[t, '.']]]
 claims = verify[t, secret]
@@ -27,22 +28,3 @@ log[int[claims.exp] - int[claims.iat]]
 log[sign[[1, 2], secret].reason]
 log[sign[json['{"user": "bob"}'], 'short'].reason]
 log[verify['not.a.token', secret].reason]
-
-talk = ask['What is the capital of Mongolia?']
-talk = asked[talk, 'And its population?']
-log[len[talk]]
-log[str[talk[1].text]]
-r = json['{"text": "let me check", "calls": [{"id": "c1", "name": "weather", "args": {"city": "Lisbon"}}], "usage": {"input": 3, "output": 4}, "stop": "tool"}']
-talk = said[talk, r]
-talk = told[talk, r.calls[0], '21°C']
-log[len[talk]]
-log[str[talk[2].role]]
-log[str[talk[3].id]]
-log[asked[r, 'x'].reason]
-log[said[talk, json['{"a": 1}']].reason]
-m = reach['openai://127.0.0.1:9/self-model']
-log[str[m.provider]]
-log[reach['ftp://x'].reason]
-got = chat[m, talk, tokens = 5, system = 'brief']
-log[got.ok]
-log[got.kind]

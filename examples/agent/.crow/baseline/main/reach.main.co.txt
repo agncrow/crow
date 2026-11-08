@@ -1,3 +1,0 @@
-reach main.co
-  db.write: query
-  serving: page, serve

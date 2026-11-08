@@ -7,14 +7,15 @@
 --- import is qualified: a bare import's names are refused as a function's
 --- locals, as they are at the top level (Vijay, 2026-10-29); a standard
 --- module's own functions, which meet this, are held by their own tests.
-use llm as l
+use web.auth as a
 
-fn f[x]
-    return len[l.ask[x]]
+fn f[user]
+    token = a.sign[map[user = user], 'a-secret-of-at-least-thirty-two-chars']
+    return str[a.verify[token, 'a-secret-of-at-least-thirty-two-chars'].user]
 
 fn g[y]
-    ask = y + 1
-    return ask
+    verify = y + 1
+    return verify
 
-log[f['what is a crow?']]
+log[f['ada']]
 log[g[1]]

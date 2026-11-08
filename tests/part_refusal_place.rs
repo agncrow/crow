@@ -94,6 +94,40 @@ fn a_packages_local_named_like_its_function_is_refused_by_its_own_name() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// What a name a package's code writes means is the package's own slip,
+/// refused in its file at its line: a name nothing declares, a builtin's
+/// name given a variable, a function of a module the file does not import.
+/// No call of the program's makes such a slip, and blamed on the program's
+/// call (`main.co:3:1: in pk.f: undefined variable 'z'`) it named a line
+/// the program cannot change (2026-11-07, as packages came to be read as
+/// standard modules are). A kind the program hands that the package cannot
+/// take stays the program's call's.
+#[test]
+fn a_packages_slip_of_a_name_is_refused_in_its_file() {
+    let dir = std::env::temp_dir().join(format!("crow_part_name_slip_{}", std::process::id()));
+    for (body, at, said_there) in [
+        ("fn f[x]\n    y = x + 1\n    z + y\n", "crow_modules/pk/main.co:3:", "undefined variable 'z'"),
+        ("fn f[x]\n    input = x + 1\n    input\n", "crow_modules/pk/main.co:2:", "'input' is a core builtin"),
+        ("fn f[x]\n    nosuch[x]\n", "crow_modules/pk/main.co:2:", "undefined function 'nosuch'"),
+        ("fn f[x]\n    ln[x]\n", "crow_modules/pk/main.co:2:", "is math's: add `use math`"),
+        ("fn f[x]\n    upper[x]\n", "main.co:3:1:", "in pk.f: upper[] takes text, got an int"),
+    ] {
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("crow_modules/pk")).unwrap();
+        std::fs::write(dir.join("crow_modules/pk/crowfile"), "name = 'pk'\n").unwrap();
+        std::fs::write(dir.join("crow_modules/pk/main.co"), body).unwrap();
+        std::fs::write(dir.join("main.co"), "use pk\n\nlog[pk.f[1]]\n").unwrap();
+        for mode in [&["run", "-i", "main.co"][..], &["check", "main.co"][..]] {
+            let out = Command::new(env!("CARGO_BIN_EXE_crow")).args(mode).current_dir(&dir).stdin(std::process::Stdio::null()).output().unwrap();
+            let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+            assert!(!out.status.success(), "{:?} {:?}: {}", mode, body, said);
+            let first = said.lines().find(|l| l.contains(said_there)).unwrap_or_else(|| panic!("{:?} {:?}: {}", mode, body, said));
+            assert!(first.starts_with(at), "{:?} {:?}: {}", mode, body, said);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A package's call of its own helper with the wrong count names the
 /// helper as the package writes it: the refusal had said "'pk__modes'
 /// expects 0 arguments" of `_modes` (Lory's glTF reader).

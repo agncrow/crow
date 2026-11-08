@@ -14,6 +14,13 @@ properly designed before it's implemented"): phase 1 needs no language
 change and begins at once; the code of each later phase waits until its
 section here has been read and its open questions answered.
 
+The `llm` and `mcp` this note names were standard modules when the
+phases were built. Since 2026-11-07 they are packages of Raven
+(github.com/agncrow/raven): `llm.co` is its packages/llm/main.co,
+`mcp.co` its packages/mcp/main.co, and tests/llm_server.rs and
+tests/mcp.rs its tests/model.py and tests/mcp.py. The counts and lists
+below are what each phase found and left.
+
 ## 1. What the inventory found
 
 Six read-only surveys of the sources at d1a1446, one per area. "Module-
@@ -621,6 +628,8 @@ ground for event handlers on elements (section 9).
    if a module needs them.
 3. Whether a program outside the standard library may use `describe`:
    not in this phase; a package that needs it is a decision then.
+   Decided since: `sys` is any program's to import (2026-10-29), and
+   Raven's `llm` package runs the loop over `describe` and `apply`.
 
 **Held by.** Parity (a list described and applied in both modes), the
 errors corpus, `tests/llm_server.rs` driving the loop against the stand-in

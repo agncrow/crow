@@ -1,8 +1,10 @@
 # A model's answer as a fixture, and a RAG app
 
-> The vectors and retrieval packages and the RAG app moved to the pie
-> repository on 2026-11-07 (`github.com/agncrow/pie`: `packages/vectors`,
-> `packages/retrieval`, `examples/rag`); the fixtures stay crow's.
+> The vectors and retrieval packages moved to the pie repository on
+> 2026-11-07 (`github.com/agncrow/pie`: `packages/vectors`,
+> `packages/retrieval`), and the RAG app to the raven repository
+> (`github.com/agncrow/raven`: `examples/rag`, beside the `llm` package
+> it asks the model through); the fixtures stay crow's.
 
 The third piece of the LLM domain (docs/llm-design.md, docs/gpt-design.md
 are the first two): what makes a program that asks a model testable, and

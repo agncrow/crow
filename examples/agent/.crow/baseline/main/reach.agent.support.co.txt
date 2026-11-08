@@ -1,7 +1,0 @@
-reach agent/support.co
-  files: exists, ls, read
-  network: request
-  db.read: connect, query
-  db.write: insert, query
-  clock: now
-  process: env

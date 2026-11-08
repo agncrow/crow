@@ -1180,7 +1180,7 @@ impl Lowerer {
                         Expr::Call { callee: Box::new(callee), args: positional }
                     }
                     // the same for a module's row called by its module —
-                    // llm.chat[…], frame.window[…], io.lines[url, headers = …] —
+                    // frame.window[…], io.lines[url, headers = …] —
                     // under the name the file imports it as
                     None if matches!(&callee, Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if crate::table::rows_named_in(self.imports.get(m).map_or(m.as_str(), |p| p.as_str()), field).any(|r| !r.options.is_empty()))) => {
                         let Expr::FieldAccess { object, field } = &callee else { unreachable!("matched a field access") };

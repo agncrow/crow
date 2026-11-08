@@ -1,18 +1,12 @@
 --- A parameter read by its fields, and typed by nothing else, is a parsed
---- value (spec, Tools are the functions): the program's gate for the
---- agent loop is a function of the call that nothing calls directly, and
---- its body's `call.name` and `call.args.city` type it, so the loop can
---- apply it by name in both modes. A gate that is none — a tool handed
---- where a gate is taken — is refused with why before any model is
---- asked, and the loop against a model nobody answers is its error, in
---- both modes. (tests/llm_server.rs runs a gated loop against a server
---- that scripts the calls; a real model refused a city the gate did not
---- allow and said so.)
-use llm
-
---- the current weather in a city
-fn weather[city]
-    return 'sunny in `upper[city]`'
+--- value (spec, sys: two operations over functions): a gate is a function of the
+--- call that nothing calls directly, and its body's `call.name` and
+--- `call.args.city` type it, so it is described and applied by name in
+--- both modes — the function a dispatch applies is visible to inference
+--- as to the lowering. (Held over llm's gated loop until llm moved to its
+--- own repository, 2026-11-07: a real model refused a city the gate did
+--- not allow and said so.)
+use sys
 
 --- the weather may be asked for Lisbon alone
 fn only_lisbon[call]
@@ -24,11 +18,26 @@ fn only_lisbon[call]
 fn nothing[call]
     return len[str[call.id]] lt 0
 
-m = reach['openai://127.0.0.1:9/self-model']
-wrong = act[m, ask['How warm is it in Lisbon?'], tools = [weather], allow = [weather]]
-log[wrong.ok]
-log[wrong.reason]
-gone = act[m, ask['How warm is it in Lisbon?'], tools = [weather], allow = [only_lisbon, nothing]]
-log[gone.ok]
-log[gone.kind]
-log[starts[gone.reason, 'cannot reach the model']]
+--- whether every gate allows the call: each applied by name, the call
+--- under its one parameter's name, and read as its bool
+fn allowed[gates, call]
+    for g in gates
+        d = describe[g]
+        named = str[d.params[0].name]
+        said = apply[g, json['{"`named`": `encode[call]`}']]
+        if not said.ok
+            return false
+        if said ne 'true'
+            return false
+    return true
+
+lisbon = json['{"id": "c1", "name": "weather", "args": {"city": "Lisbon"}}']
+porto = json['{"id": "c2", "name": "weather", "args": {"city": "Porto"}}']
+other = json['{"id": "c3", "name": "time", "args": {}}']
+log[allowed[[only_lisbon], lisbon]]
+log[allowed[[only_lisbon], porto]]
+log[allowed[[only_lisbon], other]]
+log[allowed[[only_lisbon, nothing], lisbon]]
+d = describe[only_lisbon]
+log[str[d.params[0].takes]]
+log[str[d.answers]]

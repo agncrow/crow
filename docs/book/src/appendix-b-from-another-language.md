@@ -61,7 +61,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `Decimal('0.1')`, `Fraction(1, 3)` | `decimal['0.1']`, `fraction[1, 3]`; an int grows as Python's does |
 | `json.loads(s)`, `json.dumps(v)` | `json[s]`, `encode[v]` |
 | `requests.get(url)` | `request[url]` |
-| the `anthropic` or `openai` SDK, an agent framework | `use llm`: `chat[m, talk]`; `act[m, talk, tools = [f]]` runs the tool loop |
+| the `anthropic` or `openai` SDK, an agent framework | Raven's `llm` package (github.com/agncrow/raven): `llm.chat[m, talk]`; `llm.act[m, talk, tools = [f]]` runs the tool loop |
 | `pytest` files | `test` blocks under the function (chapter 9) |
 
 ## From JavaScript and TypeScript
@@ -99,7 +99,7 @@ tensor (`*` is matmul, `.*` is element-wise), and a table is a *frame*
 | `// comment` | `--- comment` |
 | React/Vue components + fetch + REST | `view` blocks over reactive state, rendered on the server (chapter 12) |
 | `npm test`, Jest | `test` blocks under the function; `crow test` |
-| Vercel's AI SDK, LangChain.js | `use llm`: `chat[m, talk]`; `act[m, talk, tools = [f]]` runs the tool loop |
+| Vercel's AI SDK, LangChain.js | Raven's `llm` package: `llm.chat[m, talk]`; `llm.act[m, talk, tools = [f]]` runs the tool loop |
 
 ## From R
 

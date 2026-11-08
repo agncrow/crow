@@ -17,10 +17,11 @@ The language ships as a single binary containing an interpreter (for
 immediate feedback), a compiler to Rust (for production speed; the Rust
 toolchain it needs is fetched once, on the first native build), tensors,
 data frames, a database layer, and a reactive web framework. The final
-chapter of this book builds a live dashboard using all of them. The same
-binary talks to language models: a model is a connection, a program's
-own functions are its tools, and an agent loop runs them (`use llm`,
-`use mcp`; Crow by Example shows both).
+chapter of this book builds a live dashboard using all of them. Packages
+written in Crow talk to language models: Raven's `llm` makes a model a
+connection, a program's own functions its tools, and runs the agent loop
+over them, and its `mcp` reaches other programs' tools
+(github.com/agncrow/raven).
 
 Crow is in alpha: the language still changes between releases, the
 changelog in the repository says what moved, and this book is rebuilt

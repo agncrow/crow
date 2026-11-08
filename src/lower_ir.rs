@@ -6819,7 +6819,7 @@ impl<'a> Lowerer<'a> {
         // handed to a model) handed to a builtin whose rows agree on the
         // kind they take there is read as that kind, noted for the tool's
         // schema as a parsed value's read is: `upper[city]` types `city` as
-        // text (spec, Tools are the functions — "read it in the body"; the
+        // text (spec, sys: two operations over functions — "read it in the body"; the
         // refusal had said so, and only a call had typed it)
         if !self.ctx.functions.contains_key(&name) {
             let argc = lowered.len();
@@ -10256,14 +10256,15 @@ fn grown_by_push(stmts: &[S], out: &mut HashSet<String>) {
 mod tests {
     use super::*;
 
-    /// `tools = [price, listed, far, weather]` handed to a model is a group:
-    /// each held by its name, and the module describes each through
-    /// `describe` — its name, the comment above it, its parameters' kinds
-    /// as the words errors use (a parameter handed a parsed value is the
-    /// kind the body reads it as; a record's is a record), what it answers
+    /// `tools = [price, listed, far, weather]` is a group: each held by its
+    /// name, and `describe` of each says its name, the comment above it,
+    /// its parameters' kinds as the words errors use (a parameter handed a
+    /// parsed value is the kind the body reads it as; a record's is a
+    /// record), what it answers — what a model is told of a tool (held over
+    /// llm's `chat` until llm moved to its own repository, 2026-11-07)
     #[test]
     fn a_tools_list_of_functions_is_a_group_each_described() {
-        let src = "use llm
+        let src = "use sys
 
 --- the price of n units at a rate
 fn price[n, rate]
@@ -10285,14 +10286,14 @@ fn far[p]
 fn weather[city]
     return 'sunny in `upper[city]`'
 
-m = reach['openai://127.0.0.1:1/x']
-r = chat[m, ask['hi'], tools = [price, listed, far, weather]]
+tools = [price, listed, far, weather]
+for t in tools
+    log[describe[t]]
+call = json['{\"args\": {\"city\": \"Lisbon\"}}']
 log[price[2, 1.5]]
 log[listed['a', ['a'], true]]
 log[far[Point[1.0, 2.0]]]
-log[r.ok]
-if r.ok
-    log[weather[r.calls[0].args.city]]
+log[weather[call.args.city]]
 ";
         crate::note_fn_docs("", src);
         let ir = ir_of(src);
@@ -10310,7 +10311,7 @@ if r.ok
     /// schema quotes.
     #[test]
     fn a_comment_at_any_indentation_leaves_a_functions_description() {
-        let src = "use llm
+        let src = "use sys
 
 --- the weather in a city
 fn weather[city]
@@ -10320,13 +10321,14 @@ fn weather[city]
             --- and deeper than it
     return sky
 
-m = reach['openai://127.0.0.1:1/x']
-r = chat[m, ask['hi'], tools = [weather]]
+tools = [weather]
+call = json['{\"args\": {\"city\": \"Lisbon\"}}']
   --- under nothing
-log[r.ok]
-if r.ok
+for t in tools
+    log[describe[t]]
+if len[tools] gt 0
 --- before the branch's first line
-    log[weather[r.calls[0].args.city]]
+    log[weather[call.args.city]]
 ";
         crate::note_fn_docs("", src);
         let ir = ir_of(src);

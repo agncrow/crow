@@ -739,16 +739,27 @@ pub fn round(x: f64) -> i64 {
 
 // ── the program and its system ──────────────────────────────────────
 
+/// The arguments of a program crow runs from its source, handed by crow's
+/// own command (`hand_args`). Unset, the process is the program's compiled
+/// binary, and its arguments are its own.
+static HANDED: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// Crow hands the arguments of the program it runs: the words after the
+/// source file of its command. The process had been taken for crow when
+/// its binary was named `crow`, so a crow under another name answered its
+/// own arguments too (`['run', '-i', 'main.co', '1']` interpreted, `['1']`
+/// compiled), and a compiled program named `crow` lost its arguments.
+pub fn hand_args(args: Vec<String>) {
+    let _ = HANDED.set(args);
+}
+
 /// `args[]`: the arguments the program was given — after the source file
 /// when `crow` runs it, after the program when it runs compiled.
 pub fn args() -> Vec<String> {
-    let all: Vec<String> = std::env::args().collect();
-    let by_crow = all.first().and_then(|a| std::path::Path::new(a).file_stem().map(|s| s == "crow")).unwrap_or(false);
-    if by_crow {
-        let source = all.iter().position(|a| a.ends_with(".co"));
-        return source.map(|i| all[i + 1..].to_vec()).unwrap_or_default();
+    match HANDED.get() {
+        Some(handed) => handed.clone(),
+        None => std::env::args().skip(1).collect(),
     }
-    all.into_iter().skip(1).collect()
 }
 
 /// `env[name]`: the variable's text, or its absence as the reason.

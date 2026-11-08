@@ -1,0 +1,3 @@
+k50_a_call_by_name_above_the_call_is_held_to_its_kinds.co:13:1: far's parameter 'p' takes a record, which a call by name cannot hand it: a function called by name takes an int, a number, text, a bool or a parsed value
+  13 │ log[apply[far, json['{"p": {"x": 1.0, "y": 2.0}}']]]
+     │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

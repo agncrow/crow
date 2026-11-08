@@ -274,12 +274,12 @@ Crow is brand new. Even Crystal, after 12 years, has a small ecosystem. Language
 
 Python and TypeScript have the model providers' official SDKs and the frameworks built on them — LangChain and LangGraph, the OpenAI Agents SDK, Vercel's AI SDK — and the integrations around them (document loaders, vector databases, tracing services), which Crow does not have. A tool there is a function and a schema, written beside it or read from its type hints (a Zod schema in TypeScript), and the framework runs the loop.
 
-Crow ships the pieces in its standard library, written in Crow and the same in both execution modes:
+Crow's pieces are packages written in Crow — Raven's (github.com/agncrow/raven; crow's standard modules until 2026-11-07) — the same in both execution modes:
 
-- `use llm` makes a model a connection — Anthropic's API, or any server speaking the OpenAI chat completions (Ollama, vLLM, OpenRouter, LiteLLM) — with `chat`, a reply followed piece by piece, and embeddings.
+- `llm` makes a model a connection — Anthropic's API, or any server speaking the OpenAI chat completions (Ollama, vLLM, OpenRouter, LiteLLM) — with `chat`, a reply followed piece by piece, and embeddings.
 - A tool is the function itself, `tools = [weather]`: its schema is written from the kinds inference found for its parameters and the comment above it, with nothing annotated.
 - `act[m, talk, tools = [f, g]]` is the agent loop: limits on rounds and tokens, gates the program names (`allow = [g]`) asked before a tool runs, every call answered — a tool's failure is told to the model as one — and a frame with a row per model call and per tool call. Skills in the Agent Skills format load on demand, and a subagent is a tool whose body runs `act`.
-- `use mcp` speaks the Model Context Protocol over HTTP and stdio, as a client and as a server over a program's own functions.
+- `mcp` speaks the Model Context Protocol over HTTP and stdio, as a client and as a server over a program's own functions.
 - A test replays a model's answers from the fixtures `crow check --record-fixtures` kept, so evals run with no model, in both modes.
 
 Not there yet: images and documents in a turn, prompt caching, batches, and the calls of one reply run at once (the loop runs them in order).

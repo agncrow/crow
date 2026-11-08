@@ -128,21 +128,6 @@ pub static MODULES: &[Module] = &[
         module: Some(|| Arc::new(Named::new("memory"))),
         ..Module::plain("memory", "_memory")
     },
-    Module {
-        source: Some(LLM_SOURCE), needs: &[RUNTIME], registry: true,
-        docs: Some("A language model as a connection: conversations, replies, tools as the functions themselves, a reply followed piece by piece, and embeddings, over Anthropic's and the OpenAI-compatible wire formats."),
-        module: Some(|| Arc::new(Named::new("llm"))),
-        ..Module::plain("llm", "_llm")
-    },
-    // tools from other programs, and a program as one: the client on
-    // request, the server a function a route calls (it answers responses,
-    // so crow_web comes with the import)
-    Module {
-        source: Some(MCP_SOURCE), needs: &[("crow_web", &[]), RUNTIME], registry: true,
-        docs: Some("Tools from other programs, and a Crow program as one: the Model Context Protocol over Streamable HTTP — a server named, its tools listed and called, and a route answering as a server over the functions themselves."),
-        module: Some(|| Arc::new(Named::new("mcp"))),
-        ..Module::plain("mcp", "_mcp")
-    },
     // the database: its verbs are forms of their own, its drivers written
     // in Crow are carried by its import
     Module {
@@ -260,9 +245,6 @@ pub(crate) const POSTGRES_SOURCE: &str = include_str!("postgres.co");
 /// over the sys primitives: `sys.exchange`, `sys.fetch`, `sys.put`, the
 /// formats; a module that imports `sys` inlines it.
 pub(crate) const SYS_SOURCE: &str = include_str!("sys.co");
-/// `use llm`: a language model as a connection, written in Crow.
-pub(crate) const LLM_SOURCE: &str = include_str!("llm.co");
-pub(crate) const MCP_SOURCE: &str = include_str!("mcp.co");
 /// `io.lines`, `io.csv`: readers written in Crow.
 pub(crate) const IO_SOURCE: &str = include_str!("io.co");
 /// `frame.load`, `frame.save`: written in Crow.
@@ -287,8 +269,10 @@ pub fn module_by_path(path: &str) -> Option<Arc<dyn CrowModule>> {
 
 /// Every function of every module a program can import, by name: what the
 /// checker's undefined-variable rule counts as defined (`with_stdlib` loads
-/// the core set; the modules a program imports by path — llm, web.ws, … —
-/// are read here, or a part's `reach` and `chat` were "undefined").
+/// the core set; the modules a program imports by path — web.auth, web.ws,
+/// … — are read here, or a part's `sign` of web.auth would be
+/// "undefined", as a part's `reach` and `chat` of the llm module were
+/// while llm was a standard module).
 pub fn every_module_function() -> Vec<String> {
     MODULES.iter().filter(|m| !m.internal).filter_map(|m| m.module).flat_map(|make| make().functions().iter().map(|f| f.to_string()).collect::<Vec<_>>()).collect()
 }
@@ -384,7 +368,7 @@ pub fn is_crow_fn(name: &str) -> bool {
 }
 
 /// Every function a standard module written in Crow declares, helpers
-/// too, by the name it is inlined under (`_io_lines`, `_llm__talk_of`).
+/// too, by the name it is inlined under (`_io_lines`, `_web_auth__part_of`).
 fn inlined_names() -> &'static std::collections::HashSet<String> {
     static NAMES: std::sync::LazyLock<std::collections::HashSet<String>> = std::sync::LazyLock::new(|| {
         MODULES
@@ -453,7 +437,7 @@ fn parse_source(source: &str) -> Result<Vec<crate::ast::Stmt>, String> {
 }
 
 /// A message with every inlined function named as the program writes it:
-/// `_llm_chat` is `chat`, `_io_lines` is `lines` — the prefix a
+/// `_web_auth_sign` is `sign`, `_io_lines` is `lines` — the prefix a
 /// module's functions carry is no program's spelling.
 pub fn unprefixed(msg: &str) -> String {
     let mut prefixes: Vec<&'static str> = crow_modules().map(|(_, p)| p).collect();
@@ -1674,16 +1658,15 @@ mod tests {
             }
         }
         assert!(exports("").is_empty(), "{:?}", exports(""));
-        let llm = exports("llm");
-        for f in ["reach", "ask", "asked", "said", "told", "chat", "follow", "next", "reply", "embed"] {
-            assert!(llm.contains(&f), "llm exports {}: {:?}", f, llm);
+        let auth = exports("web.auth");
+        for f in ["sign", "verify"] {
+            assert!(auth.contains(&f), "web.auth exports {}: {:?}", f, auth);
         }
-        assert!(!llm.contains(&"_talk_of") && !llm.contains(&"talk_of"), "{:?}", llm);
-        assert!(exports("web.auth").contains(&"sign") && exports("web.auth").contains(&"verify"), "{:?}", exports("web.auth"));
+        assert!(!auth.contains(&"_part_of") && !auth.contains(&"part_of"), "{:?}", auth);
         assert!(exports("web.ws").contains(&"socket") && exports("web.ws").contains(&"close") && !exports("web.ws").contains(&"send"), "{:?}", exports("web.ws"));
         // a message names the function as the program writes it
-        assert_eq!(unprefixed("'_llm_chat' has no parameter named 'max' (in _io_lines, _core_read_asked)"), "'chat' has no parameter named 'max' (in lines, read_asked)");
-        assert_eq!(unprefixed("_mathx_relu and x_llm_chat stay"), "_mathx_relu and x_llm_chat stay");
+        assert_eq!(unprefixed("'_web_auth_sign' has no parameter named 'max' (in _io_lines, _core_read_asked)"), "'sign' has no parameter named 'max' (in lines, read_asked)");
+        assert_eq!(unprefixed("_mathx_relu and x_web_auth_sign stay"), "_mathx_relu and x_web_auth_sign stay");
     }
 
     /// `use io` inlines the exported functions the program calls and the

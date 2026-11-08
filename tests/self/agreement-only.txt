@@ -65,7 +65,6 @@ frame.window_one	frames: held to pandas by tests/parity/185, no reference per ca
 io.csv_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
 io.lines_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
 io.read_asked	the batch's cases share their directory, so an answer depends on the cases before it: an io family with a directory per case is the plan
-llm.asked	a model's reply: the empty replay answers here; tests/llm_server.rs holds the module to a server speaking both wire formats, in both modes
 math.bandpass	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.bessel	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.complex	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
@@ -93,10 +92,6 @@ math.spmv	no reference yet: add its answer to tests/self/reference.py, or say he
 math.stft	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.svd	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 math.tensor_of_columns	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
-mcp.catalog	asks a server: the check's values name none, and are refused alike in every configuration; tests/mcp.rs drives the client against a stand-in server over HTTP (the list read from a stream of events) and a Crow server over stdio, in both modes
-mcp.discover	asks a server: the check's values name none, and are refused alike in every configuration; tests/mcp.rs drives the client against a stand-in server in both modes
-mcp.server	a server's description from its URL or from the command that runs it, the same in every configuration; tests/mcp.rs holds what it describes to a stand-in server and to a Crow server over stdio in both modes
-mcp.tool	calls a server's tool: the check's values name no server, and are refused alike in every configuration; tests/mcp.rs drives the client against a stand-in server over HTTP and a Crow server over stdio in both modes (a result, one marked an error, an unknown tool)
 memory.canonical	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 memory.forget	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
 memory.recall	no reference yet: add its answer to tests/self/reference.py, or say here why it agrees only
@@ -178,7 +173,7 @@ sys.send	the standard library's own layer: bytes, streams and protocols no refer
 sys.set_byte	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.shaped	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.socket_of	the standard library's own layer: bytes, streams and protocols no reference models yet
-sys.start	the standard library's own layer: a process started as a command shows as its socket in every configuration; tests/parity/279 and tests/mcp.rs hold what it carries in both modes
+sys.start	the standard library's own layer: a process started as a command shows as its socket in every configuration; tests/parity/279 holds what it carries in both modes, and raven's mcp package runs its stdio transport on it
 sys.store	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.stream_of	the standard library's own layer: bytes, streams and protocols no reference models yet
 sys.tensor_of_frame	the standard library's own layer: bytes, streams and protocols no reference models yet

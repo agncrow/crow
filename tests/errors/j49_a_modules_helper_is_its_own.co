@@ -1,4 +1,4 @@
 --- a module's helper is its own: a program calling it by its name finds no such function
-use llm
+use web, web.auth
 
-log[_talk_of[ask['x']]]
+log[_part_of['x']]

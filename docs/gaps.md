@@ -98,7 +98,7 @@ or a design document.
   wait on it.
 - **The LLM domain (P8):** AdamW, a byte-level BPE tokenizer (it needs a
   text's bytes) and `grad` over a list of tensors; durable runs (nothing built,
-  a decision for Vijay, docs/agents-design.md); serving; parallel tool calls
+  a decision for Vijay, Raven's docs/agents-design.md); serving; parallel tool calls
   ("not in this round").
 - **GPU:** it computes in 32-bit floats, about 7 significant digits against
   the CPU's 15 (wgpu's limit, the spec's GPU section).

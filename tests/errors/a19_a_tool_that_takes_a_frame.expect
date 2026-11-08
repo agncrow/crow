@@ -1,2 +1,0 @@
-2
-runtime error: line 13: cannot drop an error value — cannot reach the model: the parameter table of rows takes a frame, which a model cannot hand it: a tool takes numbers, text, bools, lists, maps, records and parsed values

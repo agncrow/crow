@@ -29,7 +29,7 @@ separately: `use web.auth` adds sign-in tokens without bloating plain
 `use web`.
 
 The standard modules are `math`, `frame`, `io`, `db`,
-`doc`, `bits`, `chart`, `llm`, `mcp`, `web` (+ feature submodules), and
+`doc`, `bits`, `chart`, `web` (+ feature submodules), and
 `ui`; the standard library's pages in Part II list each one's names. Only
 these get the bare-name privilege — everything else you import lives
 behind a prefix, as you'll see in the last section.

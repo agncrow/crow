@@ -44,14 +44,16 @@ cargo clippy --workspace --all-features
 ./target/release/crow test --modules
 (cd ~/code/crow_projects/magpie && ./test.sh "$OLDPWD/target/release/crow")
 (cd ~/code/crow_projects/pie && ./test.sh "$OLDPWD/target/release/crow")
-(cd examples/agent && ../../target/release/crow test agent/store.co && ../../target/release/crow test agent/judge.co && ../../target/release/crow test --fixtures agent/support.co && ../../target/release/crow test --fixtures agent/trace.co && ../../target/release/crow test --fixtures agent/chat.co && ../../target/release/crow test --fixtures --compiled agent/trace.co && ../../target/release/crow test --fixtures --compiled agent/chat.co)
+(cd ~/code/crow_projects/raven && ./test.sh "$OLDPWD/target/release/crow")
 scripts/coverage.sh
 ```
 
 Use the release binary for the layout and site suites: the debug binary
 overflows its stack there. CI (`.github/workflows/ci.yml`) runs the same
-steps on every push and must be green — all but Magpie's and pie's
-suites (the `./test.sh` lines), which run here only.
+steps on every push and must be green — all but Magpie's, Pie's and
+Raven's suites (the three `./test.sh` lines: Raven holds `use llm` and
+`use mcp`, packages since 2026-11-07, and the agent and RAG examples),
+which run here only.
 
 ## Things that have bitten
 
@@ -384,9 +386,10 @@ suites (the `./test.sh` lines), which run here only.
   them (docs/extending-crow.md, phase 2): a top-level function with no
   leading underscore is exported — a program calls it bare, by the
   module's path or by an alias, and the inliner rewrites the call to the
-  inlined name (`_llm_chat`), typed by its use like any function; a
-  helper begins with one underscore (`_talk_of`) and is the module's own.
-  Options are defaults (`fn chat[m, talk, system = '', tools = [],
+  inlined name (`_web_auth_sign`), typed by its use like any function; a
+  helper begins with one underscore (`_part_of`) and is the module's own,
+  as a package's is its package's (spec, Importing). Options are defaults
+  (raven's llm package: `fn chat[m, talk, system = '', tools = [],
   tokens = 1024, temperature = 1.0]`; `[]` and `map[]` are allowed). The
   rows left in the table for a Crow-written function are the effects the
   session layer holds (`read`, `write`, `request`, `mail`, `fetch`, `send`,
@@ -709,9 +712,10 @@ suites (the `./test.sh` lines), which run here only.
   more puts back what it holds first. llm's `next` lost every event that
   straddled two reads, and ws's `recv` lost a message's head when its wait
   ended inside the message (the next read took the payload for a frame).
-  A test server that writes a whole body at once never shows it:
-  tests/llm_server.rs writes each chunk after a pause, and the check's
-  model (src/selfcheck/llm.rs) writes each chunk's parts apart.
+  A test server that writes a whole body at once never shows it: raven's
+  tests/model.py writes each chunk after a pause (crow's
+  tests/llm_server.rs and the self-check's model did, until llm left for
+  raven on 2026-11-07).
 - A connection's notes are keyed (`note[s, key, text]`, `noted[s, key]`):
   the Postgres driver prepares a statement with parameters once per
   connection under its kinds and text (`statement_sent`, at most 64 names,
@@ -1212,13 +1216,19 @@ suites (the `./test.sh` lines), which run here only.
   parse_power). A tensor divided by a number divides each number
   (`div_scalar`): a multiply by the reciprocal rounds twice. A Rust `sum`
   of no floats is -0: a sum a program sees folds from +0.
-- The agent loop is Crow in `src/modules/llm.co` (`act`, 2026-10-20):
-  `describe`/`apply` over the group the program hands it, nothing in the
-  compiler. Three traps: a function called only by name from INSIDE a
-  standard module (a group member applied by `act`) is noted as called
-  through `note_named_call`, past `note_call`'s scope rule — the rule
-  makes a program's functions invisible inside a module, and the tool had
-  stayed untyped and been left out of the compiled program (parity 274);
+- The agent loop is Crow in llm's `act` (2026-10-20; raven's
+  packages/llm since 2026-11-07): `describe`/`apply` over the group the
+  program hands it, nothing in the compiler. Three traps: a function
+  called only by name from INSIDE a standard module or a package (a
+  group member applied by `act`) is noted as called through
+  `note_named_call`, past `note_call`'s scope rule — the rule makes a
+  program's functions invisible inside a module, and the tool had stayed
+  untyped and been left out of the compiled program (raven's parity 274)
+  — and the note keeps NO signature: noted from what the body guessed (a
+  parsed value, for a parameter read by its fields), it had been a call
+  no later call could replace, so `describe[far]` above `far[Point[…]]`
+  made a copy at a parsed value and described `far` as taking one, where
+  the line below the call said a record (parity 525, errors k50);
   a frame column named `kind` (or `ok`, `reason`, `trace`) is unreadable,
   since `f.kind` is the frame's status; and two functions of one name in
   a module read as one (the second's parameters are "undefined
@@ -1264,7 +1274,7 @@ suites (the `./test.sh` lines), which run here only.
   transport stands on it (`server[command = …]`, `listen[tools = …]`).
   Three things that bit: `sh -c nosuch` STARTS fine and ends at once —
   a missing command is seen at the first read (nothing) or write (`the
-  process ended`), never at `start`; the mcp module's tests share one
+  process ended`), never at `start`; the mcp package's tests share one
   process per command across blocks (ids count up, so assert
   relatively); and a local named like a parameter of the same function
   (`given` for `_answered`'s message and for `_call_result`'s arguments)
@@ -1279,7 +1289,7 @@ suites (the `./test.sh` lines), which run here only.
   (type_infer): the lowering alone had seen it, so the call was typed
   as nothing and the emitter printed a text placeholder beside a bool.
   `apply` answers the value ENCODED (a text in quotes): `_plain_of` in
-  llm.co reads it back, and had masked that difference for text tools.
+  llm reads it back, and had masked that difference for text tools.
 - A subagent is a tool that runs the loop (parity 277, 2026-10-20):
   nothing in the compiler, and the nested dispatch — the outer copy of
   `act` applying `research` by name, `research` calling the inner copy —
@@ -1322,7 +1332,8 @@ suites (the `./test.sh` lines), which run here only.
   of the same day made mcp's client functions describable as taking a
   parsed value, so the check now calls `catalog`, `discover` and `tool`
   with its values (refused alike: no server named): they moved from
-  not-called to agreement-only.
+  not-called to agreement-only (and left both lists when mcp left for
+  raven, 2026-11-07).
 - A question the interpreter asks of a builtin on EVERY call is answered
   in constant time: `table::rows_named` reads an index built once (by
   name and by a hidden form's written name, in the table's order), a

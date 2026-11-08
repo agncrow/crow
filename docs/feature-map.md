@@ -65,8 +65,7 @@ compiler's own tables.
 | `use web.ws` | `socket send recv close` — a WebSocket client | spec §13 web → WebSocket |
 | `use web.mail` | `smtp mail` | spec §13 web → Mail |
 | `use ui` | `fetch poll field slider checkbox toggle radio tabs select progress icon` + the element vocabulary inside `view` blocks: the HTML names, the containers `stack row grid overlay scroll`, and `details summary dropdown modal drawer toast divider widget`; classes `card stats controls primary up down stale` | spec §13 web → View Blocks, Layout, Styling |
-| `use llm` | `reach ask asked said told chat follow next reply embed act` — a model as a connection (Anthropic's API, or any OpenAI-compatible server); tools are the functions themselves (`tools = [f, g]`); `act` is the agent loop, with limits (`rounds`, `budget`), gates (`allow = [g]`), a frame of its steps, context (`keep`, `compact`), skills (`skills = folder`) and MCP servers (`servers = [s]`) | spec §13 llm, `llm-design.md`, `agents-design.md` |
-| `use mcp` | `server discover catalog tool answer listen` — the Model Context Protocol over HTTP and stdio, as a client and as a server | spec §13 mcp, `agents-design.md` |
+| Raven's `llm`, `mcp` | packages, not standard modules, since 2026-11-07: a model as a connection, tools as the functions themselves, the agent loop `act`, the Model Context Protocol over HTTP and stdio — github.com/agncrow/raven | each package's `REFERENCE.md` there |
 | `use sys` | the standard library's own layer — bytes, connections, a process (`start`), `describe` and `apply` over functions; only a module of the standard library imports it, and a program's `use sys` is refused | spec §13 sys, `extending-crow.md` |
 
 ## Language constructs

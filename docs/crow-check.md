@@ -281,22 +281,10 @@ with no test someone has to remember to write:
   its echo, two in order, an empty one, a wait that ends with nothing, a
   socket closed), a mail server that takes every message to an address
   (`web.mail`: a message, one beyond ASCII, a body with a lone dot, a
-  recipient that is no address), and a language model that speaks both
-  wire formats (`llm`, src/selfcheck/llm.rs: the OpenAI-compatible chat
-  completions and embeddings and Anthropic's messages, plain and streamed
-  as server-sent events in chunks an event straddles, its every answer
-  saying back what it was sent — the user's last words, the system
-  prompt, `max`, `temperature`, a tool's result — so a reply holds what
-  the request said): a reply, its options, a tool called and its result
-  read back, a reply followed piece by piece (a call's too), embeddings,
-  each in both formats, a server that refuses, one that answers no JSON
-  and one nobody answers. Anthropic's base is the check's model in every
-  case's environment, so a model reached as `anthropic://` asks this
-  machine and nothing past it;
-- conversations and tokens with no server (the llm and auth families): a
-  conversation begun, added to by the user, by a reply and by a tool's
-  result, each refused where its value is not what it says, a model's URL
-  read apart and refused for each mistake; and a token signed under the
+  recipient that is no address) — and, until llm left for Raven
+  (2026-11-07), a language model that spoke both wire formats, which
+  Raven's tests/model.py is now;
+- tokens with no server (the auth family): a token signed under the
   check's still clock — so the same on every run — with claims a map, a
   record, a parsed value that says when it expires and none, read back,
   and refused for each reason the spec gives (a short secret, claims that

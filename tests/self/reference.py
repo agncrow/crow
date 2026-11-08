@@ -2313,70 +2313,6 @@ def grad_answer(name):
     return Close(shown)
 
 
-# ── a language model (spec, section 13: llm) ──────────────────────
-#
-# A conversation is a list of turns, each a map shown with its keys in
-# order; the check's model says back what it was sent — `heard <the user's
-# last words> | <the system prompt, or -> | <max> | <temperature>`, a tool's
-# result as `told <result>`, or a call of the first tool offered with the
-# user's words as `x` — its usage the turns it was sent and the words it
-# answers, and it streams its words one by one.
-
-
-def llm_heard(user, system="", most=1024, temperature=1.0):
-    return "heard {} | {} | {} | {}".format(user, system or "-", show(most, True), show(temperature, True))
-
-
-def llm_pieces(text):
-    words = text.split(" ")
-    pieces = [w + " " for w in words[:-1]] + [words[-1]]
-    return [p for p in pieces if p]
-
-
-def llm_streamed(text, lines):
-    return "\n".join(["piece: [{}]".format(p) for p in llm_pieces(text)] + lines)
-
-
-def llm_answers():
-    hi_there = llm_heard("hi there")
-    one_two = llm_heard("one two")
-    tool = "\n".join(["tool", "true", "hi", "3", "told echo hi", "end", "3"])
-    return {
-        "ask": "[[role = 'user', text = 'hi there']]",
-        "ask-more": "[[role = 'user', text = 'hi'], [role = 'user', text = 'and you']]",
-        "said": "[[role = 'user', text = 'hi'], [calls = [], role = 'assistant', text = 'hello']]",
-        "told": "[[role = 'user', text = 'hi'], [calls = [[args = [x = 1], id = 'c1', name = 'f']], role = 'assistant', text = ''], [id = 'c1', role = 'tool', text = 'done']]\n2",
-        "said-no-reply": "false\na reply is what chat[…] and reply[…] answer",
-        "told-no-call": "false\na call is one of a reply's calls",
-        "no-talk": "false\na conversation is what ask[…] answers, with its turns added by asked, said and told",
-        "reach": "openai\nllama3.2\nhttp://localhost:11434\n/v1\nOPENAI_API_KEY",
-        "reach-options": "org/model\nhttp://127.0.0.1:8000\n/api/v1\nSELF_KEY",
-        "reach-no-key": "cannot reach 'openai://api.example.com/gpt': the key's variable OPENAI_API_KEY is not set",
-        "reach-anthropic-no-key": "cannot reach 'anthropic://claude-x': the key's variable ANTHROPIC_API_KEY is not set",
-        "reach-no-model": "cannot reach 'anthropic://': no model is named — anthropic://claude-sonnet-5-5",
-        "reach-host-no-model": "cannot reach 'openai://localhost:11434': a model is named after its host — openai://localhost:11434/llama3.2",
-        "reach-scheme": "cannot reach 'http://x': a model's URL is anthropic://<model> or openai://<host>/<model>",
-        "chat": "\n".join([hi_there, "end", "1", str(len(hi_there.split())), "0"]),
-        "chat-options": "\n".join([llm_heard("hi", "be brief", 16, 0.5), "2"]),
-        "tool": tool,
-        # the loop: a chat that calls the tool (1 turn in, 1 token out), the
-        # tool's answer, a chat that says it back (3 turns in, 3 words out)
-        "act": "\n".join(["told echo hi", "end", "2", "4", "['chat', 'tool', 'chat']", "['tool', 'ok', 'end']", "4", "4"]),
-        "follow": llm_streamed(one_two, [one_two, "end", "1", str(len(one_two.split()))]),
-        "follow-tool": "tool\ntrue\nhi",
-        "embed": "[[3, 0.5, -0.25], [5, 0.5, -0.25]]",
-        "anthropic": "\n".join([llm_heard("hi there", "be brief"), "end", "1", str(len(llm_heard("hi there", "be brief").split()))]),
-        "anthropic-tool": tool,
-        "anthropic-act": "\n".join(["told echo hi", "end", "2", "['tool', 'ok', 'end']"]),
-        "anthropic-follow": llm_streamed(one_two, [one_two, "end", str(len(one_two.split()))]),
-        "anthropic-follow-tool": "tool\ntoolu_self\nhi",
-        "anthropic-embed": "anthropic serves no embeddings: reach an openai://<host>/<embedding model>",
-        "refused": "false\nthe model's server answered 401: no key here",
-        "no-json": "false\nthe model's server answered no JSON: this is not json",
-        "nobody": "false\nllm",
-    }
-
-
 def placed_past(seen):
     """An answer with where its case's route sits in its batch read past."""
     return _re.sub(r"/c\d+", "/cN", seen)
@@ -3431,8 +3367,6 @@ def answer(what, names):
         return draw_answer(what[5:])
     if what.startswith("grad:"):
         return grad_answer(what[5:])
-    if what.startswith("llm:"):
-        return llm_answers().get(what[4:]) or _skip()
     if what.startswith("auth:"):
         return auth_answers().get(what[5:]) or _skip()
     if what.startswith("io:"):

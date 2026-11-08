@@ -372,6 +372,26 @@ impl<'a> Lowerer<'a> {
         self.v.errors.push((format!("line {}: {}", line, msg), owner));
     }
 
+    /// A refusal of what a name the code writes means — a reserved name, a
+    /// function's name given a variable, a name nothing declares, a module
+    /// the file does not import. No call of the program's makes that slip,
+    /// whatever it hands, so inside a package's function it is refused in
+    /// the package's file at its line, where its own tests meet it first
+    /// (spec, Importing): blamed on the program's call, a local `row` beside
+    /// the package's `fn row` had been shown at the program's line, which
+    /// names nothing the program can change. Inside a standard module's
+    /// function it is the program's call's, as every refusal there is: the
+    /// module's line is none of the program's.
+    pub(super) fn refuse_own(&mut self, msg: String) {
+        if self.v.mute > 0 {
+            return;
+        }
+        if !crate::from_dependency(&self.current_fn) || crate::modules::is_crow_fn(&self.current_fn) {
+            return self.refuse(msg);
+        }
+        self.v.errors.push((format!("line {}: {}", self.v.line, msg), self.v.decl.clone()));
+    }
+
     /// The refusals made inside a module's helper before its caller's body
     /// was lowered, blamed anew on the export whose call made the copy —
     /// the whole program's calls are on record once the lowering is through.
@@ -639,7 +659,7 @@ impl<'a> Lowerer<'a> {
         // a value — `p = Point` for `Point[…]` — the lowered program had
         // read a name nothing bound; Rosetta Code, Draw a rotating cube)
         if self.ctx.structs.contains_key(name) && !self.ctx.functions.contains_key(name) && !self.scopes.iter().any(|s| s.contains(name)) && !self.v.stored.contains(name) {
-            self.refuse(format!("'{}' is a record's name, not a value — make one with {}[…]", name, name));
+            self.refuse_own(format!("'{}' is a record's name, not a value — make one with {}[…]", name, name));
             return;
         }
         // (a top-level variable read before the line that gives it its
@@ -657,7 +677,7 @@ impl<'a> Lowerer<'a> {
             && !self.ctx.derives.contains(name)
             && !self.is_fact(name)
         {
-            self.refuse(format!("'{}' is read before it is given a value — it is given one further down: give it its value before this line", name));
+            self.refuse_own(format!("'{}' is read before it is given a value — it is given one further down: give it its value before this line", name));
             return;
         }
         if self.defined(name) || BUILTINS.contains(&name) {
@@ -677,7 +697,7 @@ impl<'a> Lowerer<'a> {
         // reader looking for a misspelling (a function's read of one has
         // its own refusal, in the checks before this one)
         if self.at == Where::Test && self.ctx.left_out.contains(name) {
-            self.refuse(format!("undefined variable '{}' — a test sees the program's declarations (its functions, its literal values, its connections), not what top-level code computes: make the value inside the test", name));
+            self.refuse_own(format!("undefined variable '{}' — a test sees the program's declarations (its functions, its literal values, its connections), not what top-level code computes: make the value inside the test", name));
             return;
         }
         let mut seen: Vec<String> = self.scopes.iter().skip(1).flat_map(|s| s.iter().cloned()).collect();
@@ -689,7 +709,7 @@ impl<'a> Lowerer<'a> {
         let mut candidates: Vec<(String, Option<String>)> = seen.into_iter().map(|n| (n, None)).collect();
         candidates.extend(crate::lexer::KEYWORDS.iter().map(|k| (k.to_string(), None)));
         let near = self.near(name, candidates);
-        self.refuse(format!("undefined variable '{}'{}", name, near));
+        self.refuse_own(format!("undefined variable '{}'{}", name, near));
     }
 
     /// Whether the body being lowered is a route's handler reading a
@@ -752,7 +772,7 @@ impl<'a> Lowerer<'a> {
         // ws.co beside sys's; each is tested on its own)
         let own_source = what == "function" && self.ctx.bare_modules.contains("sys");
         if CORE_RESERVED.contains(&name) && !own_source {
-            self.refuse(format!("'{}' is a core builtin — pick another name for this {}", name, what));
+            self.refuse_own(format!("'{}' is a core builtin — pick another name for this {}", name, what));
             return;
         }
         // An import reserves names in the file that makes it — a part's own:
@@ -772,7 +792,7 @@ impl<'a> Lowerer<'a> {
             }
             if let Some(line) = self.ctx.bare_modules.contains(module).then(|| entry_line(module)).flatten() {
                 let module = module.to_string();
-                self.refuse(format!(
+                self.refuse_own(format!(
                     "'{}' is provided by {} (imported on line {}) — rename the {}, or import qualified: use {} as m",
                     name, module, line, what, module
                 ));
@@ -782,7 +802,7 @@ impl<'a> Lowerer<'a> {
         // Constants (pi, e, inf, nan) reserve under a bare math import
         if self.ctx.registry.has_constant(name) && self.ctx.bare_modules.contains("math") {
             if let Some(line) = entry_line("math") {
-                self.refuse(format!(
+                self.refuse_own(format!(
                     "'{}' is a math constant (imported on line {}) — rename the {}, or import qualified: use math as m",
                     name, line, what
                 ));
@@ -798,15 +818,15 @@ impl<'a> Lowerer<'a> {
         let ui_written = ["ui", "web.ui"].iter().any(|m| self.v.bare_import_lines.contains_key(*m));
         let ui_bare = entry_line("ui").is_some() || entry_line("web.ui").is_some() || (self.v.ui_mode && !ui_written);
         if web_bare && name == "reader" {
-            self.refuse(format!("'reader' is the page's signed-in reader, which sign_in and sign_out set — rename the {}", what));
+            self.refuse_own(format!("'reader' is the page's signed-in reader, which sign_in and sign_out set — rename the {}", what));
             return;
         }
         if web_bare && WEB_RESERVED.contains(&name) {
-            self.refuse(format!("'{}' is a web builtin (use web) — rename the {}", name, what));
+            self.refuse_own(format!("'{}' is a web builtin (use web) — rename the {}", name, what));
             return;
         }
         if ui_bare && UI_RESERVED.contains(&name) {
-            self.refuse(format!("'{}' is a ui builtin (use ui) — rename the {}", name, what));
+            self.refuse_own(format!("'{}' is a ui builtin (use ui) — rename the {}", name, what));
             return;
         }
         // Module prefixes and aliases are taken — the entry's own, as a bare
@@ -815,7 +835,7 @@ impl<'a> Lowerer<'a> {
         // package's `use math as m` had refused every program importing it
         // a variable `m`, "use on line 0"; pie's nn; parity 499)
         if let Some(line) = self.v.prefix_lines.get(name).copied().filter(|l| *l > 0) {
-            self.refuse(format!("'{}' is a module name (use on line {}) — pick another name for this {}", name, line, what));
+            self.refuse_own(format!("'{}' is a module name (use on line {}) — pick another name for this {}", name, line, what));
         }
     }
 
@@ -836,7 +856,7 @@ impl<'a> Lowerer<'a> {
         // (named as its file writes it: a part's function is prefixed where
         // it is inlined, and the refusal had said `pk_row` of `row`)
         let shown = super::named::own_name(name);
-        self.refuse(format!("'{}' is a function of this program — pick another name for this {}: `{}[…]` would call the function", shown, what, shown));
+        self.refuse_own(format!("'{}' is a function of this program — pick another name for this {}: `{}[…]` would call the function", shown, what, shown));
     }
 
     /// An assignment: a derivation is not assigned, and a variable keeps the
@@ -1471,7 +1491,7 @@ impl<'a> Lowerer<'a> {
         let Some(package) = crate::HIDDEN_HELPERS.with(|h| h.borrow().get(&(module.to_string(), field.to_string())).cloned()) else {
             return false;
         };
-        self.refuse(format!("'{}' is the {} package's own — a name that begins with an underscore is reached from the package's own files alone: call what it exports", field, package));
+        self.refuse_own(format!("'{}' is the {} package's own — a name that begins with an underscore is reached from the package's own files alone: call what it exports", field, package));
         true
     }
 
@@ -1493,7 +1513,7 @@ impl<'a> Lowerer<'a> {
         // the app is implicit (an app value, and the calls that took one,
         // had built compiled only, and the interpreter read it as a path)
         if real == "web" && field == "new" {
-            self.refuse("web.new[] is gone: the app is implicit — route[…], page[…] and serve[…] need none".to_string());
+            self.refuse_own("web.new[] is gone: the app is implicit — route[…], page[…] and serve[…] need none".to_string());
             return;
         }
         let registry_module = known_module(&real) && self.ctx.registry.has_function(field);
@@ -1521,7 +1541,7 @@ impl<'a> Lowerer<'a> {
             if CORE_RESERVED.contains(&field) {
                 // the core's name (`read`, `sqrt`) is called bare, whether
                 // or not a module has a form of its own
-                self.refuse(format!("{} has no '{}' — {} is the core's: {}[…]", module, field, field, field));
+                self.refuse_own(format!("{} has no '{}' — {} is the core's: {}[…]", module, field, field, field));
             } else if providers.contains(&real) {
                 // the module has it: the program does not import the module
                 self.refuse_missing_use(&format!("{}.{}", module, field), &real, "");
@@ -1529,22 +1549,22 @@ impl<'a> Lowerer<'a> {
                 // another module has it
                 let imported = self.ctx.registry.providers_of(field).iter().any(|p| p == m);
                 if imported {
-                    self.refuse(format!("{} has no '{}' — {}[] is {}'s: call it {}[…]", module, field, field, m, field));
+                    self.refuse_own(format!("{} has no '{}' — {}[] is {}'s: call it {}[…]", module, field, field, m, field));
                 } else {
-                    self.refuse(format!("{} has no '{}' — {}[] is {}'s: add `use {}`", module, field, field, m, m));
+                    self.refuse_own(format!("{} has no '{}' — {}[] is {}'s: add `use {}`", module, field, field, m, m));
                 }
             } else {
                 // a slip in one of the module's own names
                 let registry = crate::modules::ModuleRegistry::with_stdlib();
                 let own: Vec<(String, Option<String>)> = registry.functions_of(&real).into_iter().map(|f| (f.to_string(), None)).collect();
                 let near = self.near(field, own);
-                self.refuse(format!("{} has no '{}'{}", module, field, near));
+                self.refuse_own(format!("{} has no '{}'{}", module, field, near));
             }
             return;
         }
         // not a module the program has: a slip in a module's name
         let near = self.near(module, importable());
-        self.refuse(format!("undefined module or variable '{}'{}", module, near));
+        self.refuse_own(format!("undefined module or variable '{}'{}", module, near));
     }
 
     /// A call by name, its arguments already lowered and checked.
@@ -2225,7 +2245,7 @@ impl<'a> Lowerer<'a> {
                     candidates.extend(registry.functions_of(module).into_iter().map(|f| (f.to_string(), Some(module.to_string()))));
                 }
                 let near = self.near(name, candidates);
-                self.refuse(format!("undefined function '{}'{}", name, near));
+                self.refuse_own(format!("undefined function '{}'{}", name, near));
             }
             [m] => self.refuse_missing_use(name, m, ""),
             many => {
@@ -2236,7 +2256,7 @@ impl<'a> Lowerer<'a> {
                     None => format!("{}'s", m),
                 }).collect();
                 let uses: Vec<String> = many.iter().map(|m| format!("`use {}`", m)).collect();
-                self.refuse(format!("{}[] is {}: add {}", name, listed(&each, "or"), listed(&uses, "or")));
+                self.refuse_own(format!("{}[] is {}: add {}", name, listed(&each, "or"), listed(&uses, "or")));
             }
         }
     }
@@ -2285,7 +2305,7 @@ impl<'a> Lowerer<'a> {
             }
             return;
         }
-        self.refuse(format!("{}[]{} is {}'s: add `use {}`", written, of, module, module));
+        self.refuse_own(format!("{}[]{} is {}'s: add `use {}`", written, of, module, module));
         let at = self.v.errors.len() - 1;
         self.v.missing_use.insert(module.to_string(), (line, at, vec![written.to_string()], of.to_string()));
     }

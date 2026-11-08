@@ -127,6 +127,10 @@ fn crow_main() {
     // the run (crow_runtime::stops); a panic of crow's own prints as Rust's
     crow_runtime::stops::quiet_under_guards();
     let args: Vec<String> = std::env::args().collect();
+    // what `args[]` answers a program this process runs: the words after
+    // its source file (spec, `args[]`), read from the command, never from
+    // what the binary is named (crow_runtime::core::hand_args)
+    crow_runtime::core::hand_args(after_source(&args));
 
     // a program run from its source reconciles the tables it declares (spec,
     // db, The schema a program declares): crow's own run of it, and every
@@ -354,7 +358,7 @@ fn crow_main() {
                 let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
                 cmd_test_packages(&only);
             } else if args.iter().any(|a| a == "--modules") {
-                // `crow test --modules [llm]`: every standard module written
+                // `crow test --modules [auth]`: every standard module written
                 // in Crow, each its own tests (crate::modules::MODULES)
                 let only: Vec<String> = args[2..].iter().filter(|a| !a.starts_with("--")).cloned().collect();
                 cmd_test_modules(&only);
@@ -3519,6 +3523,13 @@ fn build_app_book(entry: &str) -> Result<std::path::PathBuf, String> {
 
 /// Source files end in `.co`.
 fn is_source(path: &str) -> bool { path.ends_with(".co") }
+
+/// The words after the first source file of crow's command: the arguments
+/// of the program it runs (`crow run -i main.co 1 two`: `1`, `two`), and
+/// none where the command names no file.
+fn after_source(args: &[String]) -> Vec<String> {
+    args.iter().skip(1).position(|a| is_source(a)).map(|i| args[i + 2..].to_vec()).unwrap_or_default()
+}
 fn strip_source_ext(path: &str) -> &str { path.strip_suffix(".co").unwrap_or(path) }
 
 #[cfg(test)]
@@ -4809,7 +4820,7 @@ fn read_file(filename: &str) -> String {
 thread_local! {
     /// The comment written above each function, by the function's name as
     /// the lowering knows it (a part's under its prefix): what a tool's
-    /// schema says the function does (spec, llm: Tools are the functions).
+    /// schema says the function does (spec, sys: `describe`'s `doc`).
     static FN_DOCS: std::cell::RefCell<std::collections::BTreeMap<String, String>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
 }
 
@@ -5132,7 +5143,7 @@ fn module_files(file_rel: &str, source_dir: &std::path::Path) -> Vec<std::path::
     // its held tests) is its main.co, as it is from a program that depends
     // on it (`crow_modules/<name>/main.co` below) — unless the name is a
     // standard module's, which an app may be named after (an app named
-    // `llm` imports `llm`, the module, from its own main.co)
+    // `chart` imports `chart`, the module, from its own main.co)
     if crowfile_name(&root).as_deref() == Some(file_rel) && crate::modules::by_path(file_rel).is_none() {
         candidates.push(root.join("main.co"));
     }
@@ -7114,27 +7125,40 @@ mod module_parts_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A standard module's function, inlined into a `use ui` program, keeps
-    /// its own names: llm's `embed` stacks its rows with math's `stack`,
-    /// which the element check had read as the ui element outside a view
-    /// ("ui element 'stack' can only be used inside a view block" — the
-    /// rag example's handler)
+    /// A function from a file that does not import ui keeps its own names in
+    /// a `use ui` program: a part stacking its rows with math's `stack` is
+    /// math's, where the element check had read a standard module's (llm's
+    /// `embed`, before llm moved to its own repository) as the ui element
+    /// outside a view ("ui element 'stack' can only be used inside a view
+    /// block" — the rag example's handler). No standard module left calls
+    /// an element's name: the module branch of the guard
+    /// (`modules::is_crow_fn` in the element check) has no host here.
     #[test]
-    fn a_modules_stack_in_a_ui_program_is_maths() {
-        let src = "use web, ui, llm\n\nquestion = ''\ncount = 0\n\nfn wanted[]\n    e = embed[reach['openai://127.0.0.1:1/x'], [question]]\n    if e.ok\n        count = len[e]\n\nview home[]\n    return stack[field['Question', question], button['Ask', click = wanted]]\n\npage['/', home]\nserve[3000]\n";
+    fn a_parts_stack_in_a_ui_program_is_maths() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_stack_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'stacked'\n").unwrap();
+        std::fs::write(dir.join("lib/rows.co"), "use math\n\n--- the vectors as a matrix, one row each\nfn stacked[lists]\n    rows = []\n    for numbers in lists\n        rows = push[rows, tensor[numbers]]\n    return stack[rows]\n").unwrap();
+        let src = "use web, ui\nuse lib.rows\n\nquestion = ''\ncount = 0\n\nfn wanted[]\n    m = rows.stacked[[[1.0, 2.0], [3.0, 4.0]]]\n    count = len[m]\n\nview home[]\n    return stack[field['Question', question], button['Ask', click = wanted]]\n\npage['/', home]\nserve[3000]\n";
         let stmts = build(src).unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports_checked(&stmts, &dir, &mut visited).unwrap();
         let lowered = lower::lower_program(&stmts).unwrap();
         let checked = infer_and_validate(&lowered, false);
         assert!(checked.is_ok(), "{:?}", checked.err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A standard module's local named like a fact of the program is the
-    /// module's own: llm's `embed` grows `rows = []`, and a `use ui`
-    /// program with a fact `rows = 0` had typed the module's list as that
-    /// int ("push[] takes a list and a value … got an int and numbers")
+    /// module's own: frame's `save` holds what it writes as `made`, and a
+    /// `use ui` program with a fact `made = 0` must not type the module's
+    /// local as that int (llm's `embed` growing `rows = []` beside a fact
+    /// `rows = 0` had: "push[] takes a list and a value … got an int and
+    /// numbers")
     #[test]
     fn a_modules_local_named_like_a_fact_is_its_own() {
-        let src = "use web, ui, llm\n\nquestion = ''\nrows = 0\n\nfn wanted[]\n    e = embed[reach['openai://127.0.0.1:1/x'], [question]]\n    if e.ok\n        rows = len[e]\n\nview home[]\n    return stack[field['Question', question], button['Ask', click = wanted]]\n\npage['/', home]\nserve[3000]\n";
+        let src = "use web, ui, frame\n\nquestion = ''\nmade = 0\n\nfn wanted[]\n    f = frame.new[a = [1, 2]]\n    done = save[f, 'self_made.csv']\n    if done.ok\n        made = len[question]\n\nview home[]\n    return stack[field['Question', question], button['Ask', click = wanted]]\n\npage['/', home]\nserve[3000]\n";
         let stmts = build(src).unwrap();
         let lowered = lower::lower_program(&stmts).unwrap();
         let checked = infer_and_validate(&lowered, false);

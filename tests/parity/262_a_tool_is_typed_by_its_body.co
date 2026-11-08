@@ -1,17 +1,30 @@
---- A tool only handed to a model — never called by the program — is typed
---- by what its body reads (spec, Tools are the functions): `upper[x]`
---- reads its parameter as text, and the schema the compiler writes says
---- so. Only a call had typed one, and a tool read in its body was refused
---- as typed by nothing, the refusal's own fix ("read it in the body")
---- doing nothing. (The model's address answers nobody: the call's failure
---- is the same value in both modes.)
-use llm
+--- A function only handed in a group — never called by the program — is
+--- typed by what its body reads (spec, sys: two operations over functions):
+--- `upper[x]` reads its parameter as text, and what `describe` says of it
+--- says so. Only a call had typed one, and a function read in its body
+--- was refused as typed by nothing, the refusal's own fix ("read it in
+--- the body") doing nothing. A member of the group is applied by name to
+--- arguments in a parsed value, as a model's call names them. (Held over
+--- llm's `chat` until llm moved to its own repository, 2026-11-07.)
+use sys
 
 --- says its argument back, louder
 fn shout[x]
     return upper[x]
 
-m = reach['openai://127.0.0.1:9/self-model']
-r = chat[m, ask['hi'], tools = [shout]]
-log[r.ok]
-log[r.kind]
+--- what each function is said to take, and what it answers the arguments
+fn told[tools, given]
+    said = []
+    for t in tools
+        d = describe[t]
+        out = apply[t, given]
+        if out.ok
+            said = push[said, '`str[d.name]` takes `str[d.params[0].takes]` and answers `out`']
+        else
+            said = push[said, '`str[d.name]` refused: `out.reason`']
+    return said
+
+for line in told[[shout], json['{"x": "hi"}']]
+    log[line]
+for line in told[[shout], json['{"y": "hi"}']]
+    log[line]

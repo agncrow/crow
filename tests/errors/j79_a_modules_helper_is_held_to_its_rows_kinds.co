@@ -1,12 +1,10 @@
---- inside a standard module, a helper's use of what the program handed is
---- held to its kinds as the program's own calls are, and the refusal names
---- the function the program called: chat's `system` reaches `len` two
---- helpers down (`_chat_with`, then `_body_of`), and an int there is
---- refused naming chat at the program's line. (It had been Magpie's
---- `prior`, until Magpie became a package of its own.)
-use llm
+--- inside a standard module, the use of what the program handed is held
+--- to its kinds as the program's own calls are, and the refusal names the
+--- function the program called: sign's `secret` reaches `len`, and an int
+--- there is refused naming sign at the program's line. (It had been llm's
+--- `chat` two helpers down, and before it Magpie's `prior`, until each
+--- became a package of its own.)
+use web, web.auth
 
-m = reach['http://127.0.0.1:1/v1']
-talk = ask['hello']
-r = chat[m, talk, system = 5]
-log[r.ok]
+t = sign[map[user = 'ada'], 5]
+log[t.ok]

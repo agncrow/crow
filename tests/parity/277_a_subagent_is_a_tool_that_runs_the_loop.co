@@ -1,36 +1,35 @@
---- A subagent is a tool that runs the loop (spec, llm: A subagent is a
---- tool that runs the loop): `research` is a function the parent model
---- calls, whose body runs an inner `act` with a tool list of its own and
---- answers the inner run's text — a run that failed fails the tool, and
---- the parent hears a failed result that says why. The loop is copied per
---- tool list: the inner copy is reached through the outer copy's dispatch
---- of `research` by name, `research` is typed by its body (`trim[question]`
---- reads the question as text; `ask[…]` takes any value and types nothing)
---- and by the direct call a test of it makes, and `weather` is a member of
---- both lists. The model answers nobody, so both modes agree on the
---- errors — the parent's, and the inner run's through the tool — and the
---- compiled program builds, which is the test. (tests/llm_server.rs runs a
---- delegating agent against a server that scripts the calls, in both
---- modes.)
-use llm
+--- A function of a group may itself apply a group: the dispatch is copied
+--- per group, the inner copy reached through the outer copy's application
+--- of `research` by name, `research` typed by its body (`trim[question]`
+--- reads the question as text) and by the direct call below, and
+--- `weather` a member of both groups. Both modes agree and the compiled
+--- program builds, which is the test. (Held over llm's subagent — a tool
+--- that runs the loop — until llm moved to its own repository,
+--- 2026-11-07.)
+use sys
 
 --- the current weather in a city
 fn weather[city]
     return 'sunny in `upper[city]`'
 
---- what a smaller agent finds out about a question, with the weather as
---- its only tool: its answer, or its run's failure
+--- what a smaller dispatch finds out about a question, with the weather
+--- as its only function
 fn research[question]
-    m = reach['openai://127.0.0.1:9/self-model']
-    inner = act[m, ask[trim[question]], tools = [weather], rounds = 4]
-    return inner.text
+    return run_all[[weather], trim[question]]
 
-m = reach['openai://127.0.0.1:9/self-model']
-done = act[m, ask['Is it warmer in Lisbon or Porto?'], tools = [research, weather]]
-log[done.ok]
-log[done.kind]
-log[starts[done.reason, 'cannot reach the model']]
-found = research['How warm is it in Lisbon?']
-log[found.ok]
-log[found.kind]
-log[starts[found.reason, 'cannot reach the model']]
+--- each function applied by name to one argument, under its parameter's
+--- name: what each answered, or why it could not
+fn run_all[tools, arg]
+    said = []
+    for t in tools
+        d = describe[t]
+        named = str[d.params[0].name]
+        out = apply[t, json['{"`named`": `encode[arg]`}']]
+        if out.ok
+            said = push[said, '`str[d.name]`: `out`']
+        else
+            said = push[said, '`str[d.name]` failed: `out.reason`']
+    return join[said, '; ']
+
+log[run_all[[research, weather], ' Lisbon ']]
+log[research['Porto']]

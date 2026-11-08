@@ -1,3 +1,0 @@
-# what the agent makes as it runs: its database — the orders it reads and
-# refunds, and the traces of its runs
-agent.db

@@ -1,5 +1,4 @@
---- an option a module's function lacks is refused with the parameters it has (chat's max is tokens)
-use llm
+--- an option a module's function lacks is refused with the parameters it has
+use web, web.auth
 
-m = reach['openai://127.0.0.1:9/x']
-log[chat[m, ask['hi'], max = 5]]
+log[sign[map[user = 'ada'], 'a-secret-of-at-least-thirty-two-chars', max = 5]]

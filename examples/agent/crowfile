@@ -1,2 +1,0 @@
-name = 'agent'
-db = 'sqlite://agent.db'

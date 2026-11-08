@@ -570,21 +570,25 @@ impl TypeContext {
         }
     }
 
-    /// A function called by name — `apply`'s, or a group's member where
-    /// the group was handed — noted as called with the kinds the call
-    /// hands it: its parameters unify with them and the signature is kept
-    /// for the copies. Wherever the call is lowered: a standard module's
-    /// function applies the program's functions it was handed, which it
-    /// cannot name (`calls_fn`), so the note does not go through
-    /// `note_call`'s scope rule.
+    /// A function called by name — `apply`'s, `describe`'s, or a group's
+    /// member where the group was handed — noted as called with the kinds
+    /// its parameters hold (what the body reads them as, or their
+    /// defaults): its parameters unify with them, and no signature is
+    /// kept. A call by name hands what the parameters already say, so the
+    /// function's kinds stay its positional calls': a signature noted from
+    /// the body's guess had been a call no later call could replace, and a
+    /// description written above the function's call (`describe[far]`,
+    /// then `far[Point[1.0, 2.0]]`) made a copy at a parsed value and
+    /// described `far` as taking one, where the description below the
+    /// call said a record (parity 525). Wherever the call is lowered: a
+    /// standard module's or a package's function applies the program's
+    /// functions it was handed, which it cannot name (`calls_fn`), so the
+    /// note does not go through `note_call`'s scope rule.
     pub(crate) fn note_named_call(&mut self, f: &str, types: &[Ty]) {
         let Some(sig) = self.functions.get(f).cloned() else { return };
         let mut params = sig.params.clone();
         for (p, t) in params.iter_mut().zip(types) {
             p.1 = p.1.unify(t);
-        }
-        if types.len() == params.len() && types.iter().all(|t| Self::type_is_concrete(t) || Self::empty_collection(t)) {
-            self.note_signature(f, types.to_vec());
         }
         if let Some(s) = self.functions.get_mut(f) {
             s.params = params;

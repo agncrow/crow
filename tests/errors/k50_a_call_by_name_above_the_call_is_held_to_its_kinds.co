@@ -1,0 +1,14 @@
+--- a call by name is held to the function's kinds wherever it stands: an
+--- `apply` above the call that types `far`'s parameter a record is refused
+--- as one below it is — above it, a copy at a parsed value had been made
+--- for the apply, and the program ran (parity 525)
+use sys
+
+struct Point [x, y]
+
+--- how far a point is from home
+fn far[p]
+    return p.x + p.y
+
+log[apply[far, json['{"p": {"x": 1.0, "y": 2.0}}']]]
+log[far[Point[1.0, 2.0]]]

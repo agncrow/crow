@@ -35,7 +35,7 @@ if not prices.ok
 - **Parallel by default** — `for` loops run their iterations concurrently; no threads, no async
 - **Errors are values** — no exceptions, no null; failures carry `.ok` / `.reason` and refuse to be silently misread
 - **One way to do things** — one call syntax `f[x]`, one string quote, one loop; every rejected feature has a documented reason
-- **Batteries included** — tensors, data frames, SQL, a reactive web framework (LiveView-style `view` blocks), and language models: a model as a connection, and an agent loop over the program's own functions with a gate, skills and MCP (`use llm`, `use mcp`), in one binary
+- **Batteries included** — tensors, data frames, SQL, a reactive web framework (LiveView-style `view` blocks), in one binary; language models — a model as a connection, and an agent loop over the program's own functions with a gate, skills and MCP — are [Raven](https://github.com/agncrow/raven)'s packages, written in Crow
 - **Verified** — `crow check` runs your tests plus generated edge cases, replays recorded database and model answers, and diffs what the app does against the accepted baseline; the two execution modes are held to one behaviour on every block of the book
 - **Held to references** — frames to pandas and models to scikit-learn to the last digit, optimisation to scipy step for step, retrieval to rank_bm25 and faiss, a GPT to nanoGPT; each package ships with the reference script it is held to
 

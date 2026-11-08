@@ -453,14 +453,18 @@ moved = transact[conn, rebalance]       --- committed; rolled back where rebalan
 --- insert[conn, 'orders', frame] bulk-loads a frame. Migrations: crow db apply <dir> <url>.
 ```
 
-## Language models and tools: `use llm`, `use mcp`
+## Language models and tools: Raven's `llm` and `mcp`
+
+The packages of github.com/agncrow/raven, installed as any dependency
+(`deps = map[llm = 'github.com/agncrow/raven/packages/llm@v0.1.0']`, which
+brings mcp) and called qualified:
 
 ```
 use llm
 
-m = reach['anthropic://claude-sonnet-5-5']   --- the key comes from ANTHROPIC_API_KEY
+m = llm.reach['anthropic://claude-sonnet-5-5']   --- the key comes from ANTHROPIC_API_KEY
 --- (openai://localhost:11434/llama3.2 reaches Ollama, or any OpenAI-compatible server)
-r = chat[m, ask['Capital of Mongolia?'], system = 'One word.', tokens = 50]
+r = llm.chat[m, llm.ask['Capital of Mongolia?'], system = 'One word.', tokens = 50]
 log[r.text]                     --- also r.calls, r.usage.input, r.stop: end, tool, length, other
 
 --- A tool is a function, and the comment right above it is its description.
@@ -473,27 +477,27 @@ fn weather[city]
 fn only_lisbon[call]
     return str[call.name] ne 'weather' or str[call.args.city] eq 'Lisbon'
 
-done = act[m, ask['Is it warm in Lisbon?'], tools = [weather], allow = [only_lisbon], rounds = 8]
+done = llm.act[m, llm.ask['Is it warm in Lisbon?'], tools = [weather], allow = [only_lisbon], rounds = 8]
 log[done.text]                  --- also done.stop, done.rounds, done.usage, done.talk
 log[done.steps]                 --- a frame: a row per model call and tool call
 --- A failed tool, a wrong argument, an unknown name and a gate's refusal are told to the model.
 --- More options: budget = tokens, keep = n, compact = n, skills = 'skills/', system = '...'.
---- Go on from a run: act[m, asked[done.talk, 'And Porto?'], tools = [weather]].
+--- Go on from a run: llm.act[m, llm.asked[done.talk, 'And Porto?'], tools = [weather]].
 ```
 
 ```
 use llm, mcp
 
-m = reach['anthropic://claude-sonnet-5-5']
-s = server['http://localhost:8000/mcp']
---- (or a process over stdio: server[command = 'npx -y @modelcontextprotocol/server-filesystem /tmp'])
-log[catalog[s][0].name]                       --- the tools it offers; discover[s] says what it is
-log[tool[s, 'weather', map[city = 'Lisbon']]] --- one called by hand: the text of its result
-done = act[m, ask['What is in /tmp?'], servers = [s]]   --- its tools join the loop
+m = llm.reach['anthropic://claude-sonnet-5-5']
+s = mcp.server['http://localhost:8000/mcp']
+--- (or a process over stdio: mcp.server[command = 'npx -y @modelcontextprotocol/server-filesystem /tmp'])
+log[mcp.catalog[s][0].name]                       --- the tools it offers; mcp.discover[s] says what it is
+log[mcp.tool[s, 'weather', map[city = 'Lisbon']]] --- one called by hand: the text of its result
+done = llm.act[m, llm.ask['What is in /tmp?'], servers = [s]]   --- its tools join the loop
 --- A server's tool names must differ from those in tools = [...].
---- A Crow program as a server: fn served[req] answering answer[req, tools = [weather]],
---- with route['/mcp', 'POST', served] and serve[8000]; or listen[tools = [weather]] over its
---- standard streams, which a client starts as a command: server[command = 'crow run weather.co'].
+--- A Crow program as a server: fn served[req] answering mcp.answer[req, tools = [weather]],
+--- with route['/mcp', 'POST', served] and serve[8000]; or mcp.listen[tools = [weather]] over its
+--- standard streams, which a client starts as a command: mcp.server[command = 'crow run weather.co'].
 ```
 
 ---
