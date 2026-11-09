@@ -282,16 +282,6 @@ impl<'a> Lowerer<'a> {
         if self.pass != Pass::Final {
             return;
         }
-        // (an item of a list no item is ever put into has no kind, and a
-        // loop over it none to walk: the interpreter had run no rounds and
-        // the compiled program, holding the item as text, did not build;
-        // Rosetta Code, Tropical algebra overloading)
-        if let Expr::Local(v, Ty::Unknown) | Expr::Move(v, Ty::Unknown) = x
-            && self.v.unknown_items.contains(v)
-        {
-            self.refuse(format!("'{}' is an item of a list never given one, so it has no kind to walk", crate::lower::shown(v)));
-            return;
-        }
         let walk = match x.ty().payload() {
             Ty::List(_) | Ty::Tensor(..) | Ty::Column(_) | Ty::Json | Ty::Unknown => return,
             Ty::Map(..) => " — walk keys[m] or values[m]",

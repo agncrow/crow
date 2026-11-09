@@ -2123,7 +2123,9 @@ impl Emitter {
         // a body that does not end in its value (an if whose every arm
         // yields) gathers too: each arm pushes what it yields
         let gathers = !ends_in_value(body) && Self::filter_parts(body).is_none();
-        if !use_par && (leaves(body) || (!always_yields(body) && Self::filter_parts(body).is_none()) || gathers) {
+        // (a body no run reaches — the loop walks a list the program never
+        // gives an item — yields nothing: the list of no items, gathered)
+        if unreached_body(body) || (!use_par && (leaves(body) || (!always_yields(body) && Self::filter_parts(body).is_none()) || gathers)) {
             return self.gathering_loop(var, iter, body, whole);
         }
         let iter_str = self.expr(iter);
@@ -3651,14 +3653,21 @@ fn leaves(body: &[Stmt]) -> bool {
 
 /// Whether a collecting loop's body ends in its value itself.
 fn ends_in_value(body: &[Stmt]) -> bool {
-    matches!(body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))), Some(Stmt::Do(_)))
+    matches!(body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))), Some(Stmt::Do(e)) if !crate::ir::is_unreached(e))
+}
+
+/// Whether a collecting loop's body ends on the line no run reaches (the
+/// lowering's `unreached`: the loop walks a list the program never gives
+/// an item), which yields nothing.
+fn unreached_body(body: &[Stmt]) -> bool {
+    matches!(body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))), Some(Stmt::Do(e)) if crate::ir::is_unreached(e))
 }
 
 /// Whether every pass through a collecting loop's body yields a value: it
 /// ends in one, or in a branch whose every arm does.
 fn always_yields(body: &[Stmt]) -> bool {
     match body.iter().rev().find(|s| !matches!(s, Stmt::Line(_))) {
-        Some(Stmt::Do(_)) => true,
+        Some(Stmt::Do(e)) => !crate::ir::is_unreached(e),
         Some(Stmt::If { then, els: Some(e), .. }) => always_yields(then) && always_yields(e),
         _ => false,
     }
@@ -3671,7 +3680,7 @@ fn yielding(body: &[Stmt], acc: &str, list: &Ty) -> Block {
     body.iter()
         .enumerate()
         .map(|(i, s)| match s {
-            Stmt::Do(e) if Some(i) == last => Stmt::Set {
+            Stmt::Do(e) if Some(i) == last && !crate::ir::is_unreached(e) => Stmt::Set {
                 var: acc.to_string(),
                 expr: Expr::Call {
                     target: Target::Runtime("core.push".to_string()),

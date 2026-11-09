@@ -742,6 +742,12 @@ impl Emitter {
         }
         let text = self.expr(e);
         self.line(&format!("{};", text));
+        // (the line no run reaches ends its block: what followed it was
+        // dropped, and a body ending there answers nothing — the lowering's
+        // `unreached`)
+        if crate::ir::is_unreached(e) {
+            self.line("unreachable!(\"the program ended\");");
+        }
     }
 
     /// Does an expression build a tree: a view's call, or inside a view an

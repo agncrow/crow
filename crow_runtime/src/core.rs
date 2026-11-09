@@ -819,6 +819,15 @@ pub fn halt(reason: &str) -> Result<(), String> {
     Err(reason.to_string())
 }
 
+/// What stands where a program reads an item of a list it never gives
+/// one (spec, Lists: a list never given an item): no run reaches it — a
+/// loop over such a list runs no rounds, and an index into it stops
+/// first, past the list's end. Reached, a list typed as never holding an
+/// item held one: a bug in Crow.
+pub fn unreached() -> Result<(), String> {
+    Err("a list this program never gives an item held one here: a bug in Crow, not in this program".to_string())
+}
+
 /// `sleep[s]` of a float: seconds; one that is negative is refused.
 pub fn sleep_secs(s: f64) -> Result<(), String> {
     if s.is_nan() || s < 0.0 || s.is_infinite() {
@@ -964,6 +973,15 @@ pub fn read_line(prompt: Option<&str>) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    /// The line standing where a program reads an item of a list it never
+    /// gives one is never reached; a run that reached it stops, saying the
+    /// bug is Crow's (no program can reach it, so no suite runs it).
+    #[test]
+    fn the_unreached_line_stops_naming_a_bug_in_crow() {
+        let why = super::unreached().unwrap_err();
+        assert!(why.contains("a bug in Crow, not in this program"), "{why}");
+    }
+
     /// A number of a tensor is written at one position per axis, each
     /// counted from the end when negative; one position of a matrix is its
     /// row, which a number is not.

@@ -1445,15 +1445,15 @@ which run here only.
   it another kind is refused as a local's is (`local_types` is seeded
   with the parameters); a call's concrete kind replaces a kind no call
   supports — the body's own guess — but never flips between two calls'
-  kinds (`called_so`), nor for a function taking a function. A value of
-  no known kind walked or indexed out of a list of nothing and handed to
-  a function is text, as the emitter holds it, where the program's own
-  code reaches the call (`text_items`, `call_edges`,
-  `default_unknown_params`): a module function nothing calls keeps its
-  unknowns, or its body is refused in programs that never call it. The
-  emitter chooses a row by name for such a value as text's
-  (`held_kind`): `len[p]` of a part of the tail nothing filled had
-  printed a list's length of a `String` (parity 327).
+  kinds (`called_so`), nor for a function taking a function. A value
+  walked or indexed out of a list the program never gives an item is no
+  value ever, and the code reading it is dropped (below, 2026-11-08: it
+  had been typed as text where a function was handed it —
+  `default_unknown_params`, gone — and Kite's drawing functions refused
+  `o.styles` in a chart given no overlays). The emitter chooses a row by
+  name for a value of no known kind as text's (`held_kind`): `len[p]` of
+  a part of the tail nothing filled had printed a list's length of a
+  `String` (parity 327).
 - Magpie measured after the port (2026-10-28, its magpie-in-crow.md
   4.2): build the measure programs with `crow build` in the scratchpad
   (the port is Crow, so compiled is the comparison) and profile a loop
@@ -1753,3 +1753,31 @@ which run here only.
   --release --lib gpu::tests::bench -- --ignored --nocapture`) on a quiet
   machine: under other sessions' suites a CPU-only step had doubled
   between two runs.
+- A list the program never gives an item holds no value ever (spec,
+  Lists; 2026-11-08, Kite's chart given no overlays or no indicators,
+  parity 483–487). In the final pass a list typed a list of nothing
+  known, once every rule that gives its items a kind has had its say
+  (502's operator, 523's push, 478's handed-on parameter), is
+  `never_given`, and outside a test's own body (`unreached_at`: the
+  harness hands a test lists of nothing known that hold items —
+  `box[s, sel]`, the layout engine's boxes, interpreted — and the line
+  had stood under every layout test's `boxes[i]`) a loop over it gets the
+  unreached line
+  (`table::unreached`, the hidden `core.__unreached`: `Prop::Ends` and
+  `Prop::Unreached`) at the head of its body, and a read by position is
+  made into a temporary followed by the unreached line (`never_reads`
+  keeps the read, so `kindless_item` still refuses `not g[0]`: errors
+  j89, j91). `drop_unreached` cuts every block after the unreached line
+  once a body is lowered — a function's, a derivation's, a test's, the
+  top level, a fact's default's collecting loops — before
+  `check_answered` and the move pass: the code after it was lowered as
+  before, so its types and its refusals stand, and the checks reading a
+  collecting loop's last line read the program's. The emitter ends the
+  block there (`unreachable!`) and gathers a collecting loop whose body
+  is unreached into no items (`unreached_body`; a `[]` written as its
+  list is typed ints, as a statement loop's, or `vec![]` names no type
+  for rustc — the self-check's shape/collect/empty); `decide_loops` keeps
+  such a loop in order. A list typed as never given an item that held
+  one would reach the line: both modes stop, naming a bug in Crow — so a
+  row or a form answering a list of nothing known that holds items is a
+  hole in the rule: type its items, or keep it to tests, as `box` is.

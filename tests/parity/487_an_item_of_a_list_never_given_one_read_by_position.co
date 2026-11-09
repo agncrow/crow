@@ -1,0 +1,51 @@
+--- An item of a list no line of the program gives one, read by its
+--- position: the list is always empty, so the read stops past its end,
+--- and what the line goes on to do with the item no run reaches — the
+--- line after the read is never run, in both modes. A guard before the
+--- read keeps it from running: Kite's `last_id` of a chart given no
+--- overlays (`k.overlays[n - 1].id`) and its overlay changed by id had
+--- read the item as text, and the compiled program did not build (the
+--- interpreter had refused `text has no field`, typing what is handed the
+--- item as text). Where the read does run, it stops in both modes.
+struct Mark [id, at]
+struct Board [marks]
+
+fn add[b, id]
+    b.marks = push[b.marks, Mark[id, 0.5]]
+    b
+
+fn last_id[b]
+    n = len[b.marks]
+    if n eq 0
+        return ''
+    b.marks[n - 1].id
+
+fn index_of[b, id]
+    for i in range[len[b.marks]]
+        if b.marks[i].id eq id
+            return i
+    -1
+
+fn moved[b, id, by]
+    i = index_of[b, id]
+    if i lt 0
+        return b
+    m = b.marks[i]
+    m.at = m.at + by
+    b.marks[i] = m
+    b
+
+fn at_or[b, i, other]
+    if i lt len[b.marks] and b.marks[i].at gt 0.0
+        return b.marks[i].at
+    other
+
+b = Board[[]]
+log['[`last_id[b]`]']
+log[index_of[b, 'x']]
+b = moved[b, 'x', 1.0]
+log[len[b.marks]]
+log[at_or[b, 0, 2.5]]
+log['the read itself:']
+log[b.marks[0].at]
+log['not reached']

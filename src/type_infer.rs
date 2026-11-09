@@ -509,11 +509,6 @@ pub struct TypeContext {
     /// copy lowered on its own) is placed, since the module's line is no
     /// line of the program's.
     pub first_call_line: BTreeMap<String, usize>,
-    /// The calls handing a parameter the item of a list whose items no type
-    /// says — a loop's variable over it, or a position of it — as (caller,
-    /// callee, the parameter's place): what is held as text where it is
-    /// compiled (`default_unknown_params`).
-    pub text_items: std::collections::BTreeSet<(String, String, usize)>,
     /// An open parameter handed on as it is to another function, as
     /// (caller, parameter, callee, the callee's place): one no call typed
     /// takes the callee's parameter's type (`default_open_params`).
@@ -530,9 +525,6 @@ pub struct TypeContext {
     /// takes them says: a list of numbers there is the answer's form, never
     /// a guess an earlier round made (`finish_body`'s reform keeps it).
     pub answers_by_use: std::collections::BTreeSet<String>,
-    /// Every call of a function by its name the scan reads, as (caller,
-    /// callee): what the program's own code reaches.
-    pub call_edges: std::collections::BTreeSet<(String, String)>,
     /// Every call of a user function as it is lowered, by the names the
     /// lowering resolves (a copy by its own name): (caller, callee) → the
     /// line of the first such call, kept across the passes. A refusal
@@ -694,12 +686,10 @@ impl TypeContext {
             unsaid_pushes: std::collections::BTreeSet::new(),
             fn_defaults: BTreeMap::new(),
             first_call_line: BTreeMap::new(),
-            text_items: std::collections::BTreeSet::new(),
             handed_on: std::collections::BTreeSet::new(),
             fielded: std::collections::BTreeSet::new(),
             copied_kinds: BTreeMap::new(),
             answers_by_use: std::collections::BTreeSet::new(),
-            call_edges: std::collections::BTreeSet::new(),
             module_calls: BTreeMap::new(),
             first_items: BTreeMap::new(),
             body_assigned: None,
@@ -1473,56 +1463,6 @@ impl TypeContext {
             todo.extend(called.into_iter().filter(|c| crate::foreign_code(c)));
         }
         false
-    }
-
-    /// A parameter no round typed, which a call the program reaches hands
-    /// the item of a list whose items no type says — the loop's variable
-    /// over an empty list a call handed, or a position of it
-    /// (`merge_into['abc', [], …]` handing `opened` each of its paths) — is
-    /// text, as the compiled program holds such an item (parity 313): typed
-    /// so, the forms inside read it as text, where they had read it as
-    /// nothing — `'/.pending' in p` a list's `contains`, a file's size a
-    /// row-less effect with no range — and the compiled program did not
-    /// build (crow check --self; parity 323). Only a call the program's own
-    /// code reaches (its top level, a test, and what they call), and only a
-    /// parameter no other call typed: a function called nowhere, or only
-    /// from a module function the program does not call, keeps what it
-    /// had, and so does the original of a function copied per signature.
-    /// Whether any changed.
-    pub(crate) fn default_unknown_params(&mut self) -> bool {
-        let base = |n: &str| crate::ir::copy_base(n).to_string();
-        let mut edges: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
-        for (caller, callee) in self.module_calls.keys() {
-            edges.entry(base(caller)).or_default().insert(base(callee));
-        }
-        for (caller, callee) in &self.call_edges {
-            edges.entry(base(caller)).or_default().insert(base(callee));
-        }
-        let mut reached: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        let mut todo: Vec<String> = edges.keys().filter(|c| !self.functions.contains_key(c.as_str())).cloned().collect();
-        while let Some(f) = todo.pop() {
-            if !reached.insert(f.clone()) {
-                continue;
-            }
-            if let Some(next) = edges.get(&f) {
-                todo.extend(next.iter().filter(|n| !reached.contains(*n)).cloned());
-            }
-        }
-        let copied: std::collections::BTreeSet<String> = self.specializations.keys().cloned().collect();
-        let mut changed = false;
-        for (caller, callee, i) in self.text_items.clone() {
-            if !reached.contains(&base(&caller)) || copied.contains(&callee) {
-                continue;
-            }
-            if let Some(sig) = self.functions.get_mut(&callee)
-                && let Some((_, t)) = sig.params.get_mut(i)
-                && matches!(t, Ty::Unknown)
-            {
-                *t = Ty::Str;
-                changed = true;
-            }
-        }
-        changed
     }
 
     /// A parameter still a list or map of nothing once inference has

@@ -1288,6 +1288,12 @@ pub fn ends_program(e: &Expr) -> bool {
     matches!(e, Expr::Call { target: Target::Row(row), .. } | Expr::Effect { row: Some(row), .. } if row.props.contains(&crate::table::Prop::Ends))
 }
 
+/// The line standing where a program reads an item of a list it never
+/// gives one (`table::unreached`): no run reaches it (spec, Lists).
+pub fn is_unreached(e: &Expr) -> bool {
+    matches!(e, Expr::Call { target: Target::Row(row), .. } if row.props.contains(&crate::table::Prop::Unreached))
+}
+
 pub fn quiet(e: &Expr) -> bool {
     match e {
         Expr::Const(..) | Expr::Local(..) | Expr::Move(..) | Expr::Load(..) | Expr::Derived(..) | Expr::Constant(..) | Expr::FnRef(..) => true,

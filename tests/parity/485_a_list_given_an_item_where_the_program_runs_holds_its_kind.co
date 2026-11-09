@@ -1,0 +1,24 @@
+--- A list the program does give an item holds that item's kind, read by
+--- its fields or not: `add` is called here, so `b.marks` holds marks, the
+--- loop over them runs, and `m.at` reads a mark's field (beside 483, where
+--- the same loop over a list never given an item is never run).
+struct Mark [name, at]
+struct Board [marks, title]
+
+fn add[b, n, x]
+    b.marks = push[b.marks, Mark[n, x]]
+    b
+
+fn total[b]
+    sum = 0.0
+    for m in b.marks
+        sum = sum + m.at
+    sum
+
+b = Board[[], 'x']
+log[total[b]]
+b = add[b, 'a', 2.5]
+b = add[b, 'b', 0.25]
+log[total[b]]
+log[b.marks[1].name]
+log[type[b.marks[0]]]

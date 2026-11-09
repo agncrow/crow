@@ -1,0 +1,26 @@
+--- An item of a list no line of the program gives one, handed to a
+--- function that reads it by its fields: the loop handing it runs no
+--- rounds, so the function is never called with it, and its parameter is
+--- of no kind — Kite's chart given no overlays hands each overlay to the
+--- function that draws it, which reads its styles. Typed as text, as a
+--- parameter handed only such items had been, the function was refused in
+--- both modes: "text has no field 'styles'".
+struct Overlay [name, styles]
+struct Chart [overlays, width]
+
+fn overlay[k, name]
+    k.overlays = push[k.overlays, Overlay[name, map[color = 'red']]]
+    k
+
+fn drawn[o]
+    return o.styles
+
+fn draw[k]
+    shown = []
+    for o in k.overlays
+        shown = push[shown, drawn[o]]
+    return len[shown]
+
+k = Chart[[], 800]
+log[draw[k]]
+log[k.width]

@@ -1,0 +1,39 @@
+--- An item of a list no line of the program gives one, read by its
+--- fields, is no value ever: the loop over the list runs no rounds, and
+--- the body reading the item never runs — a record's field the program
+--- never fills (its one push in a function nothing calls), a parameter's
+--- list every call hands `[]` and a local's alike, in both modes. The
+--- compiled program had held the item as text and did not build (`no
+--- field size on &String`), where the interpreter ran and printed 0 (Kite's
+--- chart given no overlays).
+struct Mark [name, at]
+struct Board [marks, title]
+
+fn add[b, n, x]
+    b.marks = push[b.marks, Mark[n, x]]
+    b
+
+fn total[b]
+    sum = 0.0
+    for m in b.marks
+        sum = sum + m.at
+    sum
+
+--- (a parameter's list, every call handing `[]`)
+fn sizes[xs]
+    n = 0
+    for x in xs
+        n = n + x.size
+    n
+
+b = Board[[], 'x']
+log[total[b]]
+log[sizes[[]]]
+log[len[b.marks]]
+
+--- (a local's)
+ys = []
+n = 0
+for y in ys
+    n = n + y.count
+log[n]

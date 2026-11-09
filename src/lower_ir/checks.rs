@@ -220,9 +220,14 @@ pub(super) struct Checks {
     /// given: a local reusing a module variable's name is a new binding
     /// (spec §7), so its type is its own, not the module's.
     pub local_types: HashMap<String, Ty>,
-    /// The loop variables bound over a list whose items no type says: what
-    /// a call hands of them is held as text (`TypeContext::text_items`).
+    /// The loop variables bound over a list whose items no type says: an
+    /// operator meeting one with a number gives the list that kind
+    /// (`item_met`).
     pub unknown_items: BTreeSet<String>,
+    /// The temporaries holding a read by position of a list the program
+    /// never gives an item, by function and name: the read as written,
+    /// which `kindless_item` refuses computed with, as it does the read.
+    pub never_reads: BTreeMap<(String, String), Expr>,
     /// What each of those loop variables walks: a local or a parameter by
     /// name, or a record's field (holder, field) — the place an operator
     /// meeting the item with a number gives the items' kind (`items_are`).

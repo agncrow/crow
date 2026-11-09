@@ -1,0 +1,39 @@
+--- A list no line of the program gives an item holds no value ever: a
+--- loop over it runs no rounds, so a loop over one of its items is never
+--- reached either — `for t in row` of `for row in e`, `e = []` never
+--- pushed onto, prints nothing and the program goes on, in both modes. It
+--- had been refused ("'row' is an item of a list never given one, so it
+--- has no kind to walk"), since the compiled program, holding the item as
+--- text, did not build (Rosetta Code, Tropical algebra overloading; errors
+--- k08 until 2026-11-08).
+e = []
+for row in e
+    for t in row
+        log[t]
+log['done']
+
+--- (a function handed an empty matrix walks its rows and each row's
+--- numbers: none)
+fn doubled[m]
+    out = []
+    for row in m
+        for x in row
+            out = push[out, x * 2]
+    len[out]
+
+log[doubled[[]]]
+
+--- (and a collecting loop over such a list is the list of no items)
+names = for row in e
+    for t in row
+        log[t]
+    len[row]
+log[names]
+
+--- (so is one over `[]` written as its list: the compiled program names
+--- the literal's items ints, as a statement loop's — `vec![]` alone had
+--- named no type, and the program did not build; crow check --self's
+--- shape/collect/empty)
+got = for x in []
+    x
+log[got]

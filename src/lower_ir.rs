@@ -440,7 +440,9 @@ fn hold_returned(b: &mut Block) {
 fn decide_loops(program: &mut Program) {
     for part in &mut program.parts {
         let order = LoopOrder::of(part);
-        let decide = |var: &str, body: &Block| !order.keeps_order(var, body);
+        // (a body no run reaches — the loop walks a list the program never
+        // gives an item — stays in order: there is no work to share)
+        let decide = |var: &str, body: &Block| !order.keeps_order(var, body) && !body.iter().any(is_unreached);
         for f in &mut part.fns {
             set_loops(&mut f.body, &decide);
         }
@@ -1485,12 +1487,9 @@ impl<'a> Lowerer<'a> {
         if self.ctx.call_says_of_callee(callee) {
             self.ctx.note_call(callee, args, types);
         }
-        // (an item of a list whose items no type says, handed to a function:
-        // held as text where it is compiled — `default_unknown_params`)
         if let A::Ident(n) = callee
             && self.ctx.functions.contains_key(n)
         {
-            self.ctx.call_edges.insert((self.current_fn.clone(), n.clone()));
             // (an open parameter of this function handed on as it is — a
             // list handed only `[]` — is noted: once inference has settled,
             // one no call typed holds what the callee's parameter holds
@@ -1502,19 +1501,6 @@ impl<'a> Lowerer<'a> {
                 let open = |t: &Ty| matches!(t, Ty::List(e) | Ty::Map(_, e) if matches!(e.as_ref(), Ty::Unknown));
                 if self.ctx.vars.get(v).is_some_and(open) && self.ctx.functions.get(&self.current_fn).is_some_and(|sig| sig.params.iter().any(|(p, _)| p == v)) {
                     self.ctx.handed_on.insert((self.current_fn.clone(), v.clone(), n.clone(), i));
-                }
-            }
-            for (i, a) in args.iter().enumerate() {
-                if !matches!(types.get(i), Some(Ty::Unknown)) {
-                    continue;
-                }
-                let item = match a {
-                    A::Ident(v) => self.v.unknown_items.contains(v),
-                    A::Call { callee: c, args: at } if at.len() == 1 => matches!(c.as_ref(), A::Ident(xs) if matches!(self.ctx.vars.get(xs).map(|t| t.payload().clone()), Some(Ty::List(e)) if *e == Ty::Unknown)),
-                    _ => false,
-                };
-                if item {
-                    self.ctx.text_items.insert((self.current_fn.clone(), n.clone(), i));
                 }
             }
         }
@@ -1739,11 +1725,18 @@ impl<'a> Lowerer<'a> {
                     // an int default of a fact that holds floats is a float
                     // (spec §1): the interpreter held the int until a handler
                     // stored a float, where the compiled program converted it
-                    let default = if ty == Ty::Float && default.ty() == Ty::Int {
+                    let mut default = if ty == Ty::Float && default.ty() == Ty::Int {
                         Expr::Convert { how: Convert::IntToFloat, expr: Box::new(default), ty: Ty::Float }
                     } else {
                         default
                     };
+                    // (a collecting loop's body no run reaches, in a default
+                    // too: `drop_unreached`)
+                    crate::ir::visit_expr_mut(&mut default, &mut |e| {
+                        if let Expr::ForExpr { body, .. } = e {
+                            drop_unreached(body);
+                        }
+                    });
                     self.scopes[0].insert(name.clone());
                     self.v.fact_lines.insert(name.clone(), self.v.line);
                     part.facts.push(Fact { name: name.clone(), ty, default, session: written.contains(name), line, refuses, held });
@@ -1775,6 +1768,7 @@ impl<'a> Lowerer<'a> {
         }
         // (a session's top-level names are read by the fragments after it)
         let outlive = if self.fragment { defined_in(&part.main) } else { HashSet::new() };
+        drop_unreached(&mut part.main);
         place_moves_in(&mut part.main, &outlive, None);
         // what a derivation and each part's top level reach, transitively,
         // as a function's does below
@@ -1977,6 +1971,7 @@ impl<'a> Lowerer<'a> {
         self.scopes.pop();
         self.v.reactive = false;
         let mut block = block?;
+        drop_unreached(&mut block);
         self.check_answered(name, kind, &ret, &block);
         if let Some(read) = std::mem::replace(&mut self.route_derived, saved_route) {
             let mut start: Vec<Stmt> = read.into_iter().map(|(d, ty)| Stmt::Let { var: d.clone(), ty: ty.clone(), expr: Expr::Derived(d, ty) }).collect();
@@ -2047,6 +2042,7 @@ impl<'a> Lowerer<'a> {
         let mut block = block?;
         self.scopes.pop();
         self.ctx.leave_body(scope);
+        drop_unreached(&mut block);
         place_moves_in(&mut block, &HashSet::new(), Some(&HashSet::new()));
         let ty = self.ctx.vars.get(name).cloned().unwrap_or(Ty::Unknown);
         let mut reads = ReadSet::default();
@@ -2100,6 +2096,7 @@ impl<'a> Lowerer<'a> {
         self.scopes.pop();
         let typed: Vec<(String, Ty)> = params.iter().map(|p| (p.clone(), self.ctx.vars.get(p).cloned().unwrap_or(Ty::Unknown))).collect();
         self.ctx.vars = saved;
+        drop_unreached(&mut block);
         place_moves_in(&mut block, &HashSet::new(), Some(&own));
         Ok(Test { name, params: typed, body: block, truths })
     }
@@ -3377,6 +3374,15 @@ impl<'a> Lowerer<'a> {
                     let end = self.detailed_now(&before);
                     self.join_detailed(&top, &end);
                     self.unbind_loop_var(var, saved);
+                    // (a list the program never gives an item walks none: its
+                    // body, lowered reading the item as nothing known, is no
+                    // run's — the unreached line at its head, what follows
+                    // dropped once the function is lowered (`drop_unreached`);
+                    // spec, Lists; parity 483)
+                    let mut b = b;
+                    if self.unreached_at(&it) {
+                        b.insert(0, unreached_line());
+                    }
                     b
                 };
                 self.scopes.pop();
@@ -3867,6 +3873,18 @@ impl<'a> Lowerer<'a> {
         Expr::Binary { op, l: Box::new(Expr::Local(t, left_ty)), r, ty }
     }
 
+    /// Whether the unreached line stands where `e`'s items are read: a
+    /// list the program never gives an item (`never_given`), as the final
+    /// pass types it — but never in a test's own body, whose reads stay as
+    /// written: the harness hands a test lists whose items no type says
+    /// (`box[s, sel]` answers the layout engine's boxes, typed a list of
+    /// nothing known, in the interpreter that runs the test), and the line
+    /// had stood under every layout test's `boxes[i]`
+    /// (tests/layout/conformance.co).
+    fn unreached_at(&self, e: &Expr) -> bool {
+        self.pass == Pass::Final && self.at != Where::Test && never_given(e)
+    }
+
     /// A position or a key that can fail, refused first when it failed —
     /// a function hands the error back, a handler stops, the top level
     /// halts — as an item of a value that can fail is: one rule for
@@ -3888,11 +3906,26 @@ impl<'a> Lowerer<'a> {
         while let Expr::Convert { how: Convert::Unwrap | Convert::Known, expr, .. } = e {
             e = expr;
         }
+        // (a read held in a temporary, the line after it unreached, is the
+        // read as written — and so is one an index is read out of)
+        let held = |l: &Self, x: &Expr| match x {
+            Expr::Local(t, _) => l.v.never_reads.get(&(l.current_fn.clone(), t.clone())).cloned(),
+            _ => None,
+        };
+        let first = held(self, e);
+        let e = first.as_ref().unwrap_or(e);
         let Expr::Index { base, .. } = e else { return };
-        let mut root = base.as_ref();
-        while let Expr::Index { base, .. } = root {
-            root = base.as_ref();
+        let mut root = base.as_ref().clone();
+        loop {
+            while let Expr::Index { base, .. } = root {
+                root = *base;
+            }
+            match held(self, &root) {
+                Some(Expr::Index { base, .. }) => root = *base,
+                _ => break,
+            }
         }
+        let root = &root;
         let mut t = root.ty().payload().clone();
         if !matches!(t, Ty::List(_)) {
             return;
@@ -5870,7 +5903,7 @@ impl<'a> Lowerer<'a> {
                 // backends refuse a list typed as able to fail right there.
                 // What the iterable hoisted waits while the body is lowered,
                 // or the body's first statement would take it.
-                let it = self.lower_expr(iter)?;
+                let mut it = self.lower_expr(iter)?;
                 // a list that can fail is refused where the loop starts (by
                 // the backends, not a propagation): an error leaves there
                 if it.ty().is_result() {
@@ -5928,6 +5961,22 @@ impl<'a> Lowerer<'a> {
                 }
                 // a list of what the body yields, as the lowering typed it
                 let ty = TypeContext::for_type(yield_of(&b));
+                // (over a list the program never gives an item, no round
+                // yields: the list of no items, its body no run's — the
+                // unreached line at its head, the body after it kept for the
+                // checks that read its last line, and dropped once the
+                // function is lowered (`drop_unreached`); spec, Lists)
+                if self.unreached_at(&it) {
+                    b.insert(0, unreached_line());
+                    // (`[]` written as the list names no item: ints, for the
+                    // compiled program to name one, as a statement loop's —
+                    // the body reads none, and the loop's own type is what
+                    // it yields; `vec![]` alone had named no type for rustc,
+                    // crow check --self's shape/collect/empty)
+                    if matches!(&it, Expr::ListLit(items, _) if items.is_empty()) {
+                        it = Expr::ListLit(vec![], Ty::List(Box::new(Ty::Int)));
+                    }
+                }
                 if let Some(saved) = saved {
                     self.unbind_loop_var(var, saved);
                 }
@@ -6421,6 +6470,25 @@ impl<'a> Lowerer<'a> {
             } else {
                 ty
             };
+            // an item of a list the program never gives one, read by its
+            // position: the list is always empty, so the read stops past its
+            // end, and what the line goes on to do with the item no run
+            // reaches — the read is made first, the line after it unreached,
+            // and the rest of its block dropped (`drop_unreached`; spec,
+            // Lists). Kite's `k.overlays[n - 1].id` in a chart given no
+            // overlays had read the item as text, and not built compiled.
+            // (A fact's default has no statement before it to hold the read.)
+            if idx.len() == 1 && matches!(idx[0].ty().payload(), Ty::Int | Ty::Big) && !self.in_fact_default && self.unreached_at(&base) {
+                let t = self.fresh();
+                if let Some(scope) = self.scopes.last_mut() {
+                    scope.insert(t.clone());
+                }
+                let read = Expr::Index { base: Box::new(base), indices: idx, ty: ty.clone() };
+                self.v.never_reads.insert((self.current_fn.clone(), t.clone()), read.clone());
+                self.pre.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: read });
+                self.pre.push(unreached_line());
+                return Ok(Expr::Local(t, ty));
+            }
             return Ok(Expr::Index { base: Box::new(base), indices: idx, ty });
         }
         let (module, name) = match callee {
@@ -8856,13 +8924,14 @@ fn infer_once(ctx: &mut TypeContext, stmts: &[S]) {
             }
         }
     }
-    // a parameter every call hands a value of no known kind is text, as it
-    // is compiled (`default_unknown_params`), and the bodies are read again
-    // with it so — a value walked out of it reaches the functions it is
-    // handed to as text too, which the next look types in turn
+    // a parameter still a list of nothing, every call handing it `[]`,
+    // holds what the body makes of it (`default_open_params`), and the
+    // bodies are read again with it so. (A parameter every call hands an
+    // item of a list never given one stays of no kind: no run calls it —
+    // the loop handing it the item runs no rounds, and the index stops
+    // first; spec, Lists.)
     for _ in 0..4 {
-        let open = ctx.default_open_params();
-        if !ctx.default_unknown_params() && !open {
+        if !ctx.default_open_params() {
             break;
         }
         for _ in 0..8 {
@@ -9373,6 +9442,61 @@ fn declared_as(first: &Ty, settled: Option<&Ty>) -> Ty {
             }
         }
         _ => first.clone(),
+    }
+}
+
+/// The line standing where a program reads an item of a list it never
+/// gives one (`table::unreached`): no run reaches it (spec, Lists).
+fn unreached_line() -> Stmt {
+    Stmt::Do(Expr::Call { target: Target::Row(crate::table::unreached()), args: vec![], ty: Ty::Unit, propagates: false })
+}
+
+fn is_unreached(s: &Stmt) -> bool {
+    matches!(s, Stmt::Do(e) if crate::ir::is_unreached(e))
+}
+
+/// A list no line of the program gives an item, as the final pass types
+/// it: a list of nothing known, after every rule that gives a list's items
+/// a kind has had its say (a push, a write, what an item is compared with
+/// or pushed onto). Its items are no value ever: a loop over it runs no
+/// rounds, and an index into it stops past its end (spec, Lists).
+fn never_given(e: &Expr) -> bool {
+    matches!(e.ty().payload(), Ty::List(item) if **item == Ty::Unknown)
+}
+
+/// What follows the unreached line in its block is dropped, in every block
+/// of a body — a branch's, a loop's, a collecting loop's, the statements a
+/// right side waits under: it was lowered reading an item of no kind, and
+/// no run reaches it. (Held, the compiled program had read such an item as
+/// text, and a field of one or a sum with one had not built; parity 483.)
+fn drop_unreached(block: &mut Block) {
+    if let Some(at) = block.iter().position(is_unreached) {
+        block.truncate(at + 1);
+    }
+    for s in block.iter_mut() {
+        match s {
+            Stmt::If { then, els, .. } => {
+                drop_unreached(then);
+                if let Some(e) = els {
+                    drop_unreached(e);
+                }
+            }
+            Stmt::While { body, .. } | Stmt::For { body, .. } => drop_unreached(body),
+            _ => {}
+        }
+        let mut collecting = |e: &mut Expr| {
+            if let Expr::ForExpr { body, .. } = e {
+                drop_unreached(body);
+            }
+        };
+        match s {
+            Stmt::Let { expr, .. } | Stmt::Set { expr, .. } | Stmt::SetPath { expr, .. } | Stmt::Store { expr, .. } | Stmt::Do(expr) | Stmt::Return(Some(expr)) => {
+                crate::ir::visit_expr_mut(expr, &mut collecting)
+            }
+            Stmt::If { cond, .. } | Stmt::While { cond, .. } => crate::ir::visit_expr_mut(cond, &mut collecting),
+            Stmt::For { iter, .. } => crate::ir::visit_expr_mut(iter, &mut collecting),
+            _ => {}
+        }
     }
 }
 

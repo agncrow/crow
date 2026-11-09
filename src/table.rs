@@ -483,6 +483,10 @@ pub enum Prop {
     /// The program ends at the call — `halt`, `exit` — so no path goes on
     /// past it: a function's body may end there without its answer.
     Ends,
+    /// Stands where a program reads an item of a list it never gives one:
+    /// no run reaches it (the lowering's `unreached`, found by this
+    /// property: `table::unreached`), and what followed it is not lowered.
+    Unreached,
     /// Hands on a tensor whose rank nothing states where a function's copy
     /// holds a tensor of a known rank, the value's rank checked against the
     /// type's where it is handed (Design Note "rank is in the type"): found
@@ -2420,6 +2424,10 @@ pub static ROWS: &[Row] = &[
     // an int where a record or none is held: 0 is none, another int stops
     // (the lowering's `none_of`, in both modes)
     row!("core.__none", "", "__none", crow_runtime::core::none_of, (Int) -> Int, stops),
+    // where a program reads an item of a list it never gives one: no run
+    // reaches it, and a run that did stops, in both modes (the lowering's
+    // `unreached`)
+    Row { props: &[Prop::Ends, Prop::Unreached], ..row!("core.__unreached", "", "__unreached", crow_runtime::core::unreached, () -> Unit, stops) },
     // a tensor whose rank nothing states, handed where a function's copy
     // holds a tensor of a known rank: the tensor where its rank agrees, a
     // stop naming the function where it does not, in both modes (its trace
@@ -4623,6 +4631,12 @@ pub fn taken_path(id: &str) -> Option<&'static str> {
 /// its name.
 pub fn column_write() -> &'static Row {
     ROWS.iter().find(|r| r.props.contains(&Prop::ColumnWrite)).expect("the column write's row is declared")
+}
+
+/// The row standing where a program reads an item of a list it never
+/// gives one: the one row carrying `Prop::Unreached`.
+pub fn unreached() -> &'static Row {
+    ROWS.iter().find(|r| r.props.contains(&Prop::Unreached)).expect("the unreached line's row is declared")
 }
 
 /// The row a tensor whose rank nothing states is handed through where a
