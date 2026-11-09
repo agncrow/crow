@@ -11,7 +11,7 @@ rustc 1.93.1).
 ## The user's view
 
 ```
-curl -fsSL https://raw.githubusercontent.com/agncrow/crow/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/agncrow/crow/main/install.sh | bash
 ```
 
 One prebuilt binary lands in `~/.crow/bin/crow`, and the script prints
@@ -28,8 +28,8 @@ The first compiled build fetches what it needs, says so, and goes on:
 
 ```
 $ crow build main.co
-(o.o) fetching the Rust toolchain 1.93.1 for aarch64-apple-darwin (130 MB) … done
-(o.o) fetching the crow 0.6.0 runtime (43 MB) … done
+(o.o) fetching the Rust toolchain 1.93.1 for aarch64-apple-darwin (about 220 MB) … done
+(o.o) fetching the crow 0.9.0 runtime (about 50 MB) … done
 (o.o) building the runtime once (about a minute) … done
 build ok -> ./main
 ```
@@ -44,7 +44,7 @@ the compiler is there, `crow run` says so and interprets:
 
 ```
 $ crow run main.co
-(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 175 MB, once), and `crow run` compiles from then on
+(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 270 MB, once), and `crow run` compiles from then on
 hello, hello
 ```
 
@@ -52,10 +52,10 @@ hello, hello
 
 | Artifact | Holds | Size | Lives at | Fetched |
 |---|---|---|---|---|
-| `crow` | The compiler, the interpreter, the checker, the language server, the servers | 51 MB | `~/.crow/bin/crow` | By the install line, per release |
-| The toolchain | rustc, cargo and the standard library for the host and for the browser (`crow build --target web`), pinned to the Crow version (1.93.1 today) | 130 MB down, 500 MB installed | `~/.crow/toolchain/1.93.1/` | On the first compiled build, or `crow setup` |
-| The runtime | `crow_runtime`, `crow_db`, `crow_web` sources (2 MB), their crates.io dependencies vendored for the supported targets (219 MB; a package neither builds is a stub of its manifest), one `Cargo.lock` | 43 MB down | `~/.crow/runtime/<version>/` | With the toolchain |
-| The runtime's build | The three crates compiled from the bundle's source, per project directory as today (`.crow_build/target`) | 41 s for a script, 85 s for a web app, measured cold; 0.2 s and 3 s after | each project's `.crow_build/` | On a project's first compiled build |
+| `crow` | The compiler, the interpreter, the checker, the language server, the servers | 48 MB on a Mac | `~/.crow/bin/crow` | By the install line, per release |
+| The toolchain | rustc, cargo and the standard library for the host and for the browser (`crow build --target web`), pinned to the Crow version (1.93.1 today) | 203 MB down on a Mac, 233 MB on Linux; 620 MB installed on a Mac | `~/.crow/toolchain/1.93.1/` | On the first compiled build, or `crow setup` |
+| The runtime | `crow_runtime`, `crow_db`, `crow_web` sources (2.5 MB), their crates.io dependencies vendored for the supported targets (297 MB; a package neither builds is a stub of its manifest), one `Cargo.lock` | 51 MB down | `~/.crow/runtime/<version>/` | With the toolchain |
+| The runtime's build | The three crates compiled from the bundle's source, per project directory as today (`.crow_build/target`) | 41 s for a script, 85 s for a web app, measured cold for 0.7.0; 0.2 s and 3 s after | each project's `.crow_build/` | On a project's first compiled build |
 | Packages | What a crowfile's `deps` name | — | `crow_modules/` per project | `crow install`, as now |
 | The editor | The VS Code extension as a `.vsix` | — | — | From the release page |
 
@@ -283,17 +283,24 @@ self-hosting note says.
 
 ## Sizes and times
 
-| | Measured |
-|---|---|
-| The `crow` binary | 51 MB |
-| The toolchain (rustc, cargo, rust-std, one target) | 130 MB download, 500 MB installed |
-| The runtime sources | 2 MB |
-| Vendored dependencies, every platform's | 578 MB, 459 crates; 84 MB as the bundle, gzipped |
-| Of which no supported target builds | 359 MB in 79 crates, 285 MB of it Windows' |
-| Vendored dependencies, pruned (shipped) | 219 MB: 380 crates whole, 79 stubs; 43 MB as the bundle, gzipped |
-| The runtime's first build, a script | 41 s |
-| The runtime's first build, a web app | 85 s |
-| Every build after | 0.2 s for a script, 3 s for an app after an edit |
+| | Measured for 0.7.0 (2026-10-16) | For 0.9.0 (2026-11-09) |
+|---|---|---|
+| The `crow` binary | 51 MB | 48 MB on a Mac |
+| The toolchain | rustc, cargo and one target's rust-std: 130 MB download, 500 MB installed | rustc, cargo, the host's rust-std and the browser's: 203 MB download on a Mac (233 MB on Linux, the browser's 33 MB of either), 620 MB installed on a Mac |
+| The runtime sources | 2 MB | 2.5 MB |
+| Vendored dependencies, every platform's | 578 MB, 459 crates; 84 MB as the bundle, gzipped | — |
+| Of which no supported target builds | 359 MB in 79 crates, 285 MB of it Windows' | — |
+| Vendored dependencies, pruned (shipped) | 219 MB: 380 crates whole, 79 stubs; 43 MB as the bundle, gzipped | 297 MB: 385 crates whole, 72 stubs; 51 MB as the bundle, gzipped |
+| The runtime's first build, a script | 41 s | — |
+| The runtime's first build, a web app | 85 s | — |
+| Every build after | 0.2 s for a script, 3 s for an app after an edit | — |
+
+The messages that name a size before fetching (`crow setup`, a first
+compiled build, a run with no compiler) say about 220 MB for the
+toolchain, about 50 MB for the runtime and about 270 MB for both: within
+a tenth of what either platform fetches. They are written by hand, so a
+release whose pieces grow restates them here and in `src/home.rs`,
+`src/main.rs` and the getting-started chapter.
 
 ## Decided
 

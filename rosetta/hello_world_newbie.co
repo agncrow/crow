@@ -34,7 +34,7 @@
 ---        crow run hello.co         compiled: translated to Rust, built, run natively
 ---
 ---    Compiling needs a Rust toolchain: `crow setup` fetches a pinned one into
----    ~/.crow once (about 175 MB), and so does the first compiled run. Until it is
+---    ~/.crow once (about 270 MB), and so does the first compiled run. Until it is
 ---    there, `crow run` says so and interprets instead.
 ---
 --- 4. Read the output. It is printed in the same terminal, on a line of its own:

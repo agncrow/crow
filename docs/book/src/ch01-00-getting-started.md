@@ -29,7 +29,7 @@ Nothing else is installed: the interpreter, the tests, `crow check`, the
 language server and a served app need only that binary. Crow compiles
 your programs to Rust, so a native build needs a Rust toolchain too:
 `crow setup` fetches a pinned one into `~/.crow`, with Crow's runtime,
-once (about 175 MB), and the first `crow build` does the same if you
+once (about 270 MB), and the first `crow build` does the same if you
 have not; `crow setup --check` says what is present. Until then `crow
 run` says so and interprets, which answers the same, only slower.
 

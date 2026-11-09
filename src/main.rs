@@ -423,7 +423,7 @@ fn crow_main() {
                 // both modes answer the same by design; the difference is
                 // speed, so a machine with no compiler yet runs the program
                 // interpreted and is told how to get one
-                eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 175 MB, once), and `crow run` compiles from then on");
+                eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 270 MB, once), and `crow run` compiles from then on");
             }
             if interp || no_compiler {
                 match rest.first() {
@@ -449,7 +449,7 @@ fn crow_main() {
         other => {
             // `crow file.co`: the short form of `crow run file.co`
             if is_source(other) && !home::can_compile() {
-                eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 175 MB, once), and `crow run` compiles from then on");
+                eprintln!("(o.o) no compiler here yet: running interpreted — `crow setup` fetches the Rust toolchain and the runtime (about 270 MB, once), and `crow run` compiles from then on");
                 cmd_run_file_interpreted(other, Resources::default());
             } else if is_source(other) {
                 let extra_args = args[2..].to_vec();

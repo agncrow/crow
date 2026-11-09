@@ -5,6 +5,17 @@ migrates what it can, and a breaking change bumps the minor version.
 Each release lists what breaks first. This file summarises; the commit
 history says the rest.
 
+## Unreleased
+
+### Fixed
+
+- What `crow setup` fetches is said at its size: about 270 MB, the
+  toolchain about 220 and the runtime about 50 (203 and 51 MB on a Mac,
+  233 and 51 on Linux), where `crow setup`, a run with no compiler and
+  the getting-started chapter had said 175, 150 and 43. 0.9.0's toolchain
+  holds the browser's standard library too (33 MB), and its runtime grew
+  by a sixth.
+
 ## v0.9.0 — 2026-11-08
 
 The numbers beyond the language, and what calls a language model, leave

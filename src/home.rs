@@ -515,7 +515,7 @@ fn fetch_toolchain(home: &Path, wanted: &[(&str, String)]) -> Result<(), String>
     let prefix = toolchain_dir_in(home);
     let whole = own_toolchain(home).is_none();
     if whole {
-        println!("(o.o) fetching the Rust toolchain {} for {} from {} (about 150 MB)", RUST_VERSION, target_triple(), rust_dist());
+        println!("(o.o) fetching the Rust toolchain {} for {} from {} (about 220 MB)", RUST_VERSION, target_triple(), rust_dist());
     } else {
         println!("(o.o) fetching {} into the Rust toolchain {} from {}", pieces_named(wanted), RUST_VERSION, rust_dist());
     }
@@ -570,7 +570,7 @@ fn fetch_runtime(home: &Path) -> Result<(), String> {
     let version = env!("CARGO_PKG_VERSION");
     let name = format!("crow-runtime-{}.tar.gz", version);
     let base = dist_url();
-    println!("(o.o) fetching the crow {} runtime from {} (about 43 MB)", version, base);
+    println!("(o.o) fetching the crow {} runtime from {} (about 50 MB)", version, base);
     let hash = published_hash(&format!("{}/{}.sha256", base, name))?;
     let archive = home.join("tmp").join(&name);
     fetch_verified(&format!("{}/{}", base, name), &archive, &hash)?;
