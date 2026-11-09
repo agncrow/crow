@@ -183,6 +183,63 @@ fn own_toolchain(home: &Path) -> Option<PathBuf> {
     dir.join("bin").join("cargo").is_file().then_some(dir)
 }
 
+/// Whether a build runs on Crow's own toolchain (else on the machine's
+/// cargo, whose targets rustup adds).
+pub fn uses_own_toolchain() -> bool {
+    own_toolchain(&home()).is_some()
+}
+
+/// The pieces of Crow's own toolchain, each a component of Rust's channel
+/// and the target it is for: rustc, cargo and the host's standard library,
+/// which every compiled build needs, and the browser's standard library,
+/// which `crow build --target web` needs (crate::web_target::TRIPLE).
+fn pieces(web: bool) -> Vec<(&'static str, String)> {
+    let host = target_triple();
+    let mut out = vec![("rustc", host.clone()), ("cargo", host.clone()), ("rust-std", host)];
+    if web {
+        out.push(("rust-std", crate::web_target::TRIPLE.to_string()));
+    }
+    out
+}
+
+/// Whether the toolchain at `prefix` holds a piece: a tool where its
+/// installer puts it, a target's standard library by its core crate,
+/// which a build without it cannot find.
+fn holds(prefix: &Path, component: &str, triple: &str) -> bool {
+    match component {
+        "rust-std" => std::fs::read_dir(prefix.join("lib").join("rustlib").join(triple).join("lib"))
+            .map(|entries| {
+                entries.flatten().any(|e| {
+                    let name = e.file_name();
+                    let name = name.to_string_lossy();
+                    name.starts_with("libcore-") && name.ends_with(".rlib")
+                })
+            })
+            .unwrap_or(false),
+        tool => prefix.join("bin").join(tool).is_file(),
+    }
+}
+
+/// The pieces a build needs that the toolchain at `prefix` lacks: a
+/// toolchain fetched before the browser's standard library was one of its
+/// pieces (crow 0.8, the same Rust) lacks that one, and a fetch cut short
+/// lacks the pieces after the cut.
+fn lacking(prefix: &Path, web: bool) -> Vec<(&'static str, String)> {
+    pieces(web).into_iter().filter(|(c, t)| !holds(prefix, c, t)).collect()
+}
+
+/// A piece as a sentence names it.
+fn piece_named(component: &str, triple: &str) -> String {
+    match component {
+        "rust-std" => format!("the standard library for {}", triple),
+        tool => tool.to_string(),
+    }
+}
+
+fn pieces_named(pieces: &[(&str, String)]) -> String {
+    pieces.iter().map(|(c, t)| piece_named(c, t)).collect::<Vec<_>>().join(" and ")
+}
+
 /// Whether a program of the name is on PATH.
 pub fn on_path(program: &str) -> bool {
     std::env::var_os("PATH")
@@ -213,11 +270,6 @@ pub fn cargo() -> Command {
     }
 }
 
-/// Whether a cargo is at hand, Crow's own or the machine's.
-pub fn has_cargo() -> bool {
-    own_toolchain(&home()).is_some() || on_path("cargo")
-}
-
 /// The one thing asked of the machine for a compiled build: a linker.
 pub fn linker() -> Result<(), String> {
     if cfg!(target_os = "macos") {
@@ -233,21 +285,25 @@ pub fn linker() -> Result<(), String> {
     Err("no linker: install build-essential (Debian, Ubuntu) or gcc (Fedora, Arch), then try again".to_string())
 }
 
-/// What a compiled build needs, each named when missing.
-pub fn missing_for_build() -> Vec<String> {
+/// What a compiled build needs, each named when missing — for the web, the
+/// browser's standard library too. The machine's cargo is taken as it is:
+/// its targets are rustup's to add.
+pub fn missing_for_build(web: bool) -> Vec<String> {
     let mut out = Vec::new();
     if runtime().is_none() {
         out.push("the runtime".to_string());
     }
-    if !has_cargo() {
-        out.push("the Rust toolchain".to_string());
+    match own_toolchain(&home()) {
+        Some(dir) => out.extend(lacking(&dir, web).iter().map(|(c, t)| piece_named(c, t))),
+        None if on_path("cargo") => {}
+        None => out.push("the Rust toolchain".to_string()),
     }
     out
 }
 
 /// Whether a program can be compiled here as things stand.
 pub fn can_compile() -> bool {
-    missing_for_build().is_empty() && linker().is_ok()
+    missing_for_build(false).is_empty() && linker().is_ok()
 }
 
 /// What `crow setup --check` says: each piece, present or not.
@@ -260,7 +316,10 @@ pub fn status() -> String {
         None => lines.push(format!("  the runtime: not here — crow setup fetches crow-runtime-{} from the release", env!("CARGO_PKG_VERSION"))),
     }
     match own_toolchain(&home) {
-        Some(dir) => lines.push(format!("  the Rust toolchain: Crow's own {} at {}", RUST_VERSION, dir.display())),
+        Some(dir) => match lacking(&dir, true) {
+            l if l.is_empty() => lines.push(format!("  the Rust toolchain: Crow's own {} at {}", RUST_VERSION, dir.display())),
+            l => lines.push(format!("  the Rust toolchain: Crow's own {} at {}, without {} — crow setup fetches {}", RUST_VERSION, dir.display(), pieces_named(&l), if l.len() == 1 { "it" } else { "them" })),
+        },
         None if on_path("cargo") => lines.push("  the Rust toolchain: the machine's cargo (crow setup fetches Crow's own, pinned)".to_string()),
         None => lines.push(format!("  the Rust toolchain: not here — crow setup fetches {} from static.rust-lang.org", RUST_VERSION)),
     }
@@ -280,8 +339,14 @@ pub fn setup(check: bool) -> Result<(), String> {
         return Ok(());
     }
     let home = home();
-    if own_toolchain(&home).is_none() {
-        fetch_toolchain(&home)?;
+    match own_toolchain(&home) {
+        None => fetch_toolchain(&home, &pieces(true))?,
+        Some(dir) => {
+            let lacks = lacking(&dir, true);
+            if !lacks.is_empty() {
+                fetch_toolchain(&home, &lacks)?;
+            }
+        }
     }
     if !matches!(runtime(), Some(Runtime::Dev(_) | Runtime::Built(_) | Runtime::Bundle(_))) {
         fetch_runtime(&home)?;
@@ -293,15 +358,22 @@ pub fn setup(check: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Before a compiled build: what is missing fetched, saying so, or the
-/// reason it cannot be.
-pub fn ensure_for_build() -> Result<(), String> {
-    let missing = missing_for_build();
+/// Before a compiled build (for the web, where `web` says so): what is
+/// missing fetched, saying so, or the reason it cannot be.
+pub fn ensure_for_build(web: bool) -> Result<(), String> {
+    let missing = missing_for_build(web);
     if !missing.is_empty() {
         println!("(o.o) a compiled build needs {}: fetching (once)", missing.join(" and "));
         let home = home();
-        if !has_cargo() {
-            fetch_toolchain(&home)?;
+        match own_toolchain(&home) {
+            Some(dir) => {
+                let lacks = lacking(&dir, web);
+                if !lacks.is_empty() {
+                    fetch_toolchain(&home, &lacks)?;
+                }
+            }
+            None if on_path("cargo") => {}
+            None => fetch_toolchain(&home, &pieces(true))?,
         }
         if runtime().is_none() {
             fetch_runtime(&home)?;
@@ -434,20 +506,24 @@ pub fn component_in(manifest: &str, component: &str, triple: &str) -> Result<(St
     }
 }
 
-/// Rust's toolchain for this host, pinned: rustc, cargo and the standard
-/// library — the host's, and the browser's for `crow build --target web`
-/// (crate::web_target::TRIPLE) — each archive held to the hash Rust's
-/// channel manifest publishes, installed by its own installer into Crow's
-/// home.
-fn fetch_toolchain(home: &Path) -> Result<(), String> {
-    let triple = target_triple();
+/// Rust's toolchain for this host, pinned — the pieces asked for (`pieces`:
+/// rustc, cargo and the standard library, the host's and the browser's for
+/// `crow build --target web`), each archive held to the hash Rust's channel
+/// manifest publishes and installed by its own installer into Crow's home,
+/// beside the pieces already there.
+fn fetch_toolchain(home: &Path, wanted: &[(&str, String)]) -> Result<(), String> {
     let prefix = toolchain_dir_in(home);
-    println!("(o.o) fetching the Rust toolchain {} for {} from {} (about 150 MB)", RUST_VERSION, triple, rust_dist());
+    let whole = own_toolchain(home).is_none();
+    if whole {
+        println!("(o.o) fetching the Rust toolchain {} for {} from {} (about 150 MB)", RUST_VERSION, target_triple(), rust_dist());
+    } else {
+        println!("(o.o) fetching {} into the Rust toolchain {} from {}", pieces_named(wanted), RUST_VERSION, rust_dist());
+    }
     let manifest = fetch_text(&format!("{}/channel-rust-{}.toml", rust_dist(), RUST_VERSION))?;
     let tmp = home.join("tmp").join("toolchain");
     let _ = std::fs::remove_dir_all(&tmp);
-    let wanted = [("rustc", triple.as_str()), ("cargo", triple.as_str()), ("rust-std", triple.as_str()), ("rust-std", crate::web_target::TRIPLE)];
     for (component, triple) in wanted {
+        let (component, triple) = (*component, triple.as_str());
         let (url, hash) = component_in(&manifest, component, triple)?;
         let url = match std::env::var("CROW_RUST_DIST") {
             // (a test's local server serves the archives at the manifest's names)
@@ -475,10 +551,15 @@ fn fetch_toolchain(home: &Path) -> Result<(), String> {
         let _ = std::fs::remove_dir_all(&unpacked);
     }
     let _ = std::fs::remove_dir_all(&tmp);
-    if !prefix.join("bin").join("cargo").is_file() {
-        return Err(format!("the toolchain was installed but {} holds no cargo", prefix.display()));
+    let unheld: Vec<(&str, String)> = wanted.iter().filter(|(c, t)| !holds(&prefix, c, t)).cloned().collect();
+    if !unheld.is_empty() {
+        return Err(format!("the toolchain was installed but {} holds no {}", prefix.display(), pieces_named(&unheld)));
     }
-    println!("(o.o) the Rust toolchain {} is at {}", RUST_VERSION, prefix.display());
+    if whole {
+        println!("(o.o) the Rust toolchain {} is at {}", RUST_VERSION, prefix.display());
+    } else {
+        println!("(o.o) the Rust toolchain {} at {} holds {} now", RUST_VERSION, prefix.display(), pieces_named(wanted));
+    }
     Ok(())
 }
 

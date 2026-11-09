@@ -3554,7 +3554,7 @@ When `gpu[]` or `gpu[n]` is called, a global GPU-enabled flag is set. This has t
 
 A kernel is compiled once, the first time it is used (the element-wise kernel once for each operation). Operations are recorded, not waited on: up to 64 run in one compute pass of one submission, at most two submissions are in flight, and a read of a tensor's numbers (`log`, a number of it, a comparison's truth) waits for every operation before it. A read is a round trip — about 1.5 ms on an M4 Max — so a training loop that reads its loss at every step pays one per step, and a loss differentiated by `grad` stays on the GPU until it is read. A tensor's numbers once read are kept for the next read, the whole of a small one (65,536 numbers or fewer), and a small tensor made on the CPU keeps the numbers it was made of: a loop reading a row of logits one number at a time pays one round trip, and positions made of a list (a batch's ids, `range[t]`) none. Each operation costs some 10–50 µs of the GPU's time however small it is, so a small network trains faster on the CPU: pie's gpt of two layers 32 wide takes 0.7 s for 40 steps there and 8 s on the GPU, where a perceptron of 256 → 1024 → 1024 → 10 on a batch of 512 takes 6.6 ms a step on the GPU against 50–70 ms on the CPU. A buffer a tensor lets go is kept for the next tensor of its size (up to a gigabyte kept), since a new buffer is filled with zeros before its first use.
 
-GPU uses f32 internally (wgpu limitation). CrowTensor uses f64. Conversion happens transparently during GPU upload/download, with ~7 significant digits of precision on GPU vs ~15 on CPU. A tensor on the CPU is never computed by the GPU's code, so a program that writes no `gpu[]`, or whose tensors were made before it, answers the CPU's digits. Metal compiles shaders with fast math, so a NaN or an infinity met inside a kernel may come out differently than on the CPU; the reductions along an axis keep a NaN in a `max` or a `min`, as the CPU's do.
+GPU uses f32 internally (wgpu limitation). CrowTensor uses f64. Conversion happens transparently during GPU upload/download, with ~7 significant digits of precision on GPU vs ~15 on CPU. `asin`, `acos`, `atan` and `atan2` are computed from arithmetic alone, to about two of f32's last digits, since the drivers' own differ by device (WGSL allows `atan2` 4096 of them). A tensor on the CPU is never computed by the GPU's code, so a program that writes no `gpu[]`, or whose tensors were made before it, answers the CPU's digits. Metal compiles shaders with fast math, so a NaN or an infinity met inside a kernel may come out differently than on the CPU; the reductions along an axis keep a NaN in a `max` or a `min`, as the CPU's do.
 
 
 ### Automatic Differentiation (grad)
@@ -4486,8 +4486,11 @@ Outside a browser the same program runs in both modes and draws nothing:
 draws is tested as the batches it builds.
 
 Building for the web needs Rust's standard library for
-`wasm32-unknown-unknown` (`rustup target add wasm32-unknown-unknown`, or
-`crow setup`, which fetches it with Crow's own toolchain).
+`wasm32-unknown-unknown`: Crow's own toolchain fetches it with the rest
+(`crow setup`), and a toolchain without it — one an earlier crow
+fetched — gains it from `crow setup` or from the first build for the web;
+the machine's cargo gains it from `rustup target add
+wasm32-unknown-unknown`.
 
 ### REPL
 

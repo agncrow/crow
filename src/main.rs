@@ -2153,8 +2153,9 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
     // §13, what stays native): the system allocator had cost compiled
     // binarytrees nine times the CPU
     // the runtime crates the program links, wherever this install keeps
-    // them (home.rs): what is missing is fetched first, once, saying so
-    home::ensure_for_build().unwrap_or_else(|e| {
+    // them (home.rs): what is missing is fetched first, once, saying so (for
+    // the web, the browser's standard library with Crow's own toolchain)
+    home::ensure_for_build(web).unwrap_or_else(|e| {
         eprintln!("error: {}", e);
         process::exit(1);
     });
@@ -2299,7 +2300,7 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
         if !output.status.success() {
             stopped_build(&output.status);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            if let Some(said) = web_target::missing_target(&stderr) {
+            if let Some(said) = web_target::missing_target(&stderr, home::uses_own_toolchain()) {
                 eprintln!("{}", said);
                 process::exit(1);
             }

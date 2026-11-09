@@ -112,6 +112,10 @@ for the browser, and a network trained under `gpu[]` stays on the GPU.
   - A sine and a cosine are each their own libm call, so no build fuses
     them into one that rounds differently.
   - A NaN survives `max` and `min` along an axis on the GPU.
+  - On the GPU, `asin`, `acos`, `atan` and `atan2` are computed from
+    arithmetic alone, to about two of f32's last digits on every device.
+    A driver's own had differed by device: lavapipe's `asin` of -0.9 had
+    been 3.5e-4 off.
 - Types.
   - A tensor whose rank no type states reaches the copy of a function of
     its own rank, or stops naming the ranks the copies hold.
@@ -129,12 +133,18 @@ for the browser, and a network trained under `gpu[]` stays on the GPU.
   - A value walked by reference is encoded as itself.
   - A part's alias is the part's alone, and a module's constant read
     through the module is the number it holds.
+- `crow setup`, and a compiled build, fetch the pieces Crow's own
+  toolchain lacks. A toolchain crow 0.8 fetched, which an upgrade keeps,
+  has no standard library for the browser, so every `crow build --target
+  web` had failed and advised rustup, which Crow's toolchain does not
+  use. A fetch cut short had left a toolchain without its standard
+  library, which every later build took as whole.
 - Speed. Every interpolation's lowering shares the program's signatures
   (Myna starts in 55 s, from 134), and a pattern compiles once per
   thread.
 - The rest are held by parity programs 470–487 and 490–525, errors j80,
-  k36–k37 and k40–k50, and the tests web_target, sine_alone, program_args
-  and uncalled_literal_rank.
+  k36–k37 and k40–k50, and the tests web_target, sine_alone, program_args,
+  uncalled_literal_rank and setup.
 
 ## v0.8.2 — 2026-11-07
 

@@ -53,17 +53,22 @@ hello, hello
 | Artifact | Holds | Size | Lives at | Fetched |
 |---|---|---|---|---|
 | `crow` | The compiler, the interpreter, the checker, the language server, the servers | 51 MB | `~/.crow/bin/crow` | By the install line, per release |
-| The toolchain | rustc, cargo and the standard library for the host, pinned to the Crow version (1.93.1 today) | 130 MB down, 500 MB installed | `~/.crow/toolchain/1.93.1/` | On the first compiled build, or `crow setup` |
+| The toolchain | rustc, cargo and the standard library for the host and for the browser (`crow build --target web`), pinned to the Crow version (1.93.1 today) | 130 MB down, 500 MB installed | `~/.crow/toolchain/1.93.1/` | On the first compiled build, or `crow setup` |
 | The runtime | `crow_runtime`, `crow_db`, `crow_web` sources (2 MB), their crates.io dependencies vendored for the supported targets (219 MB; a package neither builds is a stub of its manifest), one `Cargo.lock` | 43 MB down | `~/.crow/runtime/<version>/` | With the toolchain |
 | The runtime's build | The three crates compiled from the bundle's source, per project directory as today (`.crow_build/target`) | 41 s for a script, 85 s for a web app, measured cold; 0.2 s and 3 s after | each project's `.crow_build/` | On a project's first compiled build |
 | Packages | What a crowfile's `deps` name | — | `crow_modules/` per project | `crow install`, as now |
 | The editor | The VS Code extension as a `.vsix` | — | — | From the release page |
 
 The toolchain comes from Rust's own servers (`static.rust-lang.org`),
-three standalone component tarballs — rustc, cargo, rust-std for the
-host — with the hashes Rust's channel manifest publishes, and is
-installed by the tarballs' own install script into Crow's directory, as
-rustup would do into its own. rustup is not used and not touched: a
+four standalone component tarballs — rustc, cargo, rust-std for the
+host and for `wasm32-unknown-unknown` — with the hashes Rust's channel
+manifest publishes, and is installed by the tarballs' own install script
+into Crow's directory, as rustup would do into its own. Each piece is
+checked where its installer puts it (a tool in `bin/`, a standard library
+by its core crate), and `crow setup`, or the build that needs a piece,
+fetches only the pieces the toolchain lacks: one crow 0.8 fetched, which
+an upgrade keeps, lacks the browser's, and a fetch cut short lacks what
+came after the cut. rustup is not used and not touched: a
 person who has it keeps it, and Crow's pinned copy never moves theirs.
 
 The runtime bundle is built once per release in CI

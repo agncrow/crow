@@ -1056,6 +1056,76 @@ fn erf_of(x: f32) -> f32 {
     return select(e, -e, x < 0.0);
 }
 
+// The inverse functions from arithmetic alone, as Cephes's single
+// precision writes them (a relative error near 2.5e-7): a driver's own
+// differ by device — lavapipe's asin was 3.5e-4 off at -0.9 and its atan2
+// 3.3e-6 off at 1 over 1, which WGSL allows (atan2 to 4096 ulps, asin
+// inherited from it) — and these answer every device's digits alike
+fn atan_of(v: f32) -> f32 {
+    if v == 0.0 { return v; }
+    var x = abs(v);
+    var base = 0.0;
+    if x > 2.414213562373095 {
+        base = 1.5707963267948966;
+        x = -1.0 / x;
+    } else if x > 0.4142135623730950 {
+        base = 0.7853981633974483;
+        x = (x - 1.0) / (x + 1.0);
+    }
+    let z = x * x;
+    let p = ((0.0805374449538 * z - 0.138776856032) * z + 0.199777106478) * z - 0.333329491539;
+    let r = base + (p * z * x + x);
+    return select(r, -r, v < 0.0);
+}
+
+fn asin_of(v: f32) -> f32 {
+    let a = abs(v);
+    if a > 1.0 { return nan(); }
+    if a < 1.0e-4 { return v; }
+    var x = a;
+    var z = a * a;
+    let wide = a > 0.5;
+    if wide {
+        z = 0.5 * (1.0 - a);
+        x = sqrt(z);
+    }
+    var r = ((((0.042163199048 * z + 0.024181311049) * z + 0.045470025998) * z + 0.074953002686) * z + 0.16666752422) * z * x + x;
+    if wide {
+        r = 1.5707963267948966 - (r + r);
+    }
+    return select(r, -r, v < 0.0);
+}
+
+fn acos_of(v: f32) -> f32 {
+    if v < -1.0 || v > 1.0 { return nan(); }
+    if v < -0.5 { return 3.141592653589793 - 2.0 * asin_of(sqrt(0.5 * (1.0 + v))); }
+    if v > 0.5 { return 2.0 * asin_of(sqrt(0.5 * (1.0 - v))); }
+    return 1.5707963267948966 - asin_of(v);
+}
+
+// the angle of (x, y), as the CPU's atan2 answers it: a zero's sign read
+// from its bits, so (±0, -1) is ±π, and both sides infinite an eighth turn
+fn atan2_of(y: f32, x: f32) -> f32 {
+    let pi = 3.141592653589793;
+    let below = (bitcast<u32>(y) >> 31u) == 1u;
+    let left = x < 0.0 || (x == 0.0 && (bitcast<u32>(x) >> 31u) == 1u);
+    if y == 0.0 {
+        return select(y, select(pi, -pi, below), left);
+    }
+    if x == 0.0 {
+        return select(1.5707963267948966, -1.5707963267948966, below);
+    }
+    if abs(x) > 3.4028234e38 && abs(y) > 3.4028234e38 {
+        let q = select(0.7853981633974483, 2.356194490192345, left);
+        return select(q, -q, below);
+    }
+    let z = atan_of(y / x);
+    if left {
+        return select(z + pi, z - pi, below);
+    }
+    return z;
+}
+
 // x to the y as the CPU's powf answers it: 1 at a power of 0 and of 1, a
 // negative number to a whole power signed by its parity, to any other NaN
 fn power(x: f32, y: f32) -> f32 {
@@ -1086,9 +1156,9 @@ fn one(op: u32, x: f32) -> f32 {
         case 8u: { return tanh_of(x); }
         case 9u: { return sinh(x); }
         case 10u: { return cosh(x); }
-        case 11u: { return asin(x); }
-        case 12u: { return acos(x); }
-        case 13u: { return atan(x); }
+        case 11u: { return asin_of(x); }
+        case 12u: { return acos_of(x); }
+        case 13u: { return atan_of(x); }
         case 14u: { return log2(x); }
         case 15u: { return log(x) * 0.43429448190325176; }
         case 16u: { return log1p_of(x); }
@@ -1110,7 +1180,7 @@ fn two(op: u32, x: f32, y: f32) -> f32 {
         case 35u: { return x / y; }
         case 36u: { return power(x, y); }
         case 37u: { return x % y; }
-        case 38u: { return atan2(x, y); }
+        case 38u: { return atan2_of(x, y); }
         case 39u: { return select(0.0, 1.0, x > y); }
         case 40u: { return select(0.0, 1.0, x < y); }
         case 41u: { return select(0.0, 1.0, x >= y); }
@@ -1719,6 +1789,46 @@ mod tests {
         // a number on either side
         near(&m.to_gpu().pow_scalar(2.0).to_vec(), &m.pow_scalar(2.0).to_vec(), 2e-6);
         near(&m.to_gpu().scalar_div(1.0).to_vec(), &m.scalar_div(1.0).to_vec(), 2e-6);
+    }
+
+    /// The inverse functions answer f32's digits across their domains, at
+    /// numbers an f32 holds exactly, so what is compared is the function
+    /// and not the number's rounding (a negative zero and an infinity are
+    /// fast math's on Metal, and left out): the drivers' own asin and
+    /// atan2 had been off by thousands of ulps on lavapipe, CI's Vulkan
+    /// device, where Metal's were close (`asin: -1.120123267173767 on the
+    /// GPU, -1.1197695149986342 on the CPU`).
+    #[test]
+    fn the_inverse_functions_hold_f32s_digits_across_their_domains() {
+        let Some(_ctx) = skip_if_no_gpu() else { return };
+        let t = |v: &[f64]| CrowTensor::from_vec(v.to_vec(), vec![v.len()]);
+        let check = |name: &str, at: &[f64], got: Vec<f64>, want: Vec<f64>| {
+            assert_eq!(got.len(), at.len(), "{}", name);
+            for ((g, w), x) in got.iter().zip(&want).zip(at) {
+                assert!((g - w).abs() <= 1e-6 * w.abs().max(1.0) || (g.is_nan() && w.is_nan()), "{} at {}: {} on the GPU, {} on the CPU", name, x, g, w);
+            }
+        };
+        // every 1/1024 of [-1, 1], and past each end
+        let unit: Vec<f64> = (-1024..=1024).map(|k| k as f64 / 1024.0).chain([1.0 + 1.0 / 1024.0, -2.0]).collect();
+        check("asin", &unit, t(&unit).to_gpu().asin().to_vec(), t(&unit).asin().to_vec());
+        check("acos", &unit, t(&unit).to_gpu().acos().to_vec(), t(&unit).acos().to_vec());
+        // tangents from 2^-20 to 2^20 and each side of the two reductions'
+        // bounds (tan π/8, tan 3π/8), both signs
+        let mut wide: Vec<f64> = (-80..=80).map(|k| 2f64.powf(k as f64 / 4.0)).collect();
+        wide.extend([0.0, 0.41421354, 0.41421357, 2.4142134, 2.4142137]);
+        let wide: Vec<f64> = wide.iter().flat_map(|&x| [x, -x]).map(|x| x as f32 as f64).collect();
+        check("atan", &wide, t(&wide).to_gpu().atan().to_vec(), t(&wide).atan().to_vec());
+        // every quadrant and both axes
+        let sides = [0.0, 0.5, -0.5, 1.0, -1.0, 3.0, -3.0, 1000.0, -1000.0, 1e-6, -1e-6];
+        let (mut ys, mut xs) = (Vec::new(), Vec::new());
+        for &y in &sides {
+            for &x in &sides {
+                ys.push(y as f32 as f64);
+                xs.push(x as f32 as f64);
+            }
+        }
+        let at: Vec<f64> = (0..ys.len()).map(|i| ys[i] * 1e4 + xs[i]).collect();
+        check("atan2", &at, t(&ys).to_gpu().atan2(&t(&xs).to_gpu()).to_vec(), t(&ys).atan2(&t(&xs)).to_vec());
     }
 
     /// `where` and the comparisons the gradients read run where the

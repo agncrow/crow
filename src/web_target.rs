@@ -92,10 +92,12 @@ pub fn write_page(module: &Path, name: &str, dir: &Path) -> Result<(), String> {
 }
 
 /// What a build without the target's standard library says, in place of
-/// the Rust compiler's words.
-pub fn missing_target(stderr: &str) -> Option<String> {
+/// the Rust compiler's words: Crow's own toolchain (`own`) gains it from
+/// `crow setup`, the machine's from rustup.
+pub fn missing_target(stderr: &str, own: bool) -> Option<String> {
     let missing = stderr.contains("can't find crate for `core`") || stderr.contains("can't find crate for `std`") || stderr.contains("target may not be installed");
-    missing.then(|| format!("error: building for the web needs Rust's standard library for {t}, which this toolchain lacks: `rustup target add {t}` adds it", t = TRIPLE))
+    let adds = if own { "`crow setup` fetches it".to_string() } else { format!("`rustup target add {}` adds it", TRIPLE) };
+    missing.then(|| format!("error: building for the web needs Rust's standard library for {}, which this toolchain lacks: {}", TRIPLE, adds))
 }
 
 /// What of the environment the module's build leaves out, given the
@@ -149,9 +151,13 @@ mod tests {
 
     #[test]
     fn a_missing_standard_library_is_said_as_the_command_that_adds_it() {
-        let said = missing_target("error[E0463]: can't find crate for `core`\n  = note: the `wasm32-unknown-unknown` target may not be installed").unwrap_or_default();
+        let stderr = "error[E0463]: can't find crate for `core`\n  = note: the `wasm32-unknown-unknown` target may not be installed";
+        let said = missing_target(stderr, false).unwrap_or_default();
         assert!(said.contains("rustup target add wasm32-unknown-unknown"));
-        assert_eq!(missing_target("error: something else"), None);
+        // Crow's own toolchain has no rustup: `crow setup` adds the target
+        let said = missing_target(stderr, true).unwrap_or_default();
+        assert!(said.contains("`crow setup` fetches it") && !said.contains("rustup"), "{}", said);
+        assert_eq!(missing_target("error: something else", false), None);
     }
 
     #[test]
