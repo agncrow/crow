@@ -4,7 +4,9 @@
 # the served pages, the book, twenty generated programs, the layout and
 # module tests, the harness programs in both modes, the parts and the task
 # board — measured by cargo llvm-cov (design rule 22). Fails when a crate
-# falls under its floor. Usage: scripts/coverage.sh [--quick] [--arms]
+# falls under its floor, or when a unit test fails in its build: the one
+# run of the unit tests in a release build (CI's test job runs them in a
+# debug one). Usage: scripts/coverage.sh [--quick] [--arms]
 #   --quick: the unit tests alone, no floors.
 #   --arms:  also write target/coverage/{coverage.json,missing.txt,arms.txt}:
 #            the lines no suite reaches, by file, the functions that never
@@ -47,7 +49,23 @@ export CROW_IR_VERIFY=strict
 cargo llvm-cov clean --workspace --profraw-only > /dev/null 2>&1
 find target/llvm-cov-target/release/deps -maxdepth 1 -type f -perm -100 ! -name '*.dylib' ! -name '*.so' -delete 2> /dev/null || true
 rm -f target/llvm-cov-target/release/crow
-cargo llvm-cov --workspace --release --no-report 2>&1 | grep -E '^test result|^error' || true
+# Every crate's tests run, past a test that fails: cargo stops at the first
+# failing test binary otherwise, and the crates after it went unmeasured —
+# their floors failed in place of the test (2026-11-09: a web test, then
+# crow_runtime, crow_web and crow_db each 25 points under), and a test
+# failing in the last crate's binary would have passed with its floor. A
+# test that fails in this build (instrumented, release) fails the run, shown
+# with what it said; the whole output is target/coverage/tests.txt.
+mkdir -p target/coverage
+tests=target/coverage/tests.txt
+set +e
+cargo llvm-cov --workspace --release --no-report --no-fail-fast 2>&1 | tee "$tests" | grep -E '^test result|^error'
+tested=${PIPESTATUS[0]}
+set -e
+if [ "$tested" != 0 ]; then
+  awk '/^failures:$/ { on = 1 } on { print } /^test result: FAILED/ { on = 0 }' "$tests"
+  echo "✗ the tests failed in the instrumented build (exit $tested): target/coverage/tests.txt has their whole output"
+fi
 if [ $quick = 0 ]; then
   # the instrumented binary, run as the gate runs it; the programs it
   # compiles link an instrumented runtime, so both modes count
@@ -93,4 +111,5 @@ if [ $arms = 1 ]; then
   python3 scripts/coverage_arms.py target/coverage/coverage.json target/coverage/missing.txt > target/coverage/arms.txt
   echo "arms: target/coverage/arms.txt ($(grep -c '' target/coverage/arms.txt) lines)"
 fi
+[ "$tested" = 0 ] || fail=1
 exit $fail

@@ -36,7 +36,8 @@
 //   @vr                        into the headset: a frame's `vr` says one can
 //                              be entered, and the call is made in the frame
 //                              after the reader's press (a browser enters
-//                              only on a press); `said` has the failure
+//                              only on a press); `said` has the failure, and
+//                              where none can be entered, that is the failure
 //
 // A frame is described as JSON (see `frame` below): its time, the
 // drawing's size, its views, whether a headset can be entered (`vr`), what
@@ -532,12 +533,19 @@ const Crow = (() => {
       frame({ t, width: layer.framebufferWidth, height: layer.framebufferHeight, xr: true, ratio: 1, views, controllers: controllers(xr) });
     }
 
-    // whether a headset can be entered, asked once as the page starts
+    // whether a headset can be entered: asked as the page starts, and again
+    // as the program enters one (a headset may have come since)
     let vr = false;
-    if (navigator.xr) navigator.xr.isSessionSupported('immersive-vr').then((yes) => { vr = !!yes; }, () => {});
+    const can_enter = () => navigator.xr.isSessionSupported('immersive-vr').then((yes) => (vr = !!yes), () => false);
+    if (navigator.xr) can_enter();
 
     async function enter_vr() {
       if (session || !navigator.xr) return;
+      // the browser's answer first: asked to make the context ready for a
+      // headset while it still weighed whether there was one, Chrome had
+      // answered neither, and the failure was never said (one page in
+      // twelve, entering as it started)
+      if (!(await can_enter())) throw new Error('no headset can be entered');
       await gl.makeXRCompatible();
       session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] });
       session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
@@ -608,7 +616,7 @@ const Crow = (() => {
         get stopped() {
           return stopped;
         },
-        vr_supported: () => (navigator.xr ? navigator.xr.isSessionSupported('immersive-vr') : Promise.resolve(false)),
+        vr_supported: () => (navigator.xr ? can_enter() : Promise.resolve(false)),
       };
     }
   }

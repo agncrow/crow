@@ -828,7 +828,12 @@ which run here only.
   binary a build of 2026-10-17 had left beside the day's — its functions
   matching no profile, "3070 functions have mismatched data" — pulled
   the compiler's coverage from 82% to 50% while every test passed
-  (2026-10-20; the `-v` report lists the objects it reads).
+  (2026-10-20; the `-v` report lists the objects it reads). Its unit
+  tests run `--no-fail-fast`, and one that fails fails the script, shown
+  with what it said (the whole output in `target/coverage/tests.txt`):
+  cargo had stopped at the first failing binary, the crates after it went
+  unmeasured, and their floors failed in its place with the test unnamed
+  (2026-11-09) — the one run of the unit tests in a release build.
 - `scripts/coverage.sh` had been a zsh script, and GitHub's Linux runner
   has no zsh: coverage never ran on CI, and every run after the repository
   went public failed there while every suite before it passed. A script is
@@ -1654,7 +1659,15 @@ which run here only.
   controllers); a frame's function answers anything (`page::Done` over
   `CrowDisplay::failure`). tests/web_target.rs draws a triangle in
   headless Chrome (`--use-angle=swiftshader`) and reads its pixels; the
-  Lory package (agncrow/lory) is the engine built on it.
+  Lory package (agncrow/lory) is the engine built on it. A page under
+  test runs in REAL time and reports to the test's server (`report_of`):
+  `--dump-dom` under `--virtual-time-budget` had taken the DOM while a
+  page still ran, and a frame timed in virtual time came before what the
+  browser answers over IPC (2026-11-09: `@vr` said a frame late on CI's
+  loaded runner, and Chrome never settled a `makeXRCompatible` asked while
+  its first `isSessionSupported` was pending — `enter_vr` asks first).
+  Stress a page with its server's stand-in and six Chromes at once: one
+  failure in thirty is a CI failure every few runs.
 - A value that can fail, assigned to a variable whose first value could
   not, lands as its payload (spec, Reassignment), and what "first" means
   depends on where the variable is: at the top level, the round's own

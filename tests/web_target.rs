@@ -5,13 +5,36 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
-fn scratch(name: &str) -> PathBuf {
+/// A test's own directory under the temporary one, removed when the test
+/// ends — kept where it failed, for what it holds. The headset test had
+/// kept its build at every run (430 MB) and the refusals their files:
+/// 9.6 GB had gathered on one machine.
+struct Scratch(PathBuf);
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+}
+
+fn scratch(name: &str) -> Scratch {
     let dir = std::env::temp_dir().join(format!("crow_web_{}_{}", name, std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    Scratch(dir)
 }
 
 fn crow(dir: &Path, args: &[&str]) -> std::process::Output {
@@ -38,24 +61,32 @@ fn chrome() -> Option<PathBuf> {
         .find(|p| p.exists())
 }
 
-/// The title the page at `port` leaves once it has run, from the DOM a
-/// headless Chrome dumps (WebGL2 through SwiftShader, a software renderer
-/// on every machine), or what Chrome said where it showed no page. On
-/// Linux Chrome runs without its sandbox: Ubuntu 24.04, GitHub's runner,
-/// restricts the unprivileged user namespaces the sandbox is made of, and
-/// the page is the test's own, served from the test's own directory.
-fn title_after(chrome: PathBuf, dir: &Path, port: u16) -> String {
+/// What the page in `page` reports once it has run — its `report(text)`,
+/// a request of the test's own server — from a headless Chrome (WebGL2
+/// through SwiftShader, a software renderer on every machine), or what
+/// Chrome said where no report came in a minute. The page runs in real
+/// time, as a reader's does: under a virtual time budget (`--dump-dom`),
+/// Chrome had taken the DOM while a page still ran, and a frame timed in
+/// virtual time had come before what the browser answers in its own time
+/// (2026-11-09). On Linux Chrome runs without its sandbox: Ubuntu 24.04,
+/// GitHub's runner, restricts the unprivileged user namespaces the sandbox
+/// is made of, and the page is the test's own, served from the test's own
+/// directory.
+fn report_of(chrome: PathBuf, dir: &Path, page: PathBuf) -> String {
+    let (port, reports) = serve(page);
+    let said = dir.join("chrome.txt");
     let mut c = Command::new(chrome);
-    c.args(["--headless=new", "--no-first-run", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--virtual-time-budget=5000", "--window-size=240,240", "--dump-dom"]);
+    c.args(["--headless=new", "--no-first-run", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--window-size=240,240"]);
+    c.args(["--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows"]);
     if cfg!(target_os = "linux") {
         c.arg("--no-sandbox");
     }
-    let out = c.arg(format!("--user-data-dir={}", dir.join("profile").display())).arg(format!("http://127.0.0.1:{}/check.html", port)).output().unwrap();
-    let dom = String::from_utf8_lossy(&out.stdout);
-    match dom.split("<title>").nth(1).and_then(|t| t.split("</title>").next()) {
-        Some(title) => title.to_string(),
-        None => format!("no page ({}): {}", out.status, String::from_utf8_lossy(&out.stderr).trim()),
-    }
+    c.arg(format!("--user-data-dir={}", dir.join("profile").display())).arg(format!("http://127.0.0.1:{}/check.html", port));
+    let mut running = c.stdout(Stdio::null()).stderr(std::fs::File::create(&said).unwrap()).spawn().unwrap();
+    let report = reports.recv_timeout(Duration::from_secs(60));
+    let _ = running.kill();
+    let _ = running.wait();
+    report.unwrap_or_else(|_| format!("no report in a minute; Chrome said: {}", std::fs::read_to_string(&said).unwrap_or_default().trim()))
 }
 
 #[test]
@@ -102,37 +133,73 @@ log['top level ran']
 sys.frames[draw]
 ";
 
-/// The page's check: two frames drawn, then the pixels at the centre
-/// (inside the triangle) and at a corner (outside), and what the program
-/// logged, in the title.
-const CHECK: &str = r#"<!DOCTYPE html><html><head><title>waiting</title></head><body style="margin:0">
+/// The page's check: frames drawn for a second and a half, then the pixels
+/// at the centre (inside the triangle) and at a corner (outside), and what
+/// the program logged, reported.
+const CHECK: &str = r#"<!DOCTYPE html><html><head><title>check</title></head><body style="margin:0">
 <canvas id="c" style="width:200px;height:200px"></canvas><script src="crow.js"></script><script>
-const logged = [];
+const logged = [], report = (text) => fetch('report?' + encodeURIComponent(text));
 Crow.start({ canvas: document.getElementById('c'), module: 'tri.wasm', keep: true, said: (k, t) => logged.push(k + ':' + t) }).then((page) => {
   setTimeout(() => {
     const gl = page.gl, px = new Uint8Array(4), at = (x, y) => { gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); return Array.from(px).join(','); };
-    document.title = 'centre ' + at(gl.drawingBufferWidth >> 1, gl.drawingBufferHeight >> 1) + ' corner ' + at(1, gl.drawingBufferHeight - 2) + ' said ' + logged.join('|');
+    report('centre ' + at(gl.drawingBufferWidth >> 1, gl.drawingBufferHeight >> 1) + ' corner ' + at(1, gl.drawingBufferHeight - 2) + ' said ' + logged.join('|'));
   }, 1500);
-}).catch((e) => { document.title = 'failed ' + e.message; });
+}).catch((e) => report('failed ' + e.message));
 </script></body></html>"#;
 
-/// A static server for `dir` on a port of its own, for as long as the test.
-fn serve(dir: PathBuf) -> u16 {
+/// A query's text as the page encoded it (`encodeURIComponent`).
+fn decoded(query: &str) -> String {
+    let b = query.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match (b[i], query.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                i += 3;
+            }
+            (c, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A static server for `dir` on a port of its own, for as long as the test,
+/// and what its page reports (`report?<text>`), as they come.
+fn serve(dir: PathBuf) -> (u16, mpsc::Receiver<String>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
+    let (reports, received) = mpsc::channel();
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let dir = dir.clone();
+            let reports = reports.clone();
             std::thread::spawn(move || {
                 let mut stream = stream;
+                // the request's head, however many reads it arrives in
+                let mut head = Vec::new();
                 let mut buf = [0u8; 4096];
-                let n = stream.read(&mut buf).unwrap_or(0);
-                let head = String::from_utf8_lossy(&buf[..n]);
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() < 65536 {
+                    match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => head.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let head = String::from_utf8_lossy(&head);
                 let path = head.split_whitespace().nth(1).unwrap_or("/").trim_start_matches('/').to_string();
                 let path = if path.is_empty() { "index.html".to_string() } else { path };
-                let (status, body) = match std::fs::read(dir.join(&path)) {
-                    Ok(b) => ("200 OK", b),
-                    Err(_) => ("404 Not Found", Vec::new()),
+                let (status, body) = match path.strip_prefix("report?") {
+                    Some(text) => {
+                        let _ = reports.send(decoded(text));
+                        ("200 OK", Vec::new())
+                    }
+                    None => match std::fs::read(dir.join(&path)) {
+                        Ok(b) => ("200 OK", b),
+                        Err(_) => ("404 Not Found", Vec::new()),
+                    },
                 };
                 let kind = if path.ends_with(".wasm") { "application/wasm" } else if path.ends_with(".js") { "text/javascript" } else { "text/html" };
                 let _ = write!(stream, "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", status, kind, body.len());
@@ -140,7 +207,7 @@ fn serve(dir: PathBuf) -> u16 {
             });
         }
     });
-    port
+    (port, received)
 }
 
 #[test]
@@ -166,11 +233,9 @@ fn a_program_built_for_the_web_draws_what_it_paints() {
         return;
     };
     std::fs::write(page.join("check.html"), CHECK).unwrap();
-    let port = serve(page);
-    let title = title_after(chrome, &dir, port);
-    assert!(title.starts_with("centre 255,128,0,255 corner 0,0,255,255"), "{}", title);
-    assert!(title.contains("log:top level ran"), "{}", title);
-    let _ = std::fs::remove_dir_all(&dir);
+    let report = report_of(chrome, &dir, page);
+    assert!(report.starts_with("centre 255,128,0,255 corner 0,0,255,255"), "{}", report);
+    assert!(report.contains("log:top level ran"), "{}", report);
 }
 
 const POINTER: &str = "use sys
@@ -188,9 +253,9 @@ sys.frames[draw]
 /// it does for the reader's mouse — `give` had queued the event alone, and
 /// a frame's `pointers` stayed empty (Lory's crosshair and hover never
 /// showed under a test). A move after a press keeps the button held.
-const POINTER_CHECK: &str = r#"<!DOCTYPE html><html><head><title>waiting</title></head><body style="margin:0">
+const POINTER_CHECK: &str = r#"<!DOCTYPE html><html><head><title>check</title></head><body style="margin:0">
 <canvas id="c" style="width:200px;height:200px"></canvas><script src="crow.js"></script><script>
-const logged = [];
+const logged = [], report = (text) => fetch('report?' + encodeURIComponent(text));
 Crow.start({ canvas: document.getElementById('c'), module: 'pointer.wasm', manual: true, said: (k, t) => logged.push(t) }).then((page) => {
   const at = (type, x, y) => page.give({ type, device: 'mouse', id: 1, x, y, button: 0, shift: false, ctrl: false, alt: false, meta: false });
   page.step(16);
@@ -198,8 +263,8 @@ Crow.start({ canvas: document.getElementById('c'), module: 'pointer.wasm', manua
   at('down', 41, 51); page.step(48);
   at('move', 60, 70); page.step(64);
   at('up', 60, 70); page.step(80);
-  document.title = 'said ' + logged.join('|');
-}).catch((e) => { document.title = 'failed ' + e.message; });
+  report('said ' + logged.join('|'));
+}).catch((e) => report('failed ' + e.message));
 </script></body></html>"#;
 
 #[test]
@@ -218,10 +283,8 @@ fn a_pointer_a_test_gives_is_where_the_next_frame_says_it_is() {
     };
     let page = dir.join("pointer_web");
     std::fs::write(page.join("check.html"), POINTER_CHECK).unwrap();
-    let port = serve(page);
-    let title = title_after(chrome, &dir, port);
-    assert_eq!(title, "said pointer 40 50 false|pointer 41 51 true|pointer 60 70 true", "{}", title);
-    let _ = std::fs::remove_dir_all(&dir);
+    let report = report_of(chrome, &dir, page);
+    assert_eq!(report, "said pointer 40 50 false|pointer 41 51 true|pointer 60 70 true", "{}", report);
 }
 
 const VR: &str = "use sys
@@ -240,18 +303,25 @@ sys.frames[draw]
 /// A frame says whether a headset can be entered (`vr`), and `@vr` enters
 /// it — a page draws its own button for that, in WebGL, as Lory's controls
 /// are; where none can be entered (headless Chrome has no headset) the
-/// failure is said in a later frame, never silent.
-const VR_CHECK: &str = r#"<!DOCTYPE html><html><head><title>waiting</title></head><body style="margin:0">
+/// failure is said in a later frame, never silent. The page enters as it
+/// starts, and the browser answers in its own time, so frames are stepped
+/// until one says it, for five seconds at most: entering as the page
+/// started had been silent one time in twelve (crow.js's `enter_vr` now
+/// waits for the browser's answer to whether one can be entered), and a
+/// frame 300 ms of virtual time on had been taken for the one that says it
+/// (CI's coverage run, 2026-11-09).
+const VR_CHECK: &str = r#"<!DOCTYPE html><html><head><title>check</title></head><body style="margin:0">
 <canvas id="c" style="width:200px;height:200px"></canvas><script src="crow.js"></script><script>
-const logged = [];
-Crow.start({ canvas: document.getElementById('c'), module: 'vr.wasm', manual: true, said: (k, t) => logged.push(t) }).then((page) => {
+const logged = [], report = (text) => fetch('report?' + encodeURIComponent(text));
+Crow.start({ canvas: document.getElementById('c'), module: 'vr.wasm', manual: true, said: (k, t) => logged.push(t) }).then(async (page) => {
   page.step(16);
   page.step(32);
-  setTimeout(() => {
-    page.step(48);
-    document.title = 'said ' + logged.join('|');
-  }, 300);
-}).catch((e) => { document.title = 'failed ' + e.message; });
+  for (let n = 0; n < 250 && !logged.includes('said vr'); n++) {
+    await new Promise((done) => setTimeout(done, 20));
+    page.step(48 + 16 * n);
+  }
+  report('said ' + logged.join('|'));
+}).catch((e) => report('failed ' + e.message));
 </script></body></html>"#;
 
 #[test]
@@ -270,7 +340,10 @@ fn a_frame_says_whether_a_headset_can_be_entered_and_entering_none_is_said() {
     };
     let page = dir.join("vr_web");
     std::fs::write(page.join("check.html"), VR_CHECK).unwrap();
-    let port = serve(page);
-    let title = title_after(chrome, &dir, port);
-    assert_eq!(title, "said vr false|vr false|vr false|said vr", "{}", title);
+    let report = report_of(chrome, &dir, page);
+    // every frame says no headset can be entered, and one after the frame
+    // that asked says the failure, once, as the last thing said
+    let said: Vec<&str> = report.strip_prefix("said ").unwrap_or_default().split('|').collect();
+    let (last, frames) = said.split_last().unwrap();
+    assert!(*last == "said vr" && frames.len() >= 3 && frames.iter().all(|f| *f == "vr false"), "{}", report);
 }

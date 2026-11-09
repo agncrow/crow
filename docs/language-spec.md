@@ -4477,8 +4477,9 @@ and body in `said` when they arrive), `@tone` (a sound), `@keyboard` (`=open` br
 keyboard, and what is typed arrives as `text` events), `@cursor`, `@copy`
 (to the clipboard), `@title` and `@vr` (into the headset, where a frame's
 `vr` says one can be entered: a browser enters only on the reader's press,
-so a program asks in the frame its button is pressed, and a failure is
-said as `what` `vr` with its `failed` reason). `crow.js` lists each call's
+so a program asks in the frame its button is pressed, and a failure — none
+to enter among them — is said in a later frame as `what` `vr` with its
+`failed` reason, never silently). `crow.js` lists each call's
 arguments.
 
 Outside a browser the same program runs in both modes and draws nothing:
