@@ -1,0 +1,4 @@
+--- a call of a function nothing declares is refused as that whether or not its arguments are named: `sortd[xs, desc = true]` had been told "'sortd' takes no named arguments", where `sortd[xs]` was told the function is undefined and which one is near
+xs = [3, 1, 2]
+w = sortd[xs, desc = true]
+log[w]

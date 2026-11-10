@@ -1,0 +1,3 @@
+k58_a_named_call_of_a_function_nothing_declares_is_told_the_name.co:3:5: undefined function 'sortd' — did you mean 'sort'?
+  3 │ w = sortd[xs, desc = true]
+    │     ^^^^^

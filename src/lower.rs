@@ -356,6 +356,14 @@ fn is_function_name(name: &str) -> bool {
     crate::lower_ir::BUILTINS.contains(&name) || crate::modules::ModuleRegistry::with_stdlib().has_function(name)
 }
 
+/// What a call written with named arguments is told where nothing of its
+/// name takes them: here of a call through a value written out (`….f[…]`),
+/// and by the checks of a call by a name, or through one, that is
+/// something (crate::lower_ir, `named_call`).
+pub(crate) fn takes_no_names(target: &str) -> String {
+    format!("{} takes no named arguments — a function, a struct, a builtin with named parameters or a ui element does", target)
+}
+
 thread_local! {
     /// The modules the program being lowered imports, for its fragments.
     static PROGRAM_IMPORTS: std::cell::RefCell<Arc<BTreeMap<String, String>>> = std::cell::RefCell::new(Arc::new(BTreeMap::new()));
@@ -1197,18 +1205,34 @@ impl Lowerer {
                                     }
                                 }
                             }
-                            let target = match (&callee_name, &callee) {
-                                (Some(n), _) => format!("'{}'", n),
-                                (None, Expr::FieldAccess { object, field }) => match object.as_ref() {
-                                    Expr::Ident(m) => format!("{}.{}[…]", m, field),
-                                    _ => format!("….{}[…]", field),
-                                },
+                            // a call by a name, or through one (`m.f[…]`),
+                            // that nothing here takes named arguments of:
+                            // whether the name is anything at all is the
+                            // checks' to say, which know what is in scope
+                            // and this pass does not — passed on as written,
+                            // its arguments named still, and refused there
+                            // (crate::lower_ir, `named_call`): a name
+                            // nothing declares as the same call without
+                            // names is, a name that is something as taking
+                            // none. Refused here, a file calling a package
+                            // it does not import was told `magpie.batch[…]
+                            // takes no named arguments`, and a slip in a
+                            // function's name `'sortd' takes no named
+                            // arguments`, where without the names each was
+                            // told what the name lacks
+                            let by_name = match &callee {
+                                Expr::Ident(_) => true,
+                                Expr::FieldAccess { object, .. } => matches!(object.as_ref(), Expr::Ident(_)),
+                                _ => false,
+                            };
+                            if by_name {
+                                return Ok(Expr::Call { callee: Box::new(callee), args });
+                            }
+                            let target = match &callee {
+                                Expr::FieldAccess { field, .. } => format!("….{}[…]", field),
                                 _ => "this call".to_string(),
                             };
-                            return Err(self.err(format!(
-                                "{} takes no named arguments — a function, a struct, a builtin with named parameters or a ui element does",
-                                target
-                            )));
+                            return Err(self.err(takes_no_names(&target)));
                         }
                         Expr::Call { callee: Box::new(callee), args }
                     }
@@ -1768,10 +1792,22 @@ mod tests {
         }
     }
 
+    /// A call by a name, or through one, that nothing here takes named
+    /// arguments of is passed on as written: whether the name is anything
+    /// is the checks' to say, which know the scope (crate::lower_ir,
+    /// `named_call`; refused here, a slip in a function's name was told it
+    /// "takes no named arguments"). A call through a value written out is
+    /// refused here.
     #[test]
-    fn test_indirect_call_named_arg_errors() {
-        let err = lower_src("r = unknown_fn[1, a = 2]\n").unwrap_err();
-        assert!(err.contains("'unknown_fn' takes no named arguments"), "{}", err);
+    fn a_named_call_by_a_name_is_the_checks_to_refuse() {
+        for src in ["r = unknown_fn[1, a = 2]\n", "r = nowhere.made[1, a = 2]\n"] {
+            let stmts = lower_src(src).unwrap_or_else(|e| panic!("{}: {}", src, e));
+            assert!(has_named(&stmts), "{} keeps its named argument for the checks", src);
+        }
+        let err = lower_src("fs = [1]\nr = fs[0][1, a = 2]\n").unwrap_err();
+        assert!(err.contains("this call takes no named arguments"), "{}", err);
+        let err = lower_src("p = 1\nr = p.q.made[1, a = 2]\n").unwrap_err();
+        assert!(err.contains("….made[…] takes no named arguments"), "{}", err);
     }
 
     /// The narrowed reads of a lowered body, as the names they read.

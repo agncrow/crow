@@ -1837,3 +1837,25 @@ which run here only.
   a copy per signature (a program's `fn f__2` beside a twice-typed `f`
   takes the copy's place) and a scenario's key (`views/sim.co`'s test `t`
   and `views_sim.co`'s are one `views_sim_t`).
+- A call written with named arguments that nothing of its name takes is
+  refused by the pass that knows the scope (2026-11-09; errors k57–k59).
+  `crate::lower` rewrites the named arguments a function, a struct, a
+  builtin's options and an element take, and knows no scope: refusing
+  there, it told a file lacking `use magpie` that `magpie.batch[…] takes
+  no named arguments` and a slip in a name that `'sortd' takes no named
+  arguments`, where the same calls without the names were told what the
+  name lacks. It now passes a call by a name (`f[…]`) or through one
+  (`m.f[…]`) on with its arguments named still, and `named_call`
+  (lower_ir.rs, the top of `call`) lowers it without the names: where
+  the name is nothing here declares, unmuted, so the call's own checks
+  say it (`undefined function 'sortd' — did you mean 'sort'?`,
+  `undefined module or variable 'magpie'`, a module's missing import);
+  where it is something (`names_something`; `declared` of the name a
+  call goes through), muted, with `takes_no_names` — and with it too
+  wherever the checks passed the name by, so no such call lowers
+  unrefused. A named argument reaching `lower_expr` any other way is
+  still the internal error it was ("a named argument survived"): a new
+  form that takes names is rewritten in `crate::lower`, or refused in
+  `named_call`. What is wrong with a name is said before what is wrong
+  with its arguments: a new refusal of arguments asks first whether the
+  name is anything.

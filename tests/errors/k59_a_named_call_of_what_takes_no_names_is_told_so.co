@@ -1,0 +1,14 @@
+--- a call with a named argument of a name that is something and takes none is told so, as it was: a builtin with no named parameters, a variable holding a function, a record's field holding one
+--- mistakes: 3
+struct Op [f]
+
+fn twice[x]
+    return x * 2
+
+xs = [3, 1, 2]
+n = len[xs, upto = 2]
+g = twice
+a = g[x = 3]
+c = Op[twice]
+b = c.f[x = 3]
+log[n + a + b]

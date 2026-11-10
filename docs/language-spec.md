@@ -693,6 +693,8 @@ mx = max[x, axis = 1]             --- max along axis 1
 
 Named arguments are resolved at compile time (a lowering pass rewrites them to positional form before execution), so they work only when the callee is a directly named function, struct, builtin with named parameters, or ui element. A function received as a value (`fn apply[f, x]` calling `f[...]`) must be called with positional arguments.
 
+A call with a named argument that none of these takes is refused before the program runs, and what is wrong with its name is said before what is wrong with its arguments. A name nothing declares is refused as the same call without the names is — `sortd[xs, desc = true]` as `undefined function 'sortd' — did you mean 'sort'?`, and `magpie.batch[d, f, by = ['item']]` in a file that does not import the package as `undefined module or variable 'magpie'`. A name that is something and takes none — a builtin with no named parameters, a variable or a field holding a function — is told so: `'len' takes no named arguments — a function, a struct, a builtin with named parameters or a ui element does`.
+
 
 ### Calling
 

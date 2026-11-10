@@ -1,0 +1,3 @@
+k57_a_named_call_through_a_name_no_import_makes_is_told_the_name.co:5:5: undefined module or variable 'magpie'
+  5 │ w = magpie.batch[d, frame.new[item = ['apples'], qty = [3]], by = ['item']]
+    │     ^^^^^^

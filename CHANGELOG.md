@@ -43,6 +43,16 @@ history says the rest.
   The editor completes a part's function as the program calls it
   (`calc.total[x]`, where it had offered `lib_calc_total[x__lib_calc]`),
   and its outline is the document's own declarations.
+- A call with a named argument is told what is wrong with its name
+  before what is wrong with its arguments. `magpie.batch[d, f, by =
+  ['item']]` in a file lacking `use magpie` had been told
+  "magpie.batch[…] takes no named arguments", and a slip in a function's
+  name, `sortd[xs, desc = true]`, "'sortd' takes no named arguments";
+  each is refused as the same call without the names is: `undefined
+  module or variable 'magpie'`, `undefined function 'sortd' — did you
+  mean 'sort'?`. A name that is something and takes none — a builtin
+  with no named parameters, a value holding a function — is told so, as
+  it was.
 
 ## v0.9.0 — 2026-11-08
 

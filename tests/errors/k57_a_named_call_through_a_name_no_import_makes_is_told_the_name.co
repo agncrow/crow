@@ -1,0 +1,6 @@
+--- a call through a module's name the file does not import is refused as that whether or not its arguments are named: `magpie.batch[d, f, by = ['item']]` in a file lacking `use magpie` had been told "magpie.batch[…] takes no named arguments", where the same call without the name was told the module is undefined (Myna's dashboards, 2026-11-09)
+use frame
+
+d = 'orders'
+w = magpie.batch[d, frame.new[item = ['apples'], qty = [3]], by = ['item']]
+log[w]

@@ -6023,11 +6023,65 @@ impl<'a> Lowerer<'a> {
         Expr::Local(name.to_string(), ty)
     }
 
+    /// A call written with named arguments that nothing of its name takes
+    /// them of: `crate::lower`, which rewrites the named arguments a
+    /// function, a struct, a builtin's options and an element take and
+    /// knows no scope, passes on a call by a name (`f[…]`) or through one
+    /// (`m.f[…]`) as written. What is wrong with the name is said before
+    /// what is wrong with the arguments. A name nothing here declares is
+    /// refused by the call's own checks, lowered without its names, as the
+    /// same call written without names is — `undefined function 'sortd' —
+    /// did you mean 'sort'?`, `undefined module or variable 'magpie'`
+    /// where a file calls a package it does not import — and a name that
+    /// is something (a builtin with no named parameters, a value) takes
+    /// none. Refused in `crate::lower`, each had been told `… takes no
+    /// named arguments`, and the file lacking `use magpie` nothing of its
+    /// import (Myna's dashboards, 2026-11-09; errors k57, k58, k59).
+    fn named_call(&mut self, callee: &A, args: &[A]) -> Result<Expr, String> {
+        let values: Vec<A> = args
+            .iter()
+            .map(|a| match a {
+                A::Named { value, .. } => value.as_ref().clone(),
+                other => other.clone(),
+            })
+            .collect();
+        if self.pass != Pass::Final || self.v.mute > 0 {
+            return self.call(callee, &values);
+        }
+        let (something, target) = match callee {
+            A::Ident(n) => (self.names_something(n), format!("'{}'", n)),
+            A::FieldAccess { object, field } => match object.as_ref() {
+                A::Ident(m) => (self.declared(m), format!("{}.{}[…]", m, field)),
+                _ => (true, format!("….{}[…]", field)),
+            },
+            _ => (true, "this call".to_string()),
+        };
+        let refused = self.v.errors.len();
+        let lowered = if something { self.muted(|l| l.call(callee, &values)) } else { self.call(callee, &values) };
+        // (a name its own checks pass by — a fact read inside a handler, a
+        // module's function taking no option — is something after all)
+        if self.v.errors.len() == refused {
+            self.refuse(crate::lower::takes_no_names(&target));
+        }
+        lowered
+    }
+
+    /// Whether a bare name called is something a call here can mean: a
+    /// variable, a function, a struct, a fact or an element in view, or a
+    /// builtin the core has. A module's function the file does not import
+    /// is none: its call is told the import.
+    fn names_something(&self, name: &str) -> bool {
+        self.declared(name) || self.defined(name) || self.is_fact(name) || crate::table::has_core_rows(name) || crate::table::has_checked_form(name)
+    }
+
     /// A call, with the parameter list of a statement form noted while
     /// its arguments are lowered: the one list of several kinds (a list
     /// of what each `?` takes, sent one by one), exempt from the rule
     /// that a list holds one kind, whichever path lowers the call
     fn call(&mut self, callee: &A, args: &[A]) -> Result<Expr, String> {
+        if args.iter().any(|a| matches!(a, A::Named { .. })) {
+            return self.named_call(callee, args);
+        }
         let saved = self.params_items.take();
         if let (A::Ident(name), Some(A::Array(items))) = (callee, args.get(2)) {
             if crate::table::statement_form(None, name).is_some() {
@@ -10913,6 +10967,31 @@ log[drive[3]]
         assert_eq!(refusal_of("use io\nt = io.read['notes.txt']\nlog[t]\n"), "line 2: io has no 'read' — read is the core's: read[…]");
         assert_eq!(refusal_of("use io\nt = io.slurp['notes.txt']\nlog[t]\n"), "line 2: io has no 'slurp'");
         assert_eq!(refusal_of("t = nowhere.read['notes.txt']\nlog[t]\n"), "line 1: undefined module or variable 'nowhere'");
+    }
+
+    /// A call with a named argument is told what is wrong with its name
+    /// before what is wrong with its arguments: a name nothing declares is
+    /// refused as the same call without the names is, and a name that is
+    /// something takes none (each had been told "takes no named arguments",
+    /// a file lacking a package's import among them)
+    #[test]
+    fn a_named_call_of_a_name_nothing_declares_says_the_name() {
+        assert_eq!(refusal_of("t = nowhere.made['x', by = ['k']]\nlog[t]\n"), refusal_of("t = nowhere.made['x', ['k']]\nlog[t]\n"));
+        assert_eq!(refusal_of("t = nowhere.made['x', by = ['k']]\nlog[t]\n"), "line 1: undefined module or variable 'nowhere'");
+        assert_eq!(refusal_of("xs = [3, 1, 2]\nt = sortd[xs, desc = true]\nlog[t]\n"), refusal_of("xs = [3, 1, 2]\nt = sortd[xs, true]\nlog[t]\n"));
+        assert_eq!(refusal_of("xs = [3, 1, 2]\nt = sortd[xs, desc = true]\nlog[t]\n"), "line 2: undefined function 'sortd' — did you mean 'sort'?");
+        // a module's function the file does not import is told the import
+        assert_eq!(refusal_of("xs = [1.0, 2.0, 3.0]\nt = sma[xs, n = 2]\nlog[t]\n"), refusal_of("xs = [1.0, 2.0, 3.0]\nt = sma[xs, 2]\nlog[t]\n"));
+        assert_eq!(refusal_of("xs = [1.0, 2.0, 3.0]\nt = sma[xs, n = 2]\nlog[t]\n"), "line 2: sma[] is chart's: add `use chart`");
+        // a name that is something: a builtin with no named parameters, a
+        // variable holding a function, a record's field holding one
+        let none = "takes no named arguments — a function, a struct, a builtin with named parameters or a ui element does";
+        assert_eq!(refusal_of("xs = [3, 1, 2]\nt = len[xs, upto = 2]\nlog[t]\n"), format!("line 2: 'len' {}", none));
+        assert_eq!(refusal_of("fn twice[x]\n    return x * 2\ng = twice\nt = g[x = 3]\nlog[t]\n"), format!("line 4: 'g' {}", none));
+        assert_eq!(refusal_of("struct Op [f]\nfn twice[x]\n    return x * 2\nc = Op[twice]\nt = c.f[x = 3]\nlog[t]\n"), format!("line 5: c.f[…] {}", none));
+        // inside a function, a test and an interpolation alike
+        assert_eq!(refusal_of("fn made[d]\n    return nowhere.made[d, by = ['k']]\nlog[made['x']]\n"), "line 2: undefined module or variable 'nowhere'");
+        assert_eq!(refusal_of("xs = [3, 1, 2]\nlog['sorted: `sortd[xs, desc = true]`']\n"), "line 2: undefined function 'sortd' — did you mean 'sort'?");
     }
 
     /// A page's address holds facts (spec, Core (Server)): a path's `:name`

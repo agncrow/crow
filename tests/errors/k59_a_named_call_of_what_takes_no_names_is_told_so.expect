@@ -1,0 +1,10 @@
+k59_a_named_call_of_what_takes_no_names_is_told_so.co:9:5: 'len' takes no named arguments — a function, a struct, a builtin with named parameters or a ui element does
+  9 │ n = len[xs, upto = 2]
+    │     ^^^
+k59_a_named_call_of_what_takes_no_names_is_told_so.co:11:5: 'g' takes no named arguments — a function, a struct, a builtin with named parameters or a ui element does
+  11 │ a = g[x = 3]
+     │     ^
+k59_a_named_call_of_what_takes_no_names_is_told_so.co:13:1: c.f[…] takes no named arguments — a function, a struct, a builtin with named parameters or a ui element does
+  13 │ b = c.f[x = 3]
+     │ ^^^^^^^^^^^^^^
+3 mistakes
