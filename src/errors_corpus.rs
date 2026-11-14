@@ -500,11 +500,17 @@ fn plantable(lines: &[String]) -> Vec<(Vec<String>, Planted)> {
         }
     }
     // a module's import left out, where the program calls it: its calls
-    // say the import, once — frame, which the generated part imports too
-    // (each file's imports are its own), and db where the program connects
+    // say the import, once — frame where the program's own lines call one
+    // of its functions (the generated part imports frame too, and each
+    // file's imports are its own: a program whose cases make no frame
+    // imports it for nothing, and without it runs, as fuzz seed
+    // 1794668468 did, planted as a mistake), and db where the program
+    // connects
     let calls_db = lines.iter().any(|l| l.contains("connect[") || l.contains("query["));
+    let frame_calls = calls_of("frame");
+    let calls_frame = lines.iter().filter(|l| !l.starts_with("use ")).any(|l| calls_any(&code(l), &frame_calls));
     if let Some((i, l)) = lines.iter().enumerate().find(|(_, l)| l.starts_with("use ")) {
-        if l.contains(" frame,") {
+        if calls_frame && l.contains(" frame,") {
             let mut mutated = lines.to_vec();
             mutated[i] = l.replacen(" frame,", "", 1);
             out.push((mutated, Planted { what: "use frame left out".into(), line: None, teaches: "add `use frame`".into() }));
@@ -516,6 +522,27 @@ fn plantable(lines: &[String]) -> Vec<(Vec<String>, Planted)> {
         }
     }
     out
+}
+
+/// The calls that reach a module's functions, as the registry lists them:
+/// through the module's name (`frame.new[`), or bare by a name that is the
+/// module's alone — no core row and no other module's function of that
+/// name (`group[`; not `join[`, the core's too, which joins text, nor
+/// `where[`, math's too: either runs without the import).
+fn calls_of(module: &str) -> Vec<String> {
+    let mut calls = vec![format!("{}.", module)];
+    let Some(m) = crate::modules::module_by_path(module) else { return calls };
+    let others: Vec<_> = crate::modules::MODULES.iter().filter(|o| o.path != module).filter_map(|o| o.module).map(|make| make()).collect();
+    let alone = |f: &str| !crate::table::rows_named(f).any(|r| r.module.is_empty()) && !others.iter().any(|o| o.functions().contains(&f));
+    calls.extend(m.functions().iter().filter(|f| alone(f)).map(|f| format!("{}[", f)));
+    calls
+}
+
+/// Whether a line holds one of the calls where a word begins (`regroup[`
+/// holds no call of `group`).
+fn calls_any(line: &str, calls: &[String]) -> bool {
+    let begins = |at: usize| at == 0 || !line[..at].ends_with(|ch: char| ch.is_alphanumeric() || ch == '_' || ch == '.');
+    calls.iter().any(|c| line.match_indices(c.as_str()).any(|(at, _)| begins(at)))
 }
 
 /// `crow test --fuzz n --mistakes [--seed s] [--keep]`: programs the
@@ -673,6 +700,24 @@ mod tests {
         assert_eq!(slip, Some(("    a = upepr[x]".to_string(), Some(4))));
         // the same seed draws the same mistake
         assert_eq!((Draw(7).below(10), Draw(7).below(10)), (Draw(7).below(10), Draw(7).below(10)));
+    }
+
+    #[test]
+    fn an_import_is_left_out_only_where_the_program_calls_the_module() {
+        // fuzz seed 1794668468: a program importing frame and calling none
+        // of its functions ran without the import, and the mistake planted
+        // there was "not refused"
+        let left_out = |body: &str| {
+            let lines: Vec<String> = format!("use math, frame, db, fm1\n{}\nlog[1]", body).lines().map(String::from).collect();
+            plantable(&lines).iter().any(|(_, p)| p.what == "use frame left out")
+        };
+        // `join` is the core's too and `where` math's too; a word holding a
+        // name, and a comment, call nothing
+        let none = "xs = [1, 2]\nlog[join[['a', 'b'], '-']]\nm = where[[true], [1.0], [0.0]]\nlog[regroup[xs]] --- group[d, 'k', ['a', 'sum']]";
+        assert!(!left_out(none));
+        assert!(left_out("d = frame.new[a = [1]]"));
+        assert!(left_out("log[len[group[d, 'k', ['a', 'sum']]]]"));
+        assert!(left_out(&format!("{}\nlog[window[d, 'a', 'sum', n = 2]]", none)));
     }
 
     #[test]
