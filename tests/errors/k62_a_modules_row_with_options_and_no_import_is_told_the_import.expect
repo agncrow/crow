@@ -1,0 +1,3 @@
+k62_a_modules_row_with_options_and_no_import_is_told_the_import.co:3:5: frame.window[] is frame's: add `use frame`
+  3 │ log[frame.window[d, 2]]
+    │     ^^^^^^^^^^^^

@@ -1050,9 +1050,9 @@ fn export_sigs() -> (Vec<Sig>, Vec<NotCalled>) {
 
 /// The kinds an exported function's parameters take: the function's own
 /// types where settled, else a copy's (a function called at several
-/// signatures is lowered once per signature, `name__N`).
+/// signatures is lowered once per signature, `name·N`).
 fn export_params(fns: &[&crate::ir::Fn], name: &str) -> Result<Vec<Kind>, String> {
-    let is_copy = |f: &str| f.strip_prefix(name).and_then(|rest| rest.strip_prefix("__")).is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+    let is_copy = |f: &str| crate::ir::copy_of(f, name);
     let copies: Vec<&&crate::ir::Fn> = fns.iter().filter(|f| f.name == name || is_copy(&f.name)).collect();
     let base = copies.iter().find(|f| f.name == name).ok_or_else(|| "its module lowers no function of the name".to_string())?;
     let mut kinds = Vec::with_capacity(base.params.len());
@@ -2177,12 +2177,12 @@ fn comparable(out: &str) -> String {
 }
 
 /// The case a generated name belongs to: `self_case_3`, `self_may_3`,
-/// `self_first_3__2` (a copy per signature), `SelfBox_3`.
+/// `self_first_3·2` (a copy per signature), `SelfBox_3`.
 fn case_number(name: &str) -> Option<usize> {
     if !(name.starts_with("self_") || name.starts_with("Self")) {
         return None;
     }
-    let base = name.split("__").next().unwrap_or(name);
+    let base = crate::modules::inlined_base(name);
     let digits: String = base.rsplit('_').next().unwrap_or("").to_string();
     digits.parse().ok()
 }

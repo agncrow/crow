@@ -1,0 +1,6 @@
+--- a call through a field the value has none of, and no function's name, is refused as the field's read is, before the program runs: interpreted it had stopped as it ran, and the compiled program had not built
+--- mistakes: 2
+xs = [1, 2, 3]
+s = 'abc'
+log[xs.nosuch[]]
+log[s.nosuch[1]]

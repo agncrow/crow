@@ -187,6 +187,31 @@ pub fn brought_by(path: &str) -> Vec<&'static str> {
     out
 }
 
+/// The name a standard module's declaration is inlined under: its
+/// module's prefix and its own name joined by `PART_JOIN` twice
+/// (`_io··lines`, `_web_auth··sign`, a helper `_io··_lines_of`). No name a
+/// program writes holds the mark, and no part's does twice together (a
+/// part's prefix is its path's pieces, each followed by one mark): joined
+/// by an underscore, a program's own `fn _io_lines` beside `use io` had
+/// been io's `lines` too, and stopped as a bug in Crow; joined by one mark,
+/// a program's file `_io.co` would have been.
+pub fn inlined_name(prefix: &str, name: &str) -> String {
+    format!("{}{}{}{}", prefix, crate::PART_JOIN, crate::PART_JOIN, name)
+}
+
+/// The prefix a driver's rows' functions carry in a program, by its
+/// backend's name (`_db_clickhouse··ch`, then `_query`): what the
+/// interpreter's child and the compiled program's glue call.
+pub fn driver_rows_prefix(backend: &str) -> Option<String> {
+    MODULES.iter().find_map(|m| m.driver.as_ref().filter(|d| d.backend == backend).map(|d| inlined_name(m.prefix, d.rows)))
+}
+
+/// What joins a standard module's prefix to a declaration's name
+/// (`inlined_name`).
+fn module_join() -> String {
+    format!("{}{}", crate::PART_JOIN, crate::PART_JOIN)
+}
+
 /// The modules written in Crow, each with the prefix its functions carry.
 pub fn crow_modules() -> impl Iterator<Item = (&'static str, &'static str)> {
     MODULES.iter().filter(|m| m.source.is_some()).map(|m| (m.path, m.prefix))
@@ -194,7 +219,7 @@ pub fn crow_modules() -> impl Iterator<Item = (&'static str, &'static str)> {
 
 /// The source of a standard module written in Crow (design rule 20), by
 /// its import path. Each is inlined into the program that imports it, its
-/// functions named by `crate::table::crow_fn_name` (`_io_lines`).
+/// functions named by `crate::table::crow_fn_name` (`_io··lines`).
 pub fn crow_source(path: &str) -> Option<&'static str> {
     by_path(path)?.source
 }
@@ -340,11 +365,10 @@ pub fn crow_scope_str(name: &str) -> Option<&'static str> {
     if !inlined_names().contains(name) {
         return None;
     }
-    // (the longest prefix that fits: `_web_auth_sign` is web.auth's, not web's)
-    crow_modules()
-        .filter(|(_, prefix)| name.starts_with(prefix) && name.len() > prefix.len() && name.as_bytes()[prefix.len()] == b'_')
-        .max_by_key(|(_, prefix)| prefix.len())
-        .map(|(_, p)| p)
+    // (the prefix the mark follows: `_web_auth··sign` is web.auth's, not
+    // web's)
+    let join = module_join();
+    crow_modules().find(|(_, prefix)| name.strip_prefix(prefix).is_some_and(|rest| rest.starts_with(&join))).map(|(_, p)| p)
 }
 
 /// The scope a call of the named function runs in: its standard module's,
@@ -368,7 +392,7 @@ pub fn is_crow_fn(name: &str) -> bool {
 }
 
 /// Every function a standard module written in Crow declares, helpers
-/// too, by the name it is inlined under (`_io_lines`, `_web_auth__part_of`).
+/// too, by the name it is inlined under (`_io··lines`, `_web_auth··_part_of`).
 fn inlined_names() -> &'static std::collections::HashSet<String> {
     static NAMES: std::sync::LazyLock<std::collections::HashSet<String>> = std::sync::LazyLock::new(|| {
         MODULES
@@ -376,7 +400,7 @@ fn inlined_names() -> &'static std::collections::HashSet<String> {
             .filter_map(|m| Some((m.prefix, parse_source(m.source?).ok()?)))
             .flat_map(|(prefix, stmts)| {
                 stmts.into_iter().filter_map(move |s| match s {
-                    crate::ast::Stmt::FnDecl { name, .. } => Some(format!("{}_{}", prefix, name)),
+                    crate::ast::Stmt::FnDecl { name, .. } => Some(inlined_name(prefix, &name)),
                     _ => None,
                 })
             })
@@ -386,15 +410,12 @@ fn inlined_names() -> &'static std::collections::HashSet<String> {
 }
 
 /// A function's own name past the copies made of it: a traced copy
-/// (`_traced_f`), a copy per signature (`f__2`), a value's adapter
-/// (`f__handed`).
+/// (`_traced_f`), a copy per signature (`f·2`, `crate::ir::copy_name`), a
+/// value's adapter (`f__handed`).
 pub(crate) fn inlined_base(name: &str) -> &str {
     let name = name.strip_prefix("_traced_").unwrap_or(name);
     let name = name.strip_suffix("__handed").unwrap_or(name);
-    match name.rsplit_once("__") {
-        Some((base, n)) if !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()) => base,
-        _ => name,
-    }
+    crate::ir::copy_base(name)
 }
 
 /// The functions a module written in Crow declares for programs: its
@@ -437,11 +458,14 @@ fn parse_source(source: &str) -> Result<Vec<crate::ast::Stmt>, String> {
 }
 
 /// A message with every inlined function named as the program writes it:
-/// `_web_auth_sign` is `sign`, `_io_lines` is `lines` — the prefix a
+/// `_web_auth··sign` is `sign`, `_io··lines` is `lines` — the prefix a
 /// module's functions carry is no program's spelling.
 pub fn unprefixed(msg: &str) -> String {
-    let mut prefixes: Vec<&'static str> = crow_modules().map(|(_, p)| p).collect();
-    prefixes.sort_by_key(|p| std::cmp::Reverse(p.len()));
+    let join = module_join();
+    if !msg.contains(&join) {
+        return msg.to_string();
+    }
+    let marked: Vec<String> = crow_modules().map(|(_, p)| format!("{}{}", p, join)).collect();
     let is_word = crate::name_char;
     let chars: Vec<char> = msg.chars().collect();
     let mut out = String::with_capacity(msg.len());
@@ -449,8 +473,8 @@ pub fn unprefixed(msg: &str) -> String {
     while i < chars.len() {
         if chars[i] == '_' && (i == 0 || !is_word(chars[i - 1])) {
             let rest: String = chars[i..].iter().collect();
-            if let Some(p) = prefixes.iter().find(|p| rest.starts_with(&format!("{}_", p)) && rest[p.len() + 1..].starts_with(|c: char| c.is_alphabetic())) {
-                i += p.len() + 1;
+            if let Some(p) = marked.iter().find(|p| rest.starts_with(p.as_str())) {
+                i += p.chars().count();
                 continue;
             }
         }
@@ -461,15 +485,11 @@ pub fn unprefixed(msg: &str) -> String {
 }
 
 /// An inlined function's name as the program writes it: the prefix gone
-/// (`unprefixed`), and a copy's or a traced version's suffix (`relu__2`,
+/// (`unprefixed`), and a copy's or a traced version's suffix (`relu·2`,
 /// `_traced_…`) with it.
 pub fn written_as(name: &str) -> String {
     let name = name.strip_prefix("_traced_").unwrap_or(name);
-    let name = unprefixed(name);
-    match name.rsplit_once("__") {
-        Some((base, n)) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => base.to_string(),
-        _ => name,
-    }
+    unprefixed(crate::ir::copy_base(name))
 }
 
 /// The names a body binds — its functions, records, derivations, tests,
@@ -927,9 +947,9 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
     let program_bare: BTreeMap<String, String> = providers
         .iter()
         .filter(|(e, ms)| ms.len() == 1 && !own.contains(**e))
-        .map(|(e, ms)| (e.to_string(), format!("{}_{}", ms[0].prefix, e)))
+        .map(|(e, ms)| (e.to_string(), inlined_name(ms[0].prefix, e)))
         .collect();
-    let exported_as = |m: &Module| -> BTreeMap<String, String> { exports(&m.path).iter().map(|e| (e.to_string(), format!("{}_{}", m.prefix, e))).collect() };
+    let exported_as = |m: &Module| -> BTreeMap<String, String> { exports(&m.path).iter().map(|e| (e.to_string(), inlined_name(m.prefix, e))).collect() };
     let program_qualified: Vec<(String, BTreeMap<String, String>)> = stmts
         .iter()
         .filter_map(|s| if let Stmt::Use { path, alias } = s { Some((alias.clone().unwrap_or_else(|| path.clone()), path.clone())) } else { None })
@@ -956,10 +976,10 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
         for s in &m.stmts {
             match s {
                 Stmt::FnDecl { name, .. } if fns.contains(name) && !row_names.contains(name.as_str()) => {
-                    names.insert(name.clone(), format!("{}_{}", m.prefix, name));
+                    names.insert(name.clone(), inlined_name(m.prefix, name));
                 }
                 Stmt::StructDecl { name, .. } => {
-                    names.insert(name.clone(), format!("{}_{}", m.prefix, name));
+                    names.insert(name.clone(), inlined_name(m.prefix, name));
                 }
                 _ => {}
             }
@@ -995,10 +1015,10 @@ pub fn inline_crow_modules(stmts: &[crate::ast::Stmt]) -> Result<Vec<crate::ast:
                         rewrite.stmt(st, &shadowed);
                     }
                     drop_lines(&mut body);
-                    out.push(Stmt::FnDecl { name: format!("{}_{}", m.prefix, name), params: params.clone(), defaults: defaults.clone(), body, is_view: *is_view });
+                    out.push(Stmt::FnDecl { name: inlined_name(m.prefix, name), params: params.clone(), defaults: defaults.clone(), body, is_view: *is_view });
                 }
                 Stmt::StructDecl { name, fields } => {
-                    out.push(Stmt::StructDecl { name: format!("{}_{}", m.prefix, name), fields: fields.clone() });
+                    out.push(Stmt::StructDecl { name: inlined_name(m.prefix, name), fields: fields.clone() });
                 }
                 // the module's other functions (its tests' helpers, the
                 // functions the program never reaches), its imports, its
@@ -1619,7 +1639,7 @@ mod tests {
                 // the rows of one name: `load_asked` beside `load`)
                 let function = row.id.rsplit('.').next().unwrap_or(row.id);
                 assert!(declared.contains(&function), "{} declares {}", m.path, function);
-                assert_eq!(crate::table::crow_fn_name(row), format!("{}_{}", m.prefix, function));
+                assert_eq!(crate::table::crow_fn_name(row), inlined_name(m.prefix, function));
             }
         }
     }
@@ -1665,8 +1685,12 @@ mod tests {
         assert!(!auth.contains(&"_part_of") && !auth.contains(&"part_of"), "{:?}", auth);
         assert!(exports("web.ws").contains(&"socket") && exports("web.ws").contains(&"close") && !exports("web.ws").contains(&"send"), "{:?}", exports("web.ws"));
         // a message names the function as the program writes it
-        assert_eq!(unprefixed("'_web_auth_sign' has no parameter named 'max' (in _io_lines, _core_read_asked)"), "'sign' has no parameter named 'max' (in lines, read_asked)");
-        assert_eq!(unprefixed("_mathx_relu and x_web_auth_sign stay"), "_mathx_relu and x_web_auth_sign stay");
+        assert_eq!(unprefixed("'_web_auth··sign' has no parameter named 'max' (in _io··lines, _core··read_asked)"), "'sign' has no parameter named 'max' (in lines, read_asked)");
+        assert_eq!(unprefixed("_mathx··relu and x_web_auth··sign stay"), "_mathx··relu and x_web_auth··sign stay");
+        // (a program's own name spelled like an inlined one under the old
+        // join is no module's: `crate::modules::inlined_name`)
+        assert_eq!(unprefixed("in _io_lines"), "in _io_lines");
+        assert!(!is_crow_fn("_io_lines") && crow_scope_of("_io_lines").is_none());
     }
 
     /// `use io` inlines the exported functions the program calls and the
@@ -1678,12 +1702,12 @@ mod tests {
         let stmts = crate::build("use io\nlog[len[lines['a.txt']]]\n").expect("parses");
         let out = inline_crow_modules(&stmts).expect("inlines");
         let fns: std::collections::BTreeMap<String, Vec<Stmt>> = out.iter().filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.clone(), body.clone())) } else { None }).collect();
-        assert!(fns.contains_key("_io_lines"), "lines is inlined: {:?}", fns.keys());
-        assert!(!fns.contains_key("_io_csv"), "a function the program never reaches stays out: {:?}", fns.keys());
+        assert!(fns.contains_key("_io··lines"), "lines is inlined: {:?}", fns.keys());
+        assert!(!fns.contains_key("_io··csv"), "a function the program never reaches stays out: {:?}", fns.keys());
         for (n, body) in &fns {
             assert!(!has_line(body), "{} keeps no line mark", n);
         }
-        assert!(is_crow_fn("_io_lines") && !is_crow_fn("lines") && !is_crow_fn("_iox_lines"));
+        assert!(is_crow_fn("_io··lines") && !is_crow_fn("lines") && !is_crow_fn("_iox··lines"));
         let plain = crate::build("use math\nlog[1]\n").expect("parses");
         assert_eq!(inline_crow_modules(&plain).expect("inlines").len(), plain.len());
         // a function reached by the module's name, handed as a value, or
@@ -1693,17 +1717,17 @@ mod tests {
             inline_crow_modules(&stmts).expect("inlines").iter().filter_map(|s| if let Stmt::FnDecl { name, .. } = s { Some(name.clone()) } else { None }).collect()
         };
         let qualified = names("use io\nlog[len[io.csv['a.csv']]]\n");
-        assert!(qualified.contains(&"_io_csv".to_string()) && !qualified.contains(&"_io_lines".to_string()), "{:?}", qualified);
+        assert!(qualified.contains(&"_io··csv".to_string()) && !qualified.contains(&"_io··lines".to_string()), "{:?}", qualified);
         let handed = names("use io\nf = lines\nlog[len[f['a.txt']]]\n");
-        assert!(handed.contains(&"_io_lines".to_string()), "{:?}", handed);
+        assert!(handed.contains(&"_io··lines".to_string()), "{:?}", handed);
         let interpolated = names("use io\np = 'a.txt'\nlog['`len[lines[p]]`']\n");
-        assert!(interpolated.contains(&"_io_lines".to_string()) && !interpolated.contains(&"_io_csv".to_string()), "{:?}", interpolated);
+        assert!(interpolated.contains(&"_io··lines".to_string()) && !interpolated.contains(&"_io··csv".to_string()), "{:?}", interpolated);
     }
 
     /// A module's own imports are inlined after it (io's readers are
     /// written over sys's protocol), and its call of a core row written in
     /// Crow inlines the core — each module once, behind its own prefix,
-    /// the row's function named by the row's id (`_core_read_asked`), and
+    /// the row's function named by the row's id (`_core··read_asked`), and
     /// only what the program reaches: a reader it never calls stays out,
     /// as does every row of a module it never names.
     #[test]
@@ -1715,10 +1739,10 @@ mod tests {
         let fns = names("use io\nlog[csv['t.csv']]\n");
         // (every row of a name called: the one a call runs is decided
         // later, by its arguments — `csv` with the options is `csv_asked`)
-        for f in ["_io_csv", "_io_csv_asked", "_core_read", "_core_read_asked", "_core__as_text", "_sys_remote", "_sys_fetch", "_sys_exchange", "_sys__read_answer"] {
+        for f in ["_io··csv", "_io··csv_asked", "_core··read", "_core··read_asked", "_core··_as_text", "_sys··remote", "_sys··fetch", "_sys··exchange", "_sys··_read_answer"] {
             assert!(fns.contains(&f.to_string()), "{} is inlined: {:?}", f, fns);
         }
-        for f in ["_io_lines", "_io_lines_asked", "_io__lines_of", "_core_write", "_core_request", "_math_load", "_frame_load"] {
+        for f in ["_io··lines", "_io··lines_asked", "_io··_lines_of", "_core··write", "_core··request", "_math··load", "_frame··load"] {
             assert!(!fns.contains(&f.to_string()), "{} is never reached: {:?}", f, fns);
         }
         let mut seen = std::collections::BTreeSet::new();
@@ -1727,18 +1751,18 @@ mod tests {
         assert!(imports.iter().any(|(p, i)| p == "_io" && i == &["sys".to_string()]), "{:?}", imports);
         assert!(imports.iter().any(|(p, i)| p == "_core" && i == &["sys".to_string()]), "{:?}", imports);
         assert!(!imports.iter().any(|(p, _)| p == "_frame" || p == "_math"), "a module nothing reaches loads no scope: {:?}", imports);
-        assert_eq!(crow_scope_of("_core_read_asked").as_deref(), Some("_core"));
-        assert_eq!(crow_scope_of("_io__lines_of").as_deref(), Some("_io"));
+        assert_eq!(crow_scope_of("_core··read_asked").as_deref(), Some("_core"));
+        assert_eq!(crow_scope_of("_io··_lines_of").as_deref(), Some("_io"));
         assert_eq!(crow_scope_of("_lines_of"), None);
         // the options' row, by the module's name: both rows of the name
         let asked = names("use io\nlog[io.lines['t', timeout = 1.0]]\n");
-        for f in ["_io_lines", "_io_lines_asked", "_io__lines_of", "_core_read_asked"] {
+        for f in ["_io··lines", "_io··lines_asked", "_io··_lines_of", "_core··read_asked"] {
             assert!(asked.contains(&f.to_string()), "{} is inlined: {:?}", f, asked);
         }
-        assert!(!asked.contains(&"_io_csv".to_string()), "{:?}", asked);
+        assert!(!asked.contains(&"_io··csv".to_string()), "{:?}", asked);
         // the core alone, for a program that reads a file
         let core = names("log[read['t.txt']]\n");
-        assert!(core.contains(&"_core_read".to_string()) && !core.iter().any(|f| f.starts_with("_io_")), "{:?}", core);
+        assert!(core.contains(&"_core··read".to_string()) && !core.iter().any(|f| f.starts_with("_io_")), "{:?}", core);
         // a name of the program's that a module it never imports has a
         // row for reaches nothing: a feed's `put` is its parameter
         let feed = names("use web, frame\nfn lines[put, n]\n    put['x']\ns = stream[lines, 2]\n");
@@ -1750,10 +1774,10 @@ mod tests {
     /// (a harness lowers a part's tests and the app in turn).
     #[test]
     fn the_modules_carried_are_read_from_the_program() {
-        let carried = crow_modules_carried(["_core_read", "_core__as_text", "_sys_fetch", "main", "_io_csv"].into_iter());
+        let carried = crow_modules_carried(["_core··read", "_core··_as_text", "_sys··fetch", "main", "_io··csv"].into_iter());
         assert_eq!(carried, vec![("_core".to_string(), vec!["sys".to_string()]), ("_io".to_string(), vec!["sys".to_string()]), ("_sys".to_string(), vec!["sys".to_string()])]);
         assert!(crow_modules_carried(["main", "helper"].into_iter()).is_empty());
-        let frame = crow_modules_carried(["_frame_load"].into_iter());
+        let frame = crow_modules_carried(["_frame··load"].into_iter());
         assert_eq!(frame, vec![("_frame".to_string(), vec!["sys".to_string(), "frame".to_string()])]);
     }
 
@@ -1767,14 +1791,14 @@ mod tests {
         r.load(module_by_path("math").expect("math"));
         r.load_for("_core", module_by_path("sys").expect("sys"));
         assert!(r.has_function("exp") && !r.has_function("open"));
-        let saved = r.enter("_core_request");
+        let saved = r.enter("_core··request");
         assert!(r.has_function("open") && !r.has_function("exp"), "a module's scope is its own imports");
         assert_eq!(r.providers_of("slice"), vec!["sys"]);
         r.resume(saved);
         assert!(r.has_function("exp") && !r.has_function("open"));
         let stmts = crate::build("r = request['http://x/y']\nlog[r.status]\n").expect("parses");
         let out = inline_crow_modules(&stmts).expect("inlines");
-        assert!(out.iter().any(|s| matches!(s, Stmt::FnDecl { name, .. } if name == "_core_request")), "the core's source is inlined for a call of request");
+        assert!(out.iter().any(|s| matches!(s, Stmt::FnDecl { name, .. } if name == "_core··request")), "the core's source is inlined for a call of request");
         assert!(crow_imports().iter().any(|(p, i)| p == "_core" && i.iter().any(|m| m == "sys")));
         let none = crate::build("log[1]\n").expect("parses");
         assert!(!inline_crow_modules(&none).expect("inlines").iter().any(|s| matches!(s, Stmt::FnDecl { .. })));

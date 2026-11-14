@@ -1,5 +1,5 @@
-scenario board_door_the_door_lets_people_in_and_out (board/door.co)
-  stopped: line 52: map has no key 'name'
+scenario board·cards·only_an_admin_makes_a_board (board/cards.co)
+  ran to its end
   wrote:
     sqlite://taskboard.db CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY, role TEXT NOT NULL, hash TEXT NOT NULL)
     sqlite://taskboard.db CREATE TABLE IF NOT EXISTS boards (id INTEGER PRIMARY KEY, name TEXT NOT NULL)
@@ -10,11 +10,12 @@ scenario board_door_the_door_lets_people_in_and_out (board/door.co)
     sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["ada","admin","<password hash>"]
     sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["bob","member","<password hash>"]
     sqlite://taskboard.db INSERT OR IGNORE INTO boards (id, name) VALUES (1, ?) ["Launch"]
+    sqlite://taskboard.db INSERT INTO boards (name) VALUES (?) ["Autumn"]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","made the board Autumn"]
   answered with generated rows:
-    SELECT role, hash FROM people WHERE name = ?
+    SELECT id, name FROM boards ORDER BY id
   did not hold on rehearsal data:
-    test:44: log_in stopped, and nothing changed — the server's log has why, as <id> eq no one called nobody
-    test:49: log_in stopped, and nothing changed — the server's log has why, as <id> eq wrong password
+    test:144: 3 eq 4
+    test:145: assertion failed
   changed:
-    name = ada
-    password = lovelace
+    new_board = Mine

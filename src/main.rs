@@ -3432,7 +3432,11 @@ fn scenario_artifacts(entry: &str, parts: &std::collections::BTreeMap<String, St
         let dir = path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf();
         let stmts = expand_module_imports(&parsed, &dir, &mut std::collections::HashSet::new());
         let decls = checker::declarations(&stmts);
-        let stem = file.trim_end_matches(".co").replace('/', "_");
+        // (a scenario is keyed by its file's path and its name, each piece
+        // followed by `PART_JOIN` as a part's declarations are: joined by
+        // an underscore, `views/sim.co`'s test `t` and `views_sim.co`'s had
+        // been one key, `views_sim_t`, and one file of the baseline)
+        let stem = part_prefix(None, file.trim_end_matches(".co"));
         fn opens_app(stmts: &[ast::Stmt]) -> bool {
             let mut found = false;
             for st in stmts {
@@ -3486,7 +3490,7 @@ fn scenario_artifacts(entry: &str, parts: &std::collections::BTreeMap<String, St
             }
             let short = |l: &str| -> String { if l.chars().count() > 200 { format!("{}…", l.chars().take(200).collect::<String>()) } else { l.to_string() } };
             // the store reads a key back from the first line, up to ` (`
-            let key = format!("scenario {}_{}", stem, name);
+            let key = format!("scenario {}{}", stem, name);
             let mut text = format!("{} ({})\n", key, file);
             match &result {
                 Ok(()) => text.push_str("  ran to its end\n"),
@@ -4090,6 +4094,18 @@ pub(crate) fn as_the_program_writes(msg: &str) -> String {
         if !word.contains(PART_JOIN) {
             return word.to_string();
         }
+        // (a copy per signature is named as what it copies: `f·2` is `f`,
+        // `greet·loud·2` is `greet.loud` — `crate::ir::copy_name`)
+        let word = crate::ir::copy_base(word);
+        if !word.contains(PART_JOIN) {
+            return word.to_string();
+        }
+        // (a standard module's declaration, its prefix joined by the mark
+        // twice — which no part's name holds — is named as the module's
+        // own functions are, bare: `crate::modules::inlined_name`)
+        if word.contains(&format!("{}{}", PART_JOIN, PART_JOIN)) {
+            return crate::modules::written_as(word);
+        }
         if let Some((local, part)) = word.rsplit_once("__")
             && !local.is_empty()
             && part.ends_with(PART_JOIN)
@@ -4126,7 +4142,7 @@ pub(crate) fn as_the_program_writes(msg: &str) -> String {
 /// entry file's own. Inside that part's functions its own facts and
 /// derivations carry the prefix, so a name without it is never the part's
 /// own. Read from what each part declares, as the expansion brought it — a
-/// copy's by the function it copies (`greet·loud__2`) — never from a
+/// copy's by the function it copies (`greet·loud·2`) — never from a
 /// prefix alone: joined by an underscore, the program's `greet_twice`
 /// beside the package greet had begun with the package's prefix, been
 /// taken for the package's, and its refusal placed in the package's file.
@@ -7558,7 +7574,7 @@ mod module_parts_tests {
         let main = dir.join("main.co");
         std::fs::write(&main, src).unwrap();
         let out = scenario_artifacts(&main.display().to_string(), &std::collections::BTreeMap::new());
-        let (file, text) = out.get("scenario main_saving_writes_a_note").cloned().unwrap_or_else(|| panic!("{:?}", out.keys().collect::<Vec<_>>()));
+        let (file, text) = out.get("scenario main·saving_writes_a_note").cloned().unwrap_or_else(|| panic!("{:?}", out.keys().collect::<Vec<_>>()));
         assert_eq!(file, "main.co");
         assert!(text.contains("ran to its end"), "{}", text);
         assert!(text.contains(&format!("wrote:\n    sqlite://{} INSERT INTO notes (text) VALUES (?) [\"hello\"]", db.display())), "{}", text);
@@ -7567,6 +7583,28 @@ mod module_parts_tests {
         assert!(text.contains("n = 3") && text.contains("said = saved 3"), "{}", text);
         assert!(!db.exists(), "the rehearsal opened the sqlite file");
         assert!(text.contains("write[") && !dir.join("out.txt").exists(), "{}", text);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A scenario is keyed by its file's path and its name joined by the
+    /// mark no name holds: `views/sim.co`'s test `t` and `views_sim.co`'s
+    /// had been one key, `views_sim_t`, one artifact standing for both
+    #[test]
+    fn scenarios_of_two_files_spelled_alike_are_two() {
+        let dir = std::env::temp_dir().join(format!("crow_scenario_keys_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("views")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'keys'\n").unwrap();
+        let page = |said: &str| format!("use web, ui\nn = 0\nfn go[]\n    n = n + 1\nview v[]\n    return button['{}', click = go]\npage['/', v]\ntest t[]\n    a = app[v]\n    click[a, go]\n    assert[n eq 1]\n", said);
+        std::fs::write(dir.join("views/sim.co"), page("nested")).unwrap();
+        std::fs::write(dir.join("views_sim.co"), page("flat")).unwrap();
+        std::fs::write(dir.join("main.co"), "log['main']\n").unwrap();
+        let parts: std::collections::BTreeMap<String, String> = [("views·sim·", "views/sim.co"), ("views_sim·", "views_sim.co")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let out = scenario_artifacts(&dir.join("main.co").display().to_string(), &parts);
+        let keys: Vec<&String> = out.keys().collect();
+        assert_eq!(keys, ["scenario views_sim·t", "scenario views·sim·t"], "{:?}", keys);
+        assert_eq!(out["scenario views·sim·t"].0, "views/sim.co");
+        assert_eq!(out["scenario views_sim·t"].0, "views_sim.co");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

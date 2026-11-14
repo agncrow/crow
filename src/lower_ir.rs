@@ -6142,6 +6142,24 @@ impl<'a> Lowerer<'a> {
                 }
                 _ => self.lower_expr(callee)?,
             };
+            // a value's field it has none of, read as the call's base: a
+            // function's name written as the value's method (`xs.total[]`,
+            // `s.upper[]`, `n.abs[]`) is refused as the call it means, any
+            // other name as the field read is. (The base is read muted, so
+            // its own refusal had said nothing, and the call went through
+            // the field as a function value: interpreted it stopped as it
+            // ran, "numarray has no property 'total'", and the compiled
+            // program did not build.)
+            if self.pass == Pass::Final
+                && let A::FieldAccess { object, field } = callee
+                && let A::Ident(of) = object.as_ref()
+                && let Expr::Field { base: held, .. } = &base
+                && !self.contested(held)
+                && let Some(reason) = self.field_refusal(&read(held), field)
+            {
+                let reason = if self.names_a_function(field) { crate::lower::method_form(of, field, !args.is_empty()) } else { reason };
+                self.refuse(reason);
+            }
             // an item of a value that can fail is read from its payload,
             // refused first when it failed — a function hands the error
             // back, a handler stops, the top level halts — as a field read
@@ -6194,7 +6212,7 @@ impl<'a> Lowerer<'a> {
                             A::Ident(n) => n.clone(),
                             _ => "…".to_string(),
                         };
-                        self.refuse(format!("{0}.{1}[] is {1}[{0}]: a function takes its value first", of, field));
+                        self.refuse(crate::lower::method_form(&of, field, !args.is_empty()));
                     }
                     // (what a function that answers nothing gives, held for
                     // whether it failed: indexed, the interpreter had stopped,
@@ -11732,8 +11750,8 @@ log[drive[3]]
     #[test]
     fn a_modules_function_written_in_crow_is_the_programs_call() {
         let ir = ir_of("use io\nlog[len[lines['a.txt']]]\n");
-        assert!(ir.contains("_io_lines"), "{}", ir);
-        assert!(!ir.contains("_io_csv"), "a function the program does not call is not inlined: {}", ir);
+        assert!(ir.contains("_io··lines"), "{}", ir);
+        assert!(!ir.contains("_io··csv"), "a function the program does not call is not inlined: {}", ir);
         let r = refusal_of("use io\nlog[lines[5]]\n");
         assert!(r.contains("lines") && !r.contains("_io_"), "{}", r);
     }

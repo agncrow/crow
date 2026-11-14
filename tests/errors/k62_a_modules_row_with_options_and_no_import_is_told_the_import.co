@@ -1,0 +1,3 @@
+--- a module's row that has options, called through the module's name in a file that does not import it, is told the import, as a row without options is: `frame.window[d, 2]` without `use frame` had been told the arguments a window takes
+d = 3
+log[frame.window[d, 2]]

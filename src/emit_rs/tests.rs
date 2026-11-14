@@ -1420,8 +1420,8 @@ fn test_math_normal_transpile() {
     let rust = transpile("use math\nx = normal[0, 1, 3, 4]\nlog[x]\n");
     // the builtin table's row is written in Crow: the module's function,
     // its sizes handed as one list
-    assert!(rust.contains("fn _math_normal("), "the module's function is defined\n{}", rust);
-    assert!(rust.matches("_math_normal(").count() >= 2, "the module's function is called\n{}", rust);
+    assert!(rust.contains("fn _math··normal("), "the module's function is defined\n{}", rust);
+    assert!(rust.matches("_math··normal(").count() >= 2, "the module's function is called\n{}", rust);
     assert!(!rust.contains("crow_runtime::math::normal("), "no runtime normal\n{}", rust);
 }
 
@@ -1803,17 +1803,17 @@ fn mail_in_a_handler_goes_through_the_session() {
     assert!(!rust.contains("\"mailer\", serde_json"), "not a session fact\n{}", rust);
     // a script sends at once
     let rust = transpile("use web\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']\nr = mail[mailer, 'ada@example.com', 'Hello', 'Welcome']\nlog[r.ok]\n");
-    assert!(rust.contains("_web_mail_mail(mailer.clone(), ") && !rust.contains("state.mail("), "a script sends through the row written in Crow, at once\n{}", rust);
+    assert!(rust.contains("_web_mail··mail(mailer.clone(), ") && !rust.contains("state.mail("), "a script sends through the row written in Crow, at once\n{}", rust);
 }
 
 #[test]
 fn test_web_socket() {
     // a socket, and what acts on it, are crow_web's
     let rust = transpile("use web\nuse web.ws\nurl = 'ws://localhost:3000'\nsock = socket[url]\nsend[sock, 'hi']\nmsg = recv[sock, 5]\nclose[sock]\n");
-    assert!(rust.contains("_web_ws_socket("), "the socket written in Crow\n{}", rust);
-    assert!(rust.contains("_web_ws_send_text("), "a send is the module's\n{}", rust);
-    assert!(rust.contains("_web_ws_recv_for("), "a recv with its wait is the module's\n{}", rust);
-    assert!(rust.contains("_web_ws_close("), "a close is the module's\n{}", rust);
+    assert!(rust.contains("_web_ws··socket("), "the socket written in Crow\n{}", rust);
+    assert!(rust.contains("_web_ws··send_text("), "a send is the module's\n{}", rust);
+    assert!(rust.contains("_web_ws··recv_for("), "a recv with its wait is the module's\n{}", rust);
+    assert!(rust.contains("_web_ws··close("), "a close is the module's\n{}", rust);
 }
 
 // --- DB module codegen tests ---
@@ -1930,8 +1930,8 @@ fn test_web_msgpack_response() {
     // packed by the function written in Crow (src/modules/web.co), handed
     // the value as the program holds it — typed by that use — and reading
     // it as its JSON inside, as the interpreter's does
-    assert!(rust.contains("_web_msgpack("), "the packer written in Crow\n{}", rust);
-    assert!(rust.contains("fn _web_msgpack(value: ") && rust.contains(") -> crow_web::core::CrowResponse"), "{}", rust);
+    assert!(rust.contains("_web··msgpack("), "the packer written in Crow\n{}", rust);
+    assert!(rust.contains("fn _web··msgpack(value: ") && rust.contains(") -> crow_web::core::CrowResponse"), "{}", rust);
 }
 
 #[test]
@@ -2266,8 +2266,8 @@ fn test_find_answers_a_record_or_an_error_value() {
 fn test_monomorphization_clones_per_signature() {
     // F2: a function used at two types compiles as two clones
     let rust = transpile("fn first[arr]\n    return arr[0]\nlog[first[[1, 2]]]\nlog[first[['a', 'b']]]\n");
-    assert!(rust.contains("fn first__1"), "should emit first clone\n{}", rust);
-    assert!(rust.contains("fn first__2"), "should emit second clone\n{}", rust);
+    assert!(rust.contains("fn first·1"), "should emit first clone\n{}", rust);
+    assert!(rust.contains("fn first·2"), "should emit second clone\n{}", rust);
     assert!(!rust.contains("fn first("), "original should not be emitted\n{}", rust);
 }
 

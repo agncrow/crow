@@ -2534,7 +2534,7 @@ impl IrInterp {
     /// the server took it, or why not (the reason already names the message).
     pub(crate) fn send_mail(&mut self, mailer: &CrowValue, mail: &crow_web::live::SentMail) -> Result<(), String> {
         let args = vec![mailer.clone(), CrowValue::ok(Value::Str(mail.to.clone())), CrowValue::ok(Value::Str(mail.subject.clone())), CrowValue::ok(Value::Str(mail.body.clone()))];
-        let sent = self.call_user("_web_mail_mail", args)?;
+        let sent = self.call_user(&crate::modules::inlined_name("_web_mail", "mail"), args)?;
         if sent.is_ok() {
             Ok(())
         } else {
@@ -3254,7 +3254,7 @@ impl IrInterp {
         r
     }
 
-    /// The function a call names: a specialised name (first__1) is the one
+    /// The function a call names: a specialised name (first·1) is the one
     /// body to the interpreter.
     fn function_named(&self, name: &str) -> Result<Arc<Fn>, String> {
         match self.fns.get(name) {

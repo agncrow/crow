@@ -410,7 +410,8 @@ never copied for that kind: the clones' calls are now read again after
 their bodies settle (`specialize`, parity 259). A double underscore
 inside a name read as a copy's mark (`_llm__model_of`, a helper behind
 its prefix), so such a function was never copied at all: one predicate,
-`ir::copy_base`, names a copy (`name__N`) everywhere. A loop's variable
+`ir::copy_base`, names a copy (`name__N` then; `name·N` since November
+2026, a mark no name a program writes holds) everywhere. A loop's variable
 whose item kind was not known yet kept a binding of the same name from
 outside the loop — a module's `for t in tools` read the program's
 top-level `t` — so a loop variable is now its own binding whatever is

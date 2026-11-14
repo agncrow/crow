@@ -2014,7 +2014,7 @@ pub const IN_CROW: &str = "crow";
 /// the module's path and the name, behind an underscore no program
 /// spells (`_io_lines`); `crate::modules::inline` makes them.
 pub fn crow_fn_name(row: &Row) -> String {
-    format!("_{}_{}", crow_prefix_of(row.module), crow_fn_base(row))
+    crate::modules::inlined_name(&format!("_{}", crow_prefix_of(row.module)), crow_fn_base(row))
 }
 
 /// The prefix a module's functions carry when inlined: the module's path,

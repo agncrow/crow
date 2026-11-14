@@ -535,11 +535,7 @@ impl Emitter {
     /// generated function of the driver's row: a result's failure of kind
     /// `sys` says the connection is gone.
     fn driver_glue(&mut self, backend: &str) {
-        let prefix = match backend {
-            "clickhouse" => "_db_clickhouse_ch",
-            "postgres" => "_db_postgres_pg",
-            _ => return,
-        };
+        let Some(prefix) = crate::modules::driver_rows_prefix(backend) else { return };
         let failed = "Err(crow_db::driven::Failure { reason: _r.reason, lost: _r.kind == \"sys\" })";
         self.line(&format!("struct __CrowDriver{};", backend));
         self.line(&format!("impl crow_db::driven::Calls for __CrowDriver{} {{", backend));
@@ -901,7 +897,8 @@ impl Emitter {
         let specialized: BTreeSet<String> = self
             .fns
             .keys()
-            .filter_map(|n| n.rsplit_once("__").filter(|(_, s)| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())).map(|(b, _)| b.to_string()))
+            .filter(|n| crate::ir::is_copy(n))
+            .map(|n| crate::ir::copy_base(n).to_string())
             .collect();
         let names: Vec<String> = self.fns.keys().cloned().collect();
         let emitted = self.emitted_functions(&specialized);
@@ -1397,7 +1394,7 @@ impl Emitter {
             let clones: Vec<String> = self
                 .fns
                 .keys()
-                .filter(|k| k.strip_prefix(h.as_str()).and_then(|r| r.strip_prefix("__")).map_or(false, |d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit())))
+                .filter(|k| crate::ir::copy_of(k, &h))
                 .cloned()
                 .collect();
             let target = if clones.is_empty() {

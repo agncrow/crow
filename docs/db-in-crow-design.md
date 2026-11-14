@@ -48,7 +48,7 @@ calls (`crow_db::driven::Calls`):
 The table is registered by the program:
 
 - **Compiled:** the generated program registers, at its start, a `Calls`
-  whose methods call the generated functions (`_db_clickhouse_query`, …),
+  whose methods call the generated functions (`_db_clickhouse··ch_query`, …),
   as it registers the mail sender. Any thread may call them.
 - **Interpreted:** the interpreter keeps, per thread, a child interpreter
   over the same program's functions, and registers a `Calls` that calls

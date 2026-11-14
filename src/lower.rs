@@ -352,7 +352,7 @@ fn scoped(stmts: Vec<Stmt>) -> Result<Vec<Stmt>, String> {
 
 /// Whether a name is a function the language has — a builtin, or any
 /// standard module's — as a method-style call (`df.join[…]`) means it.
-fn is_function_name(name: &str) -> bool {
+pub(crate) fn is_function_name(name: &str) -> bool {
     crate::lower_ir::BUILTINS.contains(&name) || crate::modules::ModuleRegistry::with_stdlib().has_function(name)
 }
 
@@ -362,6 +362,18 @@ fn is_function_name(name: &str) -> bool {
 /// something (crate::lower_ir, `named_call`).
 pub(crate) fn takes_no_names(target: &str) -> String {
     format!("{} takes no named arguments — a function, a struct, a builtin with named parameters or a ui element does", target)
+}
+
+/// The refusal of a function's name read as a value's method, `v.f[…]`
+/// for `f[v, …]` (pandas's form): one wording, here, and by the checks
+/// (crate::lower_ir, `call_inner`), whatever the value is. (`v.f[]` is
+/// what the printer underlines: `crate::diagnostic::subjects`.)
+pub(crate) fn method_form(of: &str, f: &str, more: bool) -> String {
+    if more {
+        format!("{0}.{1}[] is {1}[{0}, …]: a function takes its value first", of, f)
+    } else {
+        format!("{0}.{1}[] is {1}[{0}]: a function takes its value first", of, f)
+    }
 }
 
 thread_local! {
@@ -1170,8 +1182,12 @@ impl Lowerer {
                     }
                     // the same for a module's row called by its module —
                     // frame.window[…], io.lines[url, headers = …] —
-                    // under the name the file imports it as
-                    None if matches!(&callee, Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if crate::table::rows_named_in(self.imports.get(m).map_or(m.as_str(), |p| p.as_str()), field).any(|r| !r.options.is_empty()))) => {
+                    // under the name the file imports it as; a module the
+                    // file does not import is the checks' to say, before
+                    // anything about the call's arguments (its options
+                    // filled in, `frame.window[d, 2]` without `use frame`
+                    // had been told the arguments a window takes)
+                    None if matches!(&callee, Expr::FieldAccess { object, field } if matches!(object.as_ref(), Expr::Ident(m) if (self.module_imported(m) || crate::modules::is_crow_fn(&self.current_fn)) && crate::table::rows_named_in(self.imports.get(m).map_or(m.as_str(), |p| p.as_str()), field).any(|r| !r.options.is_empty()))) => {
                         let Expr::FieldAccess { object, field } = &callee else { unreachable!("matched a field access") };
                         let module = match object.as_ref() {
                             Expr::Ident(m) => self.imports.get(m).cloned().unwrap_or_else(|| m.clone()),
@@ -1201,7 +1217,7 @@ impl Lowerer {
                                     // a function written as a value's method, as
                                     // pandas writes it: Crow hands the value first
                                     if !self.module_imported(m) && is_function_name(field) {
-                                        return Err(self.err(format!("{0}.{1}[] is {1}[{0}, …]: a function takes its value first", m, field)));
+                                        return Err(self.err(method_form(m, field, true)));
                                     }
                                 }
                             }

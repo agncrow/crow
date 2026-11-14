@@ -1260,7 +1260,7 @@ impl TypeContext {
                     && !sig.iter().any(|t| matches!(t, Ty::Fn(_, _)))
                     && let Some(base) = self.functions.get(name).cloned()
                 {
-                    let mangled = format!("{}__{}", name, idx);
+                    let mangled = crate::ir::copy_name(name, idx);
                     if !self.functions.contains_key(&mangled) {
                         let params: Vec<(String, Ty)> = base.params.iter().zip(sig.iter()).map(|((pname, _), ty)| (pname.clone(), ty.clone())).collect();
                         self.functions.insert(mangled.clone(), FnSig { params, return_type: Ty::Unknown, body: base.body.clone() });
@@ -1381,7 +1381,7 @@ impl TypeContext {
             }
             let Some(base) = self.functions.get(&name).cloned() else { continue };
             for (idx, sig) in sigs.iter().enumerate() {
-                let mangled = format!("{}__{}", name, idx + 1);
+                let mangled = crate::ir::copy_name(&name, idx + 1);
                 let params: Vec<(String, Ty)> = base
                     .params
                     .iter()

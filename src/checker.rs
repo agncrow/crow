@@ -1117,10 +1117,10 @@ pub fn reactive_readers(ctx: &TypeContext) -> BTreeSet<String> {
             out.extend(crate::derive::called_fns(body, &fns));
         }
     }
-    // a specialisation of a reactive function (`jump__1`, typed for one
+    // a specialisation of a reactive function (`jump·1`, typed for one
     // call site) is the same function
     let clones: Vec<String> = fns.keys()
-        .filter(|n| n.rsplit_once("__").map_or(false, |(base, sfx)| !sfx.is_empty() && sfx.chars().all(|c| c.is_ascii_digit()) && out.contains(base)))
+        .filter(|n| crate::ir::is_copy(n) && out.contains(crate::ir::copy_base(n)))
         .cloned()
         .collect();
     out.extend(clones);

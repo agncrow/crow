@@ -1,4 +1,4 @@
-scenario board_page_the_page_is_the_door_until_someone_signs_in (board/page.co)
+scenario board·cards·two_readers_share_a_board (board/cards.co)
   ran to its end
   wrote:
     sqlite://taskboard.db CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY, role TEXT NOT NULL, hash TEXT NOT NULL)
@@ -10,11 +10,24 @@ scenario board_page_the_page_is_the_door_until_someone_signs_in (board/page.co)
     sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["ada","admin","<password hash>"]
     sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["bob","member","<password hash>"]
     sqlite://taskboard.db INSERT OR IGNORE INTO boards (id, name) VALUES (1, ?) ["Launch"]
-    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["bob","signed out"]
+    sqlite://taskboard.db INSERT INTO boards (name) VALUES (?) ["Sprint"]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","made the board Sprint"]
+    sqlite://taskboard.db INSERT INTO cards (board, title, status, owner, stars) VALUES (?, ?, ?, ?, 0) [3,"Write the docs","todo","bob"]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["bob","added Write the docs"]
+    sqlite://taskboard.db UPDATE cards SET status = ? WHERE id = ? ["done",1]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","moved title1 to done"]
+    sqlite://taskboard.db UPDATE cards SET status = ? WHERE id = ? ["done",1]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["bob","moved title1 to done"]
   answered with generated rows:
     SELECT id, name FROM boards ORDER BY id
     SELECT id, title, status, owner, stars FROM cards WHERE board = ? ORDER BY id
-    SELECT who, what FROM audit ORDER BY id DESC
+    SELECT title, status FROM cards WHERE id = ?
   did not hold on rehearsal data:
-    test:29: who1 eq bob
-    test:30: what1 eq signed out
+    test:161: 3 eq 0
+    test:164: 3 eq 1
+    test:165: assertion failed
+    test:167: owner1 eq bob
+    test:169: status1 eq doing
+    test:171: status1 eq done
+  changed:
+    board_id = 3

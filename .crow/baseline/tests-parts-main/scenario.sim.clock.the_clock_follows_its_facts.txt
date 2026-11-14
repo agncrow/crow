@@ -1,4 +1,4 @@
-scenario sim_clock_the_clock_follows_its_facts (sim/clock.co)
+scenario sim·clock·the_clock_follows_its_facts (sim/clock.co)
   ran to its end
   changed:
     anchor = 1767225600

@@ -1,0 +1,19 @@
+--- a function's name written as a value's method — the program's, a builtin's — is refused as the call it means, whatever the value: `xs.total[]` had passed every check, stopped interpreted as it ran ("numarray has no property 'total'") and not built compiled, as `s.upper[]` and `n.abs[]` had
+--- mistakes: 5
+fn total[xs]
+    s = 0
+    for x in xs
+        s = s + x
+    return s
+
+fn go[xs]
+    return xs.total[]
+
+xs = [1, 2, 3]
+s = 'abc'
+n = 4
+log[xs.total[]]
+log[s.upper[]]
+log[n.abs[]]
+log[xs.sum[2]]
+log[go[xs]]

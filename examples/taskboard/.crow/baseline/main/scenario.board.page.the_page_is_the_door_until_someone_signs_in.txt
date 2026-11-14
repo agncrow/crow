@@ -1,4 +1,4 @@
-scenario board_cards_only_an_admin_makes_a_board (board/cards.co)
+scenario board·page·the_page_is_the_door_until_someone_signs_in (board/page.co)
   ran to its end
   wrote:
     sqlite://taskboard.db CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY, role TEXT NOT NULL, hash TEXT NOT NULL)
@@ -10,12 +10,11 @@ scenario board_cards_only_an_admin_makes_a_board (board/cards.co)
     sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["ada","admin","<password hash>"]
     sqlite://taskboard.db INSERT OR IGNORE INTO people VALUES (?, ?, ?) ["bob","member","<password hash>"]
     sqlite://taskboard.db INSERT OR IGNORE INTO boards (id, name) VALUES (1, ?) ["Launch"]
-    sqlite://taskboard.db INSERT INTO boards (name) VALUES (?) ["Autumn"]
-    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["ada","made the board Autumn"]
+    sqlite://taskboard.db INSERT INTO audit (who, what) VALUES (?, ?) ["bob","signed out"]
   answered with generated rows:
     SELECT id, name FROM boards ORDER BY id
+    SELECT id, title, status, owner, stars FROM cards WHERE board = ? ORDER BY id
+    SELECT who, what FROM audit ORDER BY id DESC
   did not hold on rehearsal data:
-    test:144: 3 eq 4
-    test:145: assertion failed
-  changed:
-    new_board = Mine
+    test:29: who1 eq bob
+    test:30: what1 eq signed out

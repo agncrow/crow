@@ -437,13 +437,13 @@ pub struct Fn {
     pub recursive: bool,
 }
 
-/// A function copied per signature is named `name__N` (crate::type_infer,
-/// `new_clones`): the name it was copied from, or the name itself where it
-/// is no copy. A double underscore elsewhere in a name is the name's own
-/// (a standard module's helper `_talk_of` inlined behind its prefix is
-/// `_llm__talk_of`), not a copy's mark.
+/// A function copied per signature is named `name·N` (`copy_name`, made
+/// by crate::type_infer's `new_clones`): the name it was copied from, or
+/// the name itself where it is no copy. A mark elsewhere in a name is a
+/// part's or a standard module's (`greet·loud`, `_io··lines`), never
+/// followed by a number alone.
 pub fn copy_base(name: &str) -> &str {
-    match name.rsplit_once("__") {
+    match name.rsplit_once(crate::PART_JOIN) {
         Some((base, n)) if !base.is_empty() && !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => base,
         _ => name,
     }
@@ -452,6 +452,22 @@ pub fn copy_base(name: &str) -> &str {
 /// Whether the name is a copy's (`copy_base`).
 pub fn is_copy(name: &str) -> bool {
     copy_base(name) != name
+}
+
+/// Whether the name is a copy of the function `base` (`copy_name`).
+pub fn copy_of(name: &str, base: &str) -> bool {
+    is_copy(name) && copy_base(name) == base
+}
+
+/// The name of a function's copy for one signature: the function's name
+/// and the copy's number joined by `PART_JOIN` (`f·2`, `greet·loud·2`,
+/// `_io··lines·2`). No name a program writes holds the mark, and no part's
+/// declaration has a number after one (a name begins with a letter or an
+/// underscore): joined by two underscores, a program's own `fn f__2`
+/// beside a function `f` called at two signatures had taken the copy's
+/// place, and its body was refused as the copy's.
+pub fn copy_name(name: &str, n: usize) -> String {
+    format!("{}{}{}", name, crate::PART_JOIN, n)
 }
 
 /// A body's first source line: where a recursion past the limit stops,

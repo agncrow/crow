@@ -1,4 +1,4 @@
-scenario board_cards_a_card_keeps_its_talk_and_files (board/cards.co)
+scenario board·cards·a_card_keeps_its_talk_and_files (board/cards.co)
   stopped: line 94: download: No such file or directory (os error 2)
   wrote:
     sqlite://taskboard.db CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY, role TEXT NOT NULL, hash TEXT NOT NULL)

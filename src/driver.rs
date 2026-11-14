@@ -35,13 +35,19 @@ fn backends_in(fns: &HashMap<String, Arc<crate::ir::Fn>, crate::ir_interp::Names
 
 /// The drivers the manifest declares (crate::modules::MODULES): each
 /// backend's name, and the prefix its rows' functions carry in a program
-/// (`_db_clickhouse_ch`).
+/// (`_db_clickhouse··ch`).
 fn drivers() -> impl Iterator<Item = (&'static str, &'static str)> {
-    crate::modules::MODULES.iter().filter_map(|m| {
-        let d = m.driver.as_ref()?;
-        let prefix: &'static str = Box::leak(format!("{}_{}", m.prefix, d.rows).into_boxed_str());
-        Some((d.backend, prefix))
-    })
+    static DRIVERS: std::sync::LazyLock<Vec<(&'static str, &'static str)>> = std::sync::LazyLock::new(|| {
+        crate::modules::MODULES
+            .iter()
+            .filter_map(|m| {
+                let d = m.driver.as_ref()?;
+                let prefix: &'static str = Box::leak(crate::modules::driver_rows_prefix(d.backend)?.into_boxed_str());
+                Some((d.backend, prefix))
+            })
+            .collect()
+    });
+    DRIVERS.iter().copied()
 }
 
 /// The interpreter loaded a program: what it carries is what a child is

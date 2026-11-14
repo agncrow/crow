@@ -19,9 +19,36 @@ history says the rest.
   function so (`main.shapes·picky:3`). A program that reached a part's
   declaration by the spelling it had been inlined as (`greet_loud[…]`
   for `greet.loud[…]`) is refused, and offered the qualified name.
+- A scenario of an app's baseline is keyed by its file's path and its
+  name joined by `·` (`scenario board·door·the_door_lets_people_in_and_out`,
+  stored as `scenario.board.door.the_door_lets_people_in_and_out.txt`):
+  an app with named tests that open it reports each scenario as removed
+  and new until it is accepted once (`crow check`, then `a`).
 
 ### Fixed
 
+- A method written in square brackets is refused before the program
+  runs, in both modes: a function's name read as a value's — the
+  program's, a builtin's, a module's — is told the call it means
+  (`xs.total[] is total[xs]: a function takes its value first`,
+  `s.upper[]`, `n.abs[]`, `xs.sum[2]`), and a name the value has no field
+  of is told so (`numbers has no field 'nosuch'`). The call had passed
+  every check, stopped the interpreter as it ran ("numarray has no
+  property 'total'") and not built compiled.
+- A module's function that has options, called through the module's
+  name in a file that does not import it, is told the import, as any
+  other is: `frame.window[d, 2]` without `use frame` had been told the
+  arguments a window takes.
+- A program's own name spelled like a name the compiler makes is the
+  program's: `fn _io_lines` beside `use io` had been io's `lines` as
+  well, and stopped as a bug in Crow ("the lowered program disagrees
+  with itself"); `fn f__2` beside a function `f` called at two signatures
+  had taken the place of `f`'s second copy, and been refused as it. A
+  standard module's functions are inlined under their prefix and name
+  joined by `··` (`_io··lines`) and a copy per signature under its name
+  and number joined by `·` (`f·2`), marks no name a program writes
+  holds; `views/sim.co`'s test `t` and `views_sim.co`'s are two
+  scenarios of the baseline, where they had been one.
 - What `crow setup` fetches is said at its size: about 270 MB, the
   toolchain about 220 and the runtime about 50 (203 and 51 MB on a Mac,
   233 and 51 on Linux), where `crow setup`, a run with no compiler and

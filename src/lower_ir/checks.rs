@@ -142,8 +142,10 @@ pub(super) fn without_echoes(errors: Vec<(String, Option<String>)>) -> Vec<(Stri
 
 /// A name as the program wrote it: a part's function without the prefix
 /// the expansion gave it (`helpers·spread` is `spread`), a part's local
-/// without its suffix (`df__helpers·` is `df`).
+/// without its suffix (`df__helpers·` is `df`), a copy as what it copies
+/// (`f·2` is `f`).
 pub(crate) fn plain_name(name: &str) -> String {
+    let name = crate::ir::copy_base(name);
     let unprefixed = match crate::part_prefix_of_declaration(name) {
         Some(prefix) => name[prefix.len()..].to_string(),
         None => name.to_string(),
@@ -1421,8 +1423,15 @@ impl<'a> Lowerer<'a> {
     /// list of tensors asked its `.shape` had stopped interpreted and not
     /// built compiled).
     pub(super) fn check_field(&mut self, obj_type: &Ty, field: &str) {
+        if let Some(reason) = self.field_refusal(obj_type, field) {
+            self.refuse(reason);
+        }
+    }
+
+    /// Why a value of this type has no field of this name, if it has none.
+    pub(super) fn field_refusal(&self, obj_type: &Ty, field: &str) -> Option<String> {
         if matches!(field, "ok" | "reason" | "kind" | "trace") {
-            return;
+            return None;
         }
         // (a value that can fail has its payload's fields: a list read from
         // a file asked `.b` had stopped interpreted and not built compiled —
@@ -1434,8 +1443,7 @@ impl<'a> Lowerer<'a> {
                 "columns" | "dtypes" => "a frame's",
                 _ => "a record's field or a frame's column",
             };
-            self.refuse(format!("a list has no field '{}': `.{}` is {} — index an item for its own", field, field, owner));
-            return;
+            return Some(format!("a list has no field '{}': `.{}` is {} — index an item for its own", field, field, owner));
         }
         // a number, a bool, text, bytes, a function or a handle has no
         // fields (`x.name` of an int had stopped the interpreter as it ran
@@ -1462,23 +1470,28 @@ impl<'a> Lowerer<'a> {
         };
         if fieldless || own_fields.is_some_and(|fs| !fs.contains(&field)) {
             let words = crate::table::Arg::of_type(obj_type).words();
-            if BUILTINS.contains(&field) {
-                self.refuse(format!("{} has no field '{}' — a function takes its value first: {}[…]", words, field, field));
+            return Some(if self.names_a_function(field) {
+                format!("{} has no field '{}' — a function takes its value first: {}[…]", words, field, field)
             } else if let Some(fs) = own_fields {
-                self.refuse(format!("{} has no field '{}' — its fields are {}", words, field, fs.join(", ")));
+                format!("{} has no field '{}' — its fields are {}", words, field, fs.join(", "))
             } else {
-                self.refuse(format!("{} has no field '{}'", words, field));
-            }
-            return;
+                format!("{} has no field '{}'", words, field)
+            });
         }
-        if let Ty::Record(name) = obj_type {
-            if let Some(sig) = self.ctx.structs.get(name) {
-                if !sig.fields.iter().any(|(f, _)| f == field) {
-                    let name = name.clone();
-                    self.refuse(format!("struct '{}' has no field '{}'", name, field));
-                }
-            }
+        if let Ty::Record(name) = obj_type
+            && let Some(sig) = self.ctx.structs.get(name)
+            && !sig.fields.iter().any(|(f, _)| f == field)
+        {
+            return Some(format!("struct '{}' has no field '{}'", name, field));
         }
+        None
+    }
+
+    /// A function's name read as a value's method, `v.f[…]`, where the
+    /// value has no field of the name: one refusal wherever the call is
+    /// written so (pandas's form; Crow hands the value first).
+    pub(super) fn names_a_function(&self, field: &str) -> bool {
+        crate::lower::is_function_name(field) || self.calls_fn(field)
     }
 
     /// A package's helper named from a file outside the package: a name

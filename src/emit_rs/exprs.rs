@@ -434,7 +434,7 @@ impl Emitter {
     }
 
     fn fn_ref(&self, name: &str) -> String {
-        let specialized = self.fns.keys().any(|k| k.rsplit_once("__").map_or(false, |(b, s)| b == name && s.chars().all(|c| c.is_ascii_digit())));
+        let specialized = self.fns.keys().any(|k| crate::ir::copy_of(k, name));
         if specialized {
             return format!(
                 "compile_error!(\"'{}' is used at multiple type signatures and cannot be passed as a value — a function value has one type. Wrap it in a single-type function\")",

@@ -84,14 +84,15 @@ pub fn verify_in<'p>(program: &'p Program, known: &HashMap<String, Ty>, earlier:
         let specialized: std::collections::HashSet<&str> = part
             .fns
             .iter()
-            .filter_map(|f| f.name.rsplit_once("__").filter(|(_, n)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())).map(|(b, _)| b))
+            .filter(|f| crate::ir::is_copy(&f.name))
+            .map(|f| crate::ir::copy_base(&f.name))
             .collect();
         let reached = crate::ir::reached_fns(part);
         for f in &part.fns {
             if specialized.contains(f.name.as_str()) {
                 continue;
             }
-            v.runs = reached.contains(&f.name) || f.name.rsplit_once("__").is_some_and(|(b, _)| reached.contains(b));
+            v.runs = reached.contains(&f.name) || reached.contains(crate::ir::copy_base(&f.name)) || f.name.rsplit_once("__").is_some_and(|(b, _)| reached.contains(b));
             v.body = format!("fn {}", f.name);
             v.line = 0;
             // a builtin written in Crow answers what its row states: the
@@ -139,7 +140,7 @@ fn crow_row_of(name: &str) -> Option<&'static crate::table::Row> {
         return None;
     }
     let base = name.strip_prefix("_traced_").unwrap_or(name);
-    let base = base.rsplit_once("__").filter(|(_, n)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())).map_or(base, |(b, _)| b);
+    let base = crate::ir::copy_base(base);
     crate::table::ROWS.iter().find(|r| r.is_crow() && crate::table::crow_fn_name(r) == base)
 }
 
@@ -1000,14 +1001,14 @@ mod tests {
         let src = "use web, web.auth\nsecret = 'a-secret-of-at-least-thirty-two-chars'\nt = sign[map[user = 'ada'], secret]\nlog[t.ok]\n";
         let mut program = lowered(src);
         assert!(verify(&program).is_empty(), "{:?}", verify(&program));
-        let f = program.parts[0].fns.iter_mut().find(|f| f.name == "_web_auth_sign").expect("the module's function is inlined");
+        let f = program.parts[0].fns.iter_mut().find(|f| f.name == "_web_auth··sign").expect("the module's function is inlined");
         assert!(matches!(f.ret, Ty::Result(_)), "a token or the reason: {:?}", f.ret);
         f.ret = Ty::Str;
         let found = verify(&program);
-        assert!(found.iter().any(|l| l.contains("_web_auth_sign")), "{:?}", found);
-        let f = program.parts[0].fns.iter_mut().find(|f| f.name == "_web_auth_sign").expect("inlined");
+        assert!(found.iter().any(|l| l.contains("_web_auth··sign")), "{:?}", found);
+        let f = program.parts[0].fns.iter_mut().find(|f| f.name == "_web_auth··sign").expect("inlined");
         f.ret = Ty::Result(Box::new(Ty::Int));
         let found = verify(&program);
-        assert!(found.iter().any(|l| l.contains("_web_auth_sign")), "{:?}", found);
+        assert!(found.iter().any(|l| l.contains("_web_auth··sign")), "{:?}", found);
     }
 }

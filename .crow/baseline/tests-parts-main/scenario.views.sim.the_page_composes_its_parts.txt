@@ -1,4 +1,4 @@
-scenario views_sim_the_page_composes_its_parts (views/sim.co)
+scenario views·sim·the_page_composes_its_parts (views/sim.co)
   ran to its end
   changed:
     sim·clock·anchor = 1767225600

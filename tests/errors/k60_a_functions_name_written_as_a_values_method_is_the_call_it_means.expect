@@ -1,0 +1,16 @@
+k60_a_functions_name_written_as_a_values_method_is_the_call_it_means.co:10:12: xs.total[] is total[xs]: a function takes its value first
+  10 │     return xs.total[]
+     │            ^^^^^^^^
+k60_a_functions_name_written_as_a_values_method_is_the_call_it_means.co:15:5: xs.total[] is total[xs]: a function takes its value first
+  15 │ log[xs.total[]]
+     │     ^^^^^^^^
+k60_a_functions_name_written_as_a_values_method_is_the_call_it_means.co:16:5: s.upper[] is upper[s]: a function takes its value first
+  16 │ log[s.upper[]]
+     │     ^^^^^^^
+k60_a_functions_name_written_as_a_values_method_is_the_call_it_means.co:17:5: n.abs[] is abs[n]: a function takes its value first
+  17 │ log[n.abs[]]
+     │     ^^^^^
+k60_a_functions_name_written_as_a_values_method_is_the_call_it_means.co:18:5: xs.sum[] is sum[xs, …]: a function takes its value first
+  18 │ log[xs.sum[2]]
+     │     ^^^^^^
+5 mistakes

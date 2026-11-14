@@ -504,7 +504,7 @@ impl Emitter {
                 // mailer and the message: whether the server took it, or why
                 // not — its reason names the message already
                 let sent = |mailer: &str, to: &str, subject: &str, body: &str| {
-                    format!("{{ let _r = _web_mail_mail({}, {}, {}, {}); if _r.ok {{ Ok(()) }} else {{ Err(_r.reason) }} }}", mailer, to, subject, body)
+                    format!("{{ let _r = {}({}, {}, {}, {}); if _r.ok {{ Ok(()) }} else {{ Err(_r.reason) }} }}", crate::modules::inlined_name("_web_mail", "mail"), mailer, to, subject, body)
                 };
                 let answer = |call: &str| {
                     format!(

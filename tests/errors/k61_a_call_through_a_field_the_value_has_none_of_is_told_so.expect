@@ -1,0 +1,7 @@
+k61_a_call_through_a_field_the_value_has_none_of_is_told_so.co:5:8: numbers has no field 'nosuch' — its fields are shape, dtype, device, grad
+  5 │ log[xs.nosuch[]]
+    │        ^^^^^^
+k61_a_call_through_a_field_the_value_has_none_of_is_told_so.co:6:7: text has no field 'nosuch'
+  6 │ log[s.nosuch[1]]
+    │       ^^^^^^
+2 mistakes

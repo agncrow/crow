@@ -386,7 +386,7 @@ which run here only.
   them (docs/extending-crow.md, phase 2): a top-level function with no
   leading underscore is exported — a program calls it bare, by the
   module's path or by an alias, and the inliner rewrites the call to the
-  inlined name (`_web_auth_sign`), typed by its use like any function; a
+  inlined name (`_web_auth··sign`), typed by its use like any function; a
   helper begins with one underscore (`_part_of`) and is the module's own,
   as a package's is its package's (spec, Importing). Options are defaults
   (raven's llm package: `fn chat[m, talk, system = '', tools = [],
@@ -1831,12 +1831,26 @@ which run here only.
   `derive.sim.clock.head.txt`), and a served app's `.events` names its
   handlers and fields so (`board·door·log_in`, `__field:board·door·name`):
   a baseline of another repository's app (finch, Raven, Pie) is accepted
-  again after this change. Still joined by an underscore and open: a
-  standard module's inlined function (a program's `fn _io_lines` beside
-  `use io` is refused as `in lines: undefined variable 'path'`),
-  a copy per signature (a program's `fn f__2` beside a twice-typed `f`
-  takes the copy's place) and a scenario's key (`views/sim.co`'s test `t`
-  and `views_sim.co`'s are one `views_sim_t`).
+  again after this change. The names the compiler makes are joined by
+  the mark too (2026-11-13; spec, the joiner's Design Note): a standard
+  module's declaration is its prefix and name joined by the mark TWICE
+  (`modules::inlined_name`: `_io··lines`, `_web_auth··sign`, a helper
+  `_io··_lines_of`, a driver's rows `_db_clickhouse··ch_query`) — one mark
+  would be a program's file `_io.co`'s `lines`, and no part's name holds
+  two together; a copy per signature is its name and number joined by
+  one (`ir::copy_name`/`copy_base`/`copy_of`, `f·2`, `greet·loud·2`: no
+  part's declaration has a number after the mark), the one rule every
+  reader of a copy's suffix calls; a scenario's key is its file's
+  `part_prefix` and its name (`scenario views·sim·t`). A program's `fn
+  _io_lines` beside `use io` had stopped as a bug in Crow, a program's
+  `fn f__2` had taken a copy's place, and `views/sim.co`'s test `t` and
+  `views_sim.co`'s had been one `views_sim_t`. `as_the_program_writes`
+  names a word holding `··` by `modules::written_as` and strips a copy's
+  number before it reads a part's prefix (or `f·2` reads as `f.2`). Still
+  joined by underscores and open: a `then` chain's hidden steps (`x =
+  [3, 1, 2]` then `then sort[]` beside a program's own `x__then1` is
+  "cannot reassign 'x__then1'"), which a mark of their own would make
+  the printer read a third kind of name.
 - A call written with named arguments that nothing of its name takes is
   refused by the pass that knows the scope (2026-11-09; errors k57–k59).
   `crate::lower` rewrites the named arguments a function, a struct, a
@@ -1859,3 +1873,16 @@ which run here only.
   `named_call`. What is wrong with a name is said before what is wrong
   with its arguments: a new refusal of arguments asks first whether the
   name is anything.
+- A call through a declared value's field (`xs.total[]`, `s.upper[]`) has
+  its callee lowered MUTED as the base of the index (`call_inner`), so
+  the field read's own refusal said nothing and the call went through the
+  field as a function value: both modes stopped as they ran, and the
+  compiled program did not build (2026-11-13; errors k60, k61).
+  `call_inner` asks `field_refusal` (checks.rs; `check_field` refuses
+  with it) after the muted base and refuses unmuted — a function's name
+  (`names_a_function`: `lower::is_function_name` or the program's) as
+  `lower::method_form`, the one wording the parser-free method refusals
+  share. `crate::lower`'s options arm fills a module row's options only
+  where the file imports the module (`module_imported`, or a standard
+  module's own code): `frame.window[d, 2]` without `use frame` had been
+  told the arguments a window takes (errors k62).
