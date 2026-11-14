@@ -5414,7 +5414,7 @@ pub(crate) fn expand_module_imports_checked(
     }
     // what the program's databases answer is kept in its project
     SCHEMA_DIR.with(|d| *d.borrow_mut() = Some(project_root(source_dir).join(".crow").join("schema")));
-    let mut ex = ModuleExpansion::default();
+    let mut ex = ModuleExpansion { entry_root: Some(package_dir(source_dir).unwrap_or_else(|| project_root(source_dir))), ..Default::default() };
     let mut body = expand_into(stmts, source_dir, &mut ex, visited);
     // what each part declares, read from here on (`separate_part_locals`
     // below; set again last, after each part validated alone set its own)
@@ -6147,6 +6147,10 @@ struct ModuleExpansion {
     /// every declaration of a part, by its prefixed name: the part's
     /// prefix (`lib·tools·greet` is `lib·tools·`'s)
     part_decls: std::collections::BTreeMap<String, String>,
+    /// where the entry's imports are rooted, as its path spells it
+    /// (`module_files`): every part's path is spelled from it, through the
+    /// links its importers reached it by
+    entry_root: Option<std::path::PathBuf>,
 }
 
 /// What an import brings the file that makes it: the imported file's
@@ -6381,14 +6385,21 @@ fn expand_into(
             // (a linked package's file lies outside the root: the path the
             // program reaches it through, crow_modules/…, names it — the
             // baseline's keys had held the machine's absolute path)
-            let rel = file_path
-                .strip_prefix(&root)
-                .or_else(|_| canon.strip_prefix(&root))
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| file_path.display().to_string());
-            let rel = match &package {
-                Some(pk) => format!("crow_modules/{}/{}", pk, rel),
-                None => rel,
+            let inside = file_path.strip_prefix(&root).or_else(|_| canon.strip_prefix(&root)).ok();
+            // (a file a package reaches outside itself — through a link in
+            // its own crow_modules/, or in the crow_modules/ beside it —
+            // lies under neither the package's path nor its link's: its
+            // path from the entry's root, as the imports spelled it, names
+            // it; joined to the package's name, its absolute path had been
+            // the name the reach and the baseline showed,
+            // `crow_modules/window//Users/…/crow_modules/lory/gui.co`)
+            let from_entry = ex.entry_root.as_deref().and_then(|r| file_path.strip_prefix(r).ok());
+            let rel = match (inside, from_entry, &package) {
+                (Some(rel), _, Some(pk)) => format!("crow_modules/{}/{}", pk, rel.display()),
+                (Some(rel), _, None) => rel.display().to_string(),
+                (None, Some(rel), _) => rel.display().to_string(),
+                (None, None, Some(pk)) => format!("crow_modules/{}/{}", pk, file_path.display()),
+                (None, None, None) => file_path.display().to_string(),
             };
             p.borrow_mut().insert(prefix.clone(), rel);
         });
@@ -7229,6 +7240,46 @@ mod module_parts_tests {
         let validated: Vec<std::path::PathBuf> = VALIDATED_PARTS.with(|v| v.borrow().keys().cloned().collect());
         assert!(validated.iter().any(|p| p.ends_with("app/deep.co")), "{:?}", validated);
         assert!(!validated.iter().any(|p| p.starts_with(&package)), "{:?}", validated);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file a linked package reaches outside itself — through a link in
+    /// its own crow_modules/, or in the crow_modules/ beside it, where
+    /// `crow install` puts its dependencies — is named by its path from the
+    /// program's root, as the imports spelled it: joined to the package's
+    /// name, its absolute path had been the part's name in `crow check`'s
+    /// reach and in the baseline's keys
+    /// (`crow_modules/window//Users/…/crow_modules/lory/gui.co`, Myna's room).
+    #[test]
+    fn a_file_a_linked_package_reaches_outside_itself_is_named_from_the_programs_root() {
+        let dir = std::env::temp_dir().join(format!("crow_linked_outside_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = dir.join("pkgsrc");
+        for d in ["pa/crow_modules", "pb", "pc"] {
+            std::fs::create_dir_all(src.join(d)).unwrap();
+        }
+        std::fs::create_dir_all(dir.join("app/crow_modules")).unwrap();
+        std::fs::write(src.join("pa/crowfile"), "name = 'pa'\n").unwrap();
+        std::fs::write(src.join("pa/main.co"), "use pb\nuse pc.x\n\nfn f[n]\n    pb.g[n] + x.h[n]\n").unwrap();
+        std::fs::write(src.join("pb/crowfile"), "name = 'pb'\n").unwrap();
+        std::fs::write(src.join("pb/main.co"), "fn g[n]\n    n * 2\n").unwrap();
+        std::fs::write(src.join("pc/crowfile"), "name = 'pc'\n").unwrap();
+        std::fs::write(src.join("pc/x.co"), "fn h[n]\n    n + 1\n").unwrap();
+        // pa's own link to pb, as its repository keeps one; pc beside pa
+        std::os::unix::fs::symlink("../../pb", src.join("pa/crow_modules/pb")).unwrap();
+        std::os::unix::fs::symlink("../../pkgsrc/pa", dir.join("app/crow_modules/pa")).unwrap();
+        std::os::unix::fs::symlink("../../pkgsrc/pc", dir.join("app/crow_modules/pc")).unwrap();
+        let app = dir.join("app");
+        std::fs::write(app.join("crowfile"), "name = 'app'\n").unwrap();
+        let stmts = build("use pa\n\nlog[pa.f[2]]\n").unwrap();
+        let mut visited = std::collections::HashSet::new();
+        let stmts = expand_module_imports_checked(&stmts, &app, &mut visited).unwrap();
+        let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
+        assert_eq!(parts.get("pa·").map(String::as_str), Some("crow_modules/pa/main.co"), "{:?}", parts);
+        assert_eq!(parts.get("pa·pb·").map(String::as_str), Some("crow_modules/pa/crow_modules/pb/main.co"), "{:?}", parts);
+        assert_eq!(parts.get("pa·pc·x·").map(String::as_str), Some("crow_modules/pc/x.co"), "{:?}", parts);
+        let lowered = lower::lower_program(&stmts).unwrap();
+        assert!(infer_and_validate(&lowered, false).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -118,6 +118,16 @@ history says the rest.
   mean 'sort'?`. A name that is something and takes none — a builtin
   with no named parameters, a value holding a function — is told so, as
   it was.
+- A file a package reaches outside itself — through a link in the
+  package's own `crow_modules/`, or in the `crow_modules/` beside it,
+  where `crow install` puts a package's dependencies — is named by its
+  path from the program's root in `crow check`'s reach, the baseline's
+  keys and the findings placed in it
+  (`crow_modules/window/crow_modules/lory/gui.co`). The machine's
+  absolute path had been joined to the package's name
+  (`crow_modules/window//Users/…/lory/gui.co`). An app holding such a
+  part reports the old reach as removed until it is accepted once
+  (`crow check`, then `a`).
 
 ## v0.9.0 — 2026-11-08
 
