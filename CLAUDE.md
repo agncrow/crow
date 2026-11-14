@@ -1611,7 +1611,11 @@ which run here only.
   imported file's functions nothing the program reaches names are dropped
   before it is typed (`unreached_parts_dropped`, by the words each
   statement says — a name the scan misses is lost, so a new way to reach
-  a function must say its name); a standard module's function is one its
+  a function must say its name), so whatever reads a part's functions off
+  the program reads the ones it reaches: a part's reach in `crow check`
+  joins what the part validated alone reaches (`PART_ALONE_REACH`, every
+  one of its functions), or a function only its tests call reaches
+  nothing (Raven's judge, 2026-11-14); a standard module's function is one its
   source declares (`modules::is_crow_fn` reads `inlined_names`), never a
   name that begins with its prefix (a program's `_frame_of` had been read
   in frame's scope: parity 439); package code is checked as a program's,
@@ -1918,3 +1922,16 @@ which run here only.
   where the file imports the module (`module_imported`, or a standard
   module's own code): `frame.window[d, 2]` without `use frame` had been
   told the arguments a window takes (errors k62).
+- `a, b = x, y` is lowered by the single assignment's arm of `lower_stmt`
+  (lower_ir.rs, `S::Assign`) where no value reads a name: each pair in
+  turn, in every pass, so every rule an assignment keeps — a parsed value
+  read as the variable's kind (`read_as_held`), `check_assign`,
+  `held_to_shape`, the scan's notes, a derivation refused — holds for it.
+  A swap (`a, b = b, a`) reads every value into a temporary first
+  (`multi_assign`, `scanned_multi`, `settled_multi`) and calls
+  `read_as_held` and `check_assign` itself. The multi arm had kept rules
+  of its own: a parsed value stored into a float fact and `x, y = 'a', 2`
+  of an int were "the lowered program disagrees with itself" (finch's
+  sessions; parity 529, served 34, errors k65, k66). A new rule for what
+  an assignment holds goes in the single arm, and in the swap's loop if
+  it reads the value.

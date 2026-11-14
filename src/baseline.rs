@@ -1439,8 +1439,47 @@ fn capabilities() -> Vec<&'static str> {
 /// functions, derivations and top level reach, transitively, by the
 /// capability it is one of (second-half-design.md §1). One entry per file,
 /// the entry's own and each part's, keyed `reach <file>`; a file that
-/// reaches nothing says so, so its first reach is a change to accept.
-pub fn reach_entries(program: &crate::ir::Program, parts: &BTreeMap<String, String>, entry: &str) -> BTreeMap<String, (String, String)> {
+/// reaches nothing says so, so its first reach is a change to accept. A
+/// part's functions the program does not reach are not in the program
+/// (`unreached_parts_dropped`): what the part reaches validated alone,
+/// every one of its functions with it, is `alone`, by file.
+pub fn reach_entries(
+    program: &crate::ir::Program,
+    parts: &BTreeMap<String, String>,
+    entry: &str,
+    alone: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeMap<String, (String, String)> {
+    let mut by_file = reach_by_file(program, parts, entry);
+    for (file, effects) in alone {
+        if let Some(reached) = by_file.get_mut(file) {
+            reached.extend(effects.iter().cloned());
+        }
+    }
+    by_file
+        .into_iter()
+        .map(|(file, effects)| {
+            let key = format!("reach {}", file);
+            let mut text = format!("{}\n", key);
+            for cap in capabilities() {
+                // (a form as the program writes it: `query`'s writing twin
+                // is `query`, never `__query_write`)
+                let mine: BTreeSet<&str> = effects.iter().filter(|e| capability_of(e) == Some(cap)).map(|e| crate::table::shown_effect(e)).collect();
+                if !mine.is_empty() {
+                    text.push_str(&format!("  {}: {}\n", cap, mine.into_iter().collect::<Vec<_>>().join(", ")));
+                }
+            }
+            if !text.contains(':') {
+                text.push_str("  nothing\n");
+            }
+            (key, (file, text))
+        })
+        .collect()
+}
+
+/// The effects each file of a lowered program reaches, by file: its
+/// functions', derivations' and top level's, the entry's own under
+/// `entry` (`reach_entries`).
+pub fn reach_by_file(program: &crate::ir::Program, parts: &BTreeMap<String, String>, entry: &str) -> BTreeMap<String, BTreeSet<String>> {
     let file_of = |name: &str| -> String {
         parts
             .iter()
@@ -1474,24 +1513,6 @@ pub fn reach_entries(program: &crate::ir::Program, parts: &BTreeMap<String, Stri
         }
     }
     by_file
-        .into_iter()
-        .map(|(file, effects)| {
-            let key = format!("reach {}", file);
-            let mut text = format!("{}\n", key);
-            for cap in capabilities() {
-                // (a form as the program writes it: `query`'s writing twin
-                // is `query`, never `__query_write`)
-                let mine: BTreeSet<&str> = effects.iter().filter(|e| capability_of(e) == Some(cap)).map(|e| crate::table::shown_effect(e)).collect();
-                if !mine.is_empty() {
-                    text.push_str(&format!("  {}: {}\n", cap, mine.into_iter().collect::<Vec<_>>().join(", ")));
-                }
-            }
-            if !text.contains(':') {
-                text.push_str("  nothing\n");
-            }
-            (key, (file, text))
-        })
-        .collect()
 }
 
 const BASELINE_DIR: &str = ".crow/baseline";
@@ -1697,14 +1718,14 @@ mod tests {
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         let program = crate::lower_ir::lower(&stmts, &mut ctx, "main").expect("lowers to the IR");
-        let reach = reach_entries(&program, &BTreeMap::new(), "main.co");
+        let reach = reach_entries(&program, &BTreeMap::new(), "main.co", &BTreeMap::new());
         assert_eq!(reach["reach main.co"].1, "reach main.co\n  files.write: write\n  clock: now\n");
         let quiet = "fn pure[x]\n    return x + 1\nlog[pure[1]]\n";
         let stmts = crate::lower::lower_program(&crate::build(quiet).expect("parses")).expect("lowers");
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         let program = crate::lower_ir::lower(&stmts, &mut ctx, "main").expect("lowers to the IR");
-        assert_eq!(reach_entries(&program, &BTreeMap::new(), "main.co")["reach main.co"].1, "reach main.co\n  nothing\n");
+        assert_eq!(reach_entries(&program, &BTreeMap::new(), "main.co", &BTreeMap::new())["reach main.co"].1, "reach main.co\n  nothing\n");
     }
 
     /// A database write a handler makes is something its control does: a
@@ -1737,7 +1758,7 @@ mod tests {
         let mut ctx = TypeContext::new();
         ctx.infer_program(&stmts);
         let program = crate::lower_ir::lower(&stmts, &mut ctx, "main").expect("lowers to the IR");
-        let reach = &reach_entries(&program, &BTreeMap::new(), "main.co")["reach main.co"].1;
+        let reach = &reach_entries(&program, &BTreeMap::new(), "main.co", &BTreeMap::new())["reach main.co"].1;
         assert!(reach.contains("  db.read: connect, query\n") && reach.contains("  db.write: query\n"), "{}", reach);
         assert!(!reach.contains("__"), "{}", reach);
     }

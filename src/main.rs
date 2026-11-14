@@ -3820,13 +3820,19 @@ fn infer_and_lower(lowered: &[ast::Stmt], describe: bool, name: &str) -> Result<
 }
 
 fn infer_and_validate(lowered: &[ast::Stmt], describe: bool) -> Result<type_infer::TypeContext, String> {
+    infer_and_check(lowered, describe).map(|(ctx, _)| ctx)
+}
+
+/// `infer_and_validate`, with the program the check lowered: the context
+/// is the inferred one, as the callers that only ask take it.
+fn infer_and_check(lowered: &[ast::Stmt], describe: bool) -> Result<(type_infer::TypeContext, ir::Program), String> {
     let mut ctx = type_infer::TypeContext::new();
     ctx.describe_queries = describe;
     ctx.infer_program(lowered);
     // the lowering refuses what is not a program (lower_ir/checks.rs); it
     // runs here on a copy of the context, for the callers that only ask
-    match lower_ir::check(lowered, &ctx) {
-        Ok(()) => Ok(ctx),
+    match lower_ir::check_lowered(lowered, &ctx) {
+        Ok(program) => Ok((ctx, program)),
         // a message names a variable as the program wrote it
         Err(lower_ir::Refusal::Invalid(errors)) => Err(lower::shown(&attribute_to_parts(&errors))),
         Err(refusal) => Err(refusal.message()),
@@ -3901,8 +3907,10 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     let (mut artifacts, rules) = baseline::derive_artifacts(&lowered, &lctx, &parts, filename);
     wireframe::layout_artifacts(&mut artifacts, filename, source.contains("wide = true"));
     // what each part can touch (second-half-design.md §1): a part that
-    // starts writing files or calling a shell is a change to accept
-    for (key, (file, text)) in baseline::reach_entries(&program, &parts, filename) {
+    // starts writing files or calling a shell is a change to accept — its
+    // functions the program does not reach too, as the part alone reaches
+    // them
+    for (key, (file, text)) in baseline::reach_entries(&program, &parts, filename, &parts_alone_reach(&parts)) {
         artifacts.files.insert(key.clone(), file);
         artifacts.entries.insert(key, text);
     }
@@ -5882,6 +5890,11 @@ thread_local! {
     /// is validated again only once one of them changes (a language
     /// server's parts change under it; a run's never do).
     static VALIDATED_PARTS: std::cell::RefCell<PartValidations> = std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Each part validated alone, by its file: the effects its functions,
+    /// derivations and top level reach there, every function with it (a
+    /// file's reach, crow-check.md; `parts_alone_reach`).
+    static PART_ALONE_REACH: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, std::collections::BTreeSet<String>>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     /// module prefix (`sim·session·`) → the part's project-relative file
     static EXPANSION_PARTS: std::cell::RefCell<std::collections::BTreeMap<String, String>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
@@ -5998,7 +6011,7 @@ fn validate_part_alone_now(path: &std::path::Path, written: Option<&std::path::P
     let expanded = expand_module_imports_checked(&stmts, &import_dir, &mut visited)?;
     let lowered = lower::lower_program(&expanded).map_err(|e| format!("{}: error: {}", rel, e))?;
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
-    let ctx = infer_and_validate(&lowered, describing()).map_err(|e| {
+    let (ctx, program) = infer_and_check(&lowered, describing()).map_err(|e| {
         refine_error_lines(&source, &e)
             .lines()
             .map(|l| {
@@ -6015,7 +6028,29 @@ fn validate_part_alone_now(path: &std::path::Path, written: Option<&std::path::P
     })?;
     // what its tests call its functions with, for the programs importing it
     PART_TEST_CALLS.with(|c| c.borrow_mut().insert(path.to_path_buf(), ctx.tested));
+    // what it can touch, every one of its functions lowered here: a program
+    // importing it lowers only the ones it reaches (`unreached_parts_dropped`),
+    // and Raven's model-as-judge, which only its evals call, had come to
+    // reach nothing
+    let reach = baseline::reach_by_file(&program, &parts, &rel).remove(&rel).unwrap_or_default();
+    PART_ALONE_REACH.with(|r| r.borrow_mut().insert(path.to_path_buf(), reach));
     Ok(())
+}
+
+/// What a program's own part can touch, by the file its prefix names, as
+/// the part validated alone reaches it (`validate_part_alone_now`): every
+/// one of its functions, where the program lowers only those it reaches. A
+/// dependency is validated where it is made, and reaches what the program
+/// reaches of it.
+fn parts_alone_reach(parts: &std::collections::BTreeMap<String, String>) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let files = EXPANSION_FILES.with(|f| f.borrow().clone());
+    parts
+        .iter()
+        .filter_map(|(prefix, file)| {
+            let reach = PART_ALONE_REACH.with(|r| r.borrow().get(files.get(prefix)?).cloned())?;
+            Some((file.clone(), reach))
+        })
+        .collect()
 }
 
 /// The program with the functions of its imported files that nothing it
@@ -6026,7 +6061,8 @@ fn validate_part_alone_now(path: &std::path::Path, written: Option<&std::path::P
 /// the functions a program reaches: a program importing a package had
 /// lowered all of it — 424 functions where Magpie's windows reach 239, and
 /// twice the build. (A program's own part is validated alone, every one of
-/// its functions with it.)
+/// its functions with it, and what they reach there is its reach:
+/// `parts_alone_reach`.)
 fn unreached_parts_dropped(
     stmts: Vec<ast::Stmt>,
     done: &std::collections::BTreeMap<std::path::PathBuf, std::collections::BTreeMap<String, String>>,

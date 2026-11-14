@@ -1,0 +1,4 @@
+--- names assigned together are each held to the kind they were first given, as one assigned alone is: `x, y = 'a', 2` of an int had been refused as a bug in Crow ("the lowered program disagrees with itself")
+x = 1
+x, y = 'a', 2
+log[x]

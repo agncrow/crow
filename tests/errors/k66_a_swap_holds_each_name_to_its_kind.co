@@ -1,0 +1,6 @@
+--- a swap reads both values before it writes either name, and each name keeps the kind it was first given: `x, y = y, x` of an int and a text had been refused as a bug in Crow ("the lowered program disagrees with itself")
+--- mistakes: 2
+x = 1
+y = 'a'
+x, y = y, x
+log[x]

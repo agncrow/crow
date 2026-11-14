@@ -164,6 +164,8 @@ x, y, z = 1, 2, 3
 
 Values of another count are refused before the program runs, in both modes, and so is one value for several names: Crow takes no list apart into names (Design Note: No Destructuring). `c, d = pair[]` is refused with the form to write, `r = pair[]`, then `c = r[0]`, `d = r[1]`. (Each had run: one value had been taken apart interpreted and had not built compiled, a value past the names had been dropped, and a name past the values left unset.)
 
+Each name is given its value as an assignment of it alone gives it: it keeps the kind it was first given (`x, y = 'a', 2` of an int `x` is refused as `x = 'a'` is), and a parsed value is read as that kind — a number as a float, so an int widens, as it does given one alone. A value that reads one of the names reads it as it was before the line (Swap, below). (Assigned together, a parsed value had been stored into a float and a text, and a change of kind had been refused as a bug in Crow, the lowered program disagreeing with itself: finch's sessions, 2026-11-14; parity 529, served 34, errors k65 and k66.)
+
 
 ### Swap
 

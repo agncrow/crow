@@ -1,0 +1,23 @@
+--- Two facts a handler assigns at once from a parsed value are each read
+--- as the fact's kind, as one assigned alone is: `trail, unit =
+--- last.a[0], last.b[0]` had stored parsed values into a float fact and a
+--- text fact, and the page was refused before it was served as "the
+--- lowered program disagrees with itself" (finch's sessions, 2026-11-14;
+--- parity 529).
+use web, ui
+
+trail = 5.0
+unit = '%'
+
+fn pick[]
+    last = json['{"a": [1.5], "b": ["x"]}']
+    trail, unit = last.a[0], last.b[0]
+
+view render[]
+    return stack[
+        p['`trail + 1.0` `unit`'],
+        button['Pick', click = pick]
+    ]
+
+serve[3454]
+page['/', render]

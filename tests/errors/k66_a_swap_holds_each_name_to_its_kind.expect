@@ -1,0 +1,7 @@
+k66_a_swap_holds_each_name_to_its_kind.co:5:1: cannot reassign 'x' from int to str — variable type cannot change
+  5 │ x, y = y, x
+    │ ^         ^
+k66_a_swap_holds_each_name_to_its_kind.co:5:4: cannot reassign 'y' from str to int — variable type cannot change
+  5 │ x, y = y, x
+    │    ^   ^
+2 mistakes

@@ -92,8 +92,16 @@ reach board/cards.co
 
 A file that touches nothing says `nothing`, so a part that starts
 writing files or calling a shell is its reach changing, a change to
-accept like any other. `crow check` prints each file's capabilities on
-one line (`board/cards.co: files.write, db.read, session`). Nothing
+accept like any other. A part's functions are its reach whether or not
+the program calls them — one only the part's own tests call too, read
+from the part lowered alone, as the entry of a program of its own
+(Raven's model-as-judge, which only its evals call, had come to reach
+`nothing` once the program lowered only the parts' functions it
+reaches). A package under `crow_modules/` reaches what the program
+reaches of it: its functions the program never names are not lowered
+here, and are held where the package is made. `crow check` prints each
+file's capabilities on one line
+(`board/cards.co: files.write, db.read, session`). Nothing
 declares a reach: it is derived from the program, which already names
 each effect it makes (second-half-design.md §1).
 

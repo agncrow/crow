@@ -76,8 +76,15 @@ pub fn lower_refusing(stmts: &[S], ctx: &mut TypeContext, part_name: &str) -> Re
 /// away, for the callers that only ask (`crow check`, the harness, the
 /// language server).
 pub fn check(stmts: &[S], ctx: &TypeContext) -> Result<(), Refusal> {
+    check_lowered(stmts, ctx).map(|_| ())
+}
+
+/// `check`, keeping the program it lowered: a part validated alone is
+/// lowered with every one of its functions, and what they reach is the
+/// part's reach (crow-check.md).
+pub fn check_lowered(stmts: &[S], ctx: &TypeContext) -> Result<Program, Refusal> {
     let mut ctx = ctx.clone();
-    lower_checked(stmts, &mut ctx, "check", &HashSet::new()).map(|_| ())
+    lower_checked(stmts, &mut ctx, "check", &HashSet::new())
 }
 
 fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>) -> Result<Program, Refusal> {
@@ -2723,16 +2730,7 @@ impl<'a> Lowerer<'a> {
                 // a loaded frame held to the columns the program's reads
                 // say, before any pass types the variable by it (uses.rs)
                 let expr = self.held_to_shape(name, expr);
-                // a parsed value assigned to a variable of a kind is read as
-                // that kind (a number as a float: the variable widens, as one
-                // assigned a float does)
-                let expr = match self.ctx.vars.get(name).map(|t| t.payload().clone()) {
-                    Some(kind @ (Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Moment)) if self.declared(name) || self.is_fact(name) => {
-                        let kind = if matches!(kind, Ty::Int) { Ty::Float } else { kind };
-                        self.read_json(expr, &kind, &format!("assigned to {}", name))
-                    }
-                    _ => expr,
-                };
+                let expr = self.read_as_held(name, expr);
                 if self.pass == Pass::Final {
                     // (a call that answers nothing gives the variable no
                     // value: refused once, and what the variable was is not
@@ -2766,6 +2764,22 @@ impl<'a> Lowerer<'a> {
                     return Ok(self.taken_in_place(stmt));
                 }
                 vec![stmt]
+            }
+            // `a, b = x, y` whose values read neither name is the
+            // assignments one after the other, each lowered as an assignment
+            // is, in every pass: a parsed value read as the variable's kind,
+            // a literal landed in the list it is given, the scan's notes,
+            // the checks. Lowered apart, `trail, unit = last.trail[0],
+            // last.unit[0]` of a query no describe had typed stored parsed
+            // values into a float fact and a text fact, which the verifier
+            // refused as the lowered program disagreeing with itself
+            // (finch's sessions; parity 529)
+            S::MultiAssign { names, values } if names.len() == values.len() && !reads_any_of(values, names) => {
+                let mut out = Vec::new();
+                for (name, value) in names.iter().zip(values) {
+                    out.extend(self.lower_stmt(&S::Assign { name: name.clone(), value: value.clone() })?);
+                }
+                out
             }
             S::MultiAssign { names, values } if self.pass == Pass::Settle => self.settled_multi(names, values)?,
             S::MultiAssign { names, values } if self.pass == Pass::Scan => self.scanned_multi(names, values)?,
@@ -3738,51 +3752,42 @@ impl<'a> Lowerer<'a> {
         })
     }
 
-    /// Several names assigned at once, a value each (the parser refuses any
-    /// other count: Crow takes no list apart into names), all read before
-    /// any is written when they read each other.
+    /// Several names assigned at once whose values read one of them (a
+    /// swap, `a, b = b, a`): every value read into a temporary before any
+    /// name is written. (Values that read none of the names are the
+    /// assignments one after the other, lowered as an assignment is:
+    /// `lower_stmt`.)
     fn multi_assign(&mut self, names: &[String], values: &[A]) -> Result<Vec<Stmt>, String> {
         let mut out = Vec::new();
-        // (a value of a call that answers nothing is refused for its name,
-        // as an assignment's is)
         let final_pass = self.pass == Pass::Final;
-        let targets: BTreeSet<String> = names.iter().cloned().collect();
-        let mut reads = BTreeSet::new();
-        let mut clock = false;
-        for v in values {
-            let mut r = BTreeSet::new();
-            reads_of_expr(v, &mut r, &mut clock);
-            reads.extend(r);
+        let mut temps = Vec::new();
+        for (i, v) in values.iter().enumerate() {
+            let e = self.lower_expr(v)?;
+            // (a value of a call that answers nothing is refused for its
+            // name, as an assignment's is)
+            if final_pass && let Some(n) = names.get(i) && self.refuse_nothing_held(&format!("'{}'", crate::lower::shown(n)), &e) {
+                self.v.contested.insert(n.clone());
+            }
+            let t = self.fresh();
+            let ty = e.ty();
+            self.flush_pre_into(&mut out);
+            out.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: e });
+            self.scopes.last_mut().unwrap().insert(t.clone());
+            temps.push((t, ty));
         }
-        if reads.is_disjoint(&targets) {
-            for (n, v) in names.iter().zip(values) {
-                let e = self.lower_expr(v)?;
-                if final_pass {
-                    self.refuse_nothing_held(&format!("'{}'", crate::lower::shown(n)), &e);
-                }
-                let stmt = self.assign(n, e);
-                self.flush_pre_into(&mut out);
-                out.push(stmt);
+        for (n, (t, ty)) in names.iter().zip(temps) {
+            // (each value read as its name's kind, and the name held to the
+            // kind it was first given, as an assignment's is: `x, y = y, x`
+            // of an int and a text had been "the lowered program disagrees
+            // with itself")
+            let e = self.read_as_held(n, Expr::Local(t, ty));
+            if final_pass && (self.declared(n) || self.in_fn().is_some() || self.is_fact(n)) {
+                let new_ty = self.checked(&e);
+                self.check_assign(n, &new_ty);
             }
-        } else {
-            let mut temps = Vec::new();
-            for (i, v) in values.iter().enumerate() {
-                let e = self.lower_expr(v)?;
-                if final_pass && let Some(n) = names.get(i) {
-                    self.refuse_nothing_held(&format!("'{}'", crate::lower::shown(n)), &e);
-                }
-                let t = self.fresh();
-                let ty = e.ty();
-                self.flush_pre_into(&mut out);
-                out.push(Stmt::Let { var: t.clone(), ty: ty.clone(), expr: e });
-                self.scopes.last_mut().unwrap().insert(t.clone());
-                temps.push((t, ty));
-            }
-            for (n, (t, ty)) in names.iter().zip(temps) {
-                let stmt = self.assign(n, Expr::Local(t, ty));
-                self.flush_pre_into(&mut out);
-                out.push(stmt);
-            }
+            let stmt = self.assign(n, e);
+            self.flush_pre_into(&mut out);
+            out.push(stmt);
         }
         Ok(out)
     }
@@ -4143,6 +4148,20 @@ impl<'a> Lowerer<'a> {
                 let read = if matches!(kind, Ty::Markup) { Ty::Str } else { kind.clone() };
                 self.ctx.param_reads.entry(self.current_fn.clone()).or_default().insert(p.clone(), read);
             }
+        }
+    }
+
+    /// A parsed value assigned to a variable of a kind is read as that kind
+    /// (a number as a float: the variable widens, as one assigned a float
+    /// does) — the one rule an assignment and each name of `a, b = x, y`
+    /// read.
+    fn read_as_held(&mut self, name: &str, expr: Expr) -> Expr {
+        match self.ctx.vars.get(name).map(|t| t.payload().clone()) {
+            Some(kind @ (Ty::Int | Ty::Float | Ty::Str | Ty::Bool | Ty::Moment)) if self.declared(name) || self.is_fact(name) => {
+                let kind = if matches!(kind, Ty::Int) { Ty::Float } else { kind };
+                self.read_json(expr, &kind, &format!("assigned to {}", name))
+            }
+            _ => expr,
         }
     }
 
@@ -4569,8 +4588,12 @@ impl<'a> Lowerer<'a> {
     fn settled_multi(&mut self, names: &[String], values: &[A]) -> Result<Vec<Stmt>, String> {
         let mut types = Vec::with_capacity(values.len());
         let mut fulls = Vec::with_capacity(values.len());
-        for v in values {
+        for (i, v) in values.iter().enumerate() {
             let x = self.lower_expr(v)?;
+            let x = match names.get(i) {
+                Some(n) => self.read_as_held(n, x),
+                None => x,
+            };
             types.push(read(&x));
             fulls.push(full(&x));
         }
@@ -4610,8 +4633,12 @@ impl<'a> Lowerer<'a> {
     /// the scan pairs them.
     fn scanned_multi(&mut self, names: &[String], values: &[A]) -> Result<Vec<Stmt>, String> {
         let mut types = Vec::with_capacity(values.len());
-        for v in values {
+        for (i, v) in values.iter().enumerate() {
             let x = self.lower_expr(v)?;
+            let x = match names.get(i) {
+                Some(n) => self.read_as_held(n, x),
+                None => x,
+            };
             types.push(read(&x));
         }
         for (n, t) in names.iter().zip(types) {
@@ -9737,6 +9764,17 @@ fn facts_written_by_fns(stmts: &[S], facts: &BTreeSet<String>) -> BTreeSet<Strin
         }
     }
     out
+}
+
+/// Whether any of `a, b = x, y`'s values reads one of its names: then each
+/// value is read before any name is written (a swap).
+fn reads_any_of(values: &[A], names: &[String]) -> bool {
+    let mut reads = BTreeSet::new();
+    let mut clock = false;
+    for v in values {
+        reads_of_expr(v, &mut reads, &mut clock);
+    }
+    names.iter().any(|n| reads.contains(n))
 }
 
 fn reads_of_expr(e: &A, names: &mut BTreeSet<String>, clock: &mut bool) {

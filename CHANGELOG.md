@@ -72,6 +72,21 @@ history says the rest.
   to it compiled, as interpreted: `t .^ x` had raised each number to
   itself (`[1, 4, 27]` for `[1, 4, 9]`), the compiled program naming
   each number `x` while it computed the power, once for each number.
+- Names assigned together (`a, b = x, y`) are each given their value as
+  an assignment of one alone gives it. `trail, unit = last.a[0],
+  last.b[0]` of a parsed value, into a float and a text, had been refused
+  before the program ran as a bug in Crow ("the lowered program
+  disagrees with itself"), in a handler writing facts too (finch's
+  sessions), where each assignment alone reads the value as the
+  variable's kind; and `x, y = 'a', 2` of an int `x`, or a swap of an int
+  and a text, had been refused so where `x = 'a'` is refused as the
+  program's: `cannot reassign 'x' from int to str`.
+- A part's reach in `crow check` holds every one of its functions
+  again, one only the part's own tests call too (crow-check.md says so
+  now): since 0.8.0 the program lowered only the parts' functions it
+  reaches, and Raven's model-as-judge, which only its evals call,
+  reached `nothing` where its baseline said `network, process`. A
+  package under `crow_modules/` reaches what the program reaches of it.
 - What `crow setup` fetches is said at its size: about 270 MB, the
   toolchain about 220 and the runtime about 50 (203 and 51 MB on a Mac,
   233 and 51 on Linux), where `crow setup`, a run with no compiler and

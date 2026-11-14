@@ -1,0 +1,37 @@
+--- `a, b = x, y` gives each name its value as `a = x` gives one (spec,
+--- Variables): a parsed value is read as the kind the variable holds — a
+--- number as a float, so an int widens, as it does given one alone — at
+--- the top level, in a function and where the values read the names (a
+--- swap reads each value before it writes a name). Assigned together,
+--- `trail, unit = last.a[0], last.b[0]` had stored parsed values into a
+--- float and a text, refused before the program ran as "the lowered
+--- program disagrees with itself" (finch's sessions, 2026-11-14; served
+--- 34 is a handler's facts, errors k65 and k66 a kind that changes).
+last = json['{"a": [1.5], "b": ["x"], "n": [4]}']
+
+trail = 5.0
+unit = '%'
+trail, unit = last.a[0], last.b[0]
+log['`trail` `unit`']
+
+fn picked[doc]
+    a = 0.0
+    b = ''
+    a, b = doc.a[0], doc.b[0]
+    return '`a + 1.0` `b`'
+log[picked[last]]
+
+k = 3
+s = ''
+k, s = last.n[0], last.b[0]
+log['`k + 1` `s`']
+
+n = 1.0
+m = 2.0
+n, m = last.a[0], n
+log['`n` `m`']
+
+x = 'p'
+y = 'q'
+x, y = y, x
+log['`x` `y`']

@@ -50,3 +50,37 @@ fn a_dependencys_sys_rows_are_defined_names() {
     assert!(!said.contains("undefined variable 'byte'"), "a sys row is defined:\n{}", said);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A part's reach is every one of its functions' (crow-check.md), a
+/// function only the part's own tests call too: the program lowers only
+/// the functions of its imports it reaches, and Raven's model-as-judge,
+/// which only its evals call, had come to reach `nothing` where its
+/// baseline said `network` and `process`. A dependency's file reaches what
+/// the program reaches of it: its functions the program never names are
+/// its own repository's to check.
+#[test]
+fn a_parts_reach_holds_the_functions_only_its_tests_call() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join("crow_check_part_reach");
+    let _ = std::fs::remove_dir_all(&root);
+    let app = root.join("host");
+    std::fs::create_dir_all(app.join("lib")).unwrap();
+    std::fs::create_dir_all(app.join("dep_src")).unwrap();
+    // a part whose clock-reading function only its own test calls, and a
+    // package whose file-writing function the app never names
+    std::fs::write(
+        app.join("lib").join("stamp.co"),
+        "fn label[s]\n    return '<`s`>'\n\nfn stamped[s]\n    t = now[]\n    return '`s` `t`'\n\ntest a_stamp_holds_its_label[]\n    assert[label['a'] eq '<a>']\n    assert[len[stamped['a']] gt 2]\n",
+    )
+    .unwrap();
+    std::fs::write(app.join("dep_src").join("crowfile"), "name = 'dep'\n").unwrap();
+    std::fs::write(app.join("dep_src").join("f.co"), "fn plain[s]\n    return s\n\nfn noted[s]\n    write['note.txt', s]\n    return s\n").unwrap();
+    std::fs::write(app.join("crowfile"), "name = 'host'\ndeps = map[dep = './dep_src']\n").unwrap();
+    std::fs::write(app.join("main.co"), "use lib.stamp\nuse dep.f\n\nlog[stamp.label['x']]\nlog[f.plain['y']]\n").unwrap();
+    let installed = crow(&app, &["install"]);
+    assert!(installed.contains("dep: linked to"), "{}", installed);
+    let said = crow(&app, &["check", "main.co"]);
+    assert!(said.contains("    lib/stamp.co: clock\n"), "the part's test-only function is its reach:\n{}", said);
+    assert!(said.contains("    crow_modules/dep/f.co: nothing\n"), "the dependency's unreached function is not:\n{}", said);
+    assert!(said.contains("    main.co: nothing\n"), "{}", said);
+    let _ = std::fs::remove_dir_all(&root);
+}
