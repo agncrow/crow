@@ -1,0 +1,5 @@
+--- a variable, a function or a parameter whose name begins with two underscores is refused where it is declared, and told the name with one; a parsed value's key after a dot may begin so
+j = json['{"__room": 4}']
+log[j.__room]
+fn spread[__xs]
+    return len[__xs]

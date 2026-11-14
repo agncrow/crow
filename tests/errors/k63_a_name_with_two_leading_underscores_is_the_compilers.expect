@@ -1,0 +1,3 @@
+k63_a_name_with_two_leading_underscores_is_the_compilers.co:2:5: '__pick_items' begins with two underscores, as only the names Crow makes do — write '_pick_items'
+  2 │ log[__pick_items[[1, 2], [true, false]]]
+    │     ^^^^^^^^^^^^

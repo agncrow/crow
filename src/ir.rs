@@ -470,6 +470,133 @@ pub fn copy_name(name: &str, n: usize) -> String {
     format!("{}{}{}", name, crate::PART_JOIN, n)
 }
 
+// The names the compiler makes beside the program's own (spec, Design
+// Note: the names the compiler makes). A name made FROM one the program
+// wrote joins it with `PART_JOIN`, which no name a program writes holds:
+// a part's declaration (`greet·loud`), a part's local (`m__greet·`), a
+// standard module's declaration (`_io··lines`), a copy per signature
+// (`f·2`), and the four below. A name the compiler makes of its own — a
+// temporary, a converting loop's item, a hidden form (`__map_of`), the
+// compiled program's own items (`__crow_state`) — begins with two
+// underscores, which no name a program writes does either (the lexer
+// refuses both). Each family's shape is its own, so none takes another's
+// place: joined by underscores, a program's own `x__s2` had been renamed
+// to `x` with the block variables, a parameter `_t1` overwritten by the
+// lowering's first temporary, and `xs__then1` refused as the chain's step
+// — each a correct program answered wrongly or refused.
+
+/// A block's later variable of a name whose earlier one's block has ended
+/// (`crate::lower`'s Namer): the name and its number joined by the mark,
+/// `x·2`, as a function's copy is (`copy_name`) — a variable is never
+/// named like a function, so the two never meet.
+pub fn block_name(name: &str, n: usize) -> String {
+    format!("{}{}{}", name, crate::PART_JOIN, n)
+}
+
+/// The name a block's later variable was written with (`block_name`):
+/// `x·2` is `x`; any other name is itself (a `then` chain's step keeps its
+/// number: `x·then·1` is no block's variable).
+pub fn block_base(name: &str) -> &str {
+    match name.rsplit_once(crate::PART_JOIN) {
+        Some((base, n)) if !base.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) && !base.ends_with(THEN_PIECE) => base,
+        _ => name,
+    }
+}
+
+/// The piece a `then` chain's steps carry: `then` is a keyword, so no
+/// part's path and no declaration holds it as a piece.
+const THEN_PIECE: &str = "·then";
+
+/// The hidden variable of a `then` chain's step (crate::parser's
+/// `then_lines`): the chain's variable, `then` and the step's number,
+/// joined by the mark — `x·then·1`, `x·then·2`, the last step assigning
+/// `x` itself.
+pub fn then_step_name(name: &str, k: usize) -> String {
+    format!("{}{}{}", name, THEN_PIECE, copy_suffix(k))
+}
+
+fn copy_suffix(n: usize) -> String {
+    format!("{}{}", crate::PART_JOIN, n)
+}
+
+/// A function's adapter of the 64-bit signature a function type names,
+/// made where the function is handed as a value (crate::int_width):
+/// `f·handed··`. A made kind of a function ends in two marks, as nothing
+/// else does: a part's local ends in one (`x__lib·dual·`, a local of
+/// `lib/dual.co`), a part's declaration and a copy in none.
+pub fn handed_name(f: &str) -> String {
+    kind_name(f, "handed")
+}
+
+/// Whether a function is an adapter (`handed_name`).
+pub fn is_handed(name: &str) -> bool {
+    kind_base(name, "handed").is_some()
+}
+
+/// The compiled program's copy of a function `grad` differentiates
+/// (`f·traced··`) and its copy over dual numbers (`f·dual··`), each
+/// declared beside the function (crate::emit_rs).
+pub fn traced_name(f: &str) -> String {
+    kind_name(f, "traced")
+}
+
+/// See `traced_name`.
+pub fn dual_name(f: &str) -> String {
+    kind_name(f, "dual")
+}
+
+fn kind_name(f: &str, kind: &str) -> String {
+    format!("{}{}{}{}{}", f, crate::PART_JOIN, kind, crate::PART_JOIN, crate::PART_JOIN)
+}
+
+/// The function a made name ends in `·<kind>··` of (`kind_name`).
+fn kind_base<'a>(name: &'a str, kind: &str) -> Option<&'a str> {
+    let rest = name.strip_suffix(crate::PART_JOIN)?.strip_suffix(crate::PART_JOIN)?;
+    let base = rest.strip_suffix(kind)?.strip_suffix(crate::PART_JOIN)?;
+    (!base.is_empty()).then_some(base)
+}
+
+/// The lowering's temporary number `n` (crate::lower_ir's `fresh`): `__t1`.
+pub fn temp_name(n: usize) -> String {
+    format!("__t{}", n)
+}
+
+/// Whether a variable is one of the lowering's temporaries (`temp_name`).
+pub fn is_temp(name: &str) -> bool {
+    name.strip_prefix("__t").is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// A converting loop's item, one per loop (crate::lower_ir's `held_as`):
+/// `__held1`.
+pub fn held_name(n: usize) -> String {
+    format!("__held{}", n)
+}
+
+/// A made name as the program wrote what it was made from, through any of
+/// the makings in turn: a `then` chain's step (`x·then·1`), a block's later
+/// variable and a copy per signature (`x·2`, `f·2`), an adapter, a traced
+/// and a dual copy (`f·handed··`, `f·traced··`, `f·dual··`) — `x` and `f`.
+/// What a part's or a module's prefix spells is the message's to say
+/// (crate::as_the_program_writes).
+pub fn made_base(name: &str) -> &str {
+    let mut name = name;
+    loop {
+        let before = name;
+        if let Some(base) = name.rsplit_once(crate::PART_JOIN).and_then(|(rest, n)| {
+            (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then_some(rest)?.strip_suffix(THEN_PIECE).filter(|b| !b.is_empty())
+        }) {
+            name = base;
+        } else if let Some(base) = ["handed", "traced", "dual"].iter().find_map(|k| kind_base(name, k)) {
+            name = base;
+        } else {
+            name = copy_base(name);
+        }
+        if name == before {
+            return name;
+        }
+    }
+}
+
 /// A body's first source line: where a recursion past the limit stops,
 /// the same line in both modes.
 pub fn first_line(b: &[Stmt]) -> usize {

@@ -1,0 +1,55 @@
+--- A program's own names spelled as the compiled program's own are the
+--- program's (spec, Design Note: the names the compiler makes): the Rust
+--- the emitter wrote had bound `_prop_0` for an argument that can fail,
+--- `s__known` beside a text read by position and `p__v` beside a vector
+--- read by index, so a program naming its own variables so did not build
+--- compiled, where it ran interpreted, and `parts__count` beside a text
+--- built piece by piece, so `joined` answered `a-b 2` compiled and
+--- `a-b 7` interpreted. A tensor's numbers raised to a power were each
+--- named `x` as the power was computed, so `t .^ x` raised each number to
+--- itself compiled: `[1, 4, 27]` where the interpreter answers `[1, 4, 9]`.
+--- The compiled program's own names hold a mark no program's name holds
+--- (`_prop_0·`, `s·known·`, `_x·`), in both modes.
+use math
+
+fn two[a, b]
+    return '`a` `b`'
+
+fn g[_prop_0, _ip0, s, s__known, _r, _v, _i, _x]
+    r = two[int['3'], _prop_0]
+    n = len[s] + s__known
+    t = slice[s, 1, 2]
+    return '`r` | `n` | `_ip0` | `t` | `_r` `_v` `_i` `_x`'
+log[g['P', 'I', 'abc', 10, 'R', 'V', 'I2', 'X']]
+
+fn joined[xs, parts__count, _c]
+    parts = []
+    for x in xs
+        parts = push[parts, x]
+    out = join[parts, _c]
+    return '`out` `parts__count`'
+log[joined[['a', 'b'], 7, '-']]
+
+fn scaled[p, p__v, _s]
+    acc = 0.0
+    for i in range[len[p]]
+        acc = acc + p[i] * p__v
+    return acc + _s
+log[scaled[tensor[[1.0, 2.0]], 3.0, 0.5]]
+
+fn total[_v, _i]
+    s = 0
+    for x in _v
+        s = s + x * _i
+    return s
+log[total[[1, 2, 3], 2]]
+
+fn pick[_r, _x]
+    ys = for _k in _r
+        _k + _x
+    return ys
+log[pick[[1, 2], 10]]
+
+t = tensor[[1.0, 2.0, 3.0]]
+x = 2
+log[t .^ x]

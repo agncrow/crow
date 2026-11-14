@@ -251,8 +251,8 @@ impl Emitter {
     /// first piece, then the piece, where the text lies.
     pub(super) fn emit_append(&mut self, x: &str, sep: &str, piece: &Expr) {
         let p = self.borrowed_text(piece);
-        let sep_part = if sep.is_empty() { String::new() } else { format!("if {x}__count > 0 {{ {x}.push_str({sep:?}); }} ") };
-        self.line(&format!("{{ {sep_part}{x}.push_str({p}); {x}__count += 1; }}"));
+        let sep_part = if sep.is_empty() { String::new() } else { format!("if {x}·count· > 0 {{ {x}.push_str({sep:?}); }} ") };
+        self.line(&format!("{{ {sep_part}{x}.push_str({p}); {x}·count· += 1; }}"));
     }
 
     /// A text read where it lies, for an append to copy: a builder's text,
@@ -265,8 +265,8 @@ impl Emitter {
             Expr::Index { base, indices, .. } if indices.len() == 1 && matches!(base.ty(), Ty::List(item) if *item == Ty::Str) && matches!(unwrapped(base), Expr::Local(..) | Expr::Move(..)) => {
                 let b = self.expr(base);
                 let i = self.expr(&indices[0]);
-                let at = self.index_at("_i", "_v.len()");
-                format!("{{ let _i = {i}; let _v = &{b}; _v[{at}].as_str() }}")
+                let at = self.index_at("_i·", "_v·.len()");
+                format!("{{ let _i· = {i}; let _v· = &{b}; _v·[{at}].as_str() }}")
             }
             // (a local holding a value that can fail, unwrapped in the IR
             // once checked, keeps the text in its payload: a tool's schema

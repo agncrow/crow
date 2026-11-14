@@ -92,7 +92,7 @@ pub fn verify_in<'p>(program: &'p Program, known: &HashMap<String, Ty>, earlier:
             if specialized.contains(f.name.as_str()) {
                 continue;
             }
-            v.runs = reached.contains(&f.name) || reached.contains(crate::ir::copy_base(&f.name)) || f.name.rsplit_once("__").is_some_and(|(b, _)| reached.contains(b));
+            v.runs = reached.contains(&f.name) || reached.contains(crate::ir::made_base(&f.name));
             v.body = format!("fn {}", f.name);
             v.line = 0;
             // a builtin written in Crow answers what its row states: the
@@ -139,8 +139,7 @@ fn crow_row_of(name: &str) -> Option<&'static crate::table::Row> {
     if !crate::modules::is_crow_fn(name) {
         return None;
     }
-    let base = name.strip_prefix("_traced_").unwrap_or(name);
-    let base = crate::ir::copy_base(base);
+    let base = crate::ir::made_base(name);
     crate::table::ROWS.iter().find(|r| r.is_crow() && crate::table::crow_fn_name(r) == base)
 }
 

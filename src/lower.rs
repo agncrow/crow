@@ -300,7 +300,8 @@ impl Lowerer {
 /// a name bound again after its block has ended is a new variable, and a
 /// read of it there is refused. The passes after this one keep a
 /// variable's type by its name, so each later binding of a name whose
-/// earlier binding's block has ended gets a name of its own (`x__s2`);
+/// earlier binding's block has ended gets a name of its own (`x·2`,
+/// `crate::ir::block_name`, which no name a program writes can be);
 /// messages print the name the program wrote (`shown`). Names visible
 /// beyond a block (the top level's, functions, structs, modules) are never
 /// renamed.
@@ -381,40 +382,22 @@ thread_local! {
     static PROGRAM_IMPORTS: std::cell::RefCell<Arc<BTreeMap<String, String>>> = std::cell::RefCell::new(Arc::new(BTreeMap::new()));
 }
 
-/// The suffix a renamed binding carries, and the name a message prints.
-const SCOPED: &str = "__s";
-
-/// The name a block's variable was written with: `x__s2` is `x`.
+/// The name a block's variable was written with: `x·2` is `x`
+/// (crate::ir::block_name). A program's own `x__s2` — the spelling before
+/// the mark — had been taken for the block's, and renamed to `x` beside the
+/// program's `x`: one variable where the program had two.
 pub fn written(name: &str) -> &str {
-    match name.rfind(SCOPED) {
-        Some(i) if i > 0 && name.len() > i + SCOPED.len() && name[i + SCOPED.len()..].chars().all(|c| c.is_ascii_digit()) => &name[..i],
-        _ => name,
-    }
+    crate::ir::block_base(name)
 }
 
-/// A name as the program wrote it: `x__s2` is `x`, a standard module's
-/// function inlined behind its prefix is its own name (`_llm_chat` is
-/// `chat`: crate::modules::unprefixed), and a part's declaration is the
-/// program's spelling of it (`greet·loud` is `greet.loud`:
-/// crate::as_the_program_writes), in every message.
+/// A name as the program wrote it, in every message: a name the compiler
+/// made of it is the name (`x·2` and `x·then·1` are `x`: crate::ir::made_base),
+/// a standard module's function inlined behind its prefix is its own name
+/// (`_io··lines` is `lines`: crate::modules::unprefixed), and a part's
+/// declaration is the program's spelling of it (`greet·loud` is
+/// `greet.loud`: crate::as_the_program_writes).
 pub fn shown(msg: &str) -> String {
-    let msg = &crate::as_the_program_writes(&crate::modules::unprefixed(msg));
-    let mut out = String::with_capacity(msg.len());
-    let mut rest: &str = msg;
-    while let Some(i) = rest.find(SCOPED) {
-        let after = &rest[i + SCOPED.len()..];
-        let digits = after.chars().take_while(|c| c.is_ascii_digit()).count();
-        let before_ok = i > 0 && rest[..i].chars().last().map_or(false, |c| c.is_alphanumeric() || c == '_');
-        if digits > 0 && before_ok && !after[digits..].starts_with(|c: char| c.is_alphanumeric() || c == '_') {
-            out.push_str(&rest[..i]);
-            rest = &after[digits..];
-        } else {
-            out.push_str(&rest[..i + SCOPED.len()]);
-            rest = after;
-        }
-    }
-    out.push_str(rest);
-    out
+    crate::as_the_program_writes(&crate::modules::unprefixed(msg))
 }
 
 struct Namer<'a> {
@@ -460,7 +443,7 @@ impl<'a> Namer<'a> {
         }
         let n = self.seen.entry(name.to_string()).or_insert(0);
         *n += 1;
-        let v = if *n == 1 { name.to_string() } else { format!("{}{}{}", name, SCOPED, n) };
+        let v = if *n == 1 { name.to_string() } else { crate::ir::block_name(name, *n) };
         self.scopes.last_mut().unwrap().insert(name.to_string(), v.clone());
         v
     }
@@ -1067,7 +1050,11 @@ impl Lowerer {
                 // read of a column after it refused too)
                 if let Expr::FieldAccess { object, field } = &callee {
                     let names_frame = matches!(object.as_ref(), Expr::Ident(m) if self.imports.get(m).is_some_and(|p| p == "frame") || (m == "frame" && !self.imports.contains_key(m)));
-                    if field == "new" && !args.is_empty() && names_frame && !self.fns.contains_key(&format!("{}_new", module_of(object))) {
+                    // (a part's own `new` is named by its prefix and the mark,
+                    // `frame·new`: asked as `frame_new`, a program's own `fn
+                    // frame_new` had taken every frame literal's place)
+                    let own_new = format!("{}{}new", module_of(object), crate::PART_JOIN);
+                    if field == "new" && !args.is_empty() && names_frame && !self.fns.contains_key(&own_new) {
                         return self.lower_frame_literal(object.as_ref().clone(), args);
                     }
                 }
@@ -1910,9 +1897,22 @@ mod tests {
             _ => None,
         }).expect("the function");
         let text = format!("{:?}", body);
-        assert!(text.contains("name: \"x\"") && text.contains("name: \"x__s2\""), "{}", text);
-        assert!(text.contains("`x__s2`!"), "the span reads the renamed variable: {}", text);
-        assert!(!text.contains("n__s") && !text.contains("c__s"), "an update and a parameter keep their names: {}", text);
+        assert!(text.contains("name: \"x\"") && text.contains("name: \"x·2\""), "{}", text);
+        assert!(text.contains("`x·2`!"), "the span reads the renamed variable: {}", text);
+        assert!(!text.contains("n·") && !text.contains("c·"), "an update and a parameter keep their names: {}", text);
+    }
+
+    /// A program's own name never meets a block's later variable: written
+    /// with two underscores (`x__s2`), it had been renamed to `x` with the
+    /// block variables, and `x + x__s2` read `x` twice (both modes)
+    #[test]
+    fn a_name_like_a_blocks_later_variable_is_the_programs() {
+        let stmts = lower_src("fn f[c]\n    if c\n        x = 1\n    else\n        x = 2\n    x__s2 = 5\n    return x__s2\n").unwrap();
+        let text = format!("{:?}", stmts);
+        assert!(text.contains("name: \"x__s2\"") && text.contains("name: \"x·2\""), "{}", text);
+        assert_eq!(written("x__s2"), "x__s2");
+        assert_eq!(written("x·2"), "x");
+        assert_eq!(written("x·then·1"), "x·then·1", "a chain's step is no block's variable");
     }
 
     /// A function's branch binds its own local whatever the program names
@@ -1930,10 +1930,10 @@ mod tests {
         };
         let plain = lower_src("x = 2.5\nfn f[c]\n    if c\n        x = 1\n    else\n        x = 'one'\n    return c\nlog[x]\n").unwrap();
         let text = body_of(&plain);
-        assert!(text.contains("name: \"x\"") && text.contains("name: \"x__s2\""), "{}", text);
+        assert!(text.contains("name: \"x\"") && text.contains("name: \"x·2\""), "{}", text);
         let ui = lower_src("use ui\nx = 0\nfn bump[c]\n    if c\n        x = 1\n    else\n        x = 2\n    return c\n").unwrap();
         let text = body_of(&ui);
-        assert!(!text.contains("__s"), "a ui program's function writes its fact: {}", text);
+        assert!(!text.contains("x·"), "a ui program's function writes its fact: {}", text);
     }
 
     /// A read after the block that set the variable ended is refused, with
@@ -1947,8 +1947,9 @@ mod tests {
     /// A message names a variable as the program wrote it
     #[test]
     fn a_renamed_variable_is_shown_as_written() {
-        assert_eq!(shown("cannot reassign 'x__s2' from int to str"), "cannot reassign 'x' from int to str");
-        assert_eq!(shown("keep __s2 and a__sb"), "keep __s2 and a__sb");
+        assert_eq!(shown("cannot reassign 'x·2' from int to str"), "cannot reassign 'x' from int to str");
+        assert_eq!(shown("cannot reassign 'xs·then·2' from int to str"), "cannot reassign 'xs' from int to str");
+        assert_eq!(shown("keep x__s2 and a·b2"), "keep x__s2 and a.b2");
     }
 
     /// A loop whose body assigns a name does not inherit its narrowing,

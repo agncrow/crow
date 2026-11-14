@@ -1,0 +1,66 @@
+--- A program's own names spelled as the compiler once spelled the names
+--- it makes are the program's own (spec, Design Note: the names the
+--- compiler makes). Joined by underscores, a program's `x__s2` had been
+--- renamed to `x` with a block's later variable (`x + x__s2` read `x`
+--- twice), a parameter `_t1` overwritten by the lowering's first
+--- temporary, `xs__then1` refused as a `then` chain's step, and
+--- `fn frame_new` taken for `frame.new`'s own check. A name the compiler
+--- makes from one the program wrote holds a mark no program's name holds
+--- (`x·2`, `xs·then·1`), and one it makes of its own begins with two
+--- underscores, which no program's name may (`__t1`), in both modes.
+use frame
+
+x = 1
+x__s2 = 2
+log[x + x__s2]
+
+fn f[a]
+    n = a
+    n__s7 = a * 10
+    return n + n__s7
+log[f[3]]
+
+fn blocks[c]
+    if c
+        y = 1
+        log[y]
+    else
+        y = 'one'
+        log[y]
+    y__s2 = 5
+    return y__s2
+log[blocks[true]]
+log[blocks[false]]
+
+xs__then1 = 'mine'
+xs = [3, 1, 2]
+    then sort
+    then reverse
+log[xs]
+log[xs__then1]
+
+fn chained[ys]
+    out__then1 = 'theirs'
+    out = ys
+        then sort
+    return '`out` `out__then1`'
+log[chained[[2, 1]]]
+
+fn g[m, _t1, _held1, _t2]
+    m = set[m, 'b', len[m]]
+    return '`m` `_t1` `_held1` `_t2`'
+log[g[map['a' = 1], 'mine', 'held', 'two']]
+
+_t1 = 'top'
+m = map['a' = 1]
+m = set[m, 'b', len[m]]
+log['`m` `_t1`']
+
+fn frame_new[]
+    return 'its own'
+d = frame.new[a = [1, 2]]
+log[d.a]
+log[frame_new[]]
+
+j = json['{"__room": 4, "a__s2": 5}']
+log[j.__room + j.a__s2]

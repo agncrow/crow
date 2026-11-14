@@ -154,8 +154,6 @@ pub(crate) fn foreign_names(source: &str, message: &str) -> Vec<String> {
     let word = |c: char| c.is_alphanumeric() || c == '_';
     let mut foreign = Vec::new();
     for n in names {
-        let internal = n.starts_with('<') || ["INDENT", "DEDENT", "NEWLINE", "EOF"].contains(&n.as_str()) || n.starts_with("__");
-        let named = !n.is_empty() && n.chars().all(|c| word(c) || c == '.');
         let held = || {
             let last = n.rsplit('.').next().unwrap_or(&n);
             code.match_indices(last).any(|(i, _)| {
@@ -164,6 +162,10 @@ pub(crate) fn foreign_names(source: &str, message: &str) -> Vec<String> {
                 before.is_none_or(|c| !word(c)) && after.is_none_or(|c| !word(c))
             })
         };
+        // (a name that begins with two underscores is the compiler's own
+        // unless the program wrote it: the refusal of one names it)
+        let internal = n.starts_with('<') || ["INDENT", "DEDENT", "NEWLINE", "EOF"].contains(&n.as_str()) || (n.starts_with("__") && !held());
+        let named = !n.is_empty() && n.chars().all(|c| word(c) || c == '.');
         if (internal || (named && !held())) && !foreign.contains(&n) {
             foreign.push(n);
         }
@@ -645,6 +647,10 @@ mod tests {
         assert_eq!(foreign_names(src, "'<expression>' takes no named arguments"), vec!["<expression>"]);
         // advice names what to write
         assert!(foreign_names("lenn[x]\n", "undefined function 'lenn' — did you mean 'len'?").is_empty());
+        // a name that begins with two underscores is the compiler's own,
+        // unless the program wrote it
+        assert_eq!(foreign_names(src, "'__t1' expects a list"), vec!["__t1"]);
+        assert!(foreign_names("log[__xs]\n", "'__xs' begins with two underscores, as only the names Crow makes do — write '_xs'").is_empty());
     }
 
     #[test]

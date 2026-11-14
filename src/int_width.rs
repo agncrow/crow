@@ -925,7 +925,7 @@ impl Walk {
         match s {
             Stmt::Let { var, expr, ty } => {
                 self.types.insert((self.fun.clone(), var.clone()), ty.clone());
-                if var.starts_with("_t") {
+                if crate::ir::is_temp(var) {
                     self.temps.insert((self.fun.clone(), var.clone()), expr.clone());
                 }
                 self.calls_in(expr);
@@ -1745,10 +1745,10 @@ fn signed_terms<'e>(e: &'e Expr, neg: bool, out: &mut Vec<(&'e Expr, bool)>) {
 }
 
 /// What a term is, looking through the temporary the lowering put a call
-/// in (`_t3 = count[n - 1]`, then `total + _t3`).
+/// in (`__t3 = count[n - 1]`, then `total + __t3`).
 fn resolved<'e>(x: &'e Expr, temps: &'e HashMap<(String, String), Expr>, fun: &str) -> &'e Expr {
     match x {
-        Expr::Local(v, _) | Expr::Move(v, _) if v.starts_with("_t") => match temps.get(&(fun.to_string(), v.clone())) {
+        Expr::Local(v, _) | Expr::Move(v, _) if crate::ir::is_temp(v) => match temps.get(&(fun.to_string(), v.clone())) {
             Some(t) => t,
             None => x,
         },
@@ -1784,7 +1784,7 @@ fn accumulators(fun: &str, b: &Block) -> HashMap<String, u32> {
     let mut temps: HashMap<(String, String), Expr> = HashMap::new();
     crate::ir::visit_stmts(b, &mut |s| {
         if let Stmt::Let { var, expr, .. } = s {
-            if var.starts_with("_t") {
+            if crate::ir::is_temp(var) {
                 temps.insert((fun.to_string(), var.clone()), expr.clone());
             }
         }
@@ -2258,12 +2258,12 @@ pub fn widen(program: &mut Program) {
     }
     // a function handed as a value whose signature grew: the value is an
     // adapter of the 64-bit signature the function type that takes it names
-    // (`f__handed`), which calls the function and answers its value in 64
+    // (`f·handed··`, `crate::ir::handed_name`), which calls the function and answers its value in 64
     // bits — refused past them, alike in both modes — while a call of the
     // function by its name keeps every digit
     let mut adapters: HashMap<String, String> = HashMap::new();
     for (name, old_params, old_ret, new_params, new_ret, kind, effects, tables_written, line) in grown_handed {
-        let wrapper = format!("{}__handed", name);
+        let wrapper = crate::ir::handed_name(&name);
         let args: Vec<Expr> = old_params.iter().zip(&new_params).map(|((p, old), (_, new))| to_type(Expr::Local(p.clone(), old.clone()), new)).collect();
         let call = Expr::Call { target: Target::User(name.clone()), args, ty: new_ret.clone(), propagates: false };
         let mut answer = to_type(call, &old_ret);
@@ -2520,7 +2520,7 @@ impl<'a> Retype<'a> {
                 *e = to_type(take(e), ret);
                 // (an adapter of a function handed as a value answers 64
                 // bits: said so)
-                if self.fun.ends_with("__handed") {
+                if crate::ir::is_handed(&self.fun) {
                     name_refusal(e, crate::ir::Who::Handed);
                 }
             }

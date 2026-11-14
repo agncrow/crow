@@ -24,6 +24,13 @@ history says the rest.
   stored as `scenario.board.door.the_door_lets_people_in_and_out.txt`):
   an app with named tests that open it reports each scenario as removed
   and new until it is accepted once (`crow check`, then `a`).
+- A name may not begin with two underscores: such names are the
+  compiler's own (its temporaries, its hidden forms, the compiled
+  program's items), and a program's is refused where it is written,
+  `'__x' begins with two underscores, as only the names Crow makes do —
+  write '_x'`. A field after a dot may still (`j.__room`). Written by a
+  program, `__pick_items[…]` had reached the hidden form `xs[mask]`
+  lowers to.
 
 ### Fixed
 
@@ -49,6 +56,22 @@ history says the rest.
   and number joined by `·` (`f·2`), marks no name a program writes
   holds; `views/sim.co`'s test `t` and `views_sim.co`'s are two
   scenarios of the baseline, where they had been one.
+- A program's own name spelled like another name the compiler makes is
+  the program's, in both modes: `x__s2` had been renamed to `x` with a
+  block's later variable `x` (`x + x__s2` read `x` twice), a parameter
+  `_t1` had been overwritten by the lowering's first temporary,
+  `xs__then1` beside a `then` chain on `xs` had been refused as the
+  chain's step, and a function's parameters `_prop_0`, `s__known` and
+  `p__v` had not built compiled, where they ran interpreted; a parameter
+  `parts__count` beside a text built piece by piece had answered the
+  builder's count compiled (`a-b 2` for `a-b 7`). The names the compiler
+  makes of a program's hold the parts' mark (`x·2`, `xs·then·1`, and the
+  compiled program's `_prop_0·`, `s·known·`), and the ones it makes of
+  its own begin with two underscores (`__t1`).
+- A tensor's numbers raised to a number a program names `x` are raised
+  to it compiled, as interpreted: `t .^ x` had raised each number to
+  itself (`[1, 4, 27]` for `[1, 4, 9]`), the compiled program naming
+  each number `x` while it computed the power, once for each number.
 - What `crow setup` fetches is said at its size: about 270 MB, the
   toolchain about 220 and the runtime about 50 (203 and 51 MB on a Mac,
   233 and 51 on Linux), where `crow setup`, a run with no compiler and

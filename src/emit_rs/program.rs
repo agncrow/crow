@@ -536,16 +536,16 @@ impl Emitter {
     /// `sys` says the connection is gone.
     fn driver_glue(&mut self, backend: &str) {
         let Some(prefix) = crate::modules::driver_rows_prefix(backend) else { return };
-        let failed = "Err(crow_db::driven::Failure { reason: _r.reason, lost: _r.kind == \"sys\" })";
+        let failed = "Err(crow_db::driven::Failure { reason: _r·.reason, lost: _r·.kind == \"sys\" })";
         self.line(&format!("struct __CrowDriver{};", backend));
         self.line(&format!("impl crow_db::driven::Calls for __CrowDriver{} {{", backend));
-        self.line(&format!("    fn open(&self, parts: &str) -> Result<crow_runtime::sys::CrowStream, crow_db::driven::Failure> {{ let _r = {p}_open(parts.to_string()); if _r.ok {{ Ok(_r.value) }} else {{ {f} }} }}", p = prefix, f = failed));
-        self.line(&format!("    fn check(&self, parts: &str, s: &crow_runtime::sys::CrowStream) -> Result<(), crow_db::driven::Failure> {{ let _r = {p}_check(parts.to_string(), s.clone()); if _r.ok {{ Ok(()) }} else {{ {f} }} }}", p = prefix, f = failed));
-        self.line(&format!("    fn query(&self, parts: &str, s: &crow_runtime::sys::CrowStream, sql: &str, params: &str) -> Result<crow_runtime::frame::CrowFrame, crow_db::driven::Failure> {{ let _r = {p}_query(parts.to_string(), s.clone(), sql.to_string(), params.to_string()); if _r.ok {{ Ok(_r.value) }} else {{ {f} }} }}", p = prefix, f = failed));
-        self.line(&format!("    fn exec(&self, parts: &str, s: &crow_runtime::sys::CrowStream, sql: &str, params: &str) -> Result<i64, crow_db::driven::Failure> {{ let _r = {p}_exec(parts.to_string(), s.clone(), sql.to_string(), params.to_string()); if _r.ok {{ Ok(_r.value) }} else {{ {f} }} }}", p = prefix, f = failed));
-        self.line(&format!("    fn insert(&self, parts: &str, s: &crow_runtime::sys::CrowStream, table: &str, frame: &crow_runtime::frame::CrowFrame) -> Result<i64, crow_db::driven::Failure> {{ let _r = {p}_insert(parts.to_string(), s.clone(), table.to_string(), frame.clone()); if _r.ok {{ Ok(_r.value) }} else {{ {f} }} }}", p = prefix, f = failed));
-        self.line(&format!("    fn describe(&self, parts: &str, s: &crow_runtime::sys::CrowStream, sql: &str) -> Result<crow_runtime::frame::CrowFrame, crow_db::driven::Failure> {{ let _r = {p}_describe(parts.to_string(), s.clone(), sql.to_string()); if _r.ok {{ Ok(_r.value) }} else {{ {f} }} }}", p = prefix, f = failed));
-        self.line(&format!("    fn cancel(&self, parts: &str, s: &crow_runtime::sys::CrowStream) -> Result<(), crow_db::driven::Failure> {{ let _r = {p}_cancel(parts.to_string(), s.clone()); if _r.ok {{ Ok(()) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn open(&self, parts: &str) -> Result<crow_runtime::sys::CrowStream, crow_db::driven::Failure> {{ let _r· = {p}_open(parts.to_string()); if _r·.ok {{ Ok(_r·.value) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn check(&self, parts: &str, s: &crow_runtime::sys::CrowStream) -> Result<(), crow_db::driven::Failure> {{ let _r· = {p}_check(parts.to_string(), s.clone()); if _r·.ok {{ Ok(()) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn query(&self, parts: &str, s: &crow_runtime::sys::CrowStream, sql: &str, params: &str) -> Result<crow_runtime::frame::CrowFrame, crow_db::driven::Failure> {{ let _r· = {p}_query(parts.to_string(), s.clone(), sql.to_string(), params.to_string()); if _r·.ok {{ Ok(_r·.value) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn exec(&self, parts: &str, s: &crow_runtime::sys::CrowStream, sql: &str, params: &str) -> Result<i64, crow_db::driven::Failure> {{ let _r· = {p}_exec(parts.to_string(), s.clone(), sql.to_string(), params.to_string()); if _r·.ok {{ Ok(_r·.value) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn insert(&self, parts: &str, s: &crow_runtime::sys::CrowStream, table: &str, frame: &crow_runtime::frame::CrowFrame) -> Result<i64, crow_db::driven::Failure> {{ let _r· = {p}_insert(parts.to_string(), s.clone(), table.to_string(), frame.clone()); if _r·.ok {{ Ok(_r·.value) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn describe(&self, parts: &str, s: &crow_runtime::sys::CrowStream, sql: &str) -> Result<crow_runtime::frame::CrowFrame, crow_db::driven::Failure> {{ let _r· = {p}_describe(parts.to_string(), s.clone(), sql.to_string()); if _r·.ok {{ Ok(_r·.value) }} else {{ {f} }} }}", p = prefix, f = failed));
+        self.line(&format!("    fn cancel(&self, parts: &str, s: &crow_runtime::sys::CrowStream) -> Result<(), crow_db::driven::Failure> {{ let _r· = {p}_cancel(parts.to_string(), s.clone()); if _r·.ok {{ Ok(()) }} else {{ {f} }} }}", p = prefix, f = failed));
         self.line("}");
         self.line("");
     }
@@ -758,7 +758,7 @@ impl Emitter {
             return text;
         }
         format!(
-            "{{ let _rv = {}; if !_rv.ok {{ crow_stop({}, format!(\"{} — {{}}\", _rv.reason)) }} _rv.value }}",
+            "{{ let _rv· = {}; if !_rv·.ok {{ crow_stop({}, format!(\"{} — {{}}\", _rv·.reason)) }} _rv·.value }}",
             text,
             fact.line,
             Decision::Assign(fact.name.clone()).refusal().replace('{', "{{").replace('}', "}}")
@@ -1352,9 +1352,9 @@ impl Emitter {
             let read = format!("__derive_{}(state)", d);
             match &rt {
                 Ty::Result(inner) => {
-                    if let Some(value) = as_json(inner, "_r.value") {
+                    if let Some(value) = as_json(inner, "_r·.value") {
                         self.line(&format!(
-                            "\"{}\" => {{ let _r = {}; Some(if _r.ok {{ serde_json::json!({{ \"ok\": true, \"value\": {} }}) }} else {{ serde_json::json!({{ \"ok\": false, \"reason\": _r.reason, \"kind\": _r.kind }}) }}) }},",
+                            "\"{}\" => {{ let _r· = {}; Some(if _r·.ok {{ serde_json::json!({{ \"ok\": true, \"value\": {} }}) }} else {{ serde_json::json!({{ \"ok\": false, \"reason\": _r·.reason, \"kind\": _r·.kind }}) }}) }},",
                             d, read, value
                         ));
                     }
@@ -1382,7 +1382,7 @@ impl Emitter {
     fn emit_handle_dispatch(&mut self) {
         self.needs_serde_json = true;
         self.line("#[allow(unused_variables)]");
-        self.line("fn __crow_handle(state: &mut CrowLiveState, event: &str, _value: Option<&str>) {");
+        self.line("fn __crow_handle(state: &mut CrowLiveState, event: &str, _value·: Option<&str>) {");
         self.indent += 1;
         self.line("match event {");
         self.indent += 1;
@@ -1424,14 +1424,14 @@ impl Emitter {
                     .iter()
                     .enumerate()
                     .map(|(i, (_, t))| match t {
-                        Ty::Int => format!("_a[{i}].as_i64().or_else(|| _a[{i}].as_f64().map(|x| x as i64)).or_else(|| _a[{i}].as_str().and_then(|s| s.trim().parse::<i64>().ok())).unwrap_or(0)", i = i),
-                        Ty::Float => format!("_a[{i}].as_f64().or_else(|| _a[{i}].as_str().and_then(|s| s.trim().parse::<f64>().ok())).unwrap_or(0.0)", i = i),
-                        Ty::Bool => format!("_a[{i}].as_bool().or_else(|| _a[{i}].as_str().map(|s| s == \"true\")).unwrap_or(false)", i = i),
+                        Ty::Int => format!("_a·[{i}].as_i64().or_else(|| _a·[{i}].as_f64().map(|x| x as i64)).or_else(|| _a·[{i}].as_str().and_then(|s| s.trim().parse::<i64>().ok())).unwrap_or(0)", i = i),
+                        Ty::Float => format!("_a·[{i}].as_f64().or_else(|| _a·[{i}].as_str().and_then(|s| s.trim().parse::<f64>().ok())).unwrap_or(0.0)", i = i),
+                        Ty::Bool => format!("_a·[{i}].as_bool().or_else(|| _a·[{i}].as_str().map(|s| s == \"true\")).unwrap_or(false)", i = i),
                         t if by_serde(t) => {
-                            decoded.push((format!("_p{}", i), format!("serde_json::from_value::<{}>(_a[{}].clone()).ok()", as_inferred(t).to_rust_type(), i)));
-                            format!("_p{}", i)
+                            decoded.push((format!("_p{}·", i), format!("serde_json::from_value::<{}>(_a·[{}].clone()).ok()", as_inferred(t).to_rust_type(), i)));
+                            format!("_p{}·", i)
                         }
-                        _ => format!("_a[{i}].as_str().map(|s| s.to_string()).unwrap_or_else(|| _a[{i}].to_string())", i = i),
+                        _ => format!("_a·[{i}].as_str().map(|s| s.to_string()).unwrap_or_else(|| _a·[{i}].to_string())", i = i),
                     })
                     .collect();
                 let call = format!("{}(state, {});", rust, extracts.join(", "));
@@ -1445,7 +1445,7 @@ impl Emitter {
                 // arguments the handler does not take stop it, as the
                 // interpreter's call does
                 self.line(&format!(
-                    "\"{h}\" => {{ let _a: Vec<serde_json::Value> = _value.and_then(|_v| serde_json::from_str::<Vec<serde_json::Value>>(_v).ok()).unwrap_or_default(); if _a.len() == {n} {{ {call} }} else {{ state.stop(format!(\"{h} stopped: {h}[] expects {n} arguments, got {{}}\", _a.len())); }} }},",
+                    "\"{h}\" => {{ let _a·: Vec<serde_json::Value> = _value·.and_then(|_v·| serde_json::from_str::<Vec<serde_json::Value>>(_v·).ok()).unwrap_or_default(); if _a·.len() == {n} {{ {call} }} else {{ state.stop(format!(\"{h} stopped: {h}[] expects {n} arguments, got {{}}\", _a·.len())); }} }},",
                     h = h,
                     n = params.len(),
                     call = call

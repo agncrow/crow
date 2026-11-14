@@ -322,7 +322,7 @@ impl Emitter {
     /// it names a parameter read so (`read_views`).
     pub(super) fn read_view(&self, e: &Expr) -> Option<String> {
         match unwrapped(e) {
-            Expr::Local(v, _) | Expr::Move(v, _) if self.read_vecs.contains(v.as_str()) => Some(format!("{}__v", v)),
+            Expr::Local(v, _) | Expr::Move(v, _) if self.read_vecs.contains(v.as_str()) => Some(format!("{}·v·", v)),
             _ => None,
         }
     }

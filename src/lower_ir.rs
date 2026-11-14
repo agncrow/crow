@@ -203,7 +203,7 @@ fn callers_lines(program: &mut Program) {
 /// a statement's does (spec, "A handler is a transaction").
 /// Each block's variable as the program wrote it (S11). The passes before
 /// the IR keep a variable's type by its name, so the front end names a
-/// binding apart when its name's earlier block has ended (`x__s2`,
+/// binding apart when its name's earlier block has ended (`x·2`,
 /// lower::scoped); only one binding of a name is ever in view, so the IR
 /// the backends read, and prints, says `x` again — Rust's blocks keep the
 /// two apart as the program's do.
@@ -5111,9 +5111,10 @@ impl<'a> Lowerer<'a> {
 
     fn fresh(&mut self) -> String {
         self.temp += 1;
-        // (named as no function of the program's is: a program with a
-        // function `t1` had its value shadowed by the temporary, compiled)
-        format!("_t{}", self.temp)
+        // (named as no name of the program's is: a program with a function
+        // `t1` had its value shadowed by the temporary, compiled, and a
+        // parameter `_t1` had been overwritten by it, in both modes)
+        crate::ir::temp_name(self.temp)
     }
 
     /// An assignment target's path, its variable and fields already
@@ -9196,8 +9197,8 @@ fn reads_a_field(e: &A) -> bool {
 
 fn local_named(e: &Expr) -> Option<String> {
     match e {
-        // (a name the lowering made — `_t1` — is no name the program wrote)
-        Expr::Local(v, _) | Expr::Move(v, _) | Expr::Load(v, _) if v.starts_with("_t") && v[2..].bytes().all(|b| b.is_ascii_digit()) => None,
+        // (a name the lowering made — `__t1` — is no name the program wrote)
+        Expr::Local(v, _) | Expr::Move(v, _) | Expr::Load(v, _) if crate::ir::is_temp(v) => None,
         Expr::Local(v, _) | Expr::Move(v, _) | Expr::Load(v, _) => Some(v.clone()),
         Expr::Convert { expr, .. } => local_named(expr),
         _ => None,
@@ -9387,7 +9388,7 @@ fn nones_of(x: Expr, slot: &Ty) -> Expr {
 /// A hidden name for a converting loop's item, one per loop.
 fn held_name() -> String {
     static HELD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    format!("_held{}", HELD.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    crate::ir::held_name(HELD.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Whether two item types hold numbers two ways at some depth: a list of
@@ -10548,7 +10549,7 @@ if len[tools] gt 0
     fn an_update_from_its_own_entry_takes_the_map_where_it_lies() {
         let ir = ir_of("fn counts_of[t]\n    counts = map[]\n    for i in range[len[t]]\n        w = slice[t, i, i + 1]\n        if w in counts\n            counts = set[counts, w, counts[w] + 1]\n        else\n            counts = set[counts, w, 1]\n    return counts\nlog[counts_of['abca']]\n");
         assert!(ir.contains(": Int = proven((counts[w] add 1))"), "the value first, into a temporary (a count of a text's characters, within 64 bits): {}", ir);
-        assert!(ir.contains("counts = core.set(move counts, move w, _t"), "the map taken where it lies, the key read for the last time: {}", ir);
+        assert!(ir.contains("counts = core.set(move counts, move w, __t"), "the map taken where it lies, the key read for the last time: {}", ir);
         assert!(!ir.contains("core.set(counts,"), "{}", ir);
     }
 
@@ -11170,7 +11171,18 @@ log[drive[3]]
         let ir = ir_of("fn f[c]\n    if c\n        t = 1\n        log[t]\n    for i in range[2]\n        t = 'x'\n        log[t]\n    return 0\nlog[f[true]]\n");
         assert!(ir.contains("let t: Int = 1"), "{}", ir);
         assert!(ir.contains("let t: Str = \"x\""), "{}", ir);
-        assert!(!ir.contains("__s"), "{}", ir);
+        assert!(!ir.contains("t·"), "{}", ir);
+    }
+
+    /// The lowering's temporaries are named as no program's variable can be
+    /// (`__t1`): a parameter `_t1` had been overwritten by the first
+    /// temporary of `m = set[m, 'b', len[m]]`, and the function answered 1
+    /// where the program said `_t1`'s value, in both modes
+    #[test]
+    fn a_temporary_is_no_programs_variable() {
+        let ir = ir_of("fn g[m, _t1]\n    m = set[m, 'b', len[m]]\n    return _t1\nlog[g[map[a = 1], 'mine']]\n");
+        assert!(ir.contains("__t1"), "{}", ir);
+        assert!(ir.contains("return _t1") || ir.contains("return move _t1"), "the parameter is answered: {}", ir);
     }
 
     /// A function handed to grad is a function of floats, however grad is
@@ -11652,7 +11664,7 @@ log[drive[3]]
     fn a_fallible_condition_is_propagated_first() {
         let ir = ir_of("fn check[s]\n    n = int[s]\n    if n gt 5\n        return 'big'\n    return 'small'\nlog[check['7']]\n");
         assert!(ir.contains("propagate"), "{}", ir);
-        assert!(ir.contains("propagate _t1\n    if unwrap _t1"), "{}", ir);
+        assert!(ir.contains("propagate __t1\n    if unwrap __t1"), "{}", ir);
     }
 
     #[test]

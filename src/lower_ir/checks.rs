@@ -142,17 +142,18 @@ pub(super) fn without_echoes(errors: Vec<(String, Option<String>)>) -> Vec<(Stri
 
 /// A name as the program wrote it: a part's function without the prefix
 /// the expansion gave it (`helpers·spread` is `spread`), a part's local
-/// without its suffix (`df__helpers·` is `df`), a copy as what it copies
-/// (`f·2` is `f`).
+/// without its suffix (`df__helpers·` is `df`, `crate::part_local_written`),
+/// a name made of another as what it was made of (`f·2` is `f`,
+/// `crate::ir::made_base`). A program's own name holding two underscores
+/// is itself (`my__var`).
 pub(crate) fn plain_name(name: &str) -> String {
-    let name = crate::ir::copy_base(name);
-    let unprefixed = match crate::part_prefix_of_declaration(name) {
+    if let Some(local) = crate::part_local_written(name) {
+        return local.to_string();
+    }
+    let name = crate::ir::made_base(name);
+    match crate::part_prefix_of_declaration(name) {
         Some(prefix) => name[prefix.len()..].to_string(),
         None => name.to_string(),
-    };
-    match unprefixed.find("__") {
-        Some(i) if i > 0 => unprefixed[..i].to_string(),
-        _ => unprefixed,
     }
 }
 

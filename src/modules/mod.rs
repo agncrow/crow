@@ -409,13 +409,11 @@ fn inlined_names() -> &'static std::collections::HashSet<String> {
     &NAMES
 }
 
-/// A function's own name past the copies made of it: a traced copy
-/// (`_traced_f`), a copy per signature (`f·2`, `crate::ir::copy_name`), a
-/// value's adapter (`f__handed`).
+/// A function's own name past the copies made of it: a copy per signature
+/// (`f·2`), a value's adapter, a traced and a dual copy (`f·handed··`,
+/// `f·traced··`, `f·dual··`) — `crate::ir::made_base`.
 pub(crate) fn inlined_base(name: &str) -> &str {
-    let name = name.strip_prefix("_traced_").unwrap_or(name);
-    let name = name.strip_suffix("__handed").unwrap_or(name);
-    crate::ir::copy_base(name)
+    crate::ir::made_base(name)
 }
 
 /// The functions a module written in Crow declares for programs: its
@@ -485,11 +483,10 @@ pub fn unprefixed(msg: &str) -> String {
 }
 
 /// An inlined function's name as the program writes it: the prefix gone
-/// (`unprefixed`), and a copy's or a traced version's suffix (`relu·2`,
-/// `_traced_…`) with it.
+/// (`unprefixed`), and what a copy or a traced version adds (`relu·2`,
+/// `relu·traced·`) with it.
 pub fn written_as(name: &str) -> String {
-    let name = name.strip_prefix("_traced_").unwrap_or(name);
-    unprefixed(crate::ir::copy_base(name))
+    unprefixed(crate::ir::made_base(name))
 }
 
 /// The names a body binds — its functions, records, derivations, tests,

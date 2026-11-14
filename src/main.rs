@@ -4076,6 +4076,28 @@ fn note_spelling(ex: &mut ModuleExpansion, prefix: &str, spelling: &str) {
     }
 }
 
+/// A part's local as the part wrote it (`m__greet·` is `m`, a block's
+/// later one `m__greet··2` too, read through `crate::ir::made_base`), or
+/// none for any other name: the expansion renames a part's local apart
+/// from the entry's as the local, two underscores and the part's prefix,
+/// the one name that ends in a single mark after two underscores. Read by
+/// the parts the expansion knows first, since a part's path may hold two
+/// underscores itself (`lib/my__util.co`).
+pub(crate) fn part_local_written(name: &str) -> Option<&str> {
+    let name = crate::ir::made_base(name);
+    if !name.ends_with(PART_JOIN) || name.ends_with(&format!("{}{}", PART_JOIN, PART_JOIN)) {
+        return None;
+    }
+    let known = EXPANSION_PARTS.with(|p| {
+        p.borrow().keys().filter_map(|prefix| name.strip_suffix(prefix.as_str())?.strip_suffix("__").map(str::len)).filter(|&n| n > 0).min()
+    });
+    let len = match known {
+        Some(n) => n,
+        None => name.rsplit_once("__").map(|(local, _)| local.len()).filter(|&n| n > 0)?,
+    };
+    Some(crate::ir::made_base(&name[..len]))
+}
+
 /// A message's inlined names as the program writes them (`lower::shown`
 /// reads every refusal through it, the terminal's and the editor's): a
 /// part's declaration is its importer's spelling of the part and the name
@@ -4094,23 +4116,21 @@ pub(crate) fn as_the_program_writes(msg: &str) -> String {
         if !word.contains(PART_JOIN) {
             return word.to_string();
         }
-        // (a copy per signature is named as what it copies: `f·2` is `f`,
-        // `greet·loud·2` is `greet.loud` — `crate::ir::copy_name`)
-        let word = crate::ir::copy_base(word);
+        // (a name made of one the program wrote is named as what it was
+        // made of: `f·2` is `f`, `x·then·1` is `x`, `f·traced··` is `f`, and
+        // `greet·loud·2` is `greet.loud` — `crate::ir::made_base`)
+        let word = crate::ir::made_base(word);
         if !word.contains(PART_JOIN) {
             return word.to_string();
+        }
+        if let Some(local) = part_local_written(word) {
+            return local.to_string();
         }
         // (a standard module's declaration, its prefix joined by the mark
         // twice — which no part's name holds — is named as the module's
         // own functions are, bare: `crate::modules::inlined_name`)
         if word.contains(&format!("{}{}", PART_JOIN, PART_JOIN)) {
             return crate::modules::written_as(word);
-        }
-        if let Some((local, part)) = word.rsplit_once("__")
-            && !local.is_empty()
-            && part.ends_with(PART_JOIN)
-        {
-            return local.to_string();
         }
         let prefix = parts
             .iter()

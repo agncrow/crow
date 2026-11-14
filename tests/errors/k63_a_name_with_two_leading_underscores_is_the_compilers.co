@@ -1,0 +1,2 @@
+--- a name a program writes may not begin with two underscores: such names are the compiler's own, and `__pick_items[…]` had reached the hidden form `xs[mask]` lowers to, refused in that form's words
+log[__pick_items[[1, 2], [true, false]]]

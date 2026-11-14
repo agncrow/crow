@@ -40,7 +40,7 @@ impl Emitter {
             let empty: Vec<Expr> = Vec::new();
             let made = self.tree(element, attrs, &empty);
             let kids = self.children_vec(children);
-            return format!("{{ let _made = {}; let _kids = {}; _made.with_children(_kids) }}", made, kids);
+            return format!("{{ let _made· = {}; let _kids· = {}; _made·.with_children(_kids·) }}", made, kids);
         }
 
         // children: a list child is spliced, each item a node
@@ -54,8 +54,8 @@ impl Emitter {
         let base = if is_void {
             format!("CrowVNode::{}()", rust_name)
         } else if spliced.iter().any(|s| *s) {
-            let pushes: Vec<String> = child_strs.iter().zip(&spliced).map(|(c, s)| if *s { format!("_k.extend({});", c) } else { format!("_k.push({});", c) }).collect();
-            format!("CrowVNode::{}({{ let mut _k: Vec<CrowVNode> = Vec::new(); {} _k }})", rust_name, pushes.join(" "))
+            let pushes: Vec<String> = child_strs.iter().zip(&spliced).map(|(c, s)| if *s { format!("_k·.extend({});", c) } else { format!("_k·.push({});", c) }).collect();
+            format!("CrowVNode::{}({{ let mut _k·: Vec<CrowVNode> = Vec::new(); {} _k· }})", rust_name, pushes.join(" "))
         } else {
             format!("CrowVNode::{}(vec![{}])", rust_name, child_strs.join(", "))
         };
@@ -120,9 +120,9 @@ impl Emitter {
         let mut pushes: Vec<String> = Vec::new();
         for c in children {
             let (s, sp) = self.child(c);
-            pushes.push(if sp { format!("_k.extend({});", s) } else { format!("_k.push({});", s) });
+            pushes.push(if sp { format!("_k·.extend({});", s) } else { format!("_k·.push({});", s) });
         }
-        format!("{{ let mut _k: Vec<CrowVNode> = Vec::new(); {} _k }}", pushes.join(" "))
+        format!("{{ let mut _k·: Vec<CrowVNode> = Vec::new(); {} _k· }}", pushes.join(" "))
     }
 
     /// Whether a child moves a local some attribute reads.
@@ -175,7 +175,7 @@ impl Emitter {
             match k.as_str() {
                 "open" => {
                     let o = self.expr(v);
-                    result = format!("{}.open_attr({{ let _o = {}; _o }})", result, o);
+                    result = format!("{}.open_attr({{ let _o· = {}; _o· }})", result, o);
                 }
                 "active" if element == "nav" => {
                     let a = self.expr(v);
@@ -187,7 +187,7 @@ impl Emitter {
                 }
                 b if crow_runtime::layout::BOOL_ATTRS.contains(&b) && !matches!(Emitter::raw(v), Expr::Const(Const::Str(_), _)) => {
                     let x = self.expr(v);
-                    result = format!("{}.bool_attr(\"{}\", {{ let _b: bool = {}; _b }})", result, b, x);
+                    result = format!("{}.bool_attr(\"{}\", {{ let _b·: bool = {}; _b· }})", result, b, x);
                 }
                 // (a class computed as the page renders joins the element's own)
                 "class" => {
@@ -206,7 +206,7 @@ impl Emitter {
                     // handed as an int, a derivation that can fail as its
                     // result, and the page did not build (parity 465)
                     result = match self.tt(v) {
-                        Ty::Result(_) => format!("{{ let _e = {}; let _v = &({}); if _v.ok {{ _e.attr(&{}, &format!(\"{{}}\", _v.value)) }} else {{ _e }} }}", result, x, key),
+                        Ty::Result(_) => format!("{{ let _e· = {}; let _v· = &({}); if _v·.ok {{ _e·.attr(&{}, &format!(\"{{}}\", _v·.value)) }} else {{ _e· }} }}", result, x, key),
                         Ty::Int | Ty::Float | Ty::Bool | Ty::Big => format!("{}.attr(&{}, &format!(\"{{}}\", {}))", result, key, x),
                         _ => format!("{}.attr(&{}, &{})", result, key, x),
                     };
@@ -226,7 +226,7 @@ impl Emitter {
         if matches!(raw, Expr::Const(Const::Str(_), _) | Expr::Interp(_)) {
             let s = self.expr(raw);
             if matches!(self.tt(raw), Ty::Result(_)) {
-                return (format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::text(&_c.value) }} }}", s), false);
+                return (format!("{{ let _c· = &({}); if !_c·.ok {{ CrowVNode::failed(&_c·.reason) }} else {{ CrowVNode::text(&_c·.value) }} }}", s), false);
             }
             return (format!("CrowVNode::text(&{})", s), false);
         }
@@ -257,22 +257,22 @@ impl Emitter {
         let s = self.expr(raw);
         if let Ty::List(item) = &inner {
             if fallible {
-                return (format!("{{ let _c = &({}); if !_c.ok {{ vec![CrowVNode::failed(&_c.reason)] }} else {{ {} }} }}", s, Self::child_items("(&_c.value)", item)), true);
+                return (format!("{{ let _c· = &({}); if !_c·.ok {{ vec![CrowVNode::failed(&_c·.reason)] }} else {{ {} }} }}", s, Self::child_items("(&_c·.value)", item)), true);
             }
             return (Self::child_items(&format!("(&{})", s), item), true);
         }
         // (a frame's column contributes each cell, as a list does)
         if let Ty::Column(_) = &inner {
             if fallible {
-                return (format!("{{ let _c = &({}); if !_c.ok {{ vec![CrowVNode::failed(&_c.reason)] }} else {{ crow_web::view::column_children(&_c.value) }} }}", s), true);
+                return (format!("{{ let _c· = &({}); if !_c·.ok {{ vec![CrowVNode::failed(&_c·.reason)] }} else {{ crow_web::view::column_children(&_c·.value) }} }}", s), true);
             }
             return (format!("crow_web::view::column_children(&{})", s), true);
         }
         let text = match inner {
-            Ty::Markup if fallible => format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::raw(&_c.value) }} }}", s),
-            Ty::Str if fallible => format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::text(&_c.value) }} }}", s),
+            Ty::Markup if fallible => format!("{{ let _c· = &({}); if !_c·.ok {{ CrowVNode::failed(&_c·.reason) }} else {{ CrowVNode::raw(&_c·.value) }} }}", s),
+            Ty::Str if fallible => format!("{{ let _c· = &({}); if !_c·.ok {{ CrowVNode::failed(&_c·.reason) }} else {{ CrowVNode::text(&_c·.value) }} }}", s),
             Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool if fallible => {
-                format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::text(&format!(\"{{}}\", _c.value)) }} }}", s)
+                format!("{{ let _c· = &({}); if !_c·.ok {{ CrowVNode::failed(&_c·.reason) }} else {{ CrowVNode::text(&format!(\"{{}}\", _c·.value)) }} }}", s)
             }
             // markup a view, an element or doc made is markup; a string is text
             Ty::Markup => format!("CrowVNode::raw(&{})", s),
@@ -282,7 +282,7 @@ impl Emitter {
             // anything else is text, as `log` writes it (spec, Views): a
             // tensor, a map, a record, a moment, a parsed value, a frame (it
             // had been handed over as it is, and the program did not build)
-            _ if fallible => format!("{{ let _c = &({}); if !_c.ok {{ CrowVNode::failed(&_c.reason) }} else {{ CrowVNode::text(&crow_runtime::display::CrowDisplay::crow_fmt(&_c.value)) }} }}", s),
+            _ if fallible => format!("{{ let _c· = &({}); if !_c·.ok {{ CrowVNode::failed(&_c·.reason) }} else {{ CrowVNode::text(&crow_runtime::display::CrowDisplay::crow_fmt(&_c·.value)) }} }}", s),
             _ => format!("CrowVNode::text(&crow_runtime::display::CrowDisplay::crow_fmt(&{}))", s),
         };
         (text, false)
@@ -296,9 +296,9 @@ impl Emitter {
         match item {
             Ty::Markup => format!("crow_web::view::markup_children({})", list),
             Ty::Node => format!("({}).to_vec()", list),
-            Ty::Str => format!("({}).iter().map(|_i| CrowVNode::text(_i)).collect::<Vec<CrowVNode>>()", list),
-            Ty::List(inner) => format!("({}).iter().flat_map(|_l| {}).collect::<Vec<CrowVNode>>()", list, Self::child_items("_l", inner)),
-            _ => format!("({}).iter().map(|_i| CrowVNode::text(&crow_runtime::display::CrowDisplay::crow_fmt(_i))).collect::<Vec<CrowVNode>>()", list),
+            Ty::Str => format!("({}).iter().map(|_i·| CrowVNode::text(_i·)).collect::<Vec<CrowVNode>>()", list),
+            Ty::List(inner) => format!("({}).iter().flat_map(|_l·| {}).collect::<Vec<CrowVNode>>()", list, Self::child_items("_l·", inner)),
+            _ => format!("({}).iter().map(|_i·| CrowVNode::text(&crow_runtime::display::CrowDisplay::crow_fmt(_i·))).collect::<Vec<CrowVNode>>()", list),
         }
     }
 
@@ -315,7 +315,7 @@ impl Emitter {
                     self.needs_serde_json = true;
                     if matches!(self.tt(v), Ty::Result(_)) {
                         failed = Some(self.expr(v));
-                        props = "serde_json::to_value(&_p.value).unwrap_or(serde_json::Value::Null)".to_string();
+                        props = "serde_json::to_value(&_p·.value).unwrap_or(serde_json::Value::Null)".to_string();
                     } else {
                         props = format!("serde_json::to_value(&{}).unwrap_or(serde_json::Value::Null)", self.expr(v));
                     }
@@ -332,7 +332,7 @@ impl Emitter {
         }
         let widget = format!("CrowVNode::widget({:?}, &{}, &[{}])", module, props, on.join(", "));
         match failed {
-            Some(p) => format!("{{ let _p = &({}); if !_p.ok {{ CrowVNode::failed(&_p.reason) }} else {{ {} }} }}", p, widget),
+            Some(p) => format!("{{ let _p· = &({}); if !_p·.ok {{ CrowVNode::failed(&_p·.reason) }} else {{ {} }} }}", p, widget),
             None => widget,
         }
     }
@@ -388,7 +388,7 @@ impl Emitter {
                 }
                 "page" => {
                     let size = format!("(({}) as i64).max(1) as usize", self.expr(v));
-                    page = if live { format!("Some(state.table_page({}, _f.nrows()))", size) } else { format!("Some(crow_runtime::layout::Paging {{ size: {}, index: 0, at: 0 }})", size) };
+                    page = if live { format!("Some(state.table_page({}, _f·.nrows()))", size) } else { format!("Some(crow_runtime::layout::Paging {{ size: {}, index: 0, at: 0 }})", size) };
                 }
                 "sort" if matches!(Emitter::raw(v), Expr::Const(Const::Bool(true), _)) => {
                     sort = if live { "Some(state.table_sort())".to_string() } else { "Some(crow_runtime::layout::Sorting::default())".to_string() };
@@ -397,13 +397,13 @@ impl Emitter {
             }
         }
         let rows = format!(
-            "CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f, {}, {}, {}, {}, {}, {}, {}, {}, {}))])",
+            "CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f·, {}, {}, {}, {}, {}, {}, {}, {}, {}))])",
             click, key, mark, delta, actions, hide, confirm, page, sort
         );
         if matches!(frame_ty, Ty::Result(_)) {
-            return format!("{{ let _fr = &({}); if !_fr.ok {{ CrowVNode::failed(&_fr.reason) }} else {{ let _f = &_fr.value; {} }} }}", f, rows);
+            return format!("{{ let _fr· = &({}); if !_fr·.ok {{ CrowVNode::failed(&_fr·.reason) }} else {{ let _f· = &_fr·.value; {} }} }}", f, rows);
         }
-        format!("{{ let _f = &{}; {} }}", f, rows)
+        format!("{{ let _f· = &{}; {} }}", f, rows)
     }
 
     /// The bound inputs, a progress bar, an icon and a chart.
@@ -469,7 +469,7 @@ impl Emitter {
             _ => "None".to_string(),
         };
         let core = format!(
-            "CrowVNode::chart_from_frame(_f, &{x}, &{cd}, &{ln}, &{by}, {{ let _m: f64 = ({mk}) as f64; if _m <= 0.0 {{ f64::NAN }} else {{ _m }} }}, &{tz}, ({h}) as f64, &{pn}, &{lv}, _pts, {sk})",
+            "CrowVNode::chart_from_frame(_f·, &{x}, &{cd}, &{ln}, &{by}, {{ let _m·: f64 = ({mk}) as f64; if _m· <= 0.0 {{ f64::NAN }} else {{ _m· }} }}, &{tz}, ({h}) as f64, &{pn}, &{lv}, _pts·, {sk})",
             x = a[1],
             cd = a[2],
             ln = a[3],
@@ -482,13 +482,13 @@ impl Emitter {
             sk = seek
         );
         let with_points = match Emitter::raw(&args[10]) {
-            Expr::Const(Const::Int(0), _) => format!("{{ let _pts: Option<&crow_runtime::frame::CrowFrame> = None; {} }}", core),
-            _ if matches!(self.tt(&args[10]), Ty::Result(_)) => format!("{{ let _pr = &({}); let _pts = if _pr.ok {{ Some(&_pr.value) }} else {{ None }}; {} }}", a[10], core),
-            _ => format!("{{ let _pf: &crow_runtime::frame::CrowFrame = &{}; let _pts = Some(_pf); {} }}", a[10], core),
+            Expr::Const(Const::Int(0), _) => format!("{{ let _pts·: Option<&crow_runtime::frame::CrowFrame> = None; {} }}", core),
+            _ if matches!(self.tt(&args[10]), Ty::Result(_)) => format!("{{ let _pr· = &({}); let _pts· = if _pr·.ok {{ Some(&_pr·.value) }} else {{ None }}; {} }}", a[10], core),
+            _ => format!("{{ let _pf·: &crow_runtime::frame::CrowFrame = &{}; let _pts· = Some(_pf·); {} }}", a[10], core),
         };
         if matches!(frame_ty, Ty::Result(_)) {
-            return format!("{{ let _fr = &({}); if !_fr.ok {{ CrowVNode::failed(&_fr.reason) }} else {{ let _f = &_fr.value; {} }} }}", a[0], with_points);
+            return format!("{{ let _fr· = &({}); if !_fr·.ok {{ CrowVNode::failed(&_fr·.reason) }} else {{ let _f· = &_fr·.value; {} }} }}", a[0], with_points);
         }
-        format!("{{ let _f = &{}; {} }}", a[0], with_points)
+        format!("{{ let _f· = &{}; {} }}", a[0], with_points)
     }
 }

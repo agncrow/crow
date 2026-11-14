@@ -2,12 +2,12 @@
 //! traced form (lower_ir/grad.rs; `ir::carries_derivative`): a number or a
 //! tensor is a `crow_runtime::autograd::Traced` there, as every number and
 //! tensor of the copy is; a list of them is a `Vec` of traced values; a
-//! record holding them is its twin, `_Traced_<name>`, each field in its
+//! record holding them is its twin, `__Traced_<name>`, each field in its
 //! traced form. A list or a record that carries no derivative keeps its
 //! plain form, as outside. Where the two meet — a plain list given to a
 //! name that holds a traced one, a record of constants built in the copy,
 //! a twin handed back as a function's answer — two traits written with the
-//! program (`_TracedForm`, `_PlainForm`) make one the other's form; each is
+//! program (`__TracedForm`, `__PlainForm`) make one the other's form; each is
 //! the identity on the form it makes, so a value already in it is never
 //! copied. The interpreter holds a traced value in a list or a record as it
 //! holds any value; compiled, a record of them had not built, and a list
@@ -81,7 +81,7 @@ impl Emitter {
     pub(crate) fn traced_rust_type(&self, t: &Ty) -> String {
         match t {
             Ty::Float | Ty::Tensor(..) => "crow_runtime::autograd::Traced".to_string(),
-            Ty::Record(n) if self.traced_records.contains(n) => format!("_Traced_{}", n),
+            Ty::Record(n) if self.traced_records.contains(n) => format!("__Traced_{}", n),
             Ty::List(i) if self.has_traced_form(t) => format!("Vec<{}>", self.traced_rust_type(i)),
             other => other.to_rust_type(),
         }
@@ -93,7 +93,7 @@ impl Emitter {
         if !self.has_traced_form(t) {
             return s.to_string();
         }
-        format!("_TracedForm::<{}>::traced_form({})", self.traced_rust_type(t), s)
+        format!("__TracedForm::<{}>::traced_form({})", self.traced_rust_type(t), s)
     }
 
     /// A value read back in its plain form: a traced one's numbers, a plain
@@ -102,7 +102,7 @@ impl Emitter {
         if !self.has_traced_form(t) {
             return s.to_string();
         }
-        format!("_PlainForm::<{}>::plain_form({})", t.to_rust_type(), s)
+        format!("__PlainForm::<{}>::plain_form({})", t.to_rust_type(), s)
     }
 
     /// The value a name of the traced copy is given, in the form the name
@@ -140,8 +140,8 @@ impl Emitter {
         let stop = self.or_stop();
         match t {
             Ty::List(item) if matches!(item.as_ref(), Ty::List(_)) => {
-                let inner = self.traced_elements("_r", item);
-                format!("crow_runtime::autograd::from_elements(&({}).iter().map(|_r| {}).collect::<Vec<_>>()){}", s, inner, stop)
+                let inner = self.traced_elements("_r·", item);
+                format!("crow_runtime::autograd::from_elements(&({}).iter().map(|_r·| {}).collect::<Vec<_>>()){}", s, inner, stop)
             }
             _ => format!("crow_runtime::autograd::from_elements(&({})){}", s, stop),
         }
@@ -166,7 +166,7 @@ impl Emitter {
             // which Rust reads from that value — `lstm_cell`'s state, where
             // an argument could fail, had been a plain record's beside the
             // twin the traced copy answers)
-            Ty::Record(n) if self.emitting_traced && self.traced_records.contains(n) => "_Placeholder::placeholder()".to_string(),
+            Ty::Record(n) if self.emitting_traced && self.traced_records.contains(n) => "__Placeholder::placeholder()".to_string(),
             Ty::List(_) if self.emitting_traced && self.has_traced_form(t) => "Vec::new()".to_string(),
             Ty::Result(inner) if self.traced_payload(inner) => {
                 format!("CrowResult {{ ok: false, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", self.payload_default(inner))
@@ -180,7 +180,7 @@ impl Emitter {
     /// itself, not copied).
     pub(crate) fn payload_form(&self, v: &str, t: &Ty) -> String {
         if self.traced_payload(t) {
-            return format!("_TracedForm::<crow_runtime::autograd::Traced>::traced_form({})", v);
+            return format!("__TracedForm::<crow_runtime::autograd::Traced>::traced_form({})", v);
         }
         v.to_string()
     }
@@ -189,7 +189,7 @@ impl Emitter {
     /// its payload traced where the copy traces it.
     pub(crate) fn result_form(&self, v: &str, t: &Ty) -> String {
         if self.traced_payload(t) {
-            return format!("_TracedForm::<CrowResult<crow_runtime::autograd::Traced>>::traced_form({})", v);
+            return format!("__TracedForm::<CrowResult<crow_runtime::autograd::Traced>>::traced_form({})", v);
         }
         v.to_string()
     }
@@ -218,36 +218,36 @@ impl Emitter {
         let ct = "crow_runtime::tensor::CrowTensor";
         self.line("// the traced forms of a function's traced copy (emit_rs/traced.rs)");
         self.line("#[allow(dead_code, non_camel_case_types)]");
-        self.line("trait _TracedForm<T> { fn traced_form(self) -> T; }");
+        self.line("trait __TracedForm<T> { fn traced_form(self) -> T; }");
         self.line("#[allow(dead_code, non_camel_case_types)]");
-        self.line("trait _PlainForm<T> { fn plain_form(self) -> T; }");
+        self.line("trait __PlainForm<T> { fn plain_form(self) -> T; }");
         let same = |this: &mut Emitter, form: &str| {
-            this.line(&format!("impl _TracedForm<{form}> for {form} {{ fn traced_form(self) -> {form} {{ self }} }}"));
+            this.line(&format!("impl __TracedForm<{form}> for {form} {{ fn traced_form(self) -> {form} {{ self }} }}"));
         };
         let plain_same = |this: &mut Emitter, form: &str| {
-            this.line(&format!("impl _PlainForm<{form}> for {form} {{ fn plain_form(self) -> {form} {{ self }} }}"));
+            this.line(&format!("impl __PlainForm<{form}> for {form} {{ fn plain_form(self) -> {form} {{ self }} }}"));
         };
         // (a list's form is its items', at any depth; collected where the
         // items lie when the two forms are one)
-        self.line("impl<A: _TracedForm<B>, B> _TracedForm<Vec<B>> for Vec<A> { fn traced_form(self) -> Vec<B> { self.into_iter().map(_TracedForm::<B>::traced_form).collect() } }");
-        self.line("impl<A: _PlainForm<B>, B> _PlainForm<Vec<B>> for Vec<A> { fn plain_form(self) -> Vec<B> { self.into_iter().map(_PlainForm::<B>::plain_form).collect() } }");
+        self.line("impl<A: __TracedForm<B>, B> __TracedForm<Vec<B>> for Vec<A> { fn traced_form(self) -> Vec<B> { self.into_iter().map(__TracedForm::<B>::traced_form).collect() } }");
+        self.line("impl<A: __PlainForm<B>, B> __PlainForm<Vec<B>> for Vec<A> { fn plain_form(self) -> Vec<B> { self.into_iter().map(__PlainForm::<B>::plain_form).collect() } }");
         // (and a value that can fail's is its payload's, its failure kept)
-        self.line("impl<A: Clone + _TracedForm<B>, B: Clone> _TracedForm<CrowResult<B>> for CrowResult<A> { fn traced_form(self) -> CrowResult<B> { CrowResult { ok: self.ok, value: self.value.traced_form(), reason: self.reason, kind: self.kind, trace: self.trace, captured: self.captured } } }");
-        self.line("impl<A: Clone + _PlainForm<B>, B: Clone> _PlainForm<CrowResult<B>> for CrowResult<A> { fn plain_form(self) -> CrowResult<B> { CrowResult { ok: self.ok, value: self.value.plain_form(), reason: self.reason, kind: self.kind, trace: self.trace, captured: self.captured } } }");
+        self.line("impl<A: Clone + __TracedForm<B>, B: Clone> __TracedForm<CrowResult<B>> for CrowResult<A> { fn traced_form(self) -> CrowResult<B> { CrowResult { ok: self.ok, value: self.value.traced_form(), reason: self.reason, kind: self.kind, trace: self.trace, captured: self.captured } } }");
+        self.line("impl<A: Clone + __PlainForm<B>, B: Clone> __PlainForm<CrowResult<B>> for CrowResult<A> { fn plain_form(self) -> CrowResult<B> { CrowResult { ok: self.ok, value: self.value.plain_form(), reason: self.reason, kind: self.kind, trace: self.trace, captured: self.captured } } }");
         same(self, tr);
-        self.line(&format!("impl _TracedForm<{tr}> for f64 {{ fn traced_form(self) -> {tr} {{ {tr}::number(self) }} }}"));
-        self.line(&format!("impl _TracedForm<{tr}> for {ct} {{ fn traced_form(self) -> {tr} {{ {tr}::constant(self) }} }}"));
+        self.line(&format!("impl __TracedForm<{tr}> for f64 {{ fn traced_form(self) -> {tr} {{ {tr}::number(self) }} }}"));
+        self.line(&format!("impl __TracedForm<{tr}> for {ct} {{ fn traced_form(self) -> {tr} {{ {tr}::constant(self) }} }}"));
         for item in ["f64", ct] {
             plain_same(self, item);
         }
-        self.line(&format!("impl _PlainForm<f64> for {tr} {{ fn plain_form(self) -> f64 {{ self.as_number().unwrap_or(f64::NAN) }} }}"));
-        self.line(&format!("impl _PlainForm<{ct}> for {tr} {{ fn plain_form(self) -> {ct} {{ self.value }} }}"));
+        self.line(&format!("impl __PlainForm<f64> for {tr} {{ fn plain_form(self) -> f64 {{ self.as_number().unwrap_or(f64::NAN) }} }}"));
+        self.line(&format!("impl __PlainForm<{ct}> for {tr} {{ fn plain_form(self) -> {ct} {{ self.value }} }}"));
         // (a failed value's placeholder of a record in either form)
         self.line("#[allow(dead_code, non_camel_case_types)]");
-        self.line("trait _Placeholder { fn placeholder() -> Self; }");
+        self.line("trait __Placeholder { fn placeholder() -> Self; }");
         for name in self.traced_records.clone() {
             let Some(def) = self.structs.get(&name).cloned() else { continue };
-            let twin = format!("_Traced_{}", name);
+            let twin = format!("__Traced_{}", name);
             let fields: Vec<(String, Ty)> = def.fields.iter().map(|(f, t)| (Self::rust_field(f), as_inferred(t))).collect();
             self.line("#[allow(non_camel_case_types, dead_code)]");
             self.line("#[derive(Clone)]");
@@ -261,16 +261,16 @@ impl Emitter {
             let plain: Vec<String> = fields.iter().map(|(f, t)| format!("{}: {}", f, self.plain_form(&format!("self.{}", f), t))).collect();
             same(self, &twin);
             plain_same(self, &name);
-            self.line(&format!("impl _TracedForm<{twin}> for {name} {{ fn traced_form(self) -> {twin} {{ {twin} {{ {} }} }} }}", traced.join(", ")));
-            self.line(&format!("impl _PlainForm<{name}> for {twin} {{ fn plain_form(self) -> {name} {{ {name} {{ {} }} }} }}", plain.join(", ")));
-            self.line(&format!("impl _Placeholder for {name} {{ fn placeholder() -> Self {{ {name}::crow_default() }} }}"));
-            self.line(&format!("impl _Placeholder for {twin} {{ fn placeholder() -> Self {{ _TracedForm::<{twin}>::traced_form({name}::crow_default()) }} }}"));
+            self.line(&format!("impl __TracedForm<{twin}> for {name} {{ fn traced_form(self) -> {twin} {{ {twin} {{ {} }} }} }}", traced.join(", ")));
+            self.line(&format!("impl __PlainForm<{name}> for {twin} {{ fn plain_form(self) -> {name} {{ {name} {{ {} }} }} }}", plain.join(", ")));
+            self.line(&format!("impl __Placeholder for {name} {{ fn placeholder() -> Self {{ {name}::crow_default() }} }}"));
+            self.line(&format!("impl __Placeholder for {twin} {{ fn placeholder() -> Self {{ __TracedForm::<{twin}>::traced_form({name}::crow_default()) }} }}"));
             // (a twin shows as its record does, its numbers read off the
             // tape: `log[state]` inside the copy had not built — and only
             // where its record shows: a record holding a function has no
             // display, and its twin's had not built, parity 518)
             if self.struct_kernel_displayable(&name) {
-                self.line(&format!("impl crow_runtime::display::CrowDisplay for {twin} {{ fn crow_repr(&self) -> String {{ crow_runtime::display::CrowDisplay::crow_repr(&_PlainForm::<{name}>::plain_form(self.clone())) }} fn crow_fmt(&self) -> String {{ crow_runtime::display::CrowDisplay::crow_fmt(&_PlainForm::<{name}>::plain_form(self.clone())) }} }}"));
+                self.line(&format!("impl crow_runtime::display::CrowDisplay for {twin} {{ fn crow_repr(&self) -> String {{ crow_runtime::display::CrowDisplay::crow_repr(&__PlainForm::<{name}>::plain_form(self.clone())) }} fn crow_fmt(&self) -> String {{ crow_runtime::display::CrowDisplay::crow_fmt(&__PlainForm::<{name}>::plain_form(self.clone())) }} }}"));
             }
         }
         self.line("");

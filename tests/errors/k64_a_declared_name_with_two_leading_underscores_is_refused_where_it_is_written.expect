@@ -1,0 +1,3 @@
+k64_a_declared_name_with_two_leading_underscores_is_refused_where_it_is_written.co:4:11: '__xs' begins with two underscores, as only the names Crow makes do — write '_xs'
+  4 │ fn spread[__xs]
+    │           ^^^^

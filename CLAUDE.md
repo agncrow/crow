@@ -323,8 +323,8 @@ which run here only.
   bracket- and quote-aware, `not contains[a, b]` → `b not in a`.
 - A `then` chain written as lines is desugared by the PARSER (`then_lines`
   in parser.rs): `x = e` then `then f[…]` lines become statements over
-  hidden names (`x__then1 = e`, `x__then2 = f[x__then1, …]`, the last
-  step assigns `x`), because a variable may not change its kind and a
+  hidden names (`x·then·1 = e`, `x·then·2 = f[x·then·1, …]`, the last
+  step assigns `x`; `ir::then_step_name`), because a variable may not change its kind and a
   chain's does. A step that names `x` has `x` renamed to the hidden
   name (`rust_names::rename_expr`, spans included); one that does not
   gets the value as its first argument. Nothing below the parser knows a
@@ -543,7 +543,7 @@ which run here only.
   (`int_vectors`; a write goes through `core::held_int`, the float's nearest
   past 2^53, so it holds what the tensor would) — a vector PARAMETER it only
   reads by index and measures through a view made as the body starts
-  (`read_views`, `{p}__v = p.numbers()`, borrowed where contiguous), and a
+  (`read_views`, `{p}·v· = p.numbers()`, borrowed where contiguous), and a
   list of text it only empties, appends to and joins as a `String` and a
   count (`emit_rs/builders.rs`). A new emitter path that prints a local
   goes through `local()`, `plain_vector`, `read_view` or the builders'
@@ -568,7 +568,7 @@ which run here only.
   (a builtin over characters) takes the `Known`, or it is quadratic again.
 - `x = set[x, k, f[x]]` (any `IN_PLACE_BUILTINS` call whose later
   arguments read `x`) is split by the lowering (`taken_in_place`): the
-  arguments first into `_tN`, then the call takes `x` moved. A backend
+  arguments first into `__tN`, then the call takes `x` moved. A backend
   that copies such a collection is missing that split, not a rule of its
   own.
 - A parameter the body only reads is lent (`ir::lendable_params`, both
@@ -749,7 +749,7 @@ which run here only.
   collecting loop over a list it reads for the last time walks it by value
   (`consumable`: a moved local, a `_list_N` bound by value, a call's
   answer), and a fallible argument that is a moved local hands its payload
-  on (`_prop_N.value`, not `.clone()`), the taken path judging the
+  on (`_prop_N·.value`, not `.clone()`), the taken path judging the
   payload's type: revcomp 1249 → 924 MB, k-nucleotide 645 → 356 MB.
 - What a compiled program links is what every one of them pays at start:
   wgpu brought Metal, QuartzCore and Foundation, chrono's default `clock`
@@ -803,7 +803,7 @@ which run here only.
   register, copied into the destination when it decides). Statements the
   RIGHT side's lowering pushes (`self.pre`: a failed value's refusal, a
   position's check) wait under the left's decision (`right_side_waits`:
-  the left into `_tN`, then `if <left goes on>` around them and `_tN =
+  the left into `__tN`, then `if <left goes on>` around them and `__tN =
   right`), or `r.ok and r.x gt 0` refused `r` before asking `r.ok`.
 - A record or none compared with the literal 0 is the none test (`t.left
   eq 0`): the lowering lets exactly that comparison past `check_order` and
@@ -957,8 +957,8 @@ which run here only.
   (`modules::module_by_path`).
 - A call evaluates every argument, left to right, before the leftmost
   failure is its value (spec, Auto-Propagation; 2026-10-17): the emitter's
-  `propagation_block` binds each argument that can fail (`_prop_N`) and
-  each that can stop or act (`_pa_N`, all but the `quiet` ones) in their
+  `propagation_block` binds each argument that can fail (`_prop_N·`) and
+  each that can stop or act (`_pa_N·`, all but the `quiet` ones) in their
   order, then checks — a failed argument had skipped the ones after it.
   A builtin that prints an argument again from the IR reads the bound
   name (`unwrap_as`, consulted at the top of `expr()`), or it runs twice.
@@ -1846,11 +1846,43 @@ which run here only.
   `fn f__2` had taken a copy's place, and `views/sim.co`'s test `t` and
   `views_sim.co`'s had been one `views_sim_t`. `as_the_program_writes`
   names a word holding `··` by `modules::written_as` and strips a copy's
-  number before it reads a part's prefix (or `f·2` reads as `f.2`). Still
-  joined by underscores and open: a `then` chain's hidden steps (`x =
-  [3, 1, 2]` then `then sort[]` beside a program's own `x__then1` is
-  "cannot reassign 'x__then1'"), which a mark of their own would make
-  the printer read a third kind of name.
+  number before it reads a part's prefix (or `f·2` reads as `f.2`).
+- Every name the compiler makes is spelled as no program's name can be
+  (2026-11-14; spec, the joiner's Design Note; parity 527, 528, errors
+  k63, k64), each family made and read in ONE place in ir.rs: made of a
+  program's name, it holds the mark — a block's later variable
+  `x·2` (`block_name`/`block_base`, which `lower::written` is), a `then`
+  step `xs·then·1` (`then_step_name`), an adapter, a traced and a dual
+  copy `f·handed··`, `f·traced··`, `f·dual··` (`handed_name`, `is_handed`,
+  `traced_name`, `dual_name`); made of nothing the program wrote, it
+  begins with two underscores — `__t1` (`temp_name`, `is_temp`: the width
+  pass reads a temporary by it), `__held1` (`held_name`), the hidden
+  forms, `__crow_state` — and the LEXER refuses a program's name that
+  begins so (a field after a dot, and `Lexer::joined` text, excepted).
+  `made_base` reads any of them back to what the program wrote, through
+  any number of makings; `as_the_program_writes` reads a part's local
+  first (`m__greet··2` is `m`), since a part's path may end in any piece
+  (`lib·dual·`). The emitter's own temporaries and the helpers it keeps
+  beside a local hold the mark too: `_v·`, `_prop_0·`, `_x·{cast}` (the
+  mark before a cast's placeholder, after a number's), `s·known·`,
+  `parts·count·`, `p·v·`, and its traced twins and their traits begin
+  with two underscores (`__Traced_P`, `__TracedForm`). A new name the
+  emitter binds in generated code takes the mark (a literal `_name`
+  alone is a program's name too) — a closure's parameter around a
+  program's expression as well: `t.map(|x| x.powf({r}))` had raised
+  each number to itself where the program's power was a local `x`
+  (parity 528) — and a new name the lowering makes takes one of the
+  ir.rs families. The emitter's text is read back outside src/emit_rs:
+  `table::borrowed_index` lends an indexed item by reading `{ let _i· =
+  …; let _v· = &xs; _v·[…].clone() }`, and its `place_text` takes a name
+  holding the mark (a block's `rows·2`); left spelled `_v`, it matched
+  nothing and every `split[rows[i], ' ']` copied its item, which only the
+  emitter's own unit test saw. Joined by underscores, a program's `x__s2`
+  had been renamed to `x` with the block variables (`x + x__s2` read
+  `x` twice), `_t1` overwritten by a temporary, `xs__then1` refused as a
+  step, `_prop_0` and `s__known` not built compiled, and a parameter
+  `parts__count` read as the builder's count (`a-b 2` compiled, `a-b 7`
+  interpreted).
 - A call written with named arguments that nothing of its name takes is
   refused by the pass that knows the scope (2026-11-09; errors k57–k59).
   `crate::lower` rewrites the named arguments a function, a struct, a

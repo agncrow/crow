@@ -1101,38 +1101,47 @@ pub fn literal_text(arg: &str) -> Option<String> {
     Some(format!("\"{}\"", inner))
 }
 
-/// An indexed read of a list as the emitter prints it — `{ let _i = …;
-/// let _v = &xs; _v[…].clone() }` — with the item referenced instead of
+/// An indexed read of a list as the emitter prints it — `{ let _i· = …;
+/// let _v· = &xs; _v·[…].clone() }` — with the item referenced instead of
 /// cloned: a parameter that only reads it needs no copy of it. Only of a
 /// list a name holds (a local, a field of one, a lent parameter, the
 /// payload of a value that can fail — `place_text`): a list an expression
 /// makes dies with the block, and a reference into it would not build.
+/// (The emitter's names end in the mark, as no program's can: read here
+/// as the emitter spells them, or no read is ever lent — spelled `_v`
+/// once the emitter's names had the mark, every `split[rows[i], ' ']`
+/// copied its item.)
 pub fn borrowed_index(arg: &str) -> Option<String> {
-    if !arg.starts_with("{ let _i = ") {
+    const HELD: &str = "; let _v· = &";
+    const READ: &str = "; _v·[";
+    if !arg.starts_with("{ let _i· = ") {
         return None;
     }
     let body = arg.strip_suffix(".clone() }")?;
-    let at = body.rfind("; _v[")?;
-    let held = body[..at].rfind("; let _v = &").map(|k| &body[k + 12..at])?;
+    let at = body.rfind(READ)?;
+    let held = body[..at].rfind(HELD).map(|k| &body[k + HELD.len()..at])?;
     if !place_text(held) {
         return None;
     }
-    Some(format!("{}; &_v[{} }}", &body[..at], &body[at + 5..]))
+    Some(format!("{}; &_v·[{} }}", &body[..at], &body[at + READ.len()..]))
 }
 
 /// Whether printed Rust names a place a name holds: a local, a field of
 /// one, a parameter the caller lends (`(*rows)`), the payload of a value
 /// that can fail (`(rows).value`) — no call, so no temporary, and no name
-/// of the emitter's own (`_t4`: a temporary that can end before the read).
+/// of the compiler's own (`__t4`, `_prop_0·`: a temporary that can end
+/// before the read). A name may hold the mark (a block's `x·2`, a part's
+/// `rows__lib·data·`), and a call's name too (`sq·dual··(x)` is a call).
 fn place_text(s: &str) -> bool {
-    let b = s.as_bytes();
+    let name = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == crate::PART_JOIN;
+    let chars: Vec<char> = s.chars().collect();
     let base = s.trim_start_matches(['(', '*']);
     !s.is_empty()
         && !base.starts_with('_')
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '(' | ')' | '*'))
-        && b.iter().enumerate().all(|(i, &c)| match c {
-            b'(' => i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_'),
-            b'*' => i > 0 && b[i - 1] == b'(',
+        && chars.iter().all(|&c| name(c) || matches!(c, '.' | '(' | ')' | '*'))
+        && chars.iter().enumerate().all(|(i, &c)| match c {
+            '(' => i == 0 || !name(chars[i - 1]),
+            '*' => i > 0 && chars[i - 1] == '(',
             _ => true,
         })
         && s.matches('(').count() == s.matches(')').count()
@@ -1253,7 +1262,7 @@ pub fn print(row: &Row, args: &[String], line: &str, trace: Option<&str>) -> Res
         Fails::Never => call,
         Fails::Stops => format!("{}.unwrap_or_else(|e| crow_stop({}, e))", call, line),
         Fails::Value(kind) => format!(
-            "match {} {{ Ok(_v) => CrowResult {{ ok: true, value: _v, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(_e) => CrowResult {{ ok: false, value: {}, reason: _e, kind: \"{}\".to_string(), trace: vec![{}], captured: 0.0 }} }}",
+            "match {} {{ Ok(_v·) => CrowResult {{ ok: true, value: _v·, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(_e·) => CrowResult {{ ok: false, value: {}, reason: _e·, kind: \"{}\".to_string(), trace: vec![{}], captured: 0.0 }} }}",
             call,
             captured,
             row.ret.default_rust(),
@@ -4356,21 +4365,33 @@ mod tests {
         assert_eq!(literal_text("\"\\t\".to_string()"), Some("\"\\t\"".to_string()));
         assert_eq!(literal_text("\"a\".to_string() + \"b\".to_string()"), None);
         assert_eq!(literal_text("name.to_string()"), None);
-        let indexed = "{ let _i = 2_i64; let _v = &rows; _v[crow_runtime::stops::at(_i, _v.len(), 5)].clone() }";
-        let borrowed = "{ let _i = 2_i64; let _v = &rows; &_v[crow_runtime::stops::at(_i, _v.len(), 5)] }";
+        // (as the emitter prints the read: its own names end in the mark)
+        let read = |list: &str| format!("{{ let _i· = i; let _v· = &{list}; _v·[crow_runtime::stops::at(_i·, _v·.len(), 6)].clone() }}");
+        let indexed = "{ let _i· = 2_i64; let _v· = &rows; _v·[crow_runtime::stops::at(_i·, _v·.len(), 5)].clone() }";
+        let borrowed = "{ let _i· = 2_i64; let _v· = &rows; &_v·[crow_runtime::stops::at(_i·, _v·.len(), 5)] }";
         assert_eq!(borrowed_index(indexed).as_deref(), Some(borrowed));
         // an item that is Copy is not cloned, and is not a borrow either
-        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &xs; _v[crow_runtime::stops::at(_i, _v.len(), 5)] }"), None);
+        assert_eq!(borrowed_index("{ let _i· = 0_i64; let _v· = &xs; _v·[crow_runtime::stops::at(_i·, _v·.len(), 5)] }"), None);
         // a list an expression makes dies with the block: the item is cloned
-        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &crow_runtime::text::split(&*(s), \" \"); _v[crow_runtime::stops::at(_i, _v.len(), 5)].clone() }"), None);
-        assert_eq!(borrowed_index("{ let _i = 0_i64; let _v = &(_t4).value.names; _v[crow_runtime::stops::at(_i, _v.len(), 5)].clone() }"), None);
-        assert!(borrowed_index("{ let _i = 0_i64; let _v = &r.names; _v[crow_runtime::stops::at(_i, _v.len(), 5)].clone() }").is_some());
+        assert_eq!(borrowed_index(&read("crow_runtime::text::split(&*(s), \" \")")), None);
+        assert_eq!(borrowed_index(&read("(__t4).value.names")), None);
+        assert_eq!(borrowed_index(&read("(_prop_0·).value.names")), None);
+        assert!(borrowed_index(&read("r.names")).is_some());
         // a parameter the caller lends and the payload of a held value that can
         // fail are places a name holds; a call's answer is not
-        assert!(borrowed_index("{ let _i = i; let _v = &(*rows); _v[crow_runtime::stops::at(_i, _v.len(), 6)].clone() }").is_some());
-        assert!(borrowed_index("{ let _i = i; let _v = &(rows).value; _v[crow_runtime::stops::at(_i, _v.len(), 6)].clone() }").is_some());
-        assert_eq!(borrowed_index("{ let _i = i; let _v = &(rows.clone()); _v[crow_runtime::stops::at(_i, _v.len(), 6)].clone() }"), None);
-        assert_eq!(borrowed_index("{ let _i = i; let _v = &f(x); _v[crow_runtime::stops::at(_i, _v.len(), 6)].clone() }"), None);
+        assert!(borrowed_index(&read("(*rows)")).is_some());
+        assert!(borrowed_index(&read("(rows).value")).is_some());
+        assert_eq!(borrowed_index(&read("(rows.clone())")), None);
+        assert_eq!(borrowed_index(&read("f(x)")), None);
+        // a name holding the mark is a place a name holds — a block's
+        // variable, a part's local — and a call of a copy or of a kind's
+        // function is a call
+        assert!(borrowed_index(&read("rows·2")).is_some());
+        assert!(borrowed_index(&read("(*rows__lib·data·)")).is_some());
+        assert_eq!(borrowed_index(&read("f·2(x)")), None);
+        assert_eq!(borrowed_index(&read("sq·dual··(x)")), None);
+        // a read spelled as no emitter prints it is no read of the emitter's
+        assert_eq!(borrowed_index("{ let _i = i; let _v = &rows; _v[crow_runtime::stops::at(_i, _v.len(), 6)].clone() }"), None);
         assert_eq!(Kind::Str.print("\"\\t\".to_string()", "3"), "\"\\t\"");
         assert_eq!(Kind::Str.print(indexed, "3"), format!("&*({})", borrowed));
         assert_eq!(Kind::Str.print("name", "3"), "&*(name)");

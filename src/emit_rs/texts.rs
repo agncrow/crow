@@ -95,7 +95,7 @@ impl Emitter {
         }
         self.needs_crow_runtime = true;
         let known = match self.indexed_text(&args[0]) {
-            Some(x) => format!("&{x}__known"),
+            Some(x) => format!("&{x}·known·"),
             None => "&crow_runtime::text::Known::new()".to_string(),
         };
         let base = match self.indexed_text(&args[0]) {
@@ -119,7 +119,7 @@ impl Emitter {
         self.needs_crow_runtime = true;
         let line = self.line_now();
         let (b, known) = match self.indexed_text(base) {
-            Some(x) => (x.to_string(), format!("&{x}__known")),
+            Some(x) => (x.to_string(), format!("&{x}·known·")),
             None => (format!("({})", self.expr(base)), "&crow_runtime::text::Known::new()".to_string()),
         };
         let i = self.expr(&indices[0]);
@@ -140,9 +140,9 @@ impl Emitter {
             ("core.slice_str", 3) => {
                 let a = self.expr(&args[1]);
                 let b = self.expr(&args[2]);
-                Some(format!("crow_runtime::text::slice_known(&{x}, &{x}__known, ({a}) as i64, ({b}) as i64)"))
+                Some(format!("crow_runtime::text::slice_known(&{x}, &{x}·known·, ({a}) as i64, ({b}) as i64)"))
             }
-            ("core.len_text", 1) => Some(format!("crow_runtime::text::len_known(&{x}, &{x}__known)")),
+            ("core.len_text", 1) => Some(format!("crow_runtime::text::len_known(&{x}, &{x}·known·)")),
             _ => None,
         }
     }

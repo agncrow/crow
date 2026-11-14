@@ -26,7 +26,7 @@ fn a_handler_reads_a_derivation_after_a_write() {
     let used = go.find("format!(\"twice is {}\", __derive_twice(state))").expect("twice read where the message uses it");
     assert!(call < used, "twice is read after the helper, in the message:\n{}", go);
     let direct = body("go_direct");
-    let write = direct.find("__facts_mut(state).base = _v").expect("the handler's own write, in place");
+    let write = direct.find("__facts_mut(state).base = _v·").expect("the handler's own write, in place");
     let used = direct.find("format!(\"twice is {}\", __derive_twice(state))").expect("twice read where the message uses it");
     assert!(write < used, "the own write lands in place, then twice is read:\n{}", direct);
     assert!(!go.contains("state.set(") && !direct.contains("state.set("), "no handler writes its facts back as JSON:\n{}\n{}", go, direct);
@@ -108,9 +108,9 @@ fn a_collection_keeps_a_clone_of_a_variable() {
 #[test]
 fn a_value_that_can_fail_is_borrowed_to_be_read() {
     let rust = transpile("t = read['f.txt']\nn = len[t]\nm = len[t]\nlog[n + m]\n");
-    assert!(rust.contains("let _prop_0 = &(t);"), "{}", rust);
-    assert!(!rust.contains("let _prop_0 = t.clone();"), "{}", rust);
-    assert!(!rust.contains("_prop_0.value.clone()"), "{}", rust);
+    assert!(rust.contains("let _prop_0· = &(t);"), "{}", rust);
+    assert!(!rust.contains("let _prop_0· = t.clone();"), "{}", rust);
+    assert!(!rust.contains("_prop_0·.value.clone()"), "{}", rust);
 }
 
 /// A variable read for the last time moves into the collection that keeps
@@ -184,7 +184,7 @@ fn a_control_renders_a_failed_argument_as_an_id_the_log_has() {
     let start = rust.find("fn render(state").expect("render");
     let rest = &rust[start..];
     let render = &rest[..rest.find("\n}\n").unwrap()];
-    assert!(render.contains("CrowVNode::failed(&_va0.reason)"), "the failed argument renders as the id the log has its reason under\n{}", render);
+    assert!(render.contains("CrowVNode::failed(&_va0·.reason)"), "the failed argument renders as the id the log has its reason under\n{}", render);
     assert!(!render.contains("error: {}"), "no reason reaches the page\n{}", render);
 }
 
@@ -307,8 +307,8 @@ fn a_vector_handed_on_inside_a_loop_stays_a_tensor() {
 #[test]
 fn a_helper_of_a_gradient_has_a_dual_version() {
     let rust = transpile("fn sq[x]\n    return x * x\nfn curve[x]\n    return sq[x] + 1.0\nd = grad[curve]\nlog[d[0.5]]\n");
-    assert!(rust.contains("fn _dual_sq(x: CrowDual) -> CrowDual {"), "{}", rust);
-    assert!(rust.contains("_dual_sq(x)"), "{}", rust);
+    assert!(rust.contains("fn sq·dual··(x: CrowDual) -> CrowDual {"), "{}", rust);
+    assert!(rust.contains("sq·dual··(x)"), "{}", rust);
 }
 
 /// A text a function reads by position keeps what is known of its start
@@ -321,13 +321,13 @@ fn a_text_read_by_position_keeps_what_is_known_of_its_start() {
     let rust = transpile("fn count[seq, pat]\n    k = len[pat]\n    c = 0\n    i = 0\n    while i lt len[seq] - k + 1\n        if slice[seq, i, i + k] eq pat\n            c = c + 1\n        i = i + 1\n    first = seq[0]\n    return c\nfn renamed[n]\n    t = 'abc'\n    out = 0\n    for i in range[n]\n        out = out + len[slice[t, 0, 2]]\n        t = 'xyz'\n    return out\nlog[count['acgtacgt', 'gt']]\nlog[renamed[2]]\n");
     let f = &rust[rust.find("fn count(").expect("count is emitted")..];
     let f = &f[..f.find("\n}").unwrap_or(f.len())];
-    assert!(f.contains("let seq__known = crow_runtime::text::Known::new();"), "{}", f);
-    assert!(f.contains("crow_runtime::text::len_known(&seq, &seq__known)"), "{}", f);
-    assert!(f.contains("crow_runtime::text::slice_is(&seq, &seq__known, (i) as i64,"), "a compared slice is compared where it lies: {}", f);
-    assert!(f.contains("crow_runtime::text::char_at_known(&seq, &seq__known, (0_i64) as i64)"), "{}", f);
+    assert!(f.contains("let seq·known· = crow_runtime::text::Known::new();"), "{}", f);
+    assert!(f.contains("crow_runtime::text::len_known(&seq, &seq·known·)"), "{}", f);
+    assert!(f.contains("crow_runtime::text::slice_is(&seq, &seq·known·, (i) as i64,"), "a compared slice is compared where it lies: {}", f);
+    assert!(f.contains("crow_runtime::text::char_at_known(&seq, &seq·known·, (0_i64) as i64)"), "{}", f);
     let g = &rust[rust.find("fn renamed(").expect("renamed is emitted")..];
     let g = &g[..g.find("\n}").unwrap_or(g.len())];
-    assert!(g.contains("let t__known = crow_runtime::text::Known::new();") && g.contains("t__known.reset();"), "a text given a new value knows nothing of it: {}", g);
+    assert!(g.contains("let t·known· = crow_runtime::text::Known::new();") && g.contains("t·known·.reset();"), "a text given a new value knows nothing of it: {}", g);
 }
 
 /// Helper: parse Crow source, infer, lower to the IR, emit Rust
@@ -387,7 +387,7 @@ fn test_swap_uses_temporaries() {
     let rust = transpile(src);
     let read_b = rust.find("= b;").expect("b is read into a temporary");
     let read_a = rust.find("= a;").expect("a is read into a temporary");
-    let write_a = rust.find("a = _t").expect("a is written from a temporary");
+    let write_a = rust.find("a = __t").expect("a is written from a temporary");
     assert!(read_b < write_a && read_a < write_a, "both are read before either is written\n{}", rust);
 }
 
@@ -445,7 +445,7 @@ fn test_cpu_count_wiring() {
     let f = &seq[seq.find("fn doubled(").expect("doubled is emitted")..];
     assert!(f[..f.find("\n}").unwrap_or(f.len())].contains("crow_runtime::cores::map_ref("), "{}", seq);
     let own = transpile("fn heavy[n]\n    cpu[2]\n    ys = for x in range[n]\n        x * 2\n    return ys\nlog[len[heavy[3]]]\n");
-    assert!(own.contains("let _cores = crow_runtime::cores::Restore::new();"), "a function's count is put back as it returns: {}", own);
+    assert!(own.contains("let _cores· = crow_runtime::cores::Restore::new();"), "a function's count is put back as it returns: {}", own);
 }
 
 /// A function's list of text that the body only empties, appends to and
@@ -457,12 +457,12 @@ fn a_list_of_text_built_and_joined_is_text() {
     let rust = transpile("fn line[syms, n]\n    row = []\n    lines = []\n    k = 0\n    while k lt n\n        row = push[row, syms[k % 2]]\n        k = k + 1\n    lines = push[lines, join[row, '']]\n    row = []\n    lines = push[lines, 'end']\n    out = join[lines, '\\n']\n    return '`out` `len[lines]`'\nlog[line[['a', 'b'], 5]]\n");
     let f = &rust[rust.find("fn line(").expect("line is emitted")..];
     let f = &f[..f.find("\n}").unwrap_or(f.len())];
-    assert!(f.contains("let mut row: String = String::new(); let mut row__count: i64 = 0;"), "{}", f);
-    assert!(f.contains("row.push_str({ let _i = "), "an item of a list of text is lent to the append: {}", f);
+    assert!(f.contains("let mut row: String = String::new(); let mut row·count·: i64 = 0;"), "{}", f);
+    assert!(f.contains("row.push_str({ let _i· = "), "an item of a list of text is lent to the append: {}", f);
     assert!(f.contains("lines.push_str(row.as_str())"), "a builder's text is lent to another's append: {}", f);
-    assert!(f.contains("if lines__count > 0 { lines.push_str(\"\\n\"); }"), "{}", f);
-    assert!(f.contains("row.clear(); row__count = 0;"), "{}", f);
-    assert!(f.contains("lines__count"), "{}", f);
+    assert!(f.contains("if lines·count· > 0 { lines.push_str(\"\\n\"); }"), "{}", f);
+    assert!(f.contains("row.clear(); row·count· = 0;"), "{}", f);
+    assert!(f.contains("lines·count·"), "{}", f);
     assert!(!f.contains("crow_runtime::core::push("), "{}", f);
 }
 
@@ -871,7 +871,7 @@ fn test_logical_operators_transpile() {
     assert!(rust.contains("(true) && (false)"), "and decides from the left\n{}", rust);
     assert!(rust.contains("(x) || (true)"), "or decides from the left\n{}", rust);
     let masks = transpile("m = [true, false]\nk = [true, true]\nlog[m and k]\n");
-    assert!(masks.contains("*_a & *_b"), "a mask joins item by item\n{}", masks);
+    assert!(masks.contains("*_a· & *_b·"), "a mask joins item by item\n{}", masks);
 }
 
 #[test]
@@ -965,17 +965,17 @@ fn test_then_chaining_transpile() {
 fn test_negative_index_transpile() {
     let rust = transpile("nums = [10, 20, 30]\nx = nums[-1]\n");
     // the runtime resolves a negative index, and stops on one outside
-    assert!(rust.contains("crow_runtime::core::number_at(&nums, _i).unwrap_or_else(|e| crow_stop(2, e))"), "should resolve the index through the runtime's one read\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::number_at(&nums, _i·).unwrap_or_else(|e| crow_stop(2, e))"), "should resolve the index through the runtime's one read\n{}", rust);
 }
 
 #[test]
 fn test_negative_index_assign_transpile() {
     let rust = transpile("nums = [1.5, 2.5, 3.5]\nnums[-1] = 9.5\n");
-    assert!(rust.contains("crow_runtime::core::set_flat_at(&mut nums, _i, _v).unwrap_or_else(|e| crow_stop(2, e))"), "should resolve the assigned index through the runtime, where the tensor lies\n{}", rust);
+    assert!(rust.contains("crow_runtime::core::set_flat_at(&mut nums, _i·, _v·).unwrap_or_else(|e| crow_stop(2, e))"), "should resolve the assigned index through the runtime, where the tensor lies\n{}", rust);
     // (whole numbers written down and written by position are a list of
     // ints: the position is resolved against the list's length)
     let rust = transpile("nums = [10, 20, 30]\nnums[-1] = 99\n");
-    assert!(rust.contains("let _idx = crow_runtime::stops::at(_i, nums.len(), 2); nums[_idx] = _v;"), "should resolve the assigned index against the list's length\n{}", rust);
+    assert!(rust.contains("let _idx· = crow_runtime::stops::at(_i·, nums.len(), 2); nums[_idx·] = _v·;"), "should resolve the assigned index against the list's length\n{}", rust);
 }
 
 #[test]
@@ -999,14 +999,14 @@ fn test_type_builtin_array_transpile() {
 #[test]
 fn test_string_index_transpile() {
     let rust = transpile("s = 'hello'\nx = s[0]\n");
-    assert!(rust.contains("crow_runtime::text::char_at_known(&s, &s__known, (0_i64) as i64)"), "a character read with what is known of the text's start\n{}", rust);
+    assert!(rust.contains("crow_runtime::text::char_at_known(&s, &s·known·, (0_i64) as i64)"), "a character read with what is known of the text's start\n{}", rust);
     assert!(!rust.contains(".chars().collect()"), "no character collected first\n{}", rust);
 }
 
 #[test]
 fn test_string_negative_index_transpile() {
     let rust = transpile("s = 'hello'\nx = s[-1]\n");
-    assert!(rust.contains("crow_runtime::text::char_at_known(&s, &s__known, ((-1_i64)) as i64)"), "a negative position counts from the end, in the runtime's read\n{}", rust);
+    assert!(rust.contains("crow_runtime::text::char_at_known(&s, &s·known·, ((-1_i64)) as i64)"), "a negative position counts from the end, in the runtime's read\n{}", rust);
 }
 
 // ===== NumArray tests =====
@@ -1123,7 +1123,7 @@ fn nodes_is_the_programs_name() {
 fn test_grad_emits_crow_dual() {
     let rust = transpile("fn f[x]\n  x * x\ndf = grad[f]\nlog[df[3]]\n");
     assert!(rust.contains("struct CrowDual"), "should emit CrowDual struct\n{}", rust);
-    assert!(rust.contains("_dual_f"), "should emit _dual_f function\n{}", rust);
+    assert!(rust.contains("fn f·dual··("), "should emit f·dual··\n{}", rust);
 }
 
 #[test]
@@ -1138,7 +1138,7 @@ fn test_grad_single_param_closure() {
 fn test_grad_multi_param_closure() {
     let rust = transpile("fn g[x, y]\n  x * x + y * y\ndg = grad[g]\nlog[dg[3, 4]]\n");
     assert!(rust.contains("Vec<f64>"), "multi-param grad should return Vec<f64>\n{}", rust);
-    assert!(rust.contains("_dual_g"), "should emit _dual_g\n{}", rust);
+    assert!(rust.contains("fn g·dual··("), "should emit g·dual··\n{}", rust);
 }
 
 #[test]
@@ -1620,7 +1620,7 @@ fn a_failed_values_payload_converted_in_a_call_keeps_the_failure() {
     let line = rust.lines().find(|l| l.contains("let v1:")).expect("v1");
     assert!(line.contains("CrowResult<Vec<i64>>"), "v1 can fail\n{}", line);
     assert!(line.contains("CrowResult { ok: true, value: crow_runtime::core::concat("), "the call is lifted\n{}", line);
-    assert!(line.contains("(_prop_1.value).to_vec()"), "the conversion reads the bound payload, moved out of the call's answer\n{}", line);
+    assert!(line.contains("(_prop_1·.value).to_vec()"), "the conversion reads the bound payload, moved out of the call's answer\n{}", line);
     assert!(!line.contains("}).value).to_vec()"), "no payload read off a failed block\n{}", line);
 }
 
@@ -1631,7 +1631,7 @@ fn a_failed_values_payload_converted_in_a_call_keeps_the_failure() {
 fn a_builtin_reading_text_takes_a_literal_or_an_indexed_read_without_a_copy() {
     let rust = transpile("rows = split['a b', ' ']\nfor i in range[len[rows]]\n    cells = split[rows[i], ' ']\n    log[len[cells]]\n");
     assert!(rust.contains("crow_runtime::text::split(\"a b\", \" \")"), "the literals are literals\n{}", rust);
-    assert!(rust.contains("let _v = &rows; &_v["), "the row is referenced\n{}", rust);
+    assert!(rust.contains("let _v· = &rows; &_v·["), "the row is referenced\n{}", rust);
     assert!(!rust.contains("\" \".to_string()"), "no String for the separator\n{}", rust);
 }
 
@@ -1797,8 +1797,8 @@ fn an_unreached_function_of_unknown_items_is_left_out() {
 #[test]
 fn mail_in_a_handler_goes_through_the_session() {
     let rust = transpile("use web, ui\nuse web.mail\nmailer = smtp['smtp.example.com', 587, 'user', 'pass']\nn = 0\nfn welcome[]\n    mail[mailer, 'ada@example.com', 'Hello', 'Welcome']\nfn asked[]\n    r = mail[mailer, 'cy@example.com', 'Asked', 'now']\n    if r.ok\n        n = 1\nview v[]\n    return stack[button['A', click = welcome], button['B', click = asked]]\npage['/', v]\n");
-    assert!(rust.contains("state.mail(_mail, _send)"), "held to the commit\n{}", rust);
-    assert!(rust.contains("state.mail_now(_mail, _send)"), "sent when asked\n{}", rust);
+    assert!(rust.contains("state.mail(_mail·, _send·)"), "held to the commit\n{}", rust);
+    assert!(rust.contains("state.mail_now(_mail·, _send·)"), "sent when asked\n{}", rust);
     assert!(rust.contains("static __crow_handle_mailer: std::sync::OnceLock<crow_runtime::sys::Mailer>"), "a static mailer\n{}", rust);
     assert!(!rust.contains("\"mailer\", serde_json"), "not a session fact\n{}", rust);
     // a script sends at once
@@ -1884,7 +1884,7 @@ fn test_db_query_of_a_statement_that_writes() {
     assert!(rust.contains(".query("), "every statement goes through .query()\n{}", rust);
     // a statement that fails answers its reason (the `.unwrap()` this had
     // looked for was the connection's, which now stops with its reason)
-    assert!(rust.contains("Err(_e) => CrowResult { ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e"), "should answer the reason\n{}", rust);
+    assert!(rust.contains("Err(_e·) => CrowResult { ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e·"), "should answer the reason\n{}", rust);
 }
 
 #[test]
@@ -1917,7 +1917,7 @@ fn test_db_insert() {
     let at = rust.find(".insert(").expect("the insert");
     let call: String = rust[at..].chars().take(80).collect();
     assert!(!call.contains(".unwrap()"), "an insert is never unwrapped: {}", call);
-    assert!(rust.contains("Err(_e) => CrowResult { ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string()"), "the refusal answered\n{}", rust);
+    assert!(rust.contains("Err(_e·) => CrowResult { ok: false, value: 0_i64, reason: _e·, kind: \"db\".to_string()"), "the refusal answered\n{}", rust);
     // (given a frame that can fail, answered once: not wrapped twice)
     assert!(!rust.contains("CrowResult { ok: true, value: { match conn.insert("), "wrapped twice\n{}", rust);
 }
@@ -1949,7 +1949,7 @@ fn test_web_fallible_handler_answers_its_failure() {
     let rust = transpile("use web, frame\nfn table[req]\n    return arrow[frame.load['data.csv']]\nroute['/table', table]\nserve[3999]\n");
     assert!(rust.contains("fn table(req: crow_web::core::CrowRequest) -> CrowResult<crow_web::core::CrowResponse>"), "the handler keeps its Result\n{}", rust);
     assert!(
-        rust.contains("crow_web::server::CrowHandler::new(\"table\", move |__req: crow_web::core::CrowRequest| { let _r = table(__req); if _r.ok { _r.value } else { crow_web::server::route_stopped(\"table\", &_r.reason) } })"),
+        rust.contains("crow_web::server::CrowHandler::new(\"table\", move |__req: crow_web::core::CrowRequest| { let _r· = table(__req); if _r·.ok { _r·.value } else { crow_web::server::route_stopped(\"table\", &_r·.reason) } })"),
         "the route answers the failure\n{}",
         rust
     );
@@ -2073,7 +2073,7 @@ fn f11_click_call_shape_emits_frozen_args() {
     assert!(rust.contains("on_click_args(\"set_speed\""), "call-shape should emit on_click_args\n{}", rust);
     assert!(rust.contains("json!([(10.0"), "frozen arg should serialize at render, parenthesised so a block argument is not read as a map\n{}", rust);
     assert!(rust.contains("fn set_speed(state: &mut CrowLiveState, s: f64)"), "handler keeps its declared param\n{}", rust);
-    assert!(rust.contains("_a[0].as_f64()"), "dispatch should parse the frozen arg\n{}", rust);
+    assert!(rust.contains("_a·[0].as_f64()"), "dispatch should parse the frozen arg\n{}", rust);
 }
 
 #[test]
@@ -2151,9 +2151,9 @@ fn test_reactive_counter() {
     // place, each write bumping its fact's version when it moved
     assert!(rust.contains("struct CrowFacts {") && rust.contains("    count: i64,"), "the facts' struct\n{}", rust);
     assert!(rust.contains("__crow_state.install_facts(Box::new(CrowFacts::default()));"), "installed in main\n{}", rust);
-    assert!(rust.contains("__facts(&*state).count") && rust.contains("__facts_mut(state).count = _v") && rust.contains("state.touch(\"count\")"), "read and written in place\n{}", rust);
+    assert!(rust.contains("__facts(&*state).count") && rust.contains("__facts_mut(state).count = _v·") && rust.contains("state.touch(\"count\")"), "read and written in place\n{}", rust);
     // Dispatch function
-    assert!(rust.contains("fn __crow_handle(state: &mut CrowLiveState, event: &str, _value: Option<&str>)"), "should generate __crow_handle dispatch\n{}", rust);
+    assert!(rust.contains("fn __crow_handle(state: &mut CrowLiveState, event: &str, _value·: Option<&str>)"), "should generate __crow_handle dispatch\n{}", rust);
     assert!(rust.contains("\"inc\" => inc(state)"), "dispatch should route inc\n{}", rust);
     assert!(rust.contains("\"dec\" => dec(state)"), "dispatch should route dec\n{}", rust);
     // Event attributes should use string, not reference
@@ -2226,7 +2226,7 @@ fn test_mask_and_emits_elementwise_zip() {
 #[test]
 fn test_mask_not_emits_elementwise_negation() {
     let rust = transpile("use frame\ndf = load['d.csv']\nm = not (df.age gt 5)\n");
-    assert!(rust.contains("!*_b"), "not on bool mask should negate element-wise\n{}", rust);
+    assert!(rust.contains("!*_b·"), "not on bool mask should negate element-wise\n{}", rust);
 }
 
 #[test]
@@ -2303,7 +2303,7 @@ fn test_fmt_emits_kernel_call() {
 fn test_fallible_condition_guarded_and_return_widened() {
     // A fn with a fallible condition returns CrowResult and guards the branch
     let rust = transpile("fn check[s]\n    n = int[s]\n    if n gt 5\n        return 'big'\n    return 'small'\nr = check['9']\nlog[r]\n");
-    assert!(rust.contains("if !_c.ok"), "condition should be guarded\n{}", rust);
+    assert!(rust.contains("if !_c·.ok"), "condition should be guarded\n{}", rust);
     assert!(rust.contains("-> CrowResult<String>"), "return type should widen to Result\n{}", rust);
 }
 
@@ -2334,7 +2334,7 @@ fn a_view_calling_what_assigns_a_fact_is_refused() {
 #[test]
 fn a_handlers_fallible_condition_stops_the_handler() {
     let rust = transpile("use web, ui\nn = 0\nentry = ''\nfn apply[]\n    v = int[entry]\n    if v gt 5\n        n = n + 1\nview render[]\n    return stack[field['Text', entry], button['Go', click = apply], p['`n`']]\npage['/', render]\n");
-    assert!(rust.contains("stopped: {}\", _c.reason)"), "{}", rust);
+    assert!(rust.contains("stopped: {}\", _c·.reason)"), "{}", rust);
     assert!(!rust.contains("return CrowResult { ok: false, value: ()"), "{}", rust);
 }
 
@@ -2364,8 +2364,8 @@ fn a_helper_sees_what_its_caller_wrote_so_far() {
     // the helper reads it
     let skip = &rust[rust.find("fn skip(state").expect("skip is a handler")..];
     let skip = &skip[..skip.find("\n}\n").unwrap_or(skip.len())];
-    let write = skip.find("__facts_mut(state).skipped = _v").expect("the caller's write, in place");
-    let call = skip.find("let _r = hop(state)").expect("the helper call");
+    let write = skip.find("__facts_mut(state).skipped = _v·").expect("the caller's write, in place");
+    let call = skip.find("let _r· = hop(state)").expect("the helper call");
     assert!(write < call && !skip.contains("state.set("), "the caller's write reaches the helper\n{}", skip);
 }
 
@@ -2376,7 +2376,7 @@ fn an_error_of_another_type_returned_from_a_function_is_converted() {
     let rust = transpile("fn half[s]\n    n = int[s]\n    if not n.ok\n        return n\n    return n / 2.0\nlog[half['8']]\n");
     // (the error travels; the int it would hold — one read from text grows —
     // converts to the float the function answers)
-    assert!(rust.contains("value: (_r.value).to_f64()") || rust.contains("ok: _r.ok, value: (_r.value as f64)"), "{}", rust);
+    assert!(rust.contains("value: (_r·.value).to_f64()") || rust.contains("ok: _r·.ok, value: (_r·.value as f64)"), "{}", rust);
 }
 
 /// A frame assigned beside an independent statement keeps its columns'
@@ -2390,7 +2390,7 @@ fn a_frame_assigned_beside_an_independent_statement_keeps_its_column_types() {
     let rust = transpile("use frame\nfn go[]\n    rows = frame.new[v = [3.5, 4.5]]\n    k = 2\n    return rows.v[0] * k\nlog[go[]]\n");
     assert!(!rust.contains("rayon::join"), "statements run in order\n{}", rust);
     assert!(rust.contains("-> f64"), "the cell is a float, so the product is\n{}", rust);
-    assert!(!rust.contains("_c.ok"), "a frame written down cannot fail\n{}", rust);
+    assert!(!rust.contains("_c·.ok"), "a frame written down cannot fail\n{}", rust);
 }
 
 #[test]
@@ -2431,7 +2431,7 @@ fn a_route_reads_what_the_app_holds_and_lands_its_writes() {
     // (the handler's bare writing `query` is decided on — a failed insert
     // stops the route — so its answer is checked as the guard holds the
     // writes)
-    assert!(rust.contains("move |__req: crow_web::core::CrowRequest| { let _w = __CrowWrites; let _r = add_h(__req); if _r.ok { _r.value } else { crow_web::server::route_stopped("), "a route's writes land as it ends, a stop included:\n{}", rust);
+    assert!(rust.contains("move |__req: crow_web::core::CrowRequest| { let _w· = __CrowWrites; let _r· = add_h(__req); if _r·.ok { _r·.value } else { crow_web::server::route_stopped("), "a route's writes land as it ends, a stop included:\n{}", rust);
     let landed = rust.rfind("crow_web::live::publish_writes(crow_db::take_write_keys());\n").expect("the top level's writes landed");
     let served = rust.find(".serve(3998").expect("served");
     assert!(landed < served, "the top level's writes land before it serves:\n{}", rust);
@@ -2484,7 +2484,7 @@ fn a_loop_takes_the_list_it_reads_last() {
 fn a_last_read_list_that_can_fail_is_cut_where_it_lies() {
     let src = "t = read['x.txt']\nparts = split[t, ',']\nmid = slice[parts, 1, 2]\nlog[mid]\n";
     let rust = transpile(src);
-    assert!(rust.contains("slice_taken({_prop_0.value}") || rust.contains("slice_taken(_prop_0.value"), "{}", rust);
+    assert!(rust.contains("slice_taken({_prop_0·.value}") || rust.contains("slice_taken(_prop_0·.value"), "{}", rust);
 }
 
 /// A program links the GPU only where it asks for it (`gpu[…]`): the
@@ -2580,8 +2580,8 @@ fn a_vector_parameter_only_read_is_read_through_a_view() {
     let rust = transpile(src);
     let start = rust.find("fn below(").expect("below");
     let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
-    assert!(body.contains("let a__v = a.numbers();"), "{}", body);
-    assert!(body.contains("a__v[") && !body.contains("number_at(&a"), "{}", body);
+    assert!(body.contains("let a·v· = a.numbers();"), "{}", body);
+    assert!(body.contains("a·v·[") && !body.contains("number_at(&a"), "{}", body);
 }
 
 /// A loop's item from a frame's column whose cells can be missing is a
@@ -2596,8 +2596,8 @@ fn a_loop_item_from_a_column_with_missing_cells_can_fail_in_the_width_pass() {
     let out = transpile(
         "use frame\nfn joined[xs]\n    acc = ''\n    for line in xs\n        acc = '`acc``line`;'\n    return acc\nsj = join[frame.new[k = [1, 2, 3]], frame.new[k = [1, 3], n = [5, 7]], 'k', 'left']\nlog[joined[sj.n]]\n",
     );
-    assert!(out.contains("let _t1: CrowResult<String> ="), "{}", out);
-    assert!(out.contains("let _c = &_t1; if !_c.ok"), "{}", out);
+    assert!(out.contains("let __t1: CrowResult<String> ="), "{}", out);
+    assert!(out.contains("let _c· = &__t1; if !_c·.ok"), "{}", out);
 }
 
 /// A record's field handed to a function that keeps it and written back
@@ -2614,13 +2614,13 @@ fn a_record_field_handed_on_and_written_back_is_taken() {
         let start = rust.find(&format!("fn {}(", name)).unwrap_or_else(|| panic!("no fn {} in {}", name, rust));
         rust[start..start + rust[start..].find("\n}\n").unwrap()].to_string()
     };
-    assert!(body("rect").contains("let _tk = std::mem::take(&mut c.verts); c.verts = quad(_tk,"), "{}", body("rect"));
+    assert!(body("rect").contains("let _tk· = std::mem::take(&mut c.verts); c.verts = quad(_tk·,"), "{}", body("rect"));
     // (the length read first, into a temporary, then the field taken)
     let twice = body("twice");
     let read = twice.find("crow_runtime::core::len(&(c.verts)[..]);");
-    let take = twice.find("let _tk = std::mem::take(&mut c.verts); c.verts = counted(_tk, _t");
+    let take = twice.find("let _tk· = std::mem::take(&mut c.verts); c.verts = counted(_tk·, __t");
     assert!(read.is_some() && take.is_some() && read < take, "{}", twice);
-    assert!(body("line").contains("let _fk = std::mem::take(&mut c.verts);"), "{}", body("line"));
+    assert!(body("line").contains("let _fk· = std::mem::take(&mut c.verts);"), "{}", body("line"));
     assert!(!body("peeked").contains("std::mem::take"), "{}", body("peeked"));
     assert!(!body("early").contains("std::mem::take"), "{}", body("early"));
     assert!(body("boxed").starts_with("fn boxed(c: Canvas,") && !body("boxed").contains("c.clone()"), "{}", body("boxed"));
@@ -2635,10 +2635,10 @@ fn a_record_field_handed_on_and_written_back_is_taken() {
 fn a_list_held_in_a_place_grows_where_it_lies() {
     let rust = transpile("struct Bag [items, count]\n\nxs = []\nxs = push[xs, []]\nm = map[]\nm = set[m, 'a', []]\nb = Bag[[], 0]\nfor i in range[3]\n    xs[0] = push[xs[0], i]\n    m['a'] = push[m['a'], i]\n    b.items = push[b.items, i]\nlog[xs]\nlog[m]\nlog[b.items]\n");
     assert_eq!(rust.matches("std::mem::take(").count(), 3, "{}", rust);
-    assert!(rust.contains("std::mem::take(&mut xs[_idx])"), "{}", rust);
+    assert!(rust.contains("std::mem::take(&mut xs[_idx·])"), "{}", rust);
     assert!(rust.contains("std::mem::take(&mut b.items)"), "{}", rust);
-    assert!(rust.contains(".get_mut(&_k)"), "{}", rust);
-    assert!(!rust.contains("_v[crow_runtime::stops::at(_i, _v.len(), 9)].clone()"), "{}", rust);
+    assert!(rust.contains(".get_mut(&_k·)"), "{}", rust);
+    assert!(!rust.contains("_v·[crow_runtime::stops::at(_i·, _v·.len(), 9)].clone()"), "{}", rust);
 }
 
 /// A vector held in a record's field grows where it lies too: taken out
@@ -2660,8 +2660,8 @@ fn a_vector_held_in_a_field_grows_where_it_lies() {
 #[test]
 fn a_list_that_can_fail_is_indexed_where_it_lies() {
     let rust = transpile("fn make[n]\n    if n lt 0\n        return error['negative']\n    xs = for i in range[n]\n        'w`i`'\n    return xs\n\nwords = make[3]\ntotal = 0\nfor i in range[len[words]]\n    total = total + len[words[i]]\nlog[total]\n");
-    assert!(rust.contains("let _v = &(words).value;"), "{}", rust);
-    assert!(!rust.contains("let _v = &(words).value.clone();"), "{}", rust);
+    assert!(rust.contains("let _v· = &(words).value;"), "{}", rust);
+    assert!(!rust.contains("let _v· = &(words).value.clone();"), "{}", rust);
 }
 
 /// An item of a list that is itself an item, `cells[k][i]`, is read through
@@ -2673,8 +2673,8 @@ fn an_item_of_an_item_is_read_where_it_lies() {
     let rust = transpile("fn total[cells]\n    t = 0\n    for k in range[len[cells]]\n        for i in range[len[cells[k]]]\n            t = t + len[cells[k][i]]\n    return t\n\nrows = []\nrows = push[rows, ['a', 'bc']]\nrows = push[rows, ['def']]\nlog[total[rows]]\n");
     let start = rust.find("fn total(").expect("total is a function");
     let body = &rust[start..start + rust[start..].find("\n}\n").unwrap()];
-    assert!(body.contains("let _v = { let _i = k; let _v = &(*cells); &_v["), "the inner item is lent to the outer read:\n{}", body);
-    assert!(!body.contains(".clone() }; _v["), "the inner list is not copied:\n{}", body);
+    assert!(body.contains("let _v· = { let _i· = k; let _v· = &(*cells); &_v·["), "the inner item is lent to the outer read:\n{}", body);
+    assert!(!body.contains(".clone() }; _v·["), "the inner list is not copied:\n{}", body);
 }
 
 /// A value a guard made known good, lent to a function that only reads it,

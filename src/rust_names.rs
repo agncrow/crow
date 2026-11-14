@@ -53,7 +53,7 @@ pub fn rename_rust_keywords(stmts: &[Stmt]) -> Option<(Vec<Stmt>, BTreeMap<Strin
     for s in stmts {
         collect_stmt(s, &mut declared, &mut seen);
     }
-    // (a binding the lowering renamed for its block, `move__s2`, is printed
+    // (a binding the lowering renamed for its block, `move·2`, is printed
     // by the name it was written with, `move`: judged and renamed by that
     // name, the underscore before its block's suffix — the second loop over
     // `move` had kept it, and the compiled program did not build; Rosetta
@@ -549,8 +549,8 @@ mod tests {
         let (out, _) = rename_rust_keywords(&lowered).expect("renames");
         let text = format!("{:?}", out);
         // (the second is its block's: printed by its written name, `move_`)
-        assert!(text.contains("var: \"move_\"") && text.contains("var: \"move___s2\""), "{}", text);
-        assert_eq!(crate::lower::written("move___s2"), "move_");
+        assert!(text.contains("var: \"move_\"") && text.contains("var: \"move_·2\""), "{}", text);
+        assert_eq!(crate::lower::written("move_·2"), "move_");
     }
 
     /// A declared name Rust reserves is renamed everywhere it is read —

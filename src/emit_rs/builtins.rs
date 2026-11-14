@@ -94,9 +94,9 @@ impl Emitter {
             let json = if Self::is_empty_list(e) {
                 "serde_json::Value::Array(vec![])".to_string()
             } else if matches!(inner, Ty::Tensor(..)) {
-                format!("serde_json::json!({}.to_vec().iter().map(|&_f| if _f.is_finite() && _f == (_f as i64) as f64 {{ serde_json::json!(_f as i64) }} else {{ serde_json::json!(_f) }}).collect::<Vec<_>>())", value)
+                format!("serde_json::json!({}.to_vec().iter().map(|&_f·| if _f·.is_finite() && _f· == (_f· as i64) as f64 {{ serde_json::json!(_f· as i64) }} else {{ serde_json::json!(_f·) }}).collect::<Vec<_>>())", value)
             } else if items_fail.is_some() {
-                format!("serde_json::Value::Array({}.iter().map(|_x| serde_json::json!(_x.value)).collect())", value)
+                format!("serde_json::Value::Array({}.iter().map(|_x·| serde_json::json!(_x·.value)).collect())", value)
             } else {
                 format!("serde_json::json!({})", value)
             };
@@ -106,7 +106,7 @@ impl Emitter {
             }
             if let Some(item) = items_fail {
                 fallible.push(format!(
-                    "({}).iter().find(|_x| !_x.ok).cloned().unwrap_or_else(|| CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }})",
+                    "({}).iter().find(|_x·| !_x·.ok).cloned().unwrap_or_else(|| CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }})",
                     value,
                     item.default_rust_value()
                 ));
@@ -140,7 +140,7 @@ impl Emitter {
         self.needs_serde_json = true;
         let (p, fallible) = self.db_params(params);
         let body = format!(
-            "{{ match {}.query(&{}, &[{}]) {{ Ok(_f) => CrowResult {{ ok: true, value: _f, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+            "{{ match {}.query(&{}, &[{}]) {{ Ok(_f·) => CrowResult {{ ok: true, value: _f·, reason: String::new(), kind: String::new(), trace: vec![], captured: {} }}, Err(_e·) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e·, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
             conn, sql, p, STAMP
         );
         self.db_guard(&fallible, "crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![])", body, crate::table::held(name))
@@ -175,7 +175,7 @@ impl Emitter {
     /// broke panicked the program).
     fn db_insert(&self, conn: &str, table: &str, frame: &str) -> String {
         format!(
-            "{{ match {}.insert(&{}, &{}) {{ Ok(_n) => CrowResult {{ ok: true, value: _n, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: 0_i64, reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+            "{{ match {}.insert(&{}, &{}) {{ Ok(_n·) => CrowResult {{ ok: true, value: _n·, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e·) => CrowResult {{ ok: false, value: 0_i64, reason: _e·, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
             conn, table, frame
         )
     }
@@ -185,7 +185,7 @@ impl Emitter {
     /// the program as it runs.
     fn db_describe(&mut self, conn: &str, sql: &str) -> String {
         format!(
-            "{{ match {}.describe(&{}) {{ Ok(_c) => CrowResult {{ ok: true, value: crow_db::driven::describe_frame(&_c), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+            "{{ match {}.describe(&{}) {{ Ok(_c·) => CrowResult {{ ok: true, value: crow_db::driven::describe_frame(&_c·), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e·) => CrowResult {{ ok: false, value: crow_runtime::frame::CrowFrame::new(vec![], vec![], vec![]), reason: _e·, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
             conn, sql
         )
     }
@@ -205,7 +205,7 @@ impl Emitter {
             ("let __failed = false; let __why = String::new();", "CrowResult { ok: true, value: __v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }", "CrowResult { ok: false, value: __v, reason: __e, kind: \"db\".to_string(), trace: vec![], captured: 0.0 }")
         };
         format!(
-            "{{ let __kept = std::cell::RefCell::new(None); let __done = {conn}.transact(&|_tx| {{ let __v = {f}(_tx); {judged} *__kept.borrow_mut() = Some(__v); if __failed {{ Err(__why) }} else {{ Ok(()) }} }}); match (__done, __kept.into_inner()) {{ (Ok(()), Some(__v)) => {kept}, (Err(__e), Some(__v)) => {refused}, (Err(__e), None) => {{ let __e = format!(\"transaction rolled back: {{}}\", __e); {failed} }}, (Ok(()), None) => {{ let __e = \"transaction rolled back: the function never ran\".to_string(); {failed} }} }} }}"
+            "{{ let __kept = std::cell::RefCell::new(None); let __done = {conn}.transact(&|_tx·| {{ let __v = {f}(_tx·); {judged} *__kept.borrow_mut() = Some(__v); if __failed {{ Err(__why) }} else {{ Ok(()) }} }}); match (__done, __kept.into_inner()) {{ (Ok(()), Some(__v)) => {kept}, (Err(__e), Some(__v)) => {refused}, (Err(__e), None) => {{ let __e = format!(\"transaction rolled back: {{}}\", __e); {failed} }}, (Ok(()), None) => {{ let __e = \"transaction rolled back: the function never ran\".to_string(); {failed} }} }} }}"
         )
     }
 
@@ -331,7 +331,7 @@ impl Emitter {
                                 .map(|(p, t)| {
                                     if tensor(t) {
                                         k += 1;
-                                        format!("_l[{}].clone()", k - 1)
+                                        format!("_l·[{}].clone()", k - 1)
                                     } else if matches!(as_inferred(t), Ty::Float) {
                                         format!("crow_runtime::autograd::Traced::number({})", p)
                                     } else {
@@ -340,21 +340,21 @@ impl Emitter {
                                 })
                                 .collect();
                             let (ret, pick) = if leaves.len() == 1 { ("crow_runtime::tensor::CrowTensor", "[0].clone()") } else { ("Vec<crow_runtime::tensor::CrowTensor>", "") };
-                            let call = format!("_traced_{}({})", Self::rust_fn_name(fname), passed.join(", "));
+                            let call = format!("{}({})", crate::ir::traced_name(&Self::rust_fn_name(fname)), passed.join(", "));
                             // (a function that can fail answers its failure,
                             // which stops the program in the interpreter's
                             // words: parity 519)
                             let answered = if matches!(as_inferred(&sig.ret), Ty::Result(_)) {
-                                format!("{{ let _r = {}; if _r.ok {{ Ok(_r.value) }} else {{ Err(format!(\"grad[{}][]: the function answered an error — {{}}\", _r.reason)) }} }}", call, fname)
+                                format!("{{ let _r· = {}; if _r·.ok {{ Ok(_r·.value) }} else {{ Err(format!(\"grad[{}][]: the function answered an error — {{}}\", _r·.reason)) }} }}", call, fname)
                             } else {
                                 format!("Ok({})", call)
                             };
                             return Some(format!(
-                                "|{}| -> {} {{ crow_runtime::autograd::gradient(&[{}], |_l| {}).unwrap_or_else(|e| crow_stop({}, e)){} }}",
+                                "|{}| -> {} {{ crow_runtime::autograd::gradient(&[{}], |_l·| {}).unwrap_or_else(|e| crow_stop({}, e)){} }}",
                                 cps.join(", "), ret, leaves.join(", "), answered, self.line_now(), pick
                             ));
                         }
-                        let dual = format!("_dual_{}", Self::rust_fn_name(fname));
+                        let dual = crate::ir::dual_name(&Self::rust_fn_name(fname));
                         if ps.len() == 1 {
                             return Some(format!("|{p}: f64| -> f64 {{ {df}(CrowDual::new({p}, 1.0)).dual }}", p = ps[0], df = dual));
                         }
@@ -409,7 +409,7 @@ impl Emitter {
                 self.needs_crow_runtime = true;
                 if matches!(ty0, Ty::Result(_)) {
                     format!(
-                        "{{ let _v = &({}); if !_v.ok {{ CrowResult {{ ok: false, value: crow_runtime::moments::Moment::default(), reason: _v.reason.clone(), kind: _v.kind.clone(), trace: _v.trace.clone(), captured: 0.0 }} }} else if _v.captured > 0.0 {{ CrowResult {{ ok: true, value: crow_runtime::moments::Moment::of_seconds(_v.captured), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} else {{ CrowResult {{ ok: false, value: crow_runtime::moments::Moment::default(), reason: \"this value was computed here, not read from outside - it has no capture moment\".to_string(), kind: \"no_capture\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+                        "{{ let _v· = &({}); if !_v·.ok {{ CrowResult {{ ok: false, value: crow_runtime::moments::Moment::default(), reason: _v·.reason.clone(), kind: _v·.kind.clone(), trace: _v·.trace.clone(), captured: 0.0 }} }} else if _v·.captured > 0.0 {{ CrowResult {{ ok: true, value: crow_runtime::moments::Moment::of_seconds(_v·.captured), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }} else {{ CrowResult {{ ok: false, value: crow_runtime::moments::Moment::default(), reason: \"this value was computed here, not read from outside - it has no capture moment\".to_string(), kind: \"no_capture\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
                         a[0]
                     )
                 } else {
@@ -436,19 +436,19 @@ impl Emitter {
                 let fails = self.fns.get(&fname).is_some_and(|f| matches!(f.ret, Ty::Result(_)));
                 let default = Self::kept(&args[1], &a[1]);
                 let mut captures = String::new();
-                let mut handed = vec!["_held".to_string()];
+                let mut handed = vec!["_held·".to_string()];
                 for (i, x) in a.iter().enumerate().skip(3) {
                     captures.push_str(&format!("let __r{} = ({}).clone(); ", i, x));
                     handed.push(format!("__r{}", i));
                 }
                 let call = format!("{}({})", Self::rust_fn_name(&fname), handed.join(", "));
                 let kept = if fails {
-                    format!("let _r = {}; let _keep = if _r.ok {{ Some(_r.value.clone()) }} else {{ None }}; (_keep, _r)", call)
+                    format!("let _r· = {}; let _keep· = if _r·.ok {{ Some(_r·.value.clone()) }} else {{ None }}; (_keep·, _r·)", call)
                 } else {
-                    format!("let _v = {}; (Some(_v.clone()), _v)", call)
+                    format!("let _v· = {}; (Some(_v·.clone()), _v·)", call)
                 };
                 format!(
-                    "{{ {}crow_runtime::memory::revise(&*({}), {}, {}, |_held| {{ {} }}).unwrap_or_else(|e| crow_stop({}, e)) }}",
+                    "{{ {}crow_runtime::memory::revise(&*({}), {}, {}, |_held·| {{ {} }}).unwrap_or_else(|e| crow_stop({}, e)) }}",
                     captures,
                     a[0],
                     default,
@@ -486,9 +486,9 @@ impl Emitter {
             "download" if n == 2 => {
                 let stop = self.stop_check();
                 match in0 {
-                    Ty::Frame(_) => format!("{{ match ({}).to_csv() {{ Ok(_t) => state.download(&{}, _t.into_bytes()), Err(_e) => state.stop(format!(\"download: {{}}\", _e)) }} {} }}", a[0], a[1], stop),
+                    Ty::Frame(_) => format!("{{ match ({}).to_csv() {{ Ok(_t·) => state.download(&{}, _t·.into_bytes()), Err(_e·) => state.stop(format!(\"download: {{}}\", _e·)) }} {} }}", a[0], a[1], stop),
                     Ty::Map(..) => format!(
-                        "{{ match ({}).get(\"path\").map(|_p| std::fs::read(_p)) {{ Some(Ok(_b)) => state.download(&{}, _b), Some(Err(_e)) => state.stop(format!(\"download: {{}}\", _e)), None => state.stop(\"download: a file to hand on is a picked file, with a path\".to_string()) }} {} }}",
+                        "{{ match ({}).get(\"path\").map(|_p·| std::fs::read(_p·)) {{ Some(Ok(_b·)) => state.download(&{}, _b·), Some(Err(_e·)) => state.stop(format!(\"download: {{}}\", _e·)), None => state.stop(\"download: a file to hand on is a picked file, with a path\".to_string()) }} {} }}",
                         a[0], a[1], stop
                     ),
                     _ => format!("{{ state.download(&{}, format!(\"{{}}\", {}).into_bytes()); }}", a[1], a[0]),
@@ -504,24 +504,24 @@ impl Emitter {
                 // mailer and the message: whether the server took it, or why
                 // not — its reason names the message already
                 let sent = |mailer: &str, to: &str, subject: &str, body: &str| {
-                    format!("{{ let _r = {}({}, {}, {}, {}); if _r.ok {{ Ok(()) }} else {{ Err(_r.reason) }} }}", crate::modules::inlined_name("_web_mail", "mail"), mailer, to, subject, body)
+                    format!("{{ let _r· = {}({}, {}, {}, {}); if _r·.ok {{ Ok(()) }} else {{ Err(_r·.reason) }} }}", crate::modules::inlined_name("_web_mail", "mail"), mailer, to, subject, body)
                 };
                 let answer = |call: &str| {
                     format!(
-                        "match {} {{ Ok(()) => CrowResult {{ ok: true, value: true, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e) => CrowResult {{ ok: false, value: false, reason: _e, kind: \"mail\".to_string(), trace: vec![{}], captured: 0.0 }} }}",
+                        "match {} {{ Ok(()) => CrowResult {{ ok: true, value: true, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Err(_e·) => CrowResult {{ ok: false, value: false, reason: _e·, kind: \"mail\".to_string(), trace: vec![{}], captured: 0.0 }} }}",
                         call, tr
                     )
                 };
                 if self.reactive_event_handlers.contains(&self.cur_fn) {
                     let send = format!(
-                        "{{ let _m = {}; let _s = _mail.clone(); let _f: crow_web::live::MailSender = std::sync::Arc::new(move || {}); _f }}",
+                        "{{ let _m· = {}; let _s· = _mail·.clone(); let _f·: crow_web::live::MailSender = std::sync::Arc::new(move || {}); _f· }}",
                         a[0],
-                        sent("_m.clone()", "_s.to.clone()", "_s.subject.clone()", "_s.body.clone()")
+                        sent("_m·.clone()", "_s·.to.clone()", "_s·.subject.clone()", "_s·.body.clone()")
                     );
                     if matches!(whole, Expr::Effect { answered: true, .. }) {
-                        format!("{{ let _mail = {}; let _send = {}; {} }}", mail, send, answer("state.mail_now(_mail, _send)"))
+                        format!("{{ let _mail· = {}; let _send· = {}; {} }}", mail, send, answer("state.mail_now(_mail·, _send·)"))
                     } else {
-                        format!("{{ let _mail = {}; let _send = {}; state.mail(_mail, _send); CrowResult {{ ok: true, value: true, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}", mail, send)
+                        format!("{{ let _mail· = {}; let _send· = {}; state.mail(_mail·, _send·); CrowResult {{ ok: true, value: true, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }} }}", mail, send)
                     }
                 } else {
                     // (a script sends at once, through no session; under the
@@ -581,19 +581,19 @@ impl Emitter {
                 self.needs_crow_runtime = true;
                 let (ls, rs) = (self.expr(l), self.expr(r));
                 self.push_scope();
-                self.declare("_al", self.tt(l));
-                self.declare("_ar", self.tt(r));
-                let cond = self.binary(op, &Expr::Local("_al".to_string(), l.ty()), &Expr::Local("_ar".to_string(), r.ty()));
+                self.declare("_al·", self.tt(l));
+                self.declare("_ar·", self.tt(r));
+                let cond = self.binary(op, &Expr::Local("_al·".to_string(), l.ty()), &Expr::Local("_ar·".to_string(), r.ty()));
                 self.pop_scope();
                 format!(
-                    "{{ let _al = {}; let _ar = {}; if !({}) {{ crow_stop({}, crow_runtime::display::assert_failed(\"{}\", &crow_runtime::display::shown(&_al), &crow_runtime::display::shown(&_ar))); }} }}",
+                    "{{ let _al· = {}; let _ar· = {}; if !({}) {{ crow_stop({}, crow_runtime::display::assert_failed(\"{}\", &crow_runtime::display::shown(&_al·), &crow_runtime::display::shown(&_ar·))); }} }}",
                     ls, rs, cond, self.line_now(), op
                 )
             }
             "assert" if n == 1 || n == 2 => {
                 let cond = match &ty0 {
                     Ty::Bool => a[0].clone(),
-                    Ty::Result(_) => format!("{{ let _a = &({}); if !_a.ok {{ crow_stop({}, format!(\"cannot branch on an error value — {{}}\", _a.reason)); }} _a.value }}", a[0], self.line_now()),
+                    Ty::Result(_) => format!("{{ let _a· = &({}); if !_a·.ok {{ crow_stop({}, format!(\"cannot branch on an error value — {{}}\", _a·.reason)); }} _a·.value }}", a[0], self.line_now()),
                     Ty::Int => format!("({}) != 0", a[0]),
                     Ty::Str => format!("!({}).is_empty()", a[0]),
                     _ => format!("({}) != 0", a[0]),
@@ -648,7 +648,7 @@ impl Emitter {
                         // of none had stopped)
                         Ty::OptRecord(nm) => format!("(if ({}).is_some() {{ \"{}\" }} else {{ \"int\" }})", v, shown.get(nm).unwrap_or(nm)),
                         Ty::Json => format!("crow_runtime::json::type_word(&({}))", v),
-                        Ty::Result(inner) => format!("{{ let _v = &({}); if _v.ok {{ {} }} else {{ \"error\" }} }}", v, word(inner, "_v.value", shown)),
+                        Ty::Result(inner) => format!("{{ let _v· = &({}); if _v·.ok {{ {} }} else {{ \"error\" }} }}", v, word(inner, "_v·.value", shown)),
                         _ => "\"unknown\"".to_string(),
                     }
                 }
@@ -657,7 +657,7 @@ impl Emitter {
                 // inside it — an index outside its list — stops here too,
                 // as it does interpreted; the word had been decided without
                 // reading it)
-                format!("{{ let _t = &({}); ({}).to_string() }}", a[0], word(&ty0, "(*_t)", &shown))
+                format!("{{ let _t· = &({}); ({}).to_string() }}", a[0], word(&ty0, "(*_t·)", &shown))
             }
             // `json[map]`, a web response (use web): `json[text]` is its row;
             // a frame answers as its records, the runtime's one form
@@ -677,16 +677,16 @@ impl Emitter {
             "any" | "all" if n == 2 => {
                 self.needs_rayon = true;
                 if matches!(in0, Ty::Tensor(..)) {
-                    let item = self.pred_item(&args[1], &in0, "_x").unwrap_or_else(|| format!("_x{}", self.pred_cast(&args[1], &in0)));
-                    return Some(Self::on_cores(format!("{}.to_vec().par_iter().{}(|&_x| {}({}))", a[0], name, a[1], item), true));
+                    let item = self.pred_item(&args[1], &in0, "_x·").unwrap_or_else(|| format!("_x·{}", self.pred_cast(&args[1], &in0)));
+                    return Some(Self::on_cores(format!("{}.to_vec().par_iter().{}(|&_x·| {}({}))", a[0], name, a[1], item), true));
                 }
                 let call = match self.pred_cast(&args[1], &in0) {
-                    _ if self.pred_item(&args[1], &in0, "*_x").is_some() => format!("({})", self.pred_item(&args[1], &in0, "*_x").unwrap_or_default()),
-                    "" if self.pred_takes_ref(&args[1]) => "(_x)".to_string(),
-                    "" => "(_x.clone())".to_string(),
-                    cast => format!("(*_x{})", cast),
+                    _ if self.pred_item(&args[1], &in0, "*_x·").is_some() => format!("({})", self.pred_item(&args[1], &in0, "*_x·").unwrap_or_default()),
+                    "" if self.pred_takes_ref(&args[1]) => "(_x·)".to_string(),
+                    "" => "(_x·.clone())".to_string(),
+                    cast => format!("(*_x·{})", cast),
                 };
-                Self::on_cores(format!("{}.par_iter().{}(|_x| {}{})", a[0], name, a[1], call), true)
+                Self::on_cores(format!("{}.par_iter().{}(|_x·| {}{})", a[0], name, a[1], call), true)
             }
             "find" if n == 2 && matches!(in0, Ty::List(_) | Ty::Tensor(..)) => {
                 self.needs_rayon = true;
@@ -697,20 +697,20 @@ impl Emitter {
                 let default = el.default_rust_value();
                 if matches!(in0, Ty::Tensor(..)) {
                     let cast = if matches!(el, Ty::Int) { " as i64" } else { "" };
-                    let item = self.pred_item(&args[1], &in0, "_x").unwrap_or_else(|| format!("_x{}", self.pred_cast(&args[1], &in0)));
+                    let item = self.pred_item(&args[1], &in0, "_x·").unwrap_or_else(|| format!("_x·{}", self.pred_cast(&args[1], &in0)));
                     return Some(format!(
-                        "{{ match crow_runtime::cores::run(|| {}.to_vec().par_iter().copied().find_first(|&_x| {}({}))) {{ Some(_v) => CrowResult {{ ok: true, value: _v{}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+                        "{{ match crow_runtime::cores::run(|| {}.to_vec().par_iter().copied().find_first(|&_x·| {}({}))) {{ Some(_v·) => CrowResult {{ ok: true, value: _v·{}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
                         a[0], a[1], item, cast, default
                     ));
                 }
                 let call = match self.pred_cast(&args[1], &in0) {
-                    _ if self.pred_item(&args[1], &in0, "**_x").is_some() => format!("({})", self.pred_item(&args[1], &in0, "**_x").unwrap_or_default()),
-                    "" if self.pred_takes_ref(&args[1]) => "(*_x)".to_string(),
-                    "" => "((*_x).clone())".to_string(),
-                    cast => format!("(**_x{})", cast),
+                    _ if self.pred_item(&args[1], &in0, "**_x·").is_some() => format!("({})", self.pred_item(&args[1], &in0, "**_x·").unwrap_or_default()),
+                    "" if self.pred_takes_ref(&args[1]) => "(*_x·)".to_string(),
+                    "" => "((*_x·).clone())".to_string(),
+                    cast => format!("(**_x·{})", cast),
                 };
                 format!(
-                    "{{ match crow_runtime::cores::run(|| {}.par_iter().find_first(|_x| {}{}).cloned()) {{ Some(_v) => CrowResult {{ ok: true, value: _v, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
+                    "{{ match crow_runtime::cores::run(|| {}.par_iter().find_first(|_x·| {}{}).cloned()) {{ Some(_v·) => CrowResult {{ ok: true, value: _v·, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, None => CrowResult {{ ok: false, value: {}, reason: \"no match\".to_string(), kind: \"find\".to_string(), trace: vec![], captured: 0.0 }} }} }}",
                     a[0], a[1], call, default
                 )
             }
@@ -720,7 +720,7 @@ impl Emitter {
                 self.needs_find_struct = true;
                 let tr = self.trace_format_expr();
                 format!(
-                    "{{ match crow_runtime::text::find(&*{}, &*{}) {{ Ok(Some(_g)) => CrowResult {{ ok: true, value: CrowFindResult {{ groups: _g }}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Ok(None) => CrowResult {{ ok: false, value: CrowFindResult {{ groups: Vec::new() }}, reason: \"no match\".to_string(), kind: String::new(), trace: vec![{}], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: CrowFindResult {{ groups: Vec::new() }}, reason: e, kind: \"regex\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
+                    "{{ match crow_runtime::text::find(&*{}, &*{}) {{ Ok(Some(_g·)) => CrowResult {{ ok: true, value: CrowFindResult {{ groups: _g· }}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}, Ok(None) => CrowResult {{ ok: false, value: CrowFindResult {{ groups: Vec::new() }}, reason: \"no match\".to_string(), kind: String::new(), trace: vec![{}], captured: 0.0 }}, Err(e) => CrowResult {{ ok: false, value: CrowFindResult {{ groups: Vec::new() }}, reason: e, kind: \"regex\".to_string(), trace: vec![{}], captured: 0.0 }} }} }}",
                     a[0], a[1], tr, tr
                 )
             }
@@ -737,10 +737,10 @@ impl Emitter {
         let quick = fn_named(arg).is_some_and(|f| crate::ir::quick_fns(self.part.fns.iter()).contains(f));
         // a handler that can write a table lands its writes as it ends, its
         // stop too (`__CrowWrites`, emit_main)
-        let writes = if self.needs_crow_db && !quick { "let _w = __CrowWrites; " } else { "" };
+        let writes = if self.needs_crow_db && !quick { "let _w· = __CrowWrites; " } else { "" };
         let answer = match fn_named(arg) {
             Some(f) if self.fns.get(f).is_some_and(|sig| sig.ret.is_result()) => format!(
-                "move |__req: crow_web::core::CrowRequest| {{ {}let _r = {}(__req); if _r.ok {{ _r.value }} else {{ crow_web::server::route_stopped(\"{}\", &_r.reason) }} }}",
+                "move |__req: crow_web::core::CrowRequest| {{ {}let _r· = {}(__req); if _r·.ok {{ _r·.value }} else {{ crow_web::server::route_stopped(\"{}\", &_r·.reason) }} }}",
                 writes,
                 Self::rust_fn_name(f),
                 f
@@ -808,7 +808,7 @@ impl Emitter {
                 }
                 let call = format!("{}({})", Self::rust_fn_name(&fname), params.join(", "));
                 let run = if self.fns.get(&fname).is_some_and(|f| f.ret.is_result()) {
-                    format!("let _r = {}; if _r.ok {{ Ok(()) }} else {{ Err(_r.reason) }}", call)
+                    format!("let _r· = {}; if _r·.ok {{ Ok(()) }} else {{ Err(_r·.reason) }}", call)
                 } else {
                     format!("let _ = {}; Ok(())", call)
                 };
@@ -862,7 +862,7 @@ impl Emitter {
         let handle = if a.len() == 3 && !listed { a[2].clone() } else { handle_all };
         let with_url = if pairs.is_empty() { String::new() } else { format!(".with_url(vec![{}])", pairs.join(", ")) };
         format!(
-            "{{ let _ws_path = format!(\"/_ws{{}}\", {}); let _lv = CrowLiveView::new(&_ws_path, __crow_state.clone(), {}, {}){}; let _lr = _lv.into_router(&{}); __crow_app = __crow_app.merge(_lr); }}",
+            "{{ let _ws_path· = format!(\"/_ws{{}}\", {}); let _lv· = CrowLiveView::new(&_ws_path·, __crow_state.clone(), {}, {}){}; let _lr· = _lv·.into_router(&{}); __crow_app = __crow_app.merge(_lr·); }}",
             a[0], a[1], handle, with_url, a[0]
         )
     }

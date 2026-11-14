@@ -136,6 +136,24 @@ impl Lexer {
             // identifier or keyword
             if ch.is_ascii_alphabetic() || ch == '_' {
                 let tok = self.lex_ident();
+                // A name beginning with two underscores is a name the compiler
+                // makes — a temporary (`__t1`), a hidden form (`__map_of`), the
+                // compiled program's own items (`__crow_state`) — so no name a
+                // program writes begins so (spec, Names): written by a program,
+                // `__pick_items[…]` had reached a hidden form. A field after a
+                // dot is a parsed value's key, which any text may be, and text
+                // the expansion wrote is the compiler's own (`Lexer::joined`).
+                if let Token::Ident(name) = &tok.token
+                    && name.starts_with("__")
+                    && !self.joined
+                    && !matches!(tokens.last().map(|t: &SpannedToken| &t.token), Some(Token::Dot))
+                {
+                    let plain = format!("_{}", name.trim_start_matches('_'));
+                    return Err(format!(
+                        "line {}, col {}: '{}' begins with two underscores, as only the names Crow makes do — write '{}'",
+                        tok.line, tok.col, name, if plain == "_" { "x".to_string() } else { plain }
+                    ));
+                }
                 // Python string prefix: f'...', r'...', b'... — a name abutting
                 // a quote is never valid Crow, and it's the LLM interpolation reflex.
                 if let Token::Ident(name) = &tok.token {

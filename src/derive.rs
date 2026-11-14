@@ -605,7 +605,7 @@ mod tests {
     /// is a function's, not the top level's).
     fn body_of(src: &str) -> Vec<Stmt> {
         let indented: String = src.lines().map(|l| format!("    {}\n", l)).collect();
-        match crate::build(&format!("fn __body[]\n{}", indented)).unwrap().into_iter().find(|s| matches!(s, Stmt::FnDecl { .. })) {
+        match crate::build(&format!("fn _body[]\n{}", indented)).unwrap().into_iter().find(|s| matches!(s, Stmt::FnDecl { .. })) {
             Some(Stmt::FnDecl { body, .. }) => body,
             _ => Vec::new(),
         }

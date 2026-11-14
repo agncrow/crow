@@ -197,7 +197,7 @@ pub(crate) struct Emitter {
     /// The plain vectors of whole numbers among them, kept as `Vec<i64>`.
     pub(crate) int_vecs: BTreeSet<String>,
     /// The vector parameters read through a view of their numbers
-    /// (`{p}__v`, vectors.rs `read_views`).
+    /// (`{p}·v·`, vectors.rs `read_views`).
     pub(crate) read_vecs: BTreeSet<String>,
     /// The current body's texts read by position, each with a `Known`
     /// beside it (texts.rs).

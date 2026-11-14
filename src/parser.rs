@@ -830,8 +830,11 @@ impl Parser {
     /// A chain written as lines: `x = e` and, indented under it, lines that
     /// each start with `then` (spec, Then Chaining). Every step is a
     /// statement of its own, assigned to a hidden name so the value's kind
-    /// may change from step to step, as a variable's may not: `x__then1 = e`,
-    /// each step reads the value so far, and the last step assigns `x`. A
+    /// may change from step to step, as a variable's may not: `x·then·1 = e`
+    /// (`crate::ir::then_step_name` — the mark, which no name a program
+    /// writes holds: `x__then1` had been the program's own name too, and a
+    /// program holding one was refused as the chain's step), each step
+    /// reads the value so far, and the last step assigns `x`. A
     /// step that names `x` reads the value where it says; a step that does
     /// not is a call, and the value is its first argument, as `x then f[a]`
     /// is `f[x, a]`.
@@ -863,7 +866,7 @@ impl Parser {
         } else if !self.is_at_end() {
             return Err(format!("line {}: a chain's lines each start with `then`", self.current_line()));
         }
-        let hidden = |k: usize| format!("{}__then{}", name, k);
+        let hidden = |k: usize| crate::ir::then_step_name(&name, k);
         let n = steps.len();
         let mut out = vec![Stmt::Assign { name: hidden(1), value }];
         for (k, (line, mut step)) in steps.into_iter().enumerate() {
@@ -1654,15 +1657,15 @@ mod then_lines_tests {
         // the value first where the step is a call; where the step names
         // the variable, the value is where it says, and the last assigns it
         let p = parsed("x = [3, 1, 2]\n    then sort\n    then reverse[x]\n    then len[x] + 1\nlog[x]\n");
-        assert!(p.contains("name: \"x__then1\""), "{}", p);
-        assert!(p.contains("Ident(\"x__then1\")"), "{}", p);
-        assert!(p.contains("name: \"x__then2\""), "{}", p);
-        assert!(p.contains("name: \"x__then3\""), "{}", p);
-        assert!(!p.contains("name: \"x__then4\""), "{}", p);
+        assert!(p.contains("name: \"x·then·1\""), "{}", p);
+        assert!(p.contains("Ident(\"x·then·1\")"), "{}", p);
+        assert!(p.contains("name: \"x·then·2\""), "{}", p);
+        assert!(p.contains("name: \"x·then·3\""), "{}", p);
+        assert!(!p.contains("name: \"x·then·4\""), "{}", p);
         assert!(p.matches("name: \"x\"").count() == 1, "{}", p);
-        // the inserted call: sort[x__then1]; the named step: reverse[x__then2]
-        assert!(p.contains("callee: Ident(\"sort\"), args: [Ident(\"x__then1\")]"), "{}", p);
-        assert!(p.contains("callee: Ident(\"reverse\"), args: [Ident(\"x__then2\")]"), "{}", p);
+        // the inserted call: sort[x·then·1]; the named step: reverse[x·then·2]
+        assert!(p.contains("callee: Ident(\"sort\"), args: [Ident(\"x·then·1\")]"), "{}", p);
+        assert!(p.contains("callee: Ident(\"reverse\"), args: [Ident(\"x·then·2\")]"), "{}", p);
         // each step keeps its line
         assert!(p.contains("Line(2)") && p.contains("Line(3)") && p.contains("Line(4)"), "{}", p);
     }
@@ -1670,9 +1673,9 @@ mod then_lines_tests {
     #[test]
     fn a_step_names_the_variable_in_a_field_a_span_or_a_nested_call() {
         let p = parsed("pr = frame.new[a = [1]]\n    then max[abs[pr.a - 1.0]]\n");
-        assert!(p.contains("object: Ident(\"pr__then1\")"), "{}", p);
+        assert!(p.contains("object: Ident(\"pr·then·1\")"), "{}", p);
         let p = parsed("t = 'a'\n    then 'got `t`'\n");
-        assert!(p.contains("got `t__then1`"), "{}", p);
+        assert!(p.contains("got `t·then·1`"), "{}", p);
         assert!(mentions(&Expr::Str("`t.x`".into()), "x") == false);
         assert!(mentions(&Expr::Str("`x.t`".into()), "x"));
     }
@@ -1705,7 +1708,7 @@ mod then_lines_tests {
     #[test]
     fn a_chain_inside_a_body_ends_with_the_body() {
         let p = parsed("fn f[s]\n    r = s\n        then upper\n    return r\nlog[f['a']]\n");
-        assert!(p.contains("name: \"r__then1\"") && p.contains("Return"), "{}", p);
+        assert!(p.contains("name: \"r·then·1\"") && p.contains("Return"), "{}", p);
     }
 }
 

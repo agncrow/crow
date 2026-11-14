@@ -133,7 +133,7 @@ impl Emitter {
         // returns (crow_runtime::cores)
         if crate::ir::sets_cores(&f.body) {
             self.needs_crow_runtime = true;
-            self.line("let _cores = crow_runtime::cores::Restore::new();");
+            self.line("let _cores· = crow_runtime::cores::Restore::new();");
         }
         // the vectors the body only reads and writes by index, kept plain
         // (vectors.rs); a parameter's is made as the body starts
@@ -152,7 +152,7 @@ impl Emitter {
             for (p, _) in &f.params {
                 if self.indexed_texts.contains(p) {
                     self.needs_crow_runtime = true;
-                    self.line(&format!("let {p}__known = crow_runtime::text::Known::new();"));
+                    self.line(&format!("let {p}·known· = crow_runtime::text::Known::new();"));
                 }
             }
             self.plain_vecs = vectors::plain_vectors(f);
@@ -165,7 +165,7 @@ impl Emitter {
                     self.line(&format!("let mut {p}: {ty} = {made};"));
                 }
                 if self.read_vecs.contains(p) {
-                    self.line(&format!("let {p}__v = {p}.numbers();"));
+                    self.line(&format!("let {p}·v· = {p}.numbers();"));
                 }
             }
         }
@@ -323,7 +323,7 @@ impl Emitter {
         self.line("");
 
         let rs = &d.spec;
-        let eq = if matches!(rt, Ty::Int | Ty::Float | Ty::Str | Ty::Bool) { "|a, b| a == b" } else { "|_a, _b| false" };
+        let eq = if matches!(rt, Ty::Int | Ty::Float | Ty::Str | Ty::Bool) { "|a, b| a == b" } else { "|_a·, _b·| false" };
         let list = |xs: &BTreeSet<String>| xs.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<_>>().join(", ");
         self.line(&format!(
             "static __DERIVE_SPEC_{n}: crow_web::live::DeriveSpec = crow_web::live::DeriveSpec {{ name: \"{n}\", facts: &[{f}], derives: &[{dd}], tables: &[{t}], now: {now}, external: {ext}, fresh: {fresh:?}, shared: {sh}, keys: &[{k}] }};",
@@ -402,7 +402,7 @@ impl Emitter {
         };
         self.needs_crow_runtime = true;
         self.line("#[allow(unused_mut, unused_variables, non_snake_case, unreachable_code)]");
-        self.line(&format!("fn _traced_{}({}) -> {} {{", Self::rust_fn_name(&f.name), params.join(", "), ret));
+        self.line(&format!("fn {}({}) -> {} {{", crate::ir::traced_name(&Self::rust_fn_name(&f.name)), params.join(", "), ret));
         self.indent += 1;
         let saved = (
             std::mem::take(&mut self.scopes),
@@ -449,7 +449,7 @@ impl Emitter {
     pub(crate) fn emit_dual_function(&mut self, f: &Fn) {
         let params: Vec<String> = f.params.iter().map(|(p, _)| format!("{}: CrowDual", p)).collect();
         self.line("#[allow(unused_mut, unused_variables, non_snake_case)]");
-        self.line(&format!("fn _dual_{}({}) -> CrowDual {{", Self::rust_fn_name(&f.name), params.join(", ")));
+        self.line(&format!("fn {}({}) -> CrowDual {{", crate::ir::dual_name(&Self::rust_fn_name(&f.name)), params.join(", ")));
         self.indent += 1;
         let saved = (
             std::mem::take(&mut self.scopes),
@@ -534,7 +534,7 @@ impl Emitter {
             let trace = self.trace_format_expr();
             if matches!(ret, Ty::Result(_)) {
                 format!(
-                    "return CrowResult {{ ok: false, value: {}, reason: {v}.reason.clone(), kind: {v}.kind.clone(), trace: {{ let mut _t = {v}.trace.clone(); crow_trace_push(&mut _t, {}); _t }}, captured: 0.0 }};",
+                    "return CrowResult {{ ok: false, value: {}, reason: {v}.reason.clone(), kind: {v}.kind.clone(), trace: {{ let mut _t· = {v}.trace.clone(); crow_trace_push(&mut _t·, {}); _t· }}, captured: 0.0 }};",
                     inner_default,
                     trace,
                     v = v
@@ -564,8 +564,8 @@ impl Emitter {
         if !matches!(self.tt(cond), Ty::Result(_)) {
             return cond_str;
         }
-        let on_error = self.refuse("_c");
-        format!("{{ let _c = &({}); if !_c.ok {{ {} }} _c.value }}", cond_str, on_error)
+        let on_error = self.refuse("_c·");
+        format!("{{ let _c· = &({}); if !_c·.ok {{ {} }} _c·.value }}", cond_str, on_error)
     }
 
     // ── statements ──────────────────────────────────────────────────
@@ -618,9 +618,9 @@ impl Emitter {
         if held != field_ty {
             return None;
         }
-        self.line(&format!("let _fk = std::mem::take(&mut {}.{});", c, Self::rust_field(f)));
-        self.declare("_fk", field_ty.clone());
-        let taken = Expr::Move("_fk".to_string(), expr.ty());
+        self.line(&format!("let _fk· = std::mem::take(&mut {}.{});", c, Self::rust_field(f)));
+        self.declare("_fk·", field_ty.clone());
+        let taken = Expr::Move("_fk·".to_string(), expr.ty());
         Some(match &block[i] {
             Stmt::Let { var, ty, .. } => Stmt::Let { var: var.clone(), ty: ty.clone(), expr: taken },
             _ => Stmt::Set { var: v.clone(), expr: taken },
@@ -704,8 +704,8 @@ impl Emitter {
             Stmt::Propagate { values, at } => {
                 for v in values {
                     if matches!(self.local_ty(v), Some(Ty::Result(_))) {
-                        let on_error = self.refuse_at("_c", at);
-                        self.line(&format!("{{ let _c = &{}; if !_c.ok {{ {} }} }}", v, on_error));
+                        let on_error = self.refuse_at("_c·", at);
+                        self.line(&format!("{{ let _c· = &{}; if !_c·.ok {{ {} }} }}", v, on_error));
                     }
                 }
             }
@@ -769,13 +769,13 @@ impl Emitter {
         // a text read by position: what is known of its start, none yet
         if self.indexed_texts.contains(var) {
             self.needs_crow_runtime = true;
-            self.line(&format!("let {var}__known = crow_runtime::text::Known::new();"));
+            self.line(&format!("let {var}·known· = crow_runtime::text::Known::new();"));
         }
     }
 
     fn emit_let_value(&mut self, var: &str, ty: &Ty, expr: &Expr) {
         if self.text_builders.contains_key(var) {
-            self.line(&format!("let mut {var}: String = String::new(); let mut {var}__count: i64 = 0;"));
+            self.line(&format!("let mut {var}: String = String::new(); let mut {var}·count·: i64 = 0;"));
             self.declare(var, as_inferred(ty));
             return;
         }
@@ -845,7 +845,7 @@ impl Emitter {
         self.emit_set_value(var, expr);
         // a text read by position given a new text: nothing known of it
         if self.indexed_texts.contains(var) {
-            self.line(&format!("{var}__known.reset();"));
+            self.line(&format!("{var}·known·.reset();"));
         }
     }
 
@@ -853,7 +853,7 @@ impl Emitter {
         if let Some(sep) = self.text_builders.get(var).cloned() {
             match builders::appended(var, expr) {
                 Some(piece) => self.emit_append(var, &sep, piece),
-                None => self.line(&format!("{var}.clear(); {var}__count = 0;")),
+                None => self.line(&format!("{var}.clear(); {var}·count· = 0;")),
             }
             return;
         }
@@ -861,7 +861,7 @@ impl Emitter {
             // a number pushed: onto the vector (vectors.rs)
             if let Some(n) = vectors::pushed(var, expr) {
                 let val = self.expr(n);
-                self.line(&format!("{{ let _v = {}; {}.push(_v); }}", self.vector_number(var, &val), var));
+                self.line(&format!("{{ let _v· = {}; {}.push(_v·); }}", self.vector_number(var, &val), var));
                 return;
             }
             let text = self.owned_expr(expr);
@@ -889,11 +889,11 @@ impl Emitter {
             // one whose type only this backend knew is refused the same way
             if let Ty::Result(inner) = &new_ty {
                 if existing.compatible(inner) || (matches!(existing, Ty::Float) && matches!(inner.as_ref(), Ty::Int)) {
-                    let abort = self.refuse_at("_asg", &Decision::Assign(var.to_string()));
+                    let abort = self.refuse_at("_asg·", &Decision::Assign(var.to_string()));
                     let cast = if matches!(existing, Ty::Float) && matches!(inner.as_ref(), Ty::Int) { " as f64" } else { "" };
                     // (in the form the variable holds: traced in a traced copy)
-                    let value = self.held_form(var, &existing, expr, format!("_asg.value{}", cast));
-                    self.line(&format!("{{ let _asg = {}; if !_asg.ok {{ {} }} {} = {}; }}", text, abort, var, value));
+                    let value = self.held_form(var, &existing, expr, format!("_asg·.value{}", cast));
+                    self.line(&format!("{{ let _asg· = {}; if !_asg·.ok {{ {} }} {} = {}; }}", text, abort, var, value));
                     return;
                 }
             }
@@ -988,8 +988,8 @@ impl Emitter {
             // the value first, then the index, as the interpreter reads them
             let val = self.expr(expr);
             let idx = self.expr(i);
-            let at = self.index_at("_i", &format!("{}.len()", var));
-            self.line(&format!("{{ let _v = {}; let _i = {}; let _k = {}; {}[_k] = _v; }}", self.vector_number(var, &val), idx, at, var));
+            let at = self.index_at("_i·", &format!("{}.len()", var));
+            self.line(&format!("{{ let _v· = {}; let _i· = {}; let _k· = {}; {}[_k·] = _v·; }}", self.vector_number(var, &val), idx, at, var));
             return;
         }
         // a part of a fact of the session (`items[0] = x`, `p.qty = 3`),
@@ -1011,8 +1011,8 @@ impl Emitter {
         if in_facts {
             self.line("{");
             self.indent += 1;
-            self.line(&format!("let _fv = {};", val));
-            val = "_fv".to_string();
+            self.line(&format!("let _fv· = {};", val));
+            val = "_fv·".to_string();
         }
         self.emit_set_path_with(var, path, &val, expr, in_facts);
         if in_facts {
@@ -1033,9 +1033,9 @@ impl Emitter {
         let float_from_int = |a: &Ty, b: &Ty| matches!(a, Ty::Float) && matches!(b, Ty::Int);
         let value = match &new_ty {
             Ty::Result(inner) if !matches!(existing, Ty::Result(_)) && (existing.compatible(inner) || float_from_int(&existing, inner)) => {
-                let abort = self.refuse_at("_asg", &Decision::Assign(fact.to_string()));
+                let abort = self.refuse_at("_asg·", &Decision::Assign(fact.to_string()));
                 let cast = if float_from_int(&existing, inner) { " as f64" } else { "" };
-                format!("{{ let _asg = {}; if !_asg.ok {{ {} }} _asg.value{} }}", text, abort, cast)
+                format!("{{ let _asg· = {}; if !_asg·.ok {{ {} }} _asg·.value{} }}", text, abort, cast)
             }
             _ if float_from_int(&existing, &new_ty) => format!("({}) as f64", text),
             _ => {
@@ -1047,11 +1047,11 @@ impl Emitter {
         };
         let field = Self::rust_field(fact);
         let moved = if self.crow_compares(&existing) {
-            format!("__facts(&*state).{} != _v", field)
+            format!("__facts(&*state).{} != _v·", field)
         } else {
-            format!("serde_json::to_value(&__facts(&*state).{}).ok() != serde_json::to_value(&_v).ok()", field)
+            format!("serde_json::to_value(&__facts(&*state).{}).ok() != serde_json::to_value(&_v·).ok()", field)
         };
-        self.line(&format!("{{ let _v = {}; let _moved = {}; __facts_mut(state).{} = _v; if _moved {{ state.touch(\"{}\"); }} }}", value, moved, field, fact));
+        self.line(&format!("{{ let _v· = {}; let _moved· = {}; __facts_mut(state).{} = _v·; if _moved· {{ state.touch(\"{}\"); }} }}", value, moved, field, fact));
     }
 
     /// Whether values of a type compare in Rust as `eq` compares them.
@@ -1086,7 +1086,7 @@ impl Emitter {
         if !in_facts {
             if let Ty::Result(inner) = &ty {
                 self.line(&format!(
-                    "{{ let _c = &{}; if !_c.ok {{ crow_stop({}, format!(\"cannot set an item of an error value — {{}}\", _c.reason)); }} }}",
+                    "{{ let _c· = &{}; if !_c·.ok {{ crow_stop({}, format!(\"cannot set an item of an error value — {{}}\", _c·.reason)); }} }}",
                     obj,
                     self.line_now()
                 ));
@@ -1138,8 +1138,8 @@ impl Emitter {
                     // (a map keyed by ints takes its int as it is: the key had
                     // been made text, and the program did not build — crow
                     // check --self)
-                    Ty::Map(crate::ir::Key::Int, _) => self.line_after(&found, &format!("{{ let _v = {}; {}.insert(({}) as i64, _v); }}", val, obj, idx)),
-                    Ty::Map(..) => self.line_after(&found, &format!("{{ let _v = {}; {}.insert(({}).to_string(), _v); }}", val, obj, idx)),
+                    Ty::Map(crate::ir::Key::Int, _) => self.line_after(&found, &format!("{{ let _v· = {}; {}.insert(({}) as i64, _v·); }}", val, obj, idx)),
+                    Ty::Map(..) => self.line_after(&found, &format!("{{ let _v· = {}; {}.insert(({}).to_string(), _v·); }}", val, obj, idx)),
                     // the value first, then the index, as the interpreter
                     // reads them (a stop in each had reported the other's
                     // first when both failed); a tensor's number is set
@@ -1148,7 +1148,7 @@ impl Emitter {
                     Ty::Tensor(..) => {
                         self.needs_crow_runtime = true;
                         self.line_after(&found, &format!(
-                            "{{ let _v = ({}) as f64; let _i = {}; crow_runtime::core::set_flat_at(&mut {}, _i, _v).unwrap_or_else(|e| crow_stop({}, e)); }}",
+                            "{{ let _v· = ({}) as f64; let _i· = {}; crow_runtime::core::set_flat_at(&mut {}, _i·, _v·).unwrap_or_else(|e| crow_stop({}, e)); }}",
                             val, idx, obj, self.line_now()
                         ));
                     }
@@ -1157,8 +1157,8 @@ impl Emitter {
                     // interpreter stops, before the write — printed as a
                     // list's write, `g[0][0] = 1` of `g = []` had not built;
                     // Rosetta Code, Abelian sandpile model)
-                    Ty::Unknown => self.line_after(&found, &format!("{{ let _v = {}; let _ = _v; crow_stop({}, \"an item of no known kind is written by position\".to_string()); }}", val, self.line_now())),
-                    _ => self.line_after(&found, &format!("{{ let _v = {}; let _i = {}; let _idx = {}; {}[_idx] = _v; }}", val, idx, self.index_at("_i", &format!("{}.len()", obj)), obj)),
+                    Ty::Unknown => self.line_after(&found, &format!("{{ let _v· = {}; let _ = _v·; crow_stop({}, \"an item of no known kind is written by position\".to_string()); }}", val, self.line_now())),
+                    _ => self.line_after(&found, &format!("{{ let _v· = {}; let _i· = {}; let _idx· = {}; {}[_idx·] = _v·; }}", val, idx, self.index_at("_i·", &format!("{}.len()", obj)), obj)),
                 }
             }
             None => self.line_after(&found, &format!("{} = {};", obj, val)),
@@ -1208,11 +1208,11 @@ impl Emitter {
                         _ => Ty::Unknown,
                     };
                     obj = if matches!(ty, Ty::Map(..)) {
-                        format!("(*{{ let _k = {i}; {o}.get_mut(&_k).unwrap_or_else(|| crow_stop({l}, crow_runtime::stops::no_key(&_k))) }})", i = idx, o = obj, l = self.line_now())
+                        format!("(*{{ let _k· = {i}; {o}.get_mut(&_k·).unwrap_or_else(|| crow_stop({l}, crow_runtime::stops::no_key(&_k·))) }})", i = idx, o = obj, l = self.line_now())
                     } else {
                         let k = found.len();
-                        found.push(format!("let _at{k} = {at};", k = k, at = self.index_at(&idx, &format!("{}.len()", obj))));
-                        format!("{}[_at{}]", obj, k)
+                        found.push(format!("let _at{k}· = {at};", k = k, at = self.index_at(&idx, &format!("{}.len()", obj))));
+                        format!("{}[_at{}·]", obj, k)
                     };
                     ty = next;
                 }
@@ -1250,43 +1250,43 @@ impl Emitter {
                 };
                 self.needs_crow_runtime = true;
                 (
-                    format!("let _k = {};", k),
-                    format!("let _slot = {}.get_mut(&_k).unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(&_k))); let _tk = std::mem::take(_slot);", obj, self.line_now()),
-                    "*_slot = _nv;".to_string(),
+                    format!("let _k· = {};", k),
+                    format!("let _slot· = {}.get_mut(&_k·).unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(&_k·))); let _tk· = std::mem::take(_slot·);", obj, self.line_now()),
+                    "*_slot· = _nv·;".to_string(),
                 )
             }
             (PathStep::Index(i), Ty::List(_)) => {
                 let idx = self.expr(i);
                 (
-                    format!("let _i = {}; let _idx = {};", idx, self.index_at("_i", &format!("{}.len()", obj))),
-                    format!("let _tk = std::mem::take(&mut {}[_idx]);", obj),
-                    format!("{}[_idx] = _nv;", obj),
+                    format!("let _i· = {}; let _idx· = {};", idx, self.index_at("_i·", &format!("{}.len()", obj))),
+                    format!("let _tk· = std::mem::take(&mut {}[_idx·]);", obj),
+                    format!("{}[_idx·] = _nv·;", obj),
                 )
             }
             (PathStep::Field(f), Ty::Record(_)) => {
                 let field = Self::rust_field(f);
-                (String::new(), format!("let _tk = std::mem::take(&mut {}.{});", obj, field), format!("{}.{} = _nv;", obj, field))
+                (String::new(), format!("let _tk· = std::mem::take(&mut {}.{});", obj, field), format!("{}.{} = _nv·;", obj, field))
             }
             (PathStep::Field(f), Ty::Map(..)) => {
                 self.needs_crow_runtime = true;
                 (
-                    format!("let _k = \"{}\".to_string();", f),
-                    format!("let _slot = {}.get_mut(&_k).unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(&_k))); let _tk = std::mem::take(_slot);", obj, self.line_now()),
-                    "*_slot = _nv;".to_string(),
+                    format!("let _k· = \"{}\".to_string();", f),
+                    format!("let _slot· = {}.get_mut(&_k·).unwrap_or_else(|| crow_stop({}, crow_runtime::stops::no_key(&_k·))); let _tk· = std::mem::take(_slot·);", obj, self.line_now()),
+                    "*_slot· = _nv·;".to_string(),
                 )
             }
             _ => return false,
         };
         // the call, its first argument the taken value: a moved local, so
         // the row's taken path prints
-        let mut rest: Vec<Expr> = vec![Expr::Move("_tk".to_string(), first.ty())];
+        let mut rest: Vec<Expr> = vec![Expr::Move("_tk·".to_string(), first.ty())];
         rest.extend(args[1..].iter().cloned());
         let call = Expr::Call { target: Target::Row(row), args: rest, ty: call_ty.clone(), propagates: *propagates };
         self.scopes.push(Default::default());
-        self.declare("_tk", first_ty);
+        self.declare("_tk·", first_ty);
         let val = self.owned_expr(&call);
         self.scopes.pop();
-        self.line_after(&found, &format!("{{ {} {} let _nv = {}; {} }}", head, take, val, write));
+        self.line_after(&found, &format!("{{ {} {} let _nv· = {}; {} }}", head, take, val, write));
         true
     }
 
@@ -1354,11 +1354,11 @@ impl Emitter {
         self.scopes.push(Default::default());
         for (i, a) in args.iter().enumerate() {
             if i == k {
-                given.push(Expr::Move("_tk".to_string(), a.ty()));
+                given.push(Expr::Move("_tk·".to_string(), a.ty()));
             } else if crate::ir::quiet(a) && !reads_var(a) {
                 given.push(a.clone());
             } else {
-                let t = format!("_ta{}", i);
+                let t = format!("_ta{}·", i);
                 let text = self.owned_expr(a);
                 head.push_str(&format!("let {} = {}; ", t, text));
                 let at = self.tt(a);
@@ -1366,12 +1366,12 @@ impl Emitter {
                 given.push(Expr::Move(t, a.ty()));
             }
         }
-        self.declare("_tk", field_ty);
+        self.declare("_tk·", field_ty);
         let call = Expr::Call { target: Target::User(g.clone()), args: given, ty: call_ty.clone(), propagates: *propagates };
         let val = self.owned_expr(&call);
         self.scopes.pop();
         let field = Self::rust_field(f);
-        self.line(&format!("{{ {}let _tk = std::mem::take(&mut {}.{}); {}.{} = {}; }}", head, var, field, var, field, val));
+        self.line(&format!("{{ {}let _tk· = std::mem::take(&mut {}.{}); {}.{} = {}; }}", head, var, field, var, field, val));
         true
     }
 
@@ -1455,7 +1455,7 @@ impl Emitter {
                 let frames = matches!((got.as_ref(), inner.as_ref()), (Ty::Frame(_), Ty::Frame(_)));
                 if known(got) && known(&inner) && got.as_ref() != inner.as_ref() && !frames {
                     self.line(&format!(
-                        "return {{ let _r = {}; CrowResult {{ ok: _r.ok, value: {}, reason: _r.reason.clone(), kind: _r.kind.clone(), trace: _r.trace.clone(), captured: 0.0 }} }};",
+                        "return {{ let _r· = {}; CrowResult {{ ok: _r·.ok, value: {}, reason: _r·.reason.clone(), kind: _r·.kind.clone(), trace: _r·.trace.clone(), captured: 0.0 }} }};",
                         text,
                         self.payload_default(&inner)
                     ));
@@ -1515,9 +1515,9 @@ impl Emitter {
         let cell_ty = as_inferred(cell);
         let getter = Self::cell_getter(&Self::inner(&cell_ty));
         let walked = if matches!(cell_ty, Ty::Result(_)) {
-            format!("{{ let _c = &({}); (0.._c.len()).map(|_i| {{ let _ok = _c.valid[_i]; let _why = if _ok {{ String::new() }} else {{ \"missing\".to_string() }}; CrowResult {{ ok: _ok, value: _c.{}(_i), reason: _why.clone(), kind: _why, trace: vec![], captured: 0.0 }} }}).collect::<Vec<_>>() }}", iter_str, getter)
+            format!("{{ let _c· = &({}); (0.._c·.len()).map(|_i·| {{ let _ok· = _c·.valid[_i·]; let _why· = if _ok· {{ String::new() }} else {{ \"missing\".to_string() }}; CrowResult {{ ok: _ok·, value: _c·.{}(_i·), reason: _why·.clone(), kind: _why·, trace: vec![], captured: 0.0 }} }}).collect::<Vec<_>>() }}", iter_str, getter)
         } else {
-            format!("{{ let _c = &({}); (0.._c.len()).map(|_i| _c.{}(_i)).collect::<Vec<_>>() }}", iter_str, getter)
+            format!("{{ let _c· = &({}); (0.._c·.len()).map(|_i·| _c·.{}(_i·)).collect::<Vec<_>>() }}", iter_str, getter)
         };
         (walked, cell_ty)
     }
