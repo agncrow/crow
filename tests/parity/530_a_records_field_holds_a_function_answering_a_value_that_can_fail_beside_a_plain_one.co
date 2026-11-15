@@ -1,0 +1,39 @@
+--- A record's field of functions holds one answering a value that can fail
+--- beside one answering the value, as a variable and a parameter do: the
+--- plain one is widened to answer it too. `_same` is called by name before
+--- a node holds it, so inference met it typed, and the field had refused
+--- `halved`, whose answer can fail ("holds a function answering a Box, and
+--- this one answers a Box that can fail"): a node made with Lory's own
+--- painter and with Myna's had been one program or the other by the order
+--- inference met the two.
+struct Box [n]
+
+struct Node [tag, painter]
+
+fn _same[b]
+    b
+
+fn bare[tag]
+    Node[tag, _same]
+
+fn paint[t, b]
+    t.painter[b]
+
+fn halved[b]
+    n = float['2.5']
+    if not n.ok
+        return error['no number']
+    Box[n * b.n]
+
+fn missing[b]
+    n = float['none']
+    if not n.ok
+        return error['no number']
+    Box[n]
+
+log[_same[Box[0.0]].n]
+log[paint[bare['plain'], Box[1.0]].n]
+log[paint[Node['drawn', halved], Box[2.0]].n]
+got = paint[Node['lost', missing], Box[3.0]]
+if not got.ok
+    log['lost: `got.reason`']

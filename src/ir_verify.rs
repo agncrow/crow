@@ -754,8 +754,11 @@ fn row_takes(k: crate::table::Kind, t: &Ty) -> bool {
     use crate::table::Kind;
     // (a list whose items are not known — nothing typed them, or they are
     // parsed values — is any list, as the table reads it: its items are
-    // read as the parameter takes them)
-    let items = |t: &Ty, ok: &dyn std::ops::Fn(&Ty) -> bool| matches!(t, Ty::List(e) if matches!(**e, Ty::Unknown | Ty::Json) || ok(e));
+    // read as the parameter takes them; so is one whose items can fail and
+    // are not known, as `Arg::of_type` reads it: a row of a test's pass
+    // whose canvas nothing made, a painter's failure reaching it)
+    let unknown = |e: &Ty| matches!(e, Ty::Unknown | Ty::Json) || matches!(e, Ty::Result(i) if **i == Ty::Unknown);
+    let items = |t: &Ty, ok: &dyn std::ops::Fn(&Ty) -> bool| matches!(t, Ty::List(e) if unknown(e) || ok(e));
     let cell = |t: &Ty| matches!(t, Ty::Int | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup | Ty::Moment);
     *t == Ty::Unknown
         || match k.each() {

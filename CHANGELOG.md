@@ -48,6 +48,26 @@ history says the rest.
 
 ### Fixed
 
+- A record made with another kind than its field holds is refused
+  naming both kinds, in both modes: a record by its struct, and a
+  function by what it takes or answers where the two differ
+  (`Node's field 'painter' holds a function answering a number, and
+  this one answers text`; `… holds a function taking a number, and this
+  one takes text`). It had said `holds a function, and this is a
+  function` and `holds a record, and this is a record`, naming neither
+  (errors k67, k68, k69).
+- A record's field of functions holds one answering a value that can
+  fail beside one answering the value, in both modes, as a variable and
+  a parameter do: the plain one answers the failure too. A node made with
+  Lory's own painter and with a program's painter whose drawing can fail
+  had been refused or not by the order inference met the two (`gui.Node's
+  field 'painter' holds a function, and this is a function`) (parity 530).
+- A row of numbers that can fail and that nothing typed yet, pushed onto
+  a matrix, is read as the push takes it, as a row nothing typed is, in
+  both modes: in a function nothing calls, and in a test of a program
+  that leaves it out (Lory's pass, whose canvas no test made), it had
+  been refused as `a list whose items can fail`, and the IR's check had
+  called the program a bug in Crow (parity 531).
 - A method written in square brackets is refused before the program
   runs, in both modes: a function's name read as a value's — the
   program's, a builtin's, a module's — is told the call it means

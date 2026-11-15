@@ -168,7 +168,7 @@ fn answers(module: &str, name: &str) -> Option<&'static str> {
 }
 
 /// `a`, `a and b`, `a, b and c`.
-fn listed(items: &[String], last: &str) -> String {
+pub(super) fn listed(items: &[String], last: &str) -> String {
     match items {
         [] => String::new(),
         [one] => one.clone(),

@@ -1,0 +1,3 @@
+k67_a_records_field_of_functions_names_what_each_answers.co:9:1: in kit.drawn: kit.Node's field 'painter' holds a function answering a kit.Box, and this one answers text: a field holds one kind, as a variable does
+  9 │ log[kit.paint[kit.drawn['drawn', label], kit.Box[1.0]]]
+    │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

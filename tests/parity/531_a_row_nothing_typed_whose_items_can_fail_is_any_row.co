@@ -1,0 +1,18 @@
+--- A row whose items nothing typed is any row, read as its push takes it,
+--- and so is one whose items can fail and nothing typed: `place` is called
+--- by no one, so `x` is not known, and `wide[t] + x` is a number that can
+--- fail of no kind yet. It had been refused as "a list whose items can
+--- fail" pushed to a matrix, in both modes, and in a test of a program
+--- that leaves the function out (Lory's pass, the canvas nothing made).
+fn wide[t]
+    if t eq 'odd'
+        return error['odd']
+    1.5
+
+fn place[x, t]
+    rows = slice[[[0.0, 0.0]], 0, 0]
+    tw = wide[t] + x
+    rows = push[rows, [tw, x]]
+    len[rows]
+
+log[wide['even']]

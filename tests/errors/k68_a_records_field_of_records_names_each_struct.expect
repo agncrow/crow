@@ -1,0 +1,3 @@
+k68_a_records_field_of_records_names_each_struct.co:10:1: Box's field 'v' holds a P, and this is a Q: a field holds one kind, as a variable does
+  10 │ b = Box[Q[2]]
+     │ ^^^^^^^^^^^^^

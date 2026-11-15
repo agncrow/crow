@@ -789,6 +789,65 @@ fn sans_results(t: &Ty) -> Ty {
     }
 }
 
+/// `sans_results`, a function's answer's "can fail" taken off too: what a
+/// record's field compares, which holds a function answering a value that
+/// can fail and one answering the value as one kind, as a parameter and a
+/// variable do (`TypeContext::answers_without_failures` is inference's).
+fn kinds_alone(t: &Ty) -> Ty {
+    match t {
+        Ty::Result(inner) => kinds_alone(inner),
+        Ty::List(item) => Ty::List(Box::new(kinds_alone(item))),
+        Ty::Map(key, value) => Ty::Map(*key, Box::new(kinds_alone(value))),
+        Ty::Fn(params, answer) => Ty::Fn(params.clone(), Box::new(kinds_alone(answer))),
+        other => other.clone(),
+    }
+}
+
+/// A field's kind and the kind a record is made with there, as the refusal
+/// of the two names them (`holds {0}, and {1}`): a record by its struct, as
+/// the program spells it, and a function by what it takes or answers, where
+/// the two functions differ — `holds a function answering a gui.Drawn, and
+/// this one answers a gui.Drawn that can fail`. (It had said `holds a
+/// function, and this is a function` and `holds a record, and this is a
+/// record`, naming neither kind; Lory's `gui.Node`, its painter made with
+/// Myna's.)
+fn field_kinds_said(held: &Ty, given: &Ty) -> (String, String) {
+    fn kind(t: &Ty) -> String {
+        let record = |t: &Ty| match t.payload() {
+            Ty::Record(n) | Ty::OptRecord(n) => Some(crate::lower::shown(n)),
+            _ => None,
+        };
+        match t.payload() {
+            Ty::Record(n) | Ty::OptRecord(n) => format!("a {}", crate::lower::shown(n)),
+            Ty::List(item) if record(item).is_some() => {
+                format!("a list of {}{}", record(item).unwrap_or_default(), if item.is_result() { " that can fail" } else { "" })
+            }
+            Ty::Fn(_, answer) => format!("a function answering {}", answered(answer)),
+            Ty::Unit => "nothing".to_string(),
+            other => crate::table::Arg::of_type(other).said(other),
+        }
+    }
+    fn answered(t: &Ty) -> String {
+        if t.is_result() { format!("{} that can fail", kind(t)) } else { kind(t) }
+    }
+    let taken = |ps: &[Ty]| if ps.is_empty() { "nothing".to_string() } else { checks::listed(&ps.iter().map(kind).collect::<Vec<_>>(), "and") };
+    match (held, given) {
+        (Ty::Fn(hp, hr), Ty::Fn(gp, gr)) => {
+            let takes = hp.len() != gp.len() || hp.iter().zip(gp).any(|(h, g)| !sans_results(h).compatible(&sans_results(g)));
+            let answers = hr.is_result() != gr.is_result() || !sans_results(hr).compatible(&sans_results(gr));
+            match (takes, answers) {
+                (true, true) => (
+                    format!("a function taking {} and answering {}", taken(hp), answered(hr)),
+                    format!("this one takes {} and answers {}", taken(gp), answered(gr)),
+                ),
+                (true, false) => (format!("a function taking {}", taken(hp)), format!("this one takes {}", taken(gp))),
+                _ => (format!("a function answering {}", answered(hr)), format!("this one answers {}", answered(gr))),
+            }
+        }
+        _ => (kind(held), format!("this is {}", kind(given))),
+    }
+}
+
 /// A lowered value's type as a variable keeps it: a column keeps its
 /// cells' kind (`texts = str[t.at]` is a column of text, so `moment[texts]`
 /// is one of moments and its cell a moment, not a parsed value — the
@@ -6658,7 +6717,10 @@ impl<'a> Lowerer<'a> {
                     // (whether items can fail is no kind of its own: a field's
                     // kind joins every record made, and a list of values that
                     // cannot fail is held where some can — bm25's index)
-                    let (field_k, given_k) = (sans_results(&field), sans_results(&given));
+                    // (nor whether a function's answer can: one answering a
+                    // value that can fail is held where one answering the
+                    // value is, as by a parameter or a variable)
+                    let (field_k, given_k) = (kinds_alone(&field), kinds_alone(&given));
                     // (a parsed value given a field of a simple kind was read
                     // as it above; one given a field of another kind fits no
                     // more than another value would — a column's field given
@@ -6672,14 +6734,15 @@ impl<'a> Lowerer<'a> {
                         let fname = self.ctx.structs.get(&name).and_then(|s| s.fields.get(i)).map(|(f, _)| f.clone()).unwrap_or_default();
                         // (a list named by its items' kind: `holds a list, and
                         // this is a list` had named neither; Rosetta Code,
-                        // Gaussian elimination)
-                        let words = |t: &Ty| crate::table::Arg::of_type(t).said(t);
+                        // Gaussian elimination — and a record by its struct,
+                        // a function by what it takes or answers)
+                        let (held, made) = field_kinds_said(&field, &given);
                         self.refuse(format!(
-                            "{}'s field '{}' holds {}, and this is {}: a field holds one kind, as a variable does",
+                            "{}'s field '{}' holds {}, and {}: a field holds one kind, as a variable does",
                             crate::lower::shown(&name),
                             fname,
-                            words(&field),
-                            words(&given)
+                            held,
+                            made
                         ));
                     }
                 }
@@ -6719,13 +6782,13 @@ impl<'a> Lowerer<'a> {
                         let held = held_map_as(value, &want);
                         if matches!(held.ty().payload(), Ty::Map(_, now) if forms_differ(&want, now)) {
                             let fname = self.ctx.structs.get(&name).and_then(|s| s.fields.get(i)).map(|(f, _)| f.clone()).unwrap_or_default();
-                            let words = |t: &Ty| crate::table::Arg::of_type(t).said(t);
+                            let (kept, made) = field_kinds_said(&declared[i], &held.ty());
                             self.refuse(format!(
-                                "{}'s field '{}' holds {}, and this is {}: a field holds one kind, as a variable does",
+                                "{}'s field '{}' holds {}, and {}: a field holds one kind, as a variable does",
                                 crate::lower::shown(&name),
                                 fname,
-                                words(&declared[i]),
-                                words(&held.ty())
+                                kept,
+                                made
                             ));
                         }
                         held

@@ -1,0 +1,9 @@
+--- a record's field holding functions, made with one answering another kind: the refusal names what each function answers, as a variable's names its two kinds (it had said `kit.Node's field 'painter' holds a function, and this is a function`, naming neither; Lory's gui.Node, its painter made with one of Myna's answering a gui.Drawn that can fail)
+use kit
+
+fn label[b]
+    return 'n`b.n`'
+
+log[kit.blank[].n]
+log[kit.paint[kit.bare['plain'], kit.Box[1.0]].n]
+log[kit.paint[kit.drawn['drawn', label], kit.Box[1.0]]]

@@ -3803,7 +3803,12 @@ impl Arg {
             // is: a matrix of 1 and 0
             Ty::List(_) if t.truths_depth() >= 2 => Arg::Rows,
             Ty::List(inner) => match inner.as_ref() {
+                // (an item that can fail, of a kind not known yet, is not
+                // known yet either: a row of a pass still typed, whose
+                // items a function value answering a value that can fail
+                // reaches, had been refused as a list of failures)
                 Ty::Unknown => Arg::AnyList,
+                Ty::Result(item) if matches!(item.as_ref(), Ty::Unknown) => Arg::AnyList,
                 Ty::Result(item) if matches!(item.as_ref(), Ty::Int | Ty::Float) => Arg::FallibleNumbers,
                 Ty::Result(_) => Arg::Fallible,
                 i => Arg::of_items(Arg::of_type(i)),

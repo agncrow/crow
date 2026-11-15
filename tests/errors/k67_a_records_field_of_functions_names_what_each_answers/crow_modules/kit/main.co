@@ -1,0 +1,19 @@
+--- a node holding the function that paints it: the package's own, or one the program hands
+struct Box [n]
+
+struct Node [tag, painter]
+
+fn bare[tag]
+    Node[tag, _same]
+
+fn drawn[tag, painter]
+    Node[tag, painter]
+
+fn paint[t, b]
+    t.painter[b]
+
+fn blank[]
+    _same[Box[0.0]]
+
+fn _same[b]
+    b

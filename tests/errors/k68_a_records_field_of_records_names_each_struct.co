@@ -1,0 +1,11 @@
+--- a record's field made with records of two structs: the refusal names each struct (it had said `holds a record, and this is a record`, naming neither)
+struct P [x]
+
+struct Q [y]
+
+struct Box [v]
+
+a = Box[P[1]]
+log[a.v.x]
+b = Box[Q[2]]
+log[len[[b]]]

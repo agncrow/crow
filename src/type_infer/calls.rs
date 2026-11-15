@@ -319,8 +319,17 @@ impl TypeContext {
                         // (a parsed value is read as the field's kind, and a
                         // value that can fail makes the field hold failures:
                         // both still join)
+                        // (so does a function answering a value that can
+                        // fail beside one answering the value, as one
+                        // parameter or one variable holding both joins them:
+                        // the field holds the one that can fail, and the
+                        // plain one answers it too —
+                        // `propagate_indirect_fn_types`; refused, a node made
+                        // with Lory's own painter and with Myna's, whose
+                        // drawing can fail, had been one program or the
+                        // other by the order inference met the two)
                         let held = &new_fields[i].1;
-                        let (h, a) = (Self::without_failures(held), Self::without_failures(at));
+                        let (h, a) = (Self::answers_without_failures(held), Self::answers_without_failures(at));
                         if held.has_unknown() || matches!(a, Ty::Json) || matches!(h, Ty::Json) || h.compatible(&a) {
                             new_fields[i].1 = held.unify(at);
                         }
@@ -418,6 +427,20 @@ impl TypeContext {
             Ty::Result(inner) => Self::without_failures(inner),
             Ty::List(inner) => Ty::List(Box::new(Self::without_failures(inner))),
             Ty::Map(k, inner) => Ty::Map(*k, Box::new(Self::without_failures(inner))),
+            other => other.clone(),
+        }
+    }
+
+    /// A type with every "can fail" taken off, a function's answer's too: a
+    /// record's field, as a parameter and a variable do, holds a function
+    /// answering a value that can fail and one answering the value as one
+    /// kind (`lower_ir::kinds_alone` is the lowering's).
+    pub(crate) fn answers_without_failures(t: &Ty) -> Ty {
+        match t {
+            Ty::Result(inner) => Self::answers_without_failures(inner),
+            Ty::List(inner) => Ty::List(Box::new(Self::answers_without_failures(inner))),
+            Ty::Map(k, inner) => Ty::Map(*k, Box::new(Self::answers_without_failures(inner))),
+            Ty::Fn(params, answer) => Ty::Fn(params.clone(), Box::new(Self::answers_without_failures(answer))),
             other => other.clone(),
         }
     }

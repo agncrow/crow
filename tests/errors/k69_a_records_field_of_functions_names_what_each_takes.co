@@ -1,0 +1,15 @@
+--- a record's field holding functions, made with one taking another kind: the refusal names what each function takes (it had said `holds a function, and this is a function`, naming neither)
+struct Node [tag, painter]
+
+fn double[x]
+    return x * 2.0
+
+fn counted[s]
+    return len[s] + 0.5
+
+log[double[1.0]]
+log[counted['ab']]
+a = Node['a', double]
+log[a.painter[3.0]]
+b = Node['b', counted]
+log[b.tag]
