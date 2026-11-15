@@ -241,8 +241,10 @@ fn a_program_built_for_the_web_draws_what_it_paints() {
 const POINTER: &str = "use sys
 
 fn draw[frame]
+    if len[frame.pointers] eq 0
+        log['none']
     for p in frame.pointers
-        log['pointer `p.x` `p.y` `p.down`']
+        log['pointer `p.device` `p.x` `p.y` `p.down`']
     len[frame.pointers]
 
 sys.frames[draw]
@@ -252,17 +254,27 @@ sys.frames[draw]
 /// pointer's events (`give`): a frame then says where the pointer is, as
 /// it does for the reader's mouse — `give` had queued the event alone, and
 /// a frame's `pointers` stayed empty (Lory's crosshair and hover never
-/// showed under a test). A move after a press keeps the button held.
+/// showed under a test). A move after a press keeps the button held. A
+/// mouse's pointer stays where its button was let go, not down — a press
+/// released within one frame too — and goes when it leaves the drawing; a
+/// touch's goes when it is lifted. (A mouse's had gone at the release, so
+/// after a click a frame had no pointer until the mouse moved: Lory's
+/// hover and the pointer's shape dropped, and Myna's runs in 3D missed a
+/// quick click.)
 const POINTER_CHECK: &str = r#"<!DOCTYPE html><html><head><title>check</title></head><body style="margin:0">
 <canvas id="c" style="width:200px;height:200px"></canvas><script src="crow.js"></script><script>
 const logged = [], report = (text) => fetch('report?' + encodeURIComponent(text));
 Crow.start({ canvas: document.getElementById('c'), module: 'pointer.wasm', manual: true, said: (k, t) => logged.push(t) }).then((page) => {
-  const at = (type, x, y) => page.give({ type, device: 'mouse', id: 1, x, y, button: 0, shift: false, ctrl: false, alt: false, meta: false });
+  const at = (type, x, y, device = 'mouse', id = 1) => page.give({ type, device, id, x, y, button: 0, shift: false, ctrl: false, alt: false, meta: false });
   page.step(16);
   at('move', 40, 50); page.step(32);
   at('down', 41, 51); page.step(48);
   at('move', 60, 70); page.step(64);
   at('up', 60, 70); page.step(80);
+  at('down', 90, 95); at('up', 90, 95); page.step(96);
+  at('leave', 199, 95); page.step(112);
+  at('down', 30, 30, 'touch', 2); page.step(128);
+  at('up', 30, 30, 'touch', 2); page.step(144);
   report('said ' + logged.join('|'));
 }).catch((e) => report('failed ' + e.message));
 </script></body></html>"#;
@@ -284,7 +296,12 @@ fn a_pointer_a_test_gives_is_where_the_next_frame_says_it_is() {
     let page = dir.join("pointer_web");
     std::fs::write(page.join("check.html"), POINTER_CHECK).unwrap();
     let report = report_of(chrome, &dir, page);
-    assert_eq!(report, "said pointer 40 50 false|pointer 41 51 true|pointer 60 70 true", "{}", report);
+    assert_eq!(
+        report,
+        "said none|pointer mouse 40 50 false|pointer mouse 41 51 true|pointer mouse 60 70 true|pointer mouse 60 70 false|pointer mouse 90 95 false|none|pointer touch 30 30 true|none",
+        "{}",
+        report
+    );
 }
 
 const VR: &str = "use sys
@@ -346,4 +363,111 @@ fn a_frame_says_whether_a_headset_can_be_entered_and_entering_none_is_said() {
     let said: Vec<&str> = report.strip_prefix("said ").unwrap_or_default().split('|').collect();
     let (last, frames) = said.split_last().unwrap();
     assert!(*last == "said vr" && frames.len() >= 3 && frames.iter().all(|f| *f == "vr false"), "{}", report);
+}
+
+const AR: &str = "use sys
+
+fn draw[frame]
+    log['ar `frame.ar` `frame.blend`']
+    if frame.t gt 20 and frame.t lt 40
+        sys.paint['[[\"@ar\"]]']
+    for s in frame.said
+        log['said `s.what`']
+    0
+
+sys.frames[draw]
+";
+
+/// A frame says whether a headset can be entered with the room seen
+/// through the drawing (`ar`) and what is seen behind the drawing
+/// (`blend`: `opaque` on a screen), and `@ar` enters one as `@vr` does —
+/// where none can be (headless Chrome has no headset), the failure is
+/// said in a later frame, as `what` `ar`, never silent. Stepped as the
+/// headset's check is, until a frame says it.
+#[test]
+fn a_frame_says_whether_the_room_can_be_seen_through_a_headset_and_entering_none_is_said() {
+    if !has_target() {
+        eprintln!("skipped: no standard library for wasm32-unknown-unknown");
+        return;
+    }
+    let dir = scratch("ar");
+    std::fs::write(dir.join("ar.co"), AR).unwrap();
+    let out = crow(&dir, &["build", "--target", "web", "ar.co"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let Some(chrome) = chrome() else {
+        eprintln!("skipped the drawing: no Chrome (CROW_CHROME names one)");
+        return;
+    };
+    let page = dir.join("ar_web");
+    std::fs::write(page.join("check.html"), VR_CHECK.replace("vr.wasm", "ar.wasm").replace("said vr", "said ar")).unwrap();
+    let report = report_of(chrome, &dir, page);
+    let said: Vec<&str> = report.strip_prefix("said ").unwrap_or_default().split('|').collect();
+    let (last, frames) = said.split_last().unwrap();
+    assert!(*last == "said ar" && frames.len() >= 3 && frames.iter().all(|f| *f == "ar false opaque"), "{}", report);
+}
+
+const SOUND: &str = "use sys
+
+fn draw[frame]
+    if frame.t gt 20 and frame.t lt 40
+        sys.paint['[[\"@sound\", \"8000\", \"2\", \"0.5\", \"f32:0.25 -0.25 0.5 -0.5 0.75 -0.75\"]]']
+    0
+
+sys.frames[draw]
+";
+
+/// What the page plays of `@sound`: the program's samples, interleaved by
+/// channel, made into one buffer at the program's rate and started `when`
+/// seconds ahead on the page's own audio clock. The page's AudioContext is
+/// watched (no sound card is asked: a headless Chrome's context may never
+/// run), so what is checked is the buffer as it was made and when it was
+/// started.
+const SOUND_CHECK: &str = r#"<!DOCTYPE html><html><head><title>check</title></head><body style="margin:0">
+<canvas id="c" style="width:200px;height:200px"></canvas><script>
+const heard = [], report = (text) => fetch('report?' + encodeURIComponent(text));
+const Real = window.AudioContext;
+window.AudioContext = class extends Real {
+  createBuffer(channels, frames, rate) {
+    heard.push('buffer ' + channels + ' ' + frames + ' ' + rate);
+    return super.createBuffer(channels, frames, rate);
+  }
+  createBufferSource() {
+    const source = super.createBufferSource();
+    const start = source.start.bind(source);
+    source.start = (when) => {
+      const b = source.buffer;
+      for (let ch = 0; ch < b.numberOfChannels; ch++) heard.push('channel ' + ch + ' ' + Array.from(b.getChannelData(ch)).join(' '));
+      heard.push('ahead ' + (when - this.currentTime).toFixed(1));
+      start(when);
+    };
+    return source;
+  }
+};
+</script><script src="crow.js"></script><script>
+Crow.start({ canvas: document.getElementById('c'), module: 'sound.wasm', manual: true }).then((page) => {
+  page.step(16);
+  page.step(32);
+  page.step(48);
+  report('heard ' + heard.join('|'));
+}).catch((e) => report('failed ' + e.message));
+</script></body></html>"#;
+
+#[test]
+fn a_sound_the_program_made_is_played_as_its_samples_at_its_rate() {
+    if !has_target() {
+        eprintln!("skipped: no standard library for wasm32-unknown-unknown");
+        return;
+    }
+    let dir = scratch("sound");
+    std::fs::write(dir.join("sound.co"), SOUND).unwrap();
+    let out = crow(&dir, &["build", "--target", "web", "sound.co"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let Some(chrome) = chrome() else {
+        eprintln!("skipped the playing: no Chrome (CROW_CHROME names one)");
+        return;
+    };
+    let page = dir.join("sound_web");
+    std::fs::write(page.join("check.html"), SOUND_CHECK).unwrap();
+    let report = report_of(chrome, &dir, page);
+    assert_eq!(report, "heard buffer 2 3 8000|channel 0 0.25 0.5 0.75|channel 1 -0.25 -0.5 -0.75|ahead 0.5", "{}", report);
 }

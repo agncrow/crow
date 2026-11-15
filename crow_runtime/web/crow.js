@@ -28,6 +28,10 @@
 //   @request =id =method =url =body   an HTTP request from the page; the
 //                              answer comes in a later frame's `said`
 //   @tone hz seconds =wave gain   a sound (WebAudio)
+//   @sound rate channels when f32:…   a sound the program made: its
+//                              samples (channels interleaved, each from -1
+//                              to 1) played at `rate` a second, `when`
+//                              seconds from now (WebAudio)
 //   @keyboard =open|=close =text   the hidden text field that brings up a
 //                              phone's keyboard and takes what is typed
 //   @cursor =css-cursor        the pointer's shape over the canvas
@@ -38,12 +42,20 @@
 //                              after the reader's press (a browser enters
 //                              only on a press); `said` has the failure, and
 //                              where none can be entered, that is the failure
+//   @ar                        into the headset with the room seen through
+//                              the drawing (WebXR's immersive-ar): as `@vr`,
+//                              a frame's `ar` saying whether it can be
 //
 // A frame is described as JSON (see `frame` below): its time, the
-// drawing's size, its views, whether a headset can be entered (`vr`), what
+// drawing's size, its views, whether a headset can be entered (`vr`) and
+// whether one can be entered with the room seen through it (`ar`), what
+// is seen behind the drawing (`blend`: `opaque`, on a screen and in a
+// headset's own world; `alpha-blend` or `additive` where the room shows
+// through, so a program clears to nothing there), what
 // happened since the last frame (`input`),
-// where each pointer is (`pointers`), the headset's controllers, and what
-// the host answered (`said`).
+// where each pointer is (`pointers`: a mouse's while it is over the
+// canvas, pressed or not; a touch's or a pen's until it is lifted), the
+// headset's controllers, and what the host answered (`said`).
 'use strict';
 
 const Crow = (() => {
@@ -69,6 +81,9 @@ const Crow = (() => {
     let last = '';
     let session = null;
     let space = null;
+    // what the session is: 'immersive-vr', or 'immersive-ar' where the room
+    // is seen through the drawing
+    let mode = '';
     const painted = [];
 
     const bytes = (ptr, len) => new Uint8Array(memory.buffer, ptr, len);
@@ -140,6 +155,14 @@ const Crow = (() => {
     const answers = [];
     const input = [];
     const pointers = new Map();
+    // whether a pointer's event lets the pointer go: a mouse's stands while
+    // the mouse is over the canvas, pressed or not — its button's release
+    // leaves it there, not down, as the mouse is still there — and goes
+    // when it leaves; a touch's or a pen's goes when it is lifted. (A
+    // mouse's had gone at the release, so a frame after a click had no
+    // pointer until the mouse moved: hover and the pointer's shape dropped,
+    // and a press released within one frame left nothing to aim from)
+    const gone = (type, device) => type === 'leave' || (type === 'up' && device !== 'mouse');
     let audio = null;
     let field = null;
 
@@ -305,6 +328,26 @@ const Crow = (() => {
       osc.stop(now + seconds + 0.02);
     }
 
+    // a sound the program made, sample by sample: `channels` interleaved
+    // in `samples`, played at `rate` samples a second, `when` seconds from
+    // now (the page's own audio clock)
+    function sound(rate, channels, when, samples) {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      const n = Math.max(1, channels | 0);
+      const frames = Math.floor(samples.length / n);
+      if (frames < 1) return null;
+      const made = audio.createBuffer(n, frames, rate);
+      for (let ch = 0; ch < n; ch++) {
+        const data = made.getChannelData(ch);
+        for (let i = 0; i < frames; i++) data[i] = samples[i * n + ch];
+      }
+      const source = audio.createBufferSource();
+      source.buffer = made;
+      source.connect(audio.destination);
+      source.start(audio.currentTime + Math.max(0, when));
+      return null;
+    }
+
     function keyboard(how, text) {
       if (!field) {
         field = document.createElement('textarea');
@@ -337,6 +380,7 @@ const Crow = (() => {
         case '@buffer': return buffer(args[0], args[1], args[2], args[3], keep);
         case '@request': return request(args[0], args[1], args[2], args[3]);
         case '@tone': return tone(args[0], args[1], args[2], args[3]);
+        case '@sound': return sound(args[0], args[1], args[2], args[3]);
         case '@keyboard': return keyboard(args[0], args[1]);
         case '@cursor': canvas.style.cursor = args[0]; return null;
         case '@copy': if (navigator.clipboard) navigator.clipboard.writeText(args[0]).catch(() => {}); return null;
@@ -344,6 +388,9 @@ const Crow = (() => {
         case '@vr':
           if (!navigator.xr) { answers.push({ what: 'vr', failed: 'this browser has no WebXR' }); return null; }
           enter_vr().catch((e) => answers.push({ what: 'vr', failed: String((e && e.message) || e) })); return null;
+        case '@ar':
+          if (!navigator.xr) { answers.push({ what: 'ar', failed: 'this browser has no WebXR' }); return null; }
+          enter_ar().catch((e) => answers.push({ what: 'ar', failed: String((e && e.message) || e) })); return null;
         default: throw new Error('the page has no call ' + JSON.stringify(name));
       }
     }
@@ -407,7 +454,7 @@ const Crow = (() => {
       return (e) => {
         const [x, y] = at_of(e);
         input.push(Object.assign({ type, id: e.pointerId, device: e.pointerType || 'mouse', x, y, button: e.button }, mods(e)));
-        if (type === 'up' || (type === 'leave' && e.pointerType !== 'mouse')) pointers.delete(e.pointerId);
+        if (gone(type, e.pointerType || 'mouse')) pointers.delete(e.pointerId);
         else pointers.set(e.pointerId, { id: e.pointerId, device: e.pointerType || 'mouse', x, y, down: e.buttons !== 0 });
         if (type === 'down') {
           canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
@@ -486,6 +533,8 @@ const Crow = (() => {
       described.pointers = Array.from(pointers.values());
       described.said = answers.splice(0);
       described.vr = vr;
+      described.ar = ar;
+      if (!described.blend) described.blend = 'opaque';
       if (!described.controllers) described.controllers = [];
       const text = encoder.encode(JSON.stringify(described));
       const ptr = exports.crow_alloc(text.length);
@@ -530,24 +579,33 @@ const Crow = (() => {
         const vp = layer.getViewport(v);
         return { eye: v.eye, x: vp.x, y: vp.y, width: vp.width, height: vp.height, projection: Array.from(v.projectionMatrix), camera: Array.from(v.transform.inverse.matrix) };
       });
-      frame({ t, width: layer.framebufferWidth, height: layer.framebufferHeight, xr: true, ratio: 1, views, controllers: controllers(xr) });
+      frame({ t, width: layer.framebufferWidth, height: layer.framebufferHeight, xr: true, ratio: 1, views, controllers: controllers(xr), blend: session.environmentBlendMode || (mode === 'immersive-ar' ? 'alpha-blend' : 'opaque') });
     }
 
     // whether a headset can be entered: asked as the page starts, and again
     // as the program enters one (a headset may have come since)
     let vr = false;
+    let ar = false;
     const can_enter = () => navigator.xr.isSessionSupported('immersive-vr').then((yes) => (vr = !!yes), () => false);
-    if (navigator.xr) can_enter();
+    const can_enter_ar = () => navigator.xr.isSessionSupported('immersive-ar').then((yes) => (ar = !!yes), () => false);
+    if (navigator.xr) {
+      can_enter();
+      can_enter_ar();
+    }
 
-    async function enter_vr() {
+    const enter_vr = () => enter('immersive-vr', can_enter, 'no headset can be entered');
+    const enter_ar = () => enter('immersive-ar', can_enter_ar, 'no headset can be entered with the room seen through it');
+
+    async function enter(kind, can, refusal) {
       if (session || !navigator.xr) return;
       // the browser's answer first: asked to make the context ready for a
       // headset while it still weighed whether there was one, Chrome had
       // answered neither, and the failure was never said (one page in
       // twelve, entering as it started)
-      if (!(await can_enter())) throw new Error('no headset can be entered');
+      if (!(await can())) throw new Error(refusal);
       await gl.makeXRCompatible();
-      session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] });
+      session = await navigator.xr.requestSession(kind, { optionalFeatures: ['local-floor'] });
+      mode = kind;
       session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
       try {
         space = await session.requestReferenceSpace('local-floor');
@@ -562,6 +620,7 @@ const Crow = (() => {
       session.addEventListener('end', () => {
         session = null;
         space = null;
+        mode = '';
         requestAnimationFrame(on_screen);
       });
       session.requestAnimationFrame(in_headset);
@@ -600,6 +659,7 @@ const Crow = (() => {
       return {
         gl,
         enter_vr,
+        enter_ar,
         painted,
         // (a test hands the page input as a reader would make it, and with
         // `manual` set draws each frame itself, at the time it says)
@@ -608,7 +668,7 @@ const Crow = (() => {
           input.push(event);
           const kinds = ['down', 'move', 'up', 'leave'];
           if (kinds.includes(event.type) && event.x !== undefined && event.device !== 'ray') {
-            if (event.type === 'up' || (event.type === 'leave' && event.device !== 'mouse')) pointers.delete(event.id);
+            if (gone(event.type, event.device || 'mouse')) pointers.delete(event.id);
             else pointers.set(event.id, { id: event.id, device: event.device || 'mouse', x: event.x, y: event.y, down: event.type === 'down' || (event.type === 'move' && !!(pointers.get(event.id) || {}).down) });
           }
         },
@@ -617,6 +677,7 @@ const Crow = (() => {
           return stopped;
         },
         vr_supported: () => (navigator.xr ? can_enter() : Promise.resolve(false)),
+        ar_supported: () => (navigator.xr ? can_enter_ar() : Promise.resolve(false)),
       };
     }
   }

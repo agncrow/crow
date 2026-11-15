@@ -2591,7 +2591,7 @@ Import with `use sys` — **meant for library code**: the layer the standard lib
 | `random[n]` | `n` bytes from the operating system's randomness |
 | `hex[bytes]` | The bytes as lowercase hex, two digits each |
 | `paint[batch]` | A batch of WebGL2 calls handed to the page a program built for the web runs in (Building for the web, section 18), which runs them now: JSON text of a list of calls, each a list of text — a WebGL2 function's name and its arguments, each read by its form (a number, a `CONSTANT`, `#3` for the object a call kept as 3, `=text`, `f32:0 0.5 1` and the other typed arrays, `base64f32:…` for a large one (the bytes `sys.float_bytes[xs, 4, true]` makes, as `sys.base64` writes them), `true`, `false`, `null`, `@framebuffer`); a call whose first item is `#N` keeps its answer as object N. Outside a browser there is no page, and nothing is drawn, in both modes |
-| `frames[f]` | The page calls `f[frame]` before each frame it shows, from when the top level has run; `frame` is a parsed value — `t` (milliseconds), `width` and `height` (pixels), `ratio` (pixels per point), `xr` (a headset shows it), `vr` (one can be entered) and `views`, one per eye in a headset (each `eye`, `x`, `y`, `width`, `height`, and the eye's `projection` and `camera`, column-major), one on a screen, then what happened since the last frame (`input`, `pointers`, `controllers`, `said`: Building for the web, section 18). A later `frames[g]` replaces `f`, from the next frame. What `f` answers is not read, as `later`'s work's is not, but a failure stops the program, naming its line. Outside a browser no frame comes, in both modes |
+| `frames[f]` | The page calls `f[frame]` before each frame it shows, from when the top level has run; `frame` is a parsed value — `t` (milliseconds), `width` and `height` (pixels), `ratio` (pixels per point), `xr` (a headset shows it), `vr` (one can be entered), `ar` (one can be entered with the room seen through it), `blend` (what is seen behind the drawing: `opaque`, `alpha-blend` or `additive`) and `views`, one per eye in a headset (each `eye`, `x`, `y`, `width`, `height`, and the eye's `projection` and `camera`, column-major), one on a screen, then what happened since the last frame (`input`, `pointers`, `controllers`, `said`: Building for the web, section 18). A later `frames[g]` replaces `f`, from the next frame. What `f` answers is not read, as `later`'s work's is not, but a failure stops the program, naming its line. Outside a browser no frame comes, in both modes |
 | `text[bytes, fill]` | The text the bytes spell, each run that spells none replaced by `fill` (`'�'`, as a browser shows one) — never an error |
 | `hash[bytes, algo]` | The digest as lowercase hex: `'sha256'`, `'sha512'`, `'crc32'` (eight digits, the checksum gzip and Kafka carry), `'sha1'` or `'md5'` |
 | `digest[bytes, algo]` | The digest as bytes: `'crc32'` (four bytes), `'sha1'` (a socket's accept key), `'sha256'`, `'sha512'` or `'md5'` |
@@ -4454,6 +4454,10 @@ frame (sys, section 13). The program draws by handing `paint` batches of
 WebGL2 calls; `crow.js` runs them on the page's WebGL2 context and holds no
 logic of its own. In a headset — entered by the page's Enter VR button, or
 by the program's own `@vr` (below) — each frame has a view per eye, drawn into the headset's framebuffer (`@framebuffer`).
+A headset that shows the room through itself is entered so too, with the
+room seen through the drawing — by the page's Enter AR button, or `@ar` —
+and what the program leaves transparent there (cleared with alpha 0) is the
+room.
 
 A page in a browser writes to its console (`log`), reads its clock, draws
 random numbers (the page's `crypto`), holds what the program holds, and
@@ -4468,6 +4472,11 @@ runs its rounds in order, with the same answers.
 The frame `f` is handed is a parsed value: `t`, its time in
 milliseconds; `width` and `height`, the drawing's size in pixels; `ratio`,
 the device's pixels per CSS pixel; `xr`, whether a headset shows it; `vr`, whether one can be entered;
+`ar`, whether one can be entered with the room seen through the drawing;
+`blend`, what is seen behind the drawing — `opaque` on a screen and in a
+headset's own world, `alpha-blend` where the room shows through what is
+drawn transparent, `additive` where the headset's lenses add the drawing's
+light to the room's;
 `views`, the views to draw — one on a screen, one per eye in a headset,
 each with its viewport (`x`, `y`, `width`, `height`) and, in a headset, the
 eye's `projection` and `camera` matrices (16 numbers, column by column,
@@ -4477,7 +4486,10 @@ each event a `type` (`down`, `move`, `up`, `leave`, `double`, `wheel`, `key`,
 it says (`x`, `y` in the drawing's pixels from its top left, `id`, the pointer's
 `device` (`mouse`, `touch`, `pen`, `ray`), `button`, `dx`/`dy` of a wheel and its `device` — `trackpad` for a swipe of a trackpad or a touch mouse, `mouse` for a wheel's notches, as the browser's deltas tell them apart; a pinch is a wheel with `ctrl` — `key` and `code` of a key, the
 `text` typed, and `shift`, `ctrl`, `alt`, `meta`); `pointers`, where each
-pointer is now; `controllers`, a headset's controllers and hands, each a
+pointer is now (`id`, `device`, `x`, `y`, and `down` while it presses): a
+mouse's while it is over the drawing, pressed or not — its button's
+release leaves it there, not down, and it goes when it leaves — and a
+touch's or a pen's until it is lifted; `controllers`, a headset's controllers and hands, each a
 ray (`origin`, `direction`, its `matrix`) with its `buttons` and `axes`;
 and `said`, what the page answered since the last frame (below), each
 answer naming `what` it answers and the `id` its call kept.
@@ -4489,13 +4501,18 @@ metrics in `said`), `@image` (a texture of an image at a URL, its size in
 `said`), `@buffer` (a buffer object holding a URL's bytes, or a span of
 them — a model's geometry, which never passes through the program — its
 size in `said` once they are in), `@request` (an HTTP request, its status
-and body in `said` when they arrive), `@tone` (a sound), `@keyboard` (`=open` brings up a phone's
+and body in `said` when they arrive), `@tone` (a tone), `@sound` (a sound
+the program made: its rate in samples a second, its number of channels,
+when it starts in seconds from now, and its samples, the channels
+interleaved, as `f32:…`), `@keyboard` (`=open` brings up a phone's
 keyboard, and what is typed arrives as `text` events), `@cursor`, `@copy`
-(to the clipboard), `@title` and `@vr` (into the headset, where a frame's
+(to the clipboard), `@title`, `@vr` (into the headset, where a frame's
 `vr` says one can be entered: a browser enters only on the reader's press,
 so a program asks in the frame its button is pressed, and a failure — none
 to enter among them — is said in a later frame as `what` `vr` with its
-`failed` reason, never silently). `crow.js` lists each call's
+`failed` reason, never silently) and `@ar` (into the headset with the room
+seen through the drawing, as `@vr`: a frame's `ar` says one can be entered,
+and a failure is said as `what` `ar`). `crow.js` lists each call's
 arguments.
 
 Outside a browser the same program runs in both modes and draws nothing:

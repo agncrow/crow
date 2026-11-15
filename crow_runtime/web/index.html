@@ -7,15 +7,16 @@
 <style>
   html, body { margin: 0; height: 100%; background: #0f1317; overflow: hidden; }
   canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
-  #vr { position: fixed; right: 16px; bottom: 16px; display: none; font: 600 15px system-ui, sans-serif;
-        padding: 10px 16px; border: 0; border-radius: 10px; background: #f6f7f9; color: #0f1317; cursor: pointer; }
+  #enter { position: fixed; right: 16px; bottom: 16px; display: flex; gap: 8px; }
+  #enter button { display: none; font: 600 15px system-ui, sans-serif; padding: 10px 16px; border: 0;
+                  border-radius: 10px; background: #f6f7f9; color: #0f1317; cursor: pointer; }
   #said { position: fixed; left: 0; right: 0; bottom: 0; margin: 0; padding: 10px 14px; display: none;
           font: 13px ui-monospace, monospace; white-space: pre-wrap; background: #3a1010; color: #ffd9d9; }
 </style>
 </head>
 <body>
 <canvas id="page"></canvas>
-<button id="vr">Enter VR</button>
+<div id="enter"><button id="ar">Enter AR</button><button id="vr">Enter VR</button></div>
 <pre id="said"></pre>
 <script src="crow.js"></script>
 <script>
@@ -31,6 +32,13 @@
     },
   }).then(async (page) => {
     window.crow = page;
+    // (a headset that shows the room through itself is entered by Enter AR,
+    // the drawing over the room; one that shows only the drawing, by Enter VR)
+    if (await page.ar_supported()) {
+      const ar = document.getElementById('ar');
+      ar.style.display = 'block';
+      ar.onclick = () => page.enter_ar();
+    }
     if (await page.vr_supported()) {
       const vr = document.getElementById('vr');
       vr.style.display = 'block';

@@ -32,6 +32,20 @@ history says the rest.
   program, `__pick_items[…]` had reached the hidden form `xs[mask]`
   lowers to.
 
+### Added
+
+- A page enters a headset with the room seen through the drawing:
+  WebXR's `immersive-ar`, by the page's Enter AR button or the program's
+  `@ar`, as `@vr` enters one's own world. A frame says whether one can be
+  entered (`ar`) and what is seen behind the drawing (`blend`: `opaque`
+  on a screen, `alpha-blend` or `additive` in such a headset), so a
+  program clears to transparent where the room should show; a failure to
+  enter is said as `what` `ar`, never silently.
+- `@sound` plays a sound the program made, sample by sample: its rate,
+  its channels, when it starts (seconds from now, on the page's audio
+  clock) and its samples, the channels interleaved, as `f32:…` or
+  `base64f32:…`. `@tone` had been a page's only sound, one oscillator's.
+
 ### Fixed
 
 - A method written in square brackets is refused before the program
@@ -87,6 +101,16 @@ history says the rest.
   reaches, and Raven's model-as-judge, which only its evals call,
   reached `nothing` where its baseline said `network, process`. A
   package under `crow_modules/` reaches what the program reaches of it.
+- A page keeps a mouse's pointer in a frame's `pointers` when its button
+  is let go, not down, as the mouse is still over the drawing, and lets
+  it go when the mouse leaves. It had gone at the release (and stayed
+  where the mouse left by), so a frame after a click had no pointer until
+  the mouse moved: Lory's hover and the pointer's shape over a control
+  dropped (`pointer`, then `default`, then `pointer` once moved), and a
+  press released within one frame — a quick click, a trackpad's tap —
+  left a program nothing to aim from (Myna's runs in 3D missed it). A
+  touch's or a pen's pointer still goes when it is lifted, and a test's
+  `give` follows the same rule.
 - What `crow setup` fetches is said at its size: about 270 MB, the
   toolchain about 220 and the runtime about 50 (203 and 51 MB on a Mac,
   233 and 51 on Linux), where `crow setup`, a run with no compiler and
