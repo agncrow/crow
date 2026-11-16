@@ -48,6 +48,18 @@ history says the rest.
 
 ### Fixed
 
+- A function a part writes into its own record is typed by the call a
+  program importing the part makes through the record's field, as the
+  same lines in one file are: a part making its nodes with its own
+  `same` (`N[name, same, kids]`) and calling through the field
+  (`n.f[d]`) only in a function the program calls had been refused
+  before the program ran, in both modes (`` `same` is handed as a value,
+  and nothing types its parameters ``), since the part, validated alone,
+  has none of the program's calls. So had a function the part hands to
+  one of its own that only the program calls (`apply[double, x]`). A
+  program that leaves such a function untyped is still refused, at the
+  part's line, whether it reaches that line or not, as in one file.
+  (Lory's gui.co had called its default painter by name once to pass.)
 - A record made with another kind than its field holds is refused
   naming both kinds, in both modes: a record by its struct, and a
   function by what it takes or answers where the two differ

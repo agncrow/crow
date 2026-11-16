@@ -1,0 +1,30 @@
+--- module: a tree whose nodes hold the function each is walked with,
+--- the part's own written in where a node is made (imported by parity
+--- 532)
+struct D [c, v]
+
+struct N [name, f, kids]
+
+fn same[d]
+    return d
+
+fn _none[]
+    nothing = [N['', same, []]]
+    return slice[nothing, 0, 0]
+
+fn leaf[name]
+    return N[name, same, _none[]]
+
+fn drawn[name, f]
+    return N[name, f, _none[]]
+
+fn top[kids]
+    return N['top', same, kids]
+
+fn walked[n, total]
+    d = D[total, 1.0]
+    d = n.f[d]
+    total = d.c + d.v
+    for k in n.kids
+        total = walked[k, total]
+    return total

@@ -594,6 +594,16 @@ pub struct TypeContext {
     /// so a program refused for a query's column types is refused by run,
     /// run -i, test and check alike.
     pub describe_queries: bool,
+    /// The program is a part validated alone, without the calls of the
+    /// program that imports it (`validate_part_alone_now`): what only those
+    /// calls can type is that program's to refuse (`check_fn_value`).
+    pub part_alone: bool,
+    /// The functions of a part validated alone that hand a function value
+    /// nothing in the part types, as the lowering found them: a program
+    /// importing the part lowers them whether it reaches them or not
+    /// (`unreached_parts_dropped`), so its calls type the value or it is
+    /// refused there, as in one file.
+    pub handing_untyped: std::collections::BTreeSet<String>,
     describe_cache: BTreeMap<String, Option<BTreeMap<String, Ty>>>,
     /// What the program's reads say of each loaded frame's columns, by the
     /// body that binds it and its name (lower_ir/uses.rs): applied where
@@ -711,6 +721,8 @@ impl TypeContext {
             record_envs: false,
             body_envs: BTreeMap::new(),
             describe_queries: false,
+            part_alone: false,
+            handing_untyped: std::collections::BTreeSet::new(),
             describe_cache: BTreeMap::new(),
             frame_shapes: BTreeMap::new(),
             frame_reasons: BTreeMap::new(),

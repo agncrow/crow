@@ -3820,19 +3820,24 @@ fn infer_and_lower(lowered: &[ast::Stmt], describe: bool, name: &str) -> Result<
 }
 
 fn infer_and_validate(lowered: &[ast::Stmt], describe: bool) -> Result<type_infer::TypeContext, String> {
-    infer_and_check(lowered, describe).map(|(ctx, _)| ctx)
+    infer_and_check(lowered, describe, false).map(|(ctx, _)| ctx)
 }
 
 /// `infer_and_validate`, with the program the check lowered: the context
-/// is the inferred one, as the callers that only ask take it.
-fn infer_and_check(lowered: &[ast::Stmt], describe: bool) -> Result<(type_infer::TypeContext, ir::Program), String> {
+/// is the inferred one, as the callers that only ask take it. `alone` is a
+/// part validated alone (`TypeContext::part_alone`).
+fn infer_and_check(lowered: &[ast::Stmt], describe: bool, alone: bool) -> Result<(type_infer::TypeContext, ir::Program), String> {
     let mut ctx = type_infer::TypeContext::new();
     ctx.describe_queries = describe;
+    ctx.part_alone = alone;
     ctx.infer_program(lowered);
     // the lowering refuses what is not a program (lower_ir/checks.rs); it
     // runs here on a copy of the context, for the callers that only ask
     match lower_ir::check_lowered(lowered, &ctx) {
-        Ok(program) => Ok((ctx, program)),
+        Ok((program, handing)) => {
+            ctx.handing_untyped = handing;
+            Ok((ctx, program))
+        }
         // a message names a variable as the program wrote it
         Err(lower_ir::Refusal::Invalid(errors)) => Err(lower::shown(&attribute_to_parts(&errors))),
         Err(refusal) => Err(refusal.message()),
@@ -5449,7 +5454,6 @@ pub(crate) fn expand_module_imports_checked(
         }
         out.push(st);
     }
-    let out = unreached_parts_dropped(out, &ex.done);
     // Each part is validated alone, as `crow test part.co` sees it — its
     // own names unprefixed, its imports inlined — so a name a part reserves
     // by what it imports, or a handler nothing in the part wires, is
@@ -5465,6 +5469,19 @@ pub(crate) fn expand_module_imports_checked(
     for path in ex.done.keys().filter(|p| !dependency(p)) {
         validate_part_alone_from(path, ex.written.get(path).map(|d| d.as_path()))?;
     }
+    // (after each part is validated alone: its functions that hand a
+    // function value nothing in it types are the program's to lower, reached
+    // or not, as one file's are)
+    let handing: std::collections::BTreeSet<String> = ex
+        .done
+        .iter()
+        .filter(|(path, _)| !dependency(path))
+        .flat_map(|(path, names)| {
+            let own = PART_HANDING_UNTYPED.with(|h| h.borrow().get(path).cloned().unwrap_or_default());
+            own.into_iter().filter_map(|f| names.get(&f).cloned()).collect::<Vec<_>>()
+        })
+        .collect();
+    let out = unreached_parts_dropped(out, &ex.done, &handing);
     // a part's function is typed from its tests' calls whichever file is
     // the entry, though the tests are the part's alone (set last, after
     // each part validated alone set its own)
@@ -5918,6 +5935,11 @@ thread_local! {
     /// alone typed them (its own names unprefixed)
     static PART_TEST_CALLS: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, TestedCalls>> =
         const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+    /// part file → its functions that hand a function value nothing in the
+    /// part types, as the part alone lowered them (its own names
+    /// unprefixed; `TypeContext::handing_untyped`)
+    static PART_HANDING_UNTYPED: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, std::collections::BTreeSet<String>>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
     /// The same for every part of the entry expanded last, spelled as the
     /// entry spells each part
     static TESTED_BY_PARTS: std::cell::RefCell<TestedCalls> = const { std::cell::RefCell::new(Vec::new()) };
@@ -6011,7 +6033,7 @@ fn validate_part_alone_now(path: &std::path::Path, written: Option<&std::path::P
     let expanded = expand_module_imports_checked(&stmts, &import_dir, &mut visited)?;
     let lowered = lower::lower_program(&expanded).map_err(|e| format!("{}: error: {}", rel, e))?;
     let parts = EXPANSION_PARTS.with(|p| p.borrow().clone());
-    let (ctx, program) = infer_and_check(&lowered, describing()).map_err(|e| {
+    let (ctx, program) = infer_and_check(&lowered, describing(), true).map_err(|e| {
         refine_error_lines(&source, &e)
             .lines()
             .map(|l| {
@@ -6028,6 +6050,8 @@ fn validate_part_alone_now(path: &std::path::Path, written: Option<&std::path::P
     })?;
     // what its tests call its functions with, for the programs importing it
     PART_TEST_CALLS.with(|c| c.borrow_mut().insert(path.to_path_buf(), ctx.tested));
+    // and what only their calls can type
+    PART_HANDING_UNTYPED.with(|h| h.borrow_mut().insert(path.to_path_buf(), ctx.handing_untyped));
     // what it can touch, every one of its functions lowered here: a program
     // importing it lowers only the ones it reaches (`unreached_parts_dropped`),
     // and Raven's model-as-judge, which only its evals call, had come to
@@ -6062,10 +6086,14 @@ fn parts_alone_reach(parts: &std::collections::BTreeMap<String, String>) -> std:
 /// lowered all of it — 424 functions where Magpie's windows reach 239, and
 /// twice the build. (A program's own part is validated alone, every one of
 /// its functions with it, and what they reach there is its reach:
-/// `parts_alone_reach`.)
+/// `parts_alone_reach`.) A part's function in `handing` hands a function
+/// value nothing in its part types (`TypeContext::handing_untyped`): it is
+/// kept whatever calls it, so the program's calls type the value or the
+/// program is refused there, as the same lines in one file are.
 fn unreached_parts_dropped(
     stmts: Vec<ast::Stmt>,
     done: &std::collections::BTreeMap<std::path::PathBuf, std::collections::BTreeMap<String, String>>,
+    handing: &std::collections::BTreeSet<String>,
 ) -> Vec<ast::Stmt> {
     let hoisted: std::collections::BTreeSet<&str> = done.values().flat_map(|names| names.values().map(|n| n.as_str())).collect();
     // (every name a statement says: its identifiers, and the words of its
@@ -6092,7 +6120,7 @@ fn unreached_parts_dropped(
         _ => None,
     };
     let mut bodies: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> = std::collections::BTreeMap::new();
-    let mut todo: Vec<String> = Vec::new();
+    let mut todo: Vec<String> = handing.iter().cloned().collect();
     for s in &stmts {
         match part_fn(s) {
             Some(name) => {
@@ -7201,6 +7229,50 @@ mod module_parts_tests {
         assert!(!fns.contains(&"lib·tools·never"), "{:?}", fns);
         let lowered = lower::lower_program(&stmts).unwrap();
         assert!(infer_and_validate(&lowered, false).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A function a part writes into its own record, typed only by a call
+    /// through the field in a function the program calls, is the
+    /// program's to type: validated alone, the part passes it (it had been
+    /// refused, "`same` is handed as a value, and nothing types its
+    /// parameters", though the program typed it and the same lines in one
+    /// file ran — Lory's gui.co), a program that calls through the field
+    /// types it, and one that never does is refused at the part's line,
+    /// whether it reaches the function or not, as the same lines in one
+    /// file are. So is one the part hands to a function of its own that
+    /// only the program calls (`apply[double, x]`).
+    #[test]
+    fn a_function_a_part_writes_into_its_record_is_the_programs_to_type() {
+        let dir = std::env::temp_dir().join(format!("crow_parts_record_fns_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        std::fs::write(dir.join("crowfile"), "name = 'parts'\n").unwrap();
+        std::fs::write(
+            dir.join("lib/tree.co"),
+            "struct D [c, v]\nstruct N [name, f, kids]\n\nfn same[d]\n    d\n\nfn leaf[name]\n    N[name, same, slice[[N['', same, []]], 0, 0]]\n\nfn walked[n, total]\n    d = n.f[D[total, 1.0]]\n    total = d.c + d.v\n    for k in n.kids\n        total = walked[k, total]\n    total\n\nfn twice[x]\n    x * 2\n",
+        )
+        .unwrap();
+        let path = std::fs::canonicalize(dir.join("lib/tree.co")).unwrap();
+        assert!(validate_part_alone(&path).is_ok(), "{:?}", validate_part_alone(&path).err());
+        let check = |src: &str| -> Result<(), String> {
+            let stmts = build(src).unwrap();
+            let mut visited = std::collections::HashSet::new();
+            let stmts = expand_module_imports_checked(&stmts, &dir, &mut visited)?;
+            let lowered = lower::lower_program(&stmts).map_err(|e| format!("error: {}", e))?;
+            infer_and_validate(&lowered, false).map(|_| ())
+        };
+        let walks = "use lib.tree\n\nlog[tree.walked[tree.leaf['a'], 0.0]]\n";
+        assert!(check(walks).is_ok(), "{:?}", check(walks).err());
+        let err = check("use lib.tree\n\nlog[tree.leaf['a'].name]\n").unwrap_err();
+        assert!(err.contains("lib/tree.co: line 8: `tree.same` is handed as a value, and nothing types its parameters"), "{}", err);
+        let err = check("use lib.tree\n\nlog[tree.twice[21]]\n").unwrap_err();
+        assert!(err.contains("lib/tree.co: line 8: `tree.same` is handed as a value, and nothing types its parameters"), "{}", err);
+        std::fs::write(dir.join("lib/hands.co"), "fn double[x]\n    x * 2\n\nfn apply[f, x]\n    f[x]\n\nfn handed[x]\n    apply[double, x]\n").unwrap();
+        let path = std::fs::canonicalize(dir.join("lib/hands.co")).unwrap();
+        assert!(validate_part_alone(&path).is_ok(), "{:?}", validate_part_alone(&path).err());
+        let hands = "use lib.hands\n\nlog[hands.handed[3]]\n";
+        assert!(check(hands).is_ok(), "{:?}", check(hands).err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

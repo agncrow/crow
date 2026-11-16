@@ -81,10 +81,12 @@ pub fn check(stmts: &[S], ctx: &TypeContext) -> Result<(), Refusal> {
 
 /// `check`, keeping the program it lowered: a part validated alone is
 /// lowered with every one of its functions, and what they reach is the
-/// part's reach (crow-check.md).
-pub fn check_lowered(stmts: &[S], ctx: &TypeContext) -> Result<Program, Refusal> {
+/// part's reach (crow-check.md); and the functions that hand a function
+/// value nothing in the part types (`TypeContext::handing_untyped`).
+pub fn check_lowered(stmts: &[S], ctx: &TypeContext) -> Result<(Program, BTreeSet<String>), Refusal> {
     let mut ctx = ctx.clone();
-    lower_checked(stmts, &mut ctx, "check", &HashSet::new())
+    let program = lower_checked(stmts, &mut ctx, "check", &HashSet::new())?;
+    Ok((program, std::mem::take(&mut ctx.handing_untyped)))
 }
 
 fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>) -> Result<Program, Refusal> {
@@ -8589,6 +8591,20 @@ impl<'a> Lowerer<'a> {
         }
         let body = sig.body.clone();
         if matches!(self.kind_of(f, &body, false), FnKind::View | FnKind::Handler | FnKind::Helper) {
+            return;
+        }
+        // (a part validated alone has none of the calls of the program
+        // that imports it, which type what the part's own lines leave
+        // untyped: the program lowers this function with its calls, reached
+        // or not (`TypeContext::handing_untyped`), and refuses there what is
+        // still untyped, as one file does — the part alone had refused a
+        // function it writes into a record, `N[name, same, kids]`, whose
+        // field it calls through only in a function the program calls,
+        // `n.f[d]`, though the program typed it and the same lines in one
+        // file ran; Lory's gui.co, a control's painter)
+        if self.ctx.part_alone {
+            let holder = crate::ir::copy_base(&self.current_fn).to_string();
+            self.ctx.handing_untyped.insert(holder);
             return;
         }
         self.refuse(format!(

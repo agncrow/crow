@@ -1,0 +1,19 @@
+--- A function a part writes into its own record is typed by the
+--- program's call through the record's field: lib/tree.co makes its
+--- nodes with its own `same` — bare, and in the list that types an empty
+--- one — and calls through the field, `n.f[d]`, only in `walked`, which
+--- only the program calls. Validated alone, without the program's calls,
+--- the part had refused `same` in both modes ("handed as a value, and
+--- nothing types its parameters"), though the program typed it and the
+--- same lines in one file ran (Lory's gui.co, a control's painter). The
+--- program's own `doubled`, handed into the field through the part's
+--- parameter, is typed by the same call.
+use lib.tree
+
+fn doubled[d]
+    d.v = d.v * 2.0
+    return d
+
+t = tree.top[[tree.leaf['a'], tree.leaf['b']]]
+log[tree.walked[t, 0.0]]
+log[tree.walked[tree.top[[tree.leaf['a'], tree.drawn['c', doubled]]], 0.0]]
