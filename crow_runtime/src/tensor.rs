@@ -269,6 +269,25 @@ impl CrowTensor {
         }
     }
 
+    /// `numbers` added to the run of this tensor's numbers that begins at the
+    /// flat (row-major) index `at`, where they lie: true when the tensor is
+    /// a contiguous one on the CPU whose storage nothing else holds and the
+    /// run fits, false (and nothing written) otherwise. A slice's gradient
+    /// is added into the gradient of what was sliced this way, where a
+    /// vector of zeros as long as the whole had been made for every slice.
+    pub fn add_run(&mut self, at: usize, numbers: &[f64]) -> bool {
+        if !self.is_contiguous() || at + numbers.len() > self.len() {
+            return false;
+        }
+        let from = self.offset + at;
+        let Some(TensorStorage::Cpu(d)) = Arc::get_mut(&mut self.data) else { return false };
+        let Some(run) = d.get_mut(from..from + numbers.len()) else { return false };
+        for (cell, x) in run.iter_mut().zip(numbers) {
+            *cell += x;
+        }
+        true
+    }
+
     /// The tensor's data on the CPU: its own storage, or a copy downloaded
     /// from the GPU. An operation with no shader reads a GPU tensor this
     /// way (`t[0]`, a broadcast, `diag` of a GPU matrix panicked).

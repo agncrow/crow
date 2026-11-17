@@ -34,10 +34,20 @@ type Backward = Box<dyn Fn(&CrowTensor) -> Vec<CrowTensor>>;
 struct Node {
     parents: Vec<usize>,
     back: Backward,
+    /// For a slice: the flat index its numbers begin at in what was sliced.
+    /// The walk adds the slice's gradient into its parent's where that lies
+    /// (`CrowTensor::add_run`), and calls `back` only where it cannot.
+    laid_at: Option<usize>,
 }
 
 thread_local! {
     static TAPE: RefCell<Option<Vec<Node>>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many slices' gradients the walk added where the parent's lay.
+    static LAID: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A node recorded on the tape, when one is open: none where no input
@@ -54,9 +64,18 @@ fn record(parents: Vec<Option<usize>>, back: impl Fn(&CrowTensor) -> Vec<CrowTen
         tape.push(Node {
             parents: parents.iter().map(|p| p.unwrap_or(usize::MAX)).collect(),
             back: Box::new(back),
+            laid_at: None,
         });
         Some(tape.len() - 1)
     })
+}
+
+/// The share of an operand that is no parameter's: the walk drops a
+/// constant parent's share unread, so a rule answers this in its place and
+/// computes nothing for it (a product with a constant matrix had cost a
+/// second product nobody read).
+fn unread() -> CrowTensor {
+    CrowTensor::scalar(0.0)
 }
 
 impl Traced {
@@ -209,6 +228,18 @@ pub fn gradient(inputs: &[CrowTensor], f: impl FnOnce(&[Traced]) -> Result<Trace
     }
     for i in (0..tape.len()).rev() {
         let Some(g) = grads[i].take() else { continue };
+        // a slice's gradient, added into its parent's where that lies
+        if let (Some(at), Some(&p)) = (tape[i].laid_at, tape[i].parents.first())
+            && p != usize::MAX
+            && !g.is_gpu()
+            && let Some(so_far) = grads[p].as_mut()
+            && !so_far.is_gpu()
+            && so_far.add_run(at, &g.numbers())
+        {
+            #[cfg(test)]
+            LAID.with(|n| n.set(n.get() + 1));
+            continue;
+        }
         let shares = (tape[i].back)(&g);
         for (p, share) in tape[i].parents.iter().zip(shares) {
             if *p == usize::MAX {
@@ -263,14 +294,16 @@ fn meets(a: &Traced, b: &Traced, sign: &str) -> Result<(), String> {
 pub fn add(a: &Traced, b: &Traced) -> Result<Traced, String> {
     meets(a, b, "+")?;
     let (sa, sb) = (a.value.shape().to_vec(), b.value.shape().to_vec());
-    let node = record(vec![a.node, b.node], move |g| vec![unbroadcast(g, &sa), unbroadcast(g, &sb)]);
+    let (ta, tb) = (a.node.is_some(), b.node.is_some());
+    let node = record(vec![a.node, b.node], move |g| vec![if ta { unbroadcast(g, &sa) } else { unread() }, if tb { unbroadcast(g, &sb) } else { unread() }]);
     Ok(Traced::from(a.value.add(&b.value), node))
 }
 
 pub fn sub(a: &Traced, b: &Traced) -> Result<Traced, String> {
     meets(a, b, "-")?;
     let (sa, sb) = (a.value.shape().to_vec(), b.value.shape().to_vec());
-    let node = record(vec![a.node, b.node], move |g| vec![unbroadcast(g, &sa), unbroadcast(&g.neg(), &sb)]);
+    let (ta, tb) = (a.node.is_some(), b.node.is_some());
+    let node = record(vec![a.node, b.node], move |g| vec![if ta { unbroadcast(g, &sa) } else { unread() }, if tb { unbroadcast(&g.neg(), &sb) } else { unread() }]);
     Ok(Traced::from(a.value.sub(&b.value), node))
 }
 
@@ -279,7 +312,8 @@ pub fn mul(a: &Traced, b: &Traced) -> Result<Traced, String> {
     meets(a, b, ".*")?;
     let (sa, sb) = (a.value.shape().to_vec(), b.value.shape().to_vec());
     let (av, bv) = (a.value.clone(), b.value.clone());
-    let node = record(vec![a.node, b.node], move |g| vec![unbroadcast(&g.mul(&bv), &sa), unbroadcast(&g.mul(&av), &sb)]);
+    let (ta, tb) = (a.node.is_some(), b.node.is_some());
+    let node = record(vec![a.node, b.node], move |g| vec![if ta { unbroadcast(&g.mul(&bv), &sa) } else { unread() }, if tb { unbroadcast(&g.mul(&av), &sb) } else { unread() }]);
     Ok(Traced::from(a.value.mul(&b.value), node))
 }
 
@@ -288,9 +322,11 @@ pub fn div(a: &Traced, b: &Traced) -> Result<Traced, String> {
     meets(a, b, "./")?;
     let (sa, sb) = (a.value.shape().to_vec(), b.value.shape().to_vec());
     let (av, bv) = (a.value.clone(), b.value.clone());
+    let (ta, tb) = (a.node.is_some(), b.node.is_some());
     let node = record(vec![a.node, b.node], move |g| {
-        let db = g.mul(&av).div(&bv.mul(&bv)).neg();
-        vec![unbroadcast(&g.div(&bv), &sa), unbroadcast(&db, &sb)]
+        let da = if ta { unbroadcast(&g.div(&bv), &sa) } else { unread() };
+        let db = if tb { unbroadcast(&g.mul(&av).div(&bv.mul(&bv)).neg(), &sb) } else { unread() };
+        vec![da, db]
     });
     Ok(Traced::from(a.value.div(&b.value), node))
 }
@@ -320,7 +356,8 @@ pub fn neg(a: &Traced) -> Traced {
 pub fn matmul(a: &Traced, b: &Traced) -> Result<Traced, String> {
     let value = a.value.try_matmul(&b.value)?;
     let (av, bv) = (a.value.clone(), b.value.clone());
-    let node = record(vec![a.node, b.node], move |g| vec![g.matmul(&bv.transpose()), av.transpose().matmul(g)]);
+    let (ta, tb) = (a.node.is_some(), b.node.is_some());
+    let node = record(vec![a.node, b.node], move |g| vec![if ta { g.matmul(&bv.transpose()) } else { unread() }, if tb { av.transpose().matmul(g) } else { unread() }]);
     Ok(Traced::from(value, node))
 }
 
@@ -784,6 +821,14 @@ pub fn slice(a: &Traced, start: i64, end: i64) -> Traced {
         }
         vec![CrowTensor::from_vec(d, shape.clone())]
     });
+    // (the walk adds the gradient at its place where the parent's lies)
+    if let Some(i) = node {
+        TAPE.with(|t| {
+            if let Some(n) = t.borrow_mut().as_mut().and_then(|tape| tape.get_mut(i)) {
+                n.laid_at = Some(s * width);
+            }
+        });
+    }
     Traced::from(value, node)
 }
 
@@ -1067,5 +1112,78 @@ mod tests {
         });
         assert_eq!(nested.map(|_| ()), Err("grad: a function grad differentiates cannot call grad".to_string()));
         assert!(TAPE.with(|t| t.borrow().is_none()), "the tape is closed after a gradient");
+    }
+
+    /// Slices of one vector add their gradients into the vector's where
+    /// they lie — pieces that overlap, a slice of a slice, a matrix's rows,
+    /// and a whole whose gradient another value still holds (the general
+    /// way) — each as finite differences give it, and exactly as the sum of
+    /// the pieces laid into zeros gives it.
+    #[test]
+    fn slices_add_their_gradients_where_they_lie() {
+        let mut g = Gen(20261116);
+        let theta = g.tensor(&[12], -2.0, 2.0);
+        let w = g.tensor(&[2, 3], -1.0, 1.0);
+        let pieces = |x: &[Traced]| -> Result<Traced, String> {
+            let a = reshape(&slice(&x[0], 0, 6), vec![2, 3])?;
+            let b = slice(&x[0], 4, 10);
+            let inner = slice(&slice(&x[0], 2, 12), 3, 7);
+            let first = sum(&mul(&a, &a)?);
+            let second = sum(&mul(&b, &Traced::number(3.0))?);
+            add(&add(&first, &second)?, &sum(&mul(&inner, &inner)?))
+        };
+        check("slices of a vector", &[theta.clone()], pieces);
+        LAID.with(|n| n.set(0));
+        let got = gradient(&[theta.clone()], pieces).expect("a gradient")[0].to_vec();
+        // (four slices: the first to reach the vector makes its gradient,
+        // the others are added into it and into the outer slice's)
+        assert!(LAID.with(|n| n.get()) >= 2, "slices were laid in place {} times", LAID.with(|n| n.get()));
+        let t = theta.to_vec();
+        let mut want = vec![0.0; 12];
+        for k in 0..6 {
+            want[k] += 2.0 * t[k];
+        }
+        for cell in want.iter_mut().take(10).skip(4) {
+            *cell += 3.0;
+        }
+        for k in 5..9 {
+            want[k] += 2.0 * t[k];
+        }
+        assert_eq!(got, want);
+        // a matrix's rows, and the whole read beside its slices
+        let rows = |x: &[Traced]| -> Result<Traced, String> {
+            let top = slice(&x[0], 0, 1);
+            let low = slice(&x[0], 1, 2);
+            add(&add(&sum(&mul(&top, &low)?), &sum(&x[0]))?, &sum(&mul(&low, &low)?))
+        };
+        check("rows of a matrix", &[w.clone()], rows);
+        // a vector no slice's gradient reached first is still zeros elsewhere
+        let one = gradient(&[theta.clone()], |x| Ok(sum(&slice(&x[0], 3, 5)))).expect("a gradient")[0].to_vec();
+        assert_eq!(one, vec![0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    }
+
+    /// An operand that is no parameter's gets no share computed: the
+    /// gradient of the parameter beside it is what it was, on either side
+    /// of each operator, and a constant's shape the share could not have
+    /// been laid in is no trouble.
+    #[test]
+    fn a_constant_operand_costs_no_share() {
+        let mut g = Gen(20261117);
+        let a = g.tensor(&[3, 4], -2.0, 2.0);
+        let m = g.tensor(&[4, 2], -1.0, 1.0);
+        let row = g.tensor(&[4], 0.5, 2.0);
+        let (cm, crow, ca) = (Traced::constant(m.clone()), Traced::constant(row.clone()), Traced::constant(a.clone()));
+        check("matmul by a constant", &[a.clone()], |x| Ok(sum(&matmul(&x[0], &cm)?)));
+        check("a constant matmul", &[m.clone()], |x| Ok(sum(&matmul(&ca, &x[0])?)));
+        check("add a constant", &[a.clone()], |x| Ok(sum(&mul(&add(&x[0], &crow)?, &x[0])?)));
+        check("a constant less", &[a.clone()], |x| Ok(sum(&mul(&sub(&crow, &x[0])?, &x[0])?)));
+        check("times a constant", &[a.clone()], |x| Ok(sum(&mul(&crow, &x[0])?)));
+        check("over a constant", &[a.clone()], |x| Ok(sum(&div(&x[0], &crow)?)));
+        check("a constant over", &[row.clone()], |x| Ok(sum(&div(&ca, &x[0])?)));
+        let both = gradient(&[a.clone(), m.clone()], |x| Ok(sum(&matmul(&x[0], &x[1])?))).expect("a gradient");
+        let left = gradient(&[a.clone()], |x| Ok(sum(&matmul(&x[0], &cm)?))).expect("a gradient");
+        let right = gradient(&[m.clone()], |x| Ok(sum(&matmul(&ca, &x[0])?))).expect("a gradient");
+        assert_eq!(left[0].to_vec(), both[0].to_vec());
+        assert_eq!(right[0].to_vec(), both[1].to_vec());
     }
 }
