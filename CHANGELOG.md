@@ -34,6 +34,14 @@ history says the rest.
 
 ### Added
 
+- `*` of tensors of more than two axes is the matrix product of each
+  batch item: it multiplies over the last two axes, the axes before them a
+  batch that broadcasts as an element-wise operation's shapes do (`a * b`
+  of a `[8, 3, 4]` and a `[8, 4, 5]` is a `[8, 3, 5]`; a matrix beside a
+  batch meets every item). `grad` differentiates it, and under `gpu[]` it
+  stays on the GPU. It had taken two matrices only, so a batch was a loop
+  in Crow over its items. A tensor of one axis is still refused, in new
+  words (`needs tensors of two axes or more`).
 - A page enters a headset with the room seen through the drawing:
   WebXR's `immersive-ar`, by the page's Enter AR button or the program's
   `@ar`, as `@vr` enters one's own world. A frame says whether one can be

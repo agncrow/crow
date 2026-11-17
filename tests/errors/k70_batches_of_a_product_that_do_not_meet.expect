@@ -1,0 +1,3 @@
+k70_batches_of_a_product_that_do_not_meet.co:7:1: matmul: the batches of shapes [2, 3, 4] and [3, 4, 5] do not meet — the axes before the last two are a batch, each pair equal or one of them 1
+  7 │ log[a * zeros[3, 4, 5]]
+    │ ^^^^^^^^^^^^^^^^^^^^^^^

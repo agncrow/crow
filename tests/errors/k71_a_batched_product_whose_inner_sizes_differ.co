@@ -1,0 +1,6 @@
+--- a batched product's matrices meet as two matrices do: the first's
+--- columns are the second's rows, or it is refused before the program runs
+use math
+
+a = zeros[2, 3, 4]
+log[a * zeros[2, 5, 6]]

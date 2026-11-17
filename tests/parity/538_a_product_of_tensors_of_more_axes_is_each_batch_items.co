@@ -1,0 +1,41 @@
+--- `*` of tensors of more than two axes is the matrix product of each
+--- batch item (the axes before the last two a batch), its gradient reaches
+--- both operands, and batches that do not meet stop the program
+use math
+
+a = reshape[linspace[1, 24, 24], 2, 3, 4]
+b = reshape[linspace[0.5, 12, 24], 2, 4, 3]
+c = a * b
+log[c.shape]
+log[c]
+--- a matrix beside a batch meets every item
+w = reshape[linspace[1, 12, 12], 3, 4]
+log[(w * b).shape, (a * transpose[w]).shape]
+log[w * b]
+--- sizes of 1 broadcast
+one = reshape[linspace[1, 12, 12], 1, 4, 3]
+log[(a * one).shape, sum[a * one]]
+four = reshape[linspace[1, 48, 48], 2, 1, 4, 6]
+five = reshape[linspace[1, 90, 90], 5, 6, 3]
+log[(four * five).shape, sum[four * five]]
+--- through a transpose, and a transpose of the product
+log[sum[transpose[a] * a], (transpose[a * b]).shape]
+
+--- the gradient reaches both operands, summed over a batch one was
+--- broadcast over
+fn loss[x, y]
+    p = x * y
+    return sum[p .* p]
+
+g = grad[loss][a, b]
+log[g[0].shape, g[1].shape, sum[g[0]], sum[g[1]]]
+h = grad[loss][w, b]
+log[h[0].shape, h[1].shape, sum[h[0]]]
+
+--- a shape the program computes is checked where it runs
+fn sized[n]
+    return reshape[linspace[1, n * 12, n * 12], n, 4, 3]
+
+log[(a * sized[2]).shape]
+bad = a * sized[3]
+log['not reached']

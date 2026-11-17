@@ -2659,7 +2659,7 @@ mod tests {
         let err = check_source("use math\nlog[zeros[2, 2] * zeros[3, 3]]\n").unwrap_err();
         assert!(err.contains("matmul: incompatible shapes [2, 2] × [3, 3] — the first's columns (2) must be the second's rows (3)"), "{}", err);
         let err = check_source("use math\nlog[[1.0, 2.0] * eye[2]]\n").unwrap_err();
-        assert!(err.contains("needs two 2-D tensors, got shapes [2] and [2, 2]"), "{}", err);
+        assert!(err.contains("needs tensors of two axes or more, got shapes [2] and [2, 2]"), "{}", err);
         // a shape kept through a local and a transpose
         let err = check_source("use math\nfn f[]\n    a = zeros[2, 3]\n    b = transpose[a]\n    return a .* b\nlog[f[]]\n").unwrap_err();
         assert!(err.contains("`.*` of tensors of shapes [2, 3] and [3, 2]"), "{}", err);

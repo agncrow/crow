@@ -1,0 +1,3 @@
+k72_a_vector_beside_a_batch_has_no_product.co:6:1: `*` between tensors is matrix multiplication over their last two axes and needs tensors of two axes or more, got shapes [2, 3, 4] and [4] (use .* for an element-wise product)
+  6 │ log[a * zeros[4]]
+    │ ^^^^^^^^^^^^^^^^^

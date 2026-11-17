@@ -1847,6 +1847,28 @@ mod tests {
         assert_eq!(x.compared(Compare::Lt, 0.5).to_vec(), vec![1.0, 1.0, 0.0, 0.0]);
     }
 
+    /// A batched product on the GPU answers the CPU's and stays there: a
+    /// batch by a batch, a matrix by a batch, and an operand on the CPU
+    /// beside one on the GPU.
+    #[test]
+    fn a_batched_product_is_the_cpus() {
+        let Some(_ctx) = skip_if_no_gpu() else { return };
+        let fill = |shape: &[usize], by: f64| CrowTensor::from_vec((0..CrowTensor::numel(shape)).map(|i| (i as f64 * by).sin()).collect(), shape.to_vec());
+        let a = fill(&[3, 4, 5], 0.37);
+        let b = fill(&[3, 5, 2], 0.91);
+        let m = fill(&[4, 5], 0.53);
+        for (name, cpu, gpu) in [
+            ("a batch by a batch", a.matmul(&b), a.to_gpu().matmul(&b.to_gpu())),
+            ("a matrix by a batch", m.matmul(&b), m.to_gpu().matmul(&b.to_gpu())),
+            ("the first on the CPU", a.matmul(&b), a.matmul(&b.to_gpu())),
+            ("through a transpose", a.transpose().matmul(&a), a.to_gpu().transpose().matmul(&a.to_gpu())),
+        ] {
+            assert!(gpu.is_gpu(), "{} left the GPU", name);
+            assert_eq!(gpu.shape(), cpu.shape(), "{}", name);
+            near(&gpu.to_vec(), &cpu.to_vec(), 2e-6);
+        }
+    }
+
     /// A reduction along each axis of a view answers the CPU's.
     #[test]
     fn a_reduction_along_an_axis_is_the_cpus() {

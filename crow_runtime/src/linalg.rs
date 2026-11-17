@@ -48,23 +48,56 @@ impl CrowTensor {
     /// mismatch is a runtime error in a program, never a panic.
     pub fn try_matmul(&self, other: &CrowTensor) -> Result<CrowTensor, String> {
         let (a, b) = (self.shape(), other.shape());
-        if a.len() != 2 || b.len() != 2 {
+        if a.len() < 2 || b.len() < 2 {
             return Err(format!(
-                "`*` between tensors is matrix multiplication and needs two 2-D tensors, got shapes {:?} and {:?} (use .* for an element-wise product)",
+                "`*` between tensors is matrix multiplication over their last two axes and needs tensors of two axes or more, got shapes {:?} and {:?} (use .* for an element-wise product)",
                 a, b
             ));
         }
-        if a[1] != b[0] {
-            return Err(format!("matmul: incompatible shapes [{},{}] × [{},{}]", a[0], a[1], b[0], b[1]));
+        let (m, k) = (a[a.len() - 2], a[a.len() - 1]);
+        let (k2, n) = (b[b.len() - 2], b[b.len() - 1]);
+        if k != k2 {
+            if a.len() == 2 && b.len() == 2 {
+                return Err(format!("matmul: incompatible shapes [{},{}] × [{},{}]", m, k, k2, n));
+            }
+            return Err(format!("matmul: incompatible shapes {:?} × {:?} — the first's columns ({}) must be the second's rows ({})", a, b, k, k2));
         }
+        Self::batch_of(a, b)?;
         Ok(self.matmul(other))
     }
 
-    /// Matrix multiplication: self (m×k) * other (k×n) → (m×n).
-    /// On the GPU where either matrix lies there, otherwise on the CPU (faer).
+    /// The batch two shapes' leading axes make (every axis before the last
+    /// two): each pair, aligned from the innermost, equal or one of them 1
+    /// or absent — or the reason they make none.
+    pub fn batch_of(a: &[usize], b: &[usize]) -> Result<Vec<usize>, String> {
+        let (la, lb) = (&a[..a.len().saturating_sub(2)], &b[..b.len().saturating_sub(2)]);
+        let n = la.len().max(lb.len());
+        let mut out = Vec::with_capacity(n);
+        for i in 0..n {
+            let da = if i < n - la.len() { 1 } else { la[i - (n - la.len())] };
+            let db = if i < n - lb.len() { 1 } else { lb[i - (n - lb.len())] };
+            if da != db && da != 1 && db != 1 {
+                return Err(format!(
+                    "matmul: the batches of shapes {:?} and {:?} do not meet: {} in one and {} in the other — the axes before the last two are a batch, each pair equal or one of them 1",
+                    a, b, da, db
+                ));
+            }
+            out.push(da.max(db));
+        }
+        Ok(out)
+    }
+
+    /// Matrix multiplication: self (m×k) * other (k×n) → (m×n), over the
+    /// last two axes of each; the axes before them are a batch (each pair
+    /// equal, or one of them 1 or absent), and the product is each batch
+    /// item's. On the GPU where either operand lies there, otherwise on the
+    /// CPU (faer).
     pub fn matmul(&self, other: &CrowTensor) -> CrowTensor {
         let shape_a = self.shape();
         let shape_b = other.shape();
+        if shape_a.len() > 2 || shape_b.len() > 2 {
+            return self.matmul_batched(other);
+        }
         assert_eq!(shape_a.len(), 2, "linalg: expected 2D tensor, got {}D", shape_a.len());
         assert_eq!(shape_b.len(), 2, "linalg: expected 2D tensor, got {}D", shape_b.len());
         assert_eq!(
@@ -84,6 +117,49 @@ impl CrowTensor {
         let b = tensor_to_mat(other);
         let c = &a * &b;
         mat_to_tensor(&c)
+    }
+
+    /// The batched product: each batch item's matrices multiplied (each a
+    /// view of its operand, read where it lies), in the batch's row-major
+    /// order. On the GPU the items' products are laid into one tensor there.
+    fn matmul_batched(&self, other: &CrowTensor) -> CrowTensor {
+        let (a, b) = (self.shape(), other.shape());
+        assert!(a.len() >= 2 && b.len() >= 2, "matmul: tensors of two axes or more, got {:?} and {:?}", a, b);
+        // (`try_matmul` has refused batches that do not meet; a caller that
+        // skipped it gets the larger of each pair, and views read within
+        // their operands)
+        let lead = Self::batch_of(a, b).unwrap_or_else(|_| {
+            let (la, lb) = (&a[..a.len() - 2], &b[..b.len() - 2]);
+            let n = la.len().max(lb.len());
+            (0..n).map(|i| la.get((i + la.len()).wrapping_sub(n)).copied().unwrap_or(1).max(lb.get((i + lb.len()).wrapping_sub(n)).copied().unwrap_or(1))).collect()
+        });
+        let (m, n) = (a[a.len() - 2], b[b.len() - 1]);
+        let count = CrowTensor::numel(&lead);
+        let mut shape = lead.clone();
+        shape.extend([m, n]);
+        let mut index = vec![0usize; lead.len()];
+        let mut items = Vec::with_capacity(count);
+        for _ in 0..count {
+            items.push(self.matrix_at(&index).matmul(&other.matrix_at(&index)));
+            for d in (0..lead.len()).rev() {
+                index[d] += 1;
+                if index[d] < lead[d] {
+                    break;
+                }
+                index[d] = 0;
+            }
+        }
+        if items.iter().any(CrowTensor::is_gpu)
+            && let Some(t) = CrowTensor::gpu_batch_of(&items, &shape)
+        {
+            return t;
+        }
+        let mut data = Vec::with_capacity(count * m * n);
+        for item in &items {
+            data.extend_from_slice(&item.numbers());
+        }
+        let out = CrowTensor::from_vec(data, shape);
+        if self.is_gpu() || other.is_gpu() { out.to_gpu() } else { out }
     }
 
     /// Solve the linear system Ax = b where self is A.
@@ -322,12 +398,54 @@ impl CrowTensor {
 mod tests {
     use super::*;
 
+    /// `*` of tensors of more than two axes is each batch item's product:
+    /// a batch of equal sizes, one a matrix every item meets, sizes of 1
+    /// broadcast, and an operand read through a transpose; batches that do
+    /// not meet, and inner sizes that do not, are the reason.
+    #[test]
+    fn a_batched_product_is_each_items_product() {
+        let fill = |shape: &[usize], by: f64| CrowTensor::from_vec((0..CrowTensor::numel(shape)).map(|i| (i as f64 * by).sin()).collect(), shape.to_vec());
+        let a = fill(&[2, 3, 4], 0.37);
+        let b = fill(&[2, 4, 5], 0.91);
+        let c = a.try_matmul(&b).expect("a product");
+        assert_eq!(c.shape(), &[2, 3, 5]);
+        let mut want = Vec::new();
+        for i in 0..2 {
+            want.extend(a.matrix_at(&[i]).matmul(&b.matrix_at(&[i])).to_vec());
+        }
+        assert_eq!(c.to_vec(), want);
+        // a matrix beside a batch meets every item
+        let m = fill(&[3, 4], 0.53);
+        let d = m.try_matmul(&b).expect("a product");
+        assert_eq!(d.shape(), &[2, 3, 5]);
+        assert_eq!(d.matrix_at(&[1]).to_vec(), m.matmul(&b.matrix_at(&[1])).to_vec());
+        let e = a.try_matmul(&fill(&[4, 2], 0.11)).expect("a product");
+        assert_eq!(e.shape(), &[2, 3, 2]);
+        // sizes of 1 broadcast, as an element-wise operation's do
+        let wide = fill(&[2, 1, 3, 4], 0.29);
+        let tall = fill(&[5, 4, 2], 0.71);
+        let f = wide.try_matmul(&tall).expect("a product");
+        assert_eq!(f.shape(), &[2, 5, 3, 2]);
+        assert_eq!(f.matrix_at(&[1, 3]).to_vec(), wide.matrix_at(&[1, 0]).matmul(&tall.matrix_at(&[3])).to_vec());
+        // an operand read through a transpose (its last two axes swapped)
+        let g = a.transpose().try_matmul(&a).expect("a product");
+        assert_eq!(g.shape(), &[2, 4, 4]);
+        assert_eq!(g.matrix_at(&[1]).to_vec(), a.matrix_at(&[1]).transpose().matmul(&a.matrix_at(&[1])).to_vec());
+        // the reasons
+        let e = a.try_matmul(&fill(&[3, 4, 5], 0.2)).unwrap_err();
+        assert!(e.contains("the batches of shapes [2, 3, 4] and [3, 4, 5] do not meet: 2 in one and 3 in the other"), "{}", e);
+        let e = a.try_matmul(&fill(&[2, 3, 5], 0.2)).unwrap_err();
+        assert!(e.contains("incompatible shapes [2, 3, 4] × [2, 3, 5] — the first's columns (4) must be the second's rows (3)"), "{}", e);
+        let e = a.try_matmul(&fill(&[4], 0.2)).unwrap_err();
+        assert!(e.contains("needs tensors of two axes or more, got shapes [2, 3, 4] and [4]"), "{}", e);
+    }
+
     #[test]
     fn try_matmul_reports_rank_and_shape_mismatches_as_values() {
         let v = CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3]);
         let m = CrowTensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
         let e = v.try_matmul(&v).unwrap_err();
-        assert!(e.contains("2-D") && e.contains(".*"), "{}", e);
+        assert!(e.contains("two axes or more") && e.contains(".*"), "{}", e);
         let e = m.try_matmul(&CrowTensor::from_vec(vec![1.0, 2.0, 3.0], vec![3, 1])).unwrap_err();
         assert!(e.contains("incompatible shapes"), "{}", e);
         assert_eq!(m.try_matmul(&m).unwrap().shape(), &[2, 2]);

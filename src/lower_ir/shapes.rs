@@ -250,6 +250,15 @@ pub(super) fn binary_dims(op: &BinOp, l: &Expr, r: &Expr) -> Option<Dims> {
         // refuses two known shapes that are not matrices)
         BinOp::Mul if tensor(l) && tensor(r) => match (ls, rs) {
             (Some(a), Some(b)) if a.len() == 2 && b.len() == 2 => Some(vec![a[0], b[1]]),
+            // more axes: the axes before the last two are a batch, which
+            // broadcasts as an element-wise operation's shapes do
+            (Some(a), Some(b)) if a.len() >= 2 && b.len() >= 2 => {
+                let mut dims = broadcast(&a[..a.len() - 2].to_vec(), &b[..b.len() - 2].to_vec()).ok()?;
+                dims.extend([a[a.len() - 2], b[b.len() - 1]]);
+                Some(dims)
+            }
+            // (an operand whose rank nothing states is read as a matrix,
+            // as it was: a batch is of tensors whose rank the program states)
             (Some(a), None) if a.len() == 2 => Some(vec![a[0], None]),
             (None, Some(b)) if b.len() == 2 => Some(vec![None, b[1]]),
             (None, None) => Some(vec![None, None]),
@@ -358,21 +367,30 @@ impl<'a> Lowerer<'a> {
         };
         match op {
             BinOp::Mul => {
-                if a.len() != 2 || b.len() != 2 {
+                if a.len() < 2 || b.len() < 2 {
                     self.refuse(format!(
-                        "`*` between tensors is matrix multiplication and needs two 2-D tensors, got shapes {} and {} (use .* for an element-wise product){}",
+                        "`*` between tensors is matrix multiplication over their last two axes and needs tensors of two axes or more, got shapes {} and {} (use .* for an element-wise product){}",
                         shown_dims(&a),
                         shown_dims(&b),
                         handed
                     ));
-                } else if let (Some(k1), Some(k2)) = (a[1], b[0]) {
-                    if k1 != k2 {
+                } else {
+                    if let (Some(k1), Some(k2)) = (a[a.len() - 1], b[b.len() - 2])
+                        && k1 != k2
+                    {
                         self.refuse(format!(
                             "matmul: incompatible shapes {} × {} — the first's columns ({}) must be the second's rows ({}){}",
                             shown_dims(&a),
                             shown_dims(&b),
                             k1,
                             k2,
+                            handed
+                        ));
+                    } else if broadcast(&a[..a.len() - 2].to_vec(), &b[..b.len() - 2].to_vec()).is_err() {
+                        self.refuse(format!(
+                            "matmul: the batches of shapes {} and {} do not meet — the axes before the last two are a batch, each pair equal or one of them 1{}",
+                            shown_dims(&a),
+                            shown_dims(&b),
                             handed
                         ));
                     }

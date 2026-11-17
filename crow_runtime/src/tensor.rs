@@ -560,6 +560,34 @@ impl CrowTensor {
         Self::from_vec(data, shape.to_vec())
     }
 
+    /// The matrix at a place of the leading axes: this tensor's last two
+    /// axes at `lead` (an index for each axis before them, 0 along an axis
+    /// of one), read where it lies — a view, nothing copied. A batched
+    /// product multiplies these.
+    pub(crate) fn matrix_at(&self, lead: &[usize]) -> CrowTensor {
+        let n = self.ndim();
+        let own = n.saturating_sub(2);
+        let skip = lead.len().saturating_sub(own);
+        let mut offset = self.offset;
+        for d in 0..own {
+            let i = if self.shape[d] == 1 { 0 } else { lead.get(skip + d).copied().unwrap_or(0) };
+            offset += i * self.strides[d];
+        }
+        CrowTensor { data: Arc::clone(&self.data), shape: self.shape[own..].to_vec(), strides: self.strides[own..].to_vec(), offset }
+    }
+
+    /// The products of a batch on the GPU laid into one tensor of `shape`
+    /// there: each a matrix `[m, n]`, in the batch's order. None where the
+    /// kernels cannot take it.
+    pub(crate) fn gpu_batch_of(items: &[CrowTensor], shape: &[usize]) -> Option<CrowTensor> {
+        let ctx = Self::gpu_of(&items.iter().collect::<Vec<_>>())?;
+        let n = shape.len();
+        let each = Self::numel(&shape[n - 2..]);
+        let inner = Self::row_major_strides(&shape[n - 2..]);
+        let parts: Vec<(&CrowTensor, gpu::Layout)> = items.iter().enumerate().map(|(i, t)| (t, gpu::Layout { offset: i * each, strides: inner.clone() })).collect();
+        Self::gpu_laid(ctx, shape, &parts)
+    }
+
     /// The matrix product on the GPU, where either matrix lies there (the
     /// other brought to it), each read through its own offset and strides:
     /// a transposed weight is never copied. None where the kernel cannot

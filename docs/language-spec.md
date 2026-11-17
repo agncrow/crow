@@ -300,7 +300,7 @@ For tensors (numeric arrays), operators follow MATLAB/Julia semantics:
 
 | Operator | Meaning |
 |---|---|
-| `*` | Matrix multiply (matmul) for tensor×tensor; scalar multiply for tensor×scalar |
+| `*` | Matrix multiply (matmul) for tensor×tensor, over their last two axes; scalar multiply for tensor×scalar |
 | `.*` | Element-wise multiply |
 | `/` | Scalar divide (tensor÷scalar only; tensor÷tensor is an error — use `./`) |
 | `./` | Element-wise divide |
@@ -319,6 +319,31 @@ c = full[3, 2] .^ 3    --- element-wise power
 d = ones[3] * 2        --- scalar multiply
 ```
 
+**A product of tensors of more than two axes is each batch item's.** `*`
+multiplies over the last two axes of each tensor, and the axes before them
+are a batch: `a * b` of a `[8, 3, 4]` and a `[8, 4, 5]` is the eight
+products, a `[8, 3, 5]`. The batches meet as an element-wise operation's
+shapes do — each pair of axes, aligned from the innermost, equal, or one
+of them 1 or absent — so a matrix beside a batch meets every item (`w * b`
+of a `[3, 4]` and a `[8, 4, 5]`), and a `[2, 1, 3, 4]` by a `[5, 4, 6]` is
+a `[2, 5, 3, 6]`. `transpose` swaps the last two axes of a tensor of any
+rank, so `transpose[a] * a` is each item's. `grad` differentiates it to
+both operands (an operand a batch was broadcast over gets the items'
+gradients summed), and under `gpu[]` it runs and stays on the GPU. A tensor
+of one axis has no product (`needs tensors of two axes or more`: reshape a
+vector to a column or a row). Where the program does not state an
+operand's rank, the product is read as a matrix, as it was: a batch is of
+tensors whose rank the program states (a literal, a constructor or a
+`reshape` given its sizes).
+
+```
+use math
+a = reshape[linspace[1, 24, 24], 2, 3, 4]
+b = reshape[linspace[1, 24, 24], 2, 4, 3]
+log[(a * b).shape]                 --- [2, 3, 3]
+log[(ones[3, 4] * b).shape]        --- [2, 3, 3]
+```
+
 **A tensor's shape is in its type.** A shape the program states is
 known before it runs — a literal (`[[1.0, 2.0], [3.0, 4.0]]` is 2×2), a
 constructor given literal sizes (`zeros[2, 3]`, `ones`, `full`, `randn`,
@@ -330,9 +355,9 @@ after `x = zeros[3, 3]` it is 3×3 from that line on; where branches, or a
 loop's rounds, meet, it has the dimensions they agree on; a function's
 parameter has the dimensions its calls agree on, and a call has the shape
 of what the function returns. An operation two known dimensions make
-certainly wrong is refused before it runs, in both modes: `*` of tensors
-that are not both 2-D, or whose inner dimensions differ (`matmul:
-incompatible shapes [2, 2] × [3, 3] — …`), and an element-wise operation
+certainly wrong is refused before it runs, in both modes: `*` of a tensor
+of one axis, of tensors whose inner dimensions differ (`matmul:
+incompatible shapes [2, 2] × [3, 3] — …`) or whose batches do not meet, and an element-wise operation
 of two shapes that do not broadcast (each pair of dimensions, aligned
 from the innermost, equal or one of them 1: `` `+` of tensors of shapes
 [2, 2] and [2, 3]: dimension 2 is 2 in one and 3 in the other — … ``),
@@ -2199,7 +2224,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 
 | Function | Description |
 |---|---|
-| `a * b` | Matrix multiplication (use `*` operator) |
+| `a * b` | Matrix multiplication (use `*` operator), over the last two axes; the axes before them are a batch |
 | `solve[a, b]` | Solve linear system Ax = b |
 | `inv[a]` | Matrix inverse |
 | `det[a]` | Determinant (returns float) |
@@ -4693,6 +4718,8 @@ squared = x .^ 2             --- element-wise power
 **Shift-key tradeoff:** `^` and `.^` require the shift key, which normally violates Crow's principle #3 (shift-key minimization, `design-rules.md`). This tradeoff is accepted because data scientists type power operations constantly, and `pow[x, 2]` is too clunky. There is no non-shift alternative for power that isn't worse.
 
 **Why not `matmul[]` builtin?** `W * x + b` is what every data scientist expects. A `matmul[W, x] + b` builtin adds noise to the most common operation in ML. `*` for matmul follows MATLAB and Julia — the two most established scientific computing languages.
+
+**Why no `bmm[]` or `einsum[]` for a batch?** One way (principle #1): the product of a batch is the product, so it is `*`, over the last two axes with the axes before them a batch, as numpy's `matmul` and PyTorch's `@` read it. Until 2026-11-16 `*` took two matrices only, and a batch was a loop in Crow over its items — Pie's attention ran about 130 small products where one was meant, and a step of a small transformer took a second. A separate builtin would have been a second way to write the same product.
 
 **Lexing:** `.*`, `./`, and `.^` are lexed as single tokens (`DotStar`, `DotSlash`, `DotCaret`), not `Dot` + `Star`. This avoids ambiguity with field access (`model.w`).
 

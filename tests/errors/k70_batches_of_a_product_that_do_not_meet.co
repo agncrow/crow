@@ -1,0 +1,7 @@
+--- `*` of tensors of more than two axes is each batch item's product:
+--- known batches that do not meet are refused before the program runs
+use math
+
+a = zeros[2, 3, 4]
+log[(a * zeros[2, 4, 5]).shape, (zeros[3, 4] * zeros[2, 4, 5]).shape, (zeros[2, 1, 3, 4] * zeros[5, 4, 2]).shape]
+log[a * zeros[3, 4, 5]]

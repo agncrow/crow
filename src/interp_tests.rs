@@ -1586,7 +1586,7 @@ mod tests {
         let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(src).map(|_| ())))
             .expect("must not panic")
             .expect_err("expected a runtime error");
-        assert!(err.contains("2-D"), "{}", err);
+        assert!(err.contains("two axes or more"), "{}", err);
     }
 
     #[test]

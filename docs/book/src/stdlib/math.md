@@ -134,7 +134,7 @@ Negative indices are supported (wrap around from the end). The result tensor has
 
 | Function | Description | Example |
 |---|---|---|
-| `a * b` | Matrix multiplication (use `*` operator) | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
+| `a * b` | Matrix multiplication (use `*` operator), over the last two axes; the axes before them are a batch | [Views: the whole element vocabulary](../by-example/views-elements.md) · [Reactive State and Events](../ch12-02-reactive-state.md) · [Testing a Live App](../ch12-05-testing-live-apps.md) · [The Element Vocabulary](../ch12-07-vocabulary.md) |
 | `solve[a, b]` | Solve linear system Ax = b | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) |
 | `inv[a]` | Matrix inverse | [Math: reductions and linear algebra](../by-example/math-linalg.md) |
 | `det[a]` | Determinant (returns float) | [Math: reductions and linear algebra](../by-example/math-linalg.md) · [Math: tensors](../by-example/math.md) |

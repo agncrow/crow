@@ -1,0 +1,6 @@
+--- a tensor of one axis has no matrix product, beside a batch as beside
+--- a matrix
+use math
+
+a = zeros[2, 3, 4]
+log[a * zeros[4]]

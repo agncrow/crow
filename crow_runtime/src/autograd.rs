@@ -352,12 +352,17 @@ pub fn neg(a: &Traced) -> Traced {
     Traced::from(a.value.neg(), node)
 }
 
-/// `*` of two matrices.
+/// `*` of two tensors: the matrix product over their last two axes, the
+/// axes before them a batch.
 pub fn matmul(a: &Traced, b: &Traced) -> Result<Traced, String> {
     let value = a.value.try_matmul(&b.value)?;
     let (av, bv) = (a.value.clone(), b.value.clone());
     let (ta, tb) = (a.node.is_some(), b.node.is_some());
-    let node = record(vec![a.node, b.node], move |g| vec![if ta { g.matmul(&bv.transpose()) } else { unread() }, if tb { av.transpose().matmul(g) } else { unread() }]);
+    // (a batch one operand was broadcast over is summed back to its shape)
+    let (sa, sb) = (a.value.shape().to_vec(), b.value.shape().to_vec());
+    let node = record(vec![a.node, b.node], move |g| {
+        vec![if ta { unbroadcast(&g.matmul(&bv.transpose()), &sa) } else { unread() }, if tb { unbroadcast(&av.transpose().matmul(g), &sb) } else { unread() }]
+    });
     Ok(Traced::from(value, node))
 }
 
@@ -1160,6 +1165,28 @@ mod tests {
         // a vector no slice's gradient reached first is still zeros elsewhere
         let one = gradient(&[theta.clone()], |x| Ok(sum(&slice(&x[0], 3, 5)))).expect("a gradient")[0].to_vec();
         assert_eq!(one, vec![0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    }
+
+    /// A batched product differentiates to both operands: a batch of equal
+    /// sizes, a matrix every item meets (its gradient the items' summed),
+    /// a size of 1 broadcast, and a constant operand.
+    #[test]
+    fn a_batched_product_differentiates_to_its_operands() {
+        let mut g = Gen(20261118);
+        let a = g.tensor(&[2, 3, 4], -1.0, 1.0);
+        let b = g.tensor(&[2, 4, 2], -1.0, 1.0);
+        let m = g.tensor(&[3, 4], -1.0, 1.0);
+        let one = g.tensor(&[1, 4, 2], -1.0, 1.0);
+        let squared = |x: &Traced| -> Result<Traced, String> { Ok(sum(&mul(x, x)?)) };
+        check("a batch by a batch", &[a.clone(), b.clone()], |x| squared(&matmul(&x[0], &x[1])?));
+        check("a matrix by a batch", &[m.clone(), b.clone()], |x| squared(&matmul(&x[0], &x[1])?));
+        check("a batch by a batch of one", &[a.clone(), one.clone()], |x| squared(&matmul(&x[0], &x[1])?));
+        let cb = Traced::constant(b.clone());
+        check("a batch by a constant batch", &[a.clone()], |x| squared(&matmul(&x[0], &cb)?));
+        check("a batch through a transpose", &[a.clone()], |x| squared(&matmul(&transpose(&x[0]), &x[0])?));
+        let grads = gradient(&[m.clone(), b.clone()], |x| Ok(sum(&matmul(&x[0], &x[1])?))).expect("a gradient");
+        assert_eq!(grads[0].shape(), &[3, 4]);
+        assert_eq!(grads[1].shape(), &[2, 4, 2]);
     }
 
     /// An operand that is no parameter's gets no share computed: the
