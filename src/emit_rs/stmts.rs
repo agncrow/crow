@@ -1450,10 +1450,16 @@ impl Emitter {
                 self.line(&format!("return CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }};", text));
             } else if let Ty::Result(got) = &ety {
                 let known = |t: &Ty| !matches!(t, Ty::Unknown);
-                // (two frames of other columns are one Rust type: the error
-                // passes as it is)
-                let frames = matches!((got.as_ref(), inner.as_ref()), (Ty::Frame(_), Ty::Frame(_)));
-                if known(got) && known(&inner) && got.as_ref() != inner.as_ref() && !frames {
+                // (two types the program holds as one Rust type — frames of
+                // other columns, tensors whose shapes are known differently
+                // — pass as they are, the value with them: only a failure
+                // can pass between two Rust types, so the form below hands
+                // on the failure and a placeholder. A matrix returned on one
+                // path and a tensor of no stated rank on another had been
+                // told apart here, and the function answered an empty
+                // tensor in the value's place, compiled: parity 539)
+                let one_type = self.held_type(got) == self.held_type(&inner);
+                if known(got) && known(&inner) && got.as_ref() != inner.as_ref() && !one_type {
                     self.line(&format!(
                         "return {{ let _r· = {}; CrowResult {{ ok: _r·.ok, value: {}, reason: _r·.reason.clone(), kind: _r·.kind.clone(), trace: _r·.trace.clone(), captured: 0.0 }} }};",
                         text,

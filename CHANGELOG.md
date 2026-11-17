@@ -56,6 +56,12 @@ history says the rest.
 
 ### Fixed
 
+- A function that can fail and returns a tensor on two paths answers the
+  value on each, compiled: where one path's tensor had its shape known
+  differently from the function's answer (a matrix on one, a tensor of no
+  stated rank on the other), the compiled program handed on only whether
+  it had failed and the caller got an empty tensor, where the interpreter
+  answered the value (pie's `bert.sentence`; parity 539).
 - A function a part writes into its own record is typed by the call a
   program importing the part makes through the record's field, as the
   same lines in one file are: a part making its nodes with its own

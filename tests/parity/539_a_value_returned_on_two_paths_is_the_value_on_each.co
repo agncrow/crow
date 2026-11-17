@@ -1,0 +1,28 @@
+--- A function that can fail and returns a tensor on two paths answers the
+--- value on each, in both modes. Compiled, a return whose tensor's shape
+--- was known differently from the function's answer (a matrix on one path,
+--- a tensor of no stated rank on the other) handed on only whether it had
+--- failed, and the caller got an empty tensor: pie's bert.sentence answered
+--- `[0]` numbers where the interpreter answered the sentences' vectors.
+use math as m
+
+--- a tensor laid in sizes the program computes: its rank is not stated
+fn laid[t, dims]
+    if len[dims] eq 1
+        return m.reshape[t, dims[0]]
+    return m.reshape[t, dims[0], dims[1]]
+
+fn scaled[x]
+    return laid[m.flatten[x] * 2.0, x.shape]
+
+--- a matrix whose size is read from text, so it can fail; scaled or not
+fn made[text, unit = true]
+    out = m.ones[int[text], 2]
+    if unit
+        return scaled[out]
+    return out
+
+log[made['2'].shape, made['2']]
+log[made['3', unit = false].shape, made['3', unit = false]]
+bad = made['x']
+log[bad.ok]
