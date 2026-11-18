@@ -329,12 +329,28 @@ pub struct GpuBuffer {
     /// loop over one row of 59 logits had read each number back alone, a
     /// round trip of a millisecond and a half apiece).
     host: OnceLock<Vec<f32>>,
+    /// Of a buffer too large to keep whole: the blocks of `HOST_MOST`
+    /// numbers last read from (`NEAR_MOST` of them at most, the oldest let
+    /// go first), each with where it begins. A batch read out of a
+    /// table of 300,000 numbers one number at a time had been a round trip
+    /// for each, 3,600 a training step.
+    near: Mutex<Vec<(usize, Vec<f32>)>>,
+    /// Whether the pool keeps the buffer when it is let go: an answer's,
+    /// which the next answer of its size takes. An upload's is not kept:
+    /// no upload takes a buffer from the pool (a kept buffer is written
+    /// only by recorded commands), so each one kept was one more buffer
+    /// alive, and every batch sent pays for each buffer alive (wgpu's
+    /// tracker): a training loop's steps grew slower one after another.
+    pooled: bool,
 }
 
 /// The most numbers a read of part of a buffer brings back whole, to keep
 /// for the next: a vector of parameters, millions of numbers, read a slice
 /// at a time, is read a slice at a time.
 const HOST_MOST: usize = 1 << 16;
+
+/// The blocks of a large buffer kept at most (4 MB of numbers).
+const NEAR_MOST: usize = 16;
 
 impl GpuBuffer {
     /// The numbers the buffer holds.
@@ -352,7 +368,13 @@ impl GpuBuffer {
 
     /// A buffer's numbers as a tensor's storage, none read back yet.
     fn of(buffer: wgpu::Buffer, len: usize) -> Self {
-        GpuBuffer { buffer, len, host: OnceLock::new() }
+        GpuBuffer { buffer, len, host: OnceLock::new(), near: Mutex::new(Vec::new()), pooled: true }
+    }
+
+    /// An uploaded buffer's numbers as a tensor's storage: freed when let
+    /// go, not kept.
+    fn uploaded(buffer: wgpu::Buffer, len: usize) -> Self {
+        GpuBuffer { buffer, len, host: OnceLock::new(), near: Mutex::new(Vec::new()), pooled: false }
     }
 
     /// A buffer of `n` zeros: a new one (wgpu zeroes every buffer it
@@ -392,7 +414,7 @@ impl GpuBuffer {
             contents: bytemuck::cast_slice(data),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
         });
-        let out = GpuBuffer::of(buffer, data.len());
+        let out = GpuBuffer::uploaded(buffer, data.len());
         // (a small upload keeps the numbers it was made of, so a read of
         // them is no round trip: a batch's ids, the positions `range[t]`)
         if data.len() <= HOST_MOST {
@@ -412,7 +434,7 @@ impl GpuBuffer {
             contents: bytemuck::cast_slice(data),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
         });
-        GpuBuffer::of(buffer, data.len())
+        GpuBuffer::uploaded(buffer, data.len())
     }
 
     /// Upload f64 CPU data to GPU as f32.
@@ -438,7 +460,20 @@ impl GpuBuffer {
             let all = self.host.get_or_init(|| self.fetched(ctx, 0, self.len));
             return all.get(start..start + len).map(<[f32]>::to_vec).unwrap_or_default();
         }
-        self.fetched(ctx, start, len)
+        // (a run inside one block is read from the block, fetched once)
+        let first = start / HOST_MOST * HOST_MOST;
+        if start + len > first + HOST_MOST {
+            return self.fetched(ctx, start, len);
+        }
+        let mut near = self.near.lock().unwrap_or_else(|e| e.into_inner());
+        if !near.iter().any(|(at, _)| *at == first) {
+            if near.len() >= NEAR_MOST {
+                near.remove(0);
+            }
+            near.push((first, self.fetched(ctx, first, HOST_MOST.min(self.len - first))));
+        }
+        let at = start - first;
+        near.iter().find(|(b, _)| *b == first).and_then(|(_, block)| block.get(at..at + len)).map(<[f32]>::to_vec).unwrap_or_default()
     }
 
     /// The `len` numbers from `start` (a run inside the buffer), fetched
@@ -500,6 +535,9 @@ impl GpuBuffer {
 /// A buffer let go goes back to the pool (`Pool`).
 impl Drop for GpuBuffer {
     fn drop(&mut self) {
+        if !self.pooled {
+            return;
+        }
         if let Some(Some(ctx)) = GPU_CONTEXT.get() {
             ctx.keep(self.buffer.clone());
         }
@@ -963,20 +1001,54 @@ pub struct Matrix {
 /// it.
 #[expect(clippy::too_many_arguments, reason = "the two operands and their places, and the product's three sizes")]
 pub fn matmul(ctx: &GpuContext, a: &GpuBuffer, at: Matrix, b: &GpuBuffer, bt: Matrix, m: usize, k: usize, n: usize) -> Option<GpuBuffer> {
-    let out_n = m.checked_mul(n)?;
-    if !ctx.holds(out_n) || k == 0 || m.div_ceil(64) > 65_535 || n.div_ceil(64) > 65_535 {
+    matmul_batch(ctx, a, at, b, bt, m, k, n, &Batch::default())
+}
+
+/// A batch of matrix products: the batch's axes, and for each the step
+/// from one item's matrix to the next in each operand's buffer (0 along an
+/// axis the operand is broadcast over).
+#[derive(Default)]
+pub struct Batch {
+    pub sizes: Vec<usize>,
+    pub a_steps: Vec<usize>,
+    pub b_steps: Vec<usize>,
+}
+
+/// The most axes of a batch the product's kernel takes.
+pub const BATCH_AXES: usize = MAX_DIMS - 2;
+
+/// The products of a batch in one run of the kernel, an item to each
+/// layer of its grid, answered in the batch's order — a kernel's run for
+/// each item, and the items copied into one tensor after, had been
+/// thousands of runs a step of a small transformer. `at` and `bt` place
+/// the first item's matrices. None where the kernel cannot take it.
+#[expect(clippy::too_many_arguments, reason = "the two operands and their places, the product's three sizes and its batch")]
+pub fn matmul_batch(ctx: &GpuContext, a: &GpuBuffer, at: Matrix, b: &GpuBuffer, bt: Matrix, m: usize, k: usize, n: usize, batch: &Batch) -> Option<GpuBuffer> {
+    let axes = batch.sizes.len();
+    if axes > BATCH_AXES || batch.a_steps.len() != axes || batch.b_steps.len() != axes {
         return None;
     }
-    let a_last = at.offset + (m - 1) * at.row + (k - 1) * at.col;
-    let b_last = bt.offset + (k - 1) * bt.row + (n - 1) * bt.col;
+    let count: usize = batch.sizes.iter().product();
+    let out_n = m.checked_mul(n)?.checked_mul(count)?;
+    if !ctx.holds(out_n) || k == 0 || count == 0 || count > 65_535 || m.div_ceil(64) > 65_535 || n.div_ceil(64) > 65_535 {
+        return None;
+    }
+    let reach = |steps: &[usize]| batch.sizes.iter().zip(steps).map(|(size, step)| (size - 1) * step).sum::<usize>();
+    let a_last = at.offset + reach(&batch.a_steps) + (m - 1) * at.row + (k - 1) * at.col;
+    let b_last = bt.offset + reach(&batch.b_steps) + (k - 1) * bt.row + (n - 1) * bt.col;
     if a_last >= a.len || b_last >= b.len {
         return None;
     }
     let fits = |x: usize| u32::try_from(x).ok();
-    let info = [fits(m)?, fits(k)?, fits(n)?, 0, fits(at.offset)?, fits(at.row)?, fits(at.col)?, fits(bt.offset)?, fits(bt.row)?, fits(bt.col)?];
+    let mut info = vec![fits(m)?, fits(k)?, fits(n)?, fits(axes)?, fits(at.offset)?, fits(at.row)?, fits(at.col)?, fits(bt.offset)?, fits(bt.row)?, fits(bt.col)?];
+    for part in [&batch.sizes, &batch.a_steps, &batch.b_steps] {
+        for &x in part {
+            info.push(fits(x)?);
+        }
+    }
     let out = GpuBuffer::output(ctx, out_n);
     let kernel = ctx.kernel("matmul", MATMUL, 2);
-    ctx.run(&kernel, &info, &[&a.buffer, &b.buffer], &out.buffer, [n.div_ceil(64) as u32, m.div_ceil(64) as u32, 1]);
+    ctx.run(&kernel, &info, &[&a.buffer, &b.buffer], &out.buffer, [n.div_ceil(64) as u32, m.div_ceil(64) as u32, count as u32]);
     Some(out)
 }
 
@@ -1520,7 +1592,9 @@ fn main(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid
 /// to a thread, read two numbers there for each multiply and ran at a
 /// tenth of this. Each number of the answer is its k products summed in
 /// order. `info`: [0] m, [1] k, [2] n, [4] a's offset, [5] its row
-/// stride, [6] its column stride, [7..10] b's.
+/// stride, [6] its column stride, [7..10] b's; [3] the axes of a batch,
+/// then their sizes, a's step along each and b's: a layer of the grid is
+/// an item of the batch, its matrices found from its number.
 const MATMUL: &str = r#"
 @group(0) @binding(0) var<storage, read> info: array<u32>;
 @group(0) @binding(1) var<storage, read> x0: array<f32>;
@@ -1538,6 +1612,18 @@ fn main(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid
     let row0 = wid.y * 64u;
     let col0 = wid.x * 64u;
     let tid = lid.y * 16u + lid.x;
+    let axes = info[3];
+    var rest = wid.z;
+    var a_at = info[4];
+    var b_at = info[7];
+    for (var d = axes; d > 0u; d = d - 1u) {
+        let size = info[9u + d];
+        let i = rest % size;
+        rest = rest / size;
+        a_at = a_at + i * info[9u + axes + d];
+        b_at = b_at + i * info[9u + 2u * axes + d];
+    }
+    let o_at = wid.z * m * n;
     var acc: array<f32, 16>;
     let steps = (k + 15u) / 16u;
     for (var t = 0u; t < steps; t = t + 1u) {
@@ -1546,12 +1632,12 @@ fn main(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid
             let ar = row0 + e / 16u;
             let ak = t * 16u + e % 16u;
             var va = 0.0;
-            if ar < m && ak < k { va = x0[info[4] + ar * info[5] + ak * info[6]]; }
+            if ar < m && ak < k { va = x0[a_at + ar * info[5] + ak * info[6]]; }
             ta[e] = va;
             let bk = t * 16u + e / 64u;
             let bc = col0 + e % 64u;
             var vb = 0.0;
-            if bk < k && bc < n { vb = x1[info[7] + bk * info[8] + bc * info[9]]; }
+            if bk < k && bc < n { vb = x1[b_at + bk * info[8] + bc * info[9]]; }
             tb[e] = vb;
         }
         workgroupBarrier();
@@ -1588,7 +1674,7 @@ fn main(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid
         for (var j = 0u; j < 4u; j = j + 1u) {
             let c = col0 + lid.x + 16u * j;
             if r < m && c < n {
-                out[r * n + c] = acc[i * 4u + j];
+                out[o_at + r * n + c] = acc[i * 4u + j];
             }
         }
     }
@@ -1610,6 +1696,86 @@ mod tests {
         for (g, w) in got.iter().zip(want) {
             let scale = w.abs().max(1.0);
             assert!((g - w).abs() <= tol * scale || (g.is_nan() && w.is_nan()), "{:?} against {:?}", got, want);
+        }
+    }
+
+    /// The buffers the pool keeps.
+    fn pooled(ctx: &GpuContext) -> usize {
+        ctx.pool.lock().unwrap_or_else(|e| e.into_inner()).by_size.values().map(Vec::len).sum()
+    }
+
+    /// Uploads let go leave the pool as it was: each had been kept for an
+    /// answer of its size and none taken back for an upload, so a training
+    /// loop's batches (a few hundred numbers each) added buffers at every
+    /// step until the pool held a gigabyte of them, and every batch of
+    /// operations sent paid for each buffer alive.
+    #[test]
+    fn uploads_let_go_do_not_fill_the_pool() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        // (sizes no other test makes: the pool is every test's)
+        let of_size = |bytes: u64| ctx.pool.lock().unwrap_or_else(|e| e.into_inner()).by_size.get(&bytes).map_or(0, Vec::len);
+        for i in 0..2000 {
+            let t = CrowTensor::from_vec(vec![f64::from(i); 1237], vec![1237]).to_gpu();
+            let _ = t.add_scalar(1.0);
+            drop(GpuBuffer::from_u32(ctx, &[7; 1239]));
+        }
+        assert!(of_size(1237 * 4) <= 8, "the pool keeps {} buffers of an upload's size", of_size(1237 * 4));
+        assert_eq!(of_size(1239 * 4), 0);
+    }
+
+    /// Numbers read one at a time out of a buffer too large to keep whole
+    /// are the buffer's, across the blocks they are fetched in and at its
+    /// end, and a run across two blocks is too.
+    #[test]
+    fn numbers_read_one_at_a_time_from_a_large_buffer_are_its_numbers() {
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        let n = HOST_MOST * 2 + 1000;
+        let data: Vec<f32> = (0..n).map(|i| (i % 9973) as f32).collect();
+        let held = GpuBuffer::from_f32(ctx, &data);
+        // (an answer's buffer keeps no copy of what it was made of)
+        let big = GpuBuffer::output(ctx, n);
+        copy(ctx, &held, 0, &big, 0, n);
+        for at in [0, 1, HOST_MOST - 1, HOST_MOST, HOST_MOST + 7, 5, 2 * HOST_MOST, n - 1] {
+            assert_eq!(big.read(ctx, at, 1), vec![data[at]], "at {at}");
+        }
+        assert_eq!(big.read(ctx, HOST_MOST - 3, 6), data[HOST_MOST - 3..HOST_MOST + 3].to_vec());
+        assert_eq!(big.read(ctx, n - 4, 100), data[n - 4..].to_vec());
+        assert_eq!(big.read(ctx, n, 1), Vec::<f32>::new());
+    }
+
+    /// Positions on the GPU into a tensor of more numbers than a 32-bit
+    /// float counts exactly are refused, where they had read other
+    /// numbers; positions held on the CPU read it, and a smaller tensor is
+    /// read by either.
+    #[test]
+    fn positions_on_the_gpu_past_what_a_float_counts_are_refused() {
+        let Some(_ctx) = skip_if_no_gpu() else { return };
+        let n = CrowTensor::GPU_EXACT + 8;
+        let big = CrowTensor::from_vec((0..n).map(|i| (i % 1000) as f64).collect(), vec![n]).to_gpu();
+        let at = CrowTensor::from_vec(vec![(n - 1) as f64, 3.0], vec![2]);
+        let said = big.positions_read(&at.to_gpu()).unwrap_err();
+        assert!(said.contains("exact only up to 16777216"), "{said}");
+        assert_eq!(big.positions_read(&at), Ok(vec![n - 1, 3]));
+        let small = CrowTensor::from_vec(vec![5.0, 6.0, 7.0], vec![3]).to_gpu();
+        assert_eq!(small.positions_read(&CrowTensor::from_vec(vec![2.0], vec![1]).to_gpu()), Ok(vec![2]));
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_steps_after_many_uploads() {
+        use std::time::Instant;
+        let Some(ctx) = skip_if_no_gpu() else { return };
+        let mut x = CrowTensor::from_vec(vec![1.0; 64], vec![64]).to_gpu();
+        for round in 0..6 {
+            let t0 = Instant::now();
+            for _ in 0..2000 {
+                x = x.add_scalar(1.0);
+            }
+            let _ = x.get_flat(0);
+            println!("round {round}: {} pooled, 2000 operations {:.2?}", pooled(ctx), t0.elapsed());
+            for i in 0..20000 {
+                drop(CrowTensor::from_vec(vec![i as f64; 24 + i % 500], vec![24 + i % 500]).to_gpu());
+            }
         }
     }
 
@@ -1862,6 +2028,11 @@ mod tests {
             ("a matrix by a batch", m.matmul(&b), m.to_gpu().matmul(&b.to_gpu())),
             ("the first on the CPU", a.matmul(&b), a.matmul(&b.to_gpu())),
             ("through a transpose", a.transpose().matmul(&a), a.to_gpu().transpose().matmul(&a.to_gpu())),
+            ("a batch of two axes", fill(&[2, 3, 4, 5], 0.21).matmul(&fill(&[2, 3, 5, 2], 0.77)), fill(&[2, 3, 4, 5], 0.21).to_gpu().matmul(&fill(&[2, 3, 5, 2], 0.77).to_gpu())),
+            ("axes that meet", fill(&[2, 1, 4, 5], 0.21).matmul(&b), fill(&[2, 1, 4, 5], 0.21).to_gpu().matmul(&b.to_gpu())),
+            ("a batch by a matrix", a.matmul(&fill(&[5, 7], 0.13)), a.to_gpu().matmul(&fill(&[5, 7], 0.13).to_gpu())),
+            ("past one workgroup", fill(&[5, 70, 33], 0.011).matmul(&fill(&[5, 33, 130], 0.017)), fill(&[5, 70, 33], 0.011).to_gpu().matmul(&fill(&[5, 33, 130], 0.017).to_gpu())),
+            ("part of a batch", a.slice(0, 1, 3).matmul(&b.slice(0, 1, 3)), a.to_gpu().slice(0, 1, 3).matmul(&b.to_gpu().slice(0, 1, 3))),
         ] {
             assert!(gpu.is_gpu(), "{} left the GPU", name);
             assert_eq!(gpu.shape(), cpu.shape(), "{}", name);

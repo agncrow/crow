@@ -606,6 +606,28 @@ impl CrowTensor {
         Some(Self::from_gpu(out, vec![m, n]))
     }
 
+    /// A batch of matrix products on the GPU in one run of the kernel,
+    /// where either operand lies there: `lead` the batch's axes, each
+    /// operand read where it lies, through its own strides (0 along an
+    /// axis it is broadcast over). None where the kernel cannot take it.
+    pub(crate) fn gpu_matmul_batch(&self, other: &CrowTensor, lead: &[usize]) -> Option<CrowTensor> {
+        let ctx = Self::gpu_of(&[self, other])?;
+        if lead.len() > gpu::BATCH_AXES || self.ndim() < 2 || other.ndim() < 2 {
+            return None;
+        }
+        let (m, k) = (self.shape[self.ndim() - 2], self.shape[self.ndim() - 1]);
+        let n = other.shape[other.ndim() - 1];
+        let over = |rows: usize, cols: usize| lead.iter().copied().chain([rows, cols]).collect::<Vec<_>>();
+        let (a, a_at) = self.on_gpu_over(ctx, &over(m, k))?;
+        let (b, b_at) = other.on_gpu_over(ctx, &over(k, n))?;
+        let axes = lead.len();
+        let at = gpu::Matrix { offset: a_at.offset, row: a_at.strides[axes], col: a_at.strides[axes + 1] };
+        let bt = gpu::Matrix { offset: b_at.offset, row: b_at.strides[axes], col: b_at.strides[axes + 1] };
+        let batch = gpu::Batch { sizes: lead.to_vec(), a_steps: a_at.strides[..axes].to_vec(), b_steps: b_at.strides[..axes].to_vec() };
+        let out = gpu::matmul_batch(ctx, a.buffer(), at, b.buffer(), bt, m, k, n, &batch)?;
+        Some(Self::from_gpu(out, over(m, n)))
+    }
+
     /// Create a CrowTensor from a GpuBuffer with a given shape.
     pub fn from_gpu_with_shape(buf: GpuBuffer, shape: Vec<usize>) -> CrowTensor {
         let strides = Self::row_major_strides(&shape);
@@ -1768,8 +1790,22 @@ impl CrowTensor {
     /// words wherever the numbers lie.
     pub fn positions_read(&self, indices: &CrowTensor) -> Result<Vec<usize>, String> {
         let n = self.len();
+        // (a tensor on the GPU holds 32-bit floats, which count exactly to
+        // 16,777,216 only: positions computed there into a larger tensor
+        // had read the numbers beside the ones asked for, silently — a
+        // table of 49 million numbers gathered a batch of other rows)
+        if indices.is_gpu() && n > Self::GPU_EXACT {
+            return Err(format!(
+                "positions held on the GPU are exact only up to {}, and they read a tensor of {} numbers — take the part wanted with slice first, or compute the positions before gpu[]",
+                Self::GPU_EXACT, n
+            ));
+        }
         indices.numbers().iter().map(|&i| crate::stops::item(Self::position(i)?, n)).collect()
     }
+
+    /// The largest whole number below which every whole number is a
+    /// 32-bit float, as a tensor on the GPU holds its numbers.
+    pub const GPU_EXACT: usize = 1 << 24;
 
     /// The numbers at `at` (`positions_read` of `indices`), shaped like
     /// the positions: on the GPU where the source or the positions lie

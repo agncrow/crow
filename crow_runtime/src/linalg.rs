@@ -137,6 +137,13 @@ impl CrowTensor {
         let count = CrowTensor::numel(&lead);
         let mut shape = lead.clone();
         shape.extend([m, n]);
+        // (on the GPU the whole batch is one run of the kernel)
+        if (self.is_gpu() || other.is_gpu())
+            && a[a.len() - 1] == b[b.len() - 2]
+            && let Some(t) = self.gpu_matmul_batch(other, &lead)
+        {
+            return t;
+        }
         let mut index = vec![0usize; lead.len()];
         let mut items = Vec::with_capacity(count);
         for _ in 0..count {

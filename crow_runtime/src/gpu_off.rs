@@ -220,6 +220,21 @@ pub fn matmul(ctx: &GpuContext, _a: &GpuBuffer, _at: Matrix, _b: &GpuBuffer, _bt
     match *ctx {}
 }
 
+/// A batch of matrix products (see gpu.rs).
+#[derive(Default)]
+pub struct Batch {
+    pub sizes: Vec<usize>,
+    pub a_steps: Vec<usize>,
+    pub b_steps: Vec<usize>,
+}
+
+pub const BATCH_AXES: usize = 6;
+
+#[expect(clippy::too_many_arguments, reason = "gpu.rs's signature: the two operands and their places, the product's three sizes and its batch")]
+pub fn matmul_batch(ctx: &GpuContext, _a: &GpuBuffer, _at: Matrix, _b: &GpuBuffer, _bt: Matrix, _m: usize, _k: usize, _n: usize, _batch: &Batch) -> Option<GpuBuffer> {
+    match *ctx {}
+}
+
 pub fn gpu_available() -> bool {
     false
 }

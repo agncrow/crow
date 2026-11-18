@@ -56,6 +56,23 @@ history says the rest.
 
 ### Fixed
 
+- A training loop on the GPU keeps its speed, a batch of matrix products
+  is one run of the kernel, and positions the GPU cannot count are
+  refused (2026-11-17, found training a model of 870,000 parameters,
+  whose step took 1.7 s on the GPU against 1 s on the CPU and gave another
+  loss): an uploaded buffer let go is freed, where it had been kept in the
+  pool no upload takes from, so every step left more buffers alive and
+  each batch of operations sent paid for all of them (250 steps had gone
+  from 90 s to 320 s); `*` of batches multiplies every item in one run of
+  the kernel, an item to a layer of its grid, where each item had been a
+  run of its own and a copy into the answer; numbers read one at a time
+  out of a buffer too large to keep whole are read from blocks of 65,536
+  fetched once (sixteen kept), where each had been a round trip; and
+  positions held on the GPU that read a tensor of more than 16,777,216
+  numbers stop the program, saying so — a 32-bit float counts no further,
+  and a gather out of a table of 49 million numbers had read the rows
+  beside the ones asked for, silently. The model's step: 0.11 s, the same
+  over 2,000 steps, with the CPU's loss.
 - A function that can fail and returns a tensor on two paths answers the
   value on each, compiled: where one path's tensor had its shape known
   differently from the function's answer (a matrix on one, a tensor of no
