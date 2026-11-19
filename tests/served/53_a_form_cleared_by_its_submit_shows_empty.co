@@ -1,0 +1,24 @@
+--- A form its submit clears: the name typed key by key keeps every
+--- character, Enter (the form's submit, or its button) runs `add`, which
+--- keeps the name and sets the variable back to empty, and the page shows
+--- the field empty in both modes; a second submit keeps the empty name the
+--- page shows, not the one typed before. (The page's loader shows the
+--- program's value in the field that has the focus: crow_web's
+--- `a_focused_field_takes_the_value_its_program_set`.)
+use web, ui
+
+name = ''
+things = slice[[''], 0, 0]
+
+fn add[]
+    things = push[things, name]
+    name = ''
+
+view render[]
+    listed = join[things, '|']
+    return stack[
+        form[row[field['Name', name], button['Add', click = add]], submit = add],
+        p['things: [`listed`] `len[things]`']]
+
+page['/', render]
+serve[3971]

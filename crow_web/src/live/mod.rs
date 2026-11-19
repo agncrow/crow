@@ -3001,6 +3001,10 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
     format!(r#"<script>
 (function() {{
   var ws, reconDelay = 100, seq = 0, busy = [], first = true;
+  // what the page told the server of each bound input: the number of its
+  // last message, and the value it carried; and the highest number the
+  // server has answered (it applies messages in the order they came)
+  var sentAt = {{}}, said = {{}}, acked = 0;
   var pageToken = '{page_token}';
   // the tab's session is kept under its address's path
   function key() {{ return 'crow-session:' + location.pathname; }}
@@ -3079,7 +3083,7 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
 
   function connect() {{
     ws = new WebSocket(wsUrl());
-    ws.onopen = function() {{ reconDelay = 100; offline(false); answered(Infinity); if (window.crowDev) window.crowDev.open(); }};
+    ws.onopen = function() {{ reconDelay = 100; acked = seq; offline(false); answered(Infinity); if (window.crowDev) window.crowDev.open(); }};
     ws.onclose = function() {{
       offline(true);
       setTimeout(connect, Math.min(reconDelay, 5000));
@@ -3087,6 +3091,7 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
     }};
     ws.onmessage = function(e) {{
       var msg = JSON.parse(e.data);
+      if (msg.ack > acked) acked = msg.ack;
       if (msg.type === 'dev') {{ if (window.crowDev) window.crowDev.message(msg); return; }}
       if (msg.head) applyHead(msg.head);
       if (msg.type === 'head') return;
@@ -3171,9 +3176,12 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
     var focusKey = focused ? (focused.getAttribute('data-crow-input') || focused.getAttribute('data-crow-change')) : null;
     var draft = focusKey && focused.type !== 'radio' && focused.type !== 'checkbox'
       ? {{ value: focused.value, start: focused.selectionStart, end: focused.selectionEnd }} : null;
+    // (what the server's last render put there, before this one moves it)
+    var prior = draft ? shown(focused) : null;
     morphKids(target, source);
-    // the input being typed in keeps its draft, even when its node moved;
-    // every other bound input took the value the server rendered
+    // the input being typed in keeps its draft, even when its node moved,
+    // unless the program set it another value (`programSet`); every other bound
+    // input took the value the server rendered
     if (focusKey) {{
       var el = document.activeElement;
       var mine = el && (el.getAttribute('data-crow-input') === focusKey || el.getAttribute('data-crow-change') === focusKey);
@@ -3182,10 +3190,57 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
         if (el) el.focus();
       }}
       if (el && draft) {{
-        if (el.value !== draft.value) el.value = draft.value;
-        try {{ el.setSelectionRange(draft.start, draft.end); }} catch(e) {{}}
+        if (programSet(focusKey, draft.value, prior, shown(el))) {{
+          if (el.value !== shown(el)) put(el, shown(el));
+          else if (!mine) try {{ el.setSelectionRange(draft.start, draft.end); }} catch(e) {{}}
+        }} else {{
+          if (el.value !== draft.value) el.value = draft.value;
+          try {{ el.setSelectionRange(draft.start, draft.end); }} catch(e) {{}}
+        }}
       }}
     }}
+  }}
+  // A bound input's key: the event its typing or its choice sends.
+  function bindKey(el) {{
+    return el && el.getAttribute ? (el.getAttribute('data-crow-input') || el.getAttribute('data-crow-change')) : null;
+  }}
+  // What the server's last render put in a control: its attributes and
+  // options, which the reader's typing does not move.
+  function shown(el) {{
+    if (el.tagName === 'SELECT') {{
+      var o = el.querySelector('option[selected]') || el.options[0];
+      return o ? o.value : '';
+    }}
+    return el.defaultValue;
+  }}
+  // A control before a change reaches it: what the last render put there
+  // and what it holds (an option's is its select's).
+  function before(el) {{
+    if (el && el.tagName === 'OPTION') el = el.parentNode;
+    return el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? {{ prior: shown(el), held: el.value }} : null;
+  }}
+  // Whether the value the server sent a bound input with the focus is the
+  // program's, which the page shows: the server has answered every message
+  // the page sent for that input (else it may be an echo of typing still on
+  // its way), the value moved from what the last render put there (`prior`;
+  // a render that left it alone says nothing of it), and the reader typed
+  // nothing the server was not sent (the input holds what the last render
+  // put there or what the page last sent).
+  function programSet(k, held, prior, next) {{
+    return !!k && !(sentAt[k] > acked) && next !== prior && (held === prior || (k in said && held === said[k]));
+  }}
+  // a control takes the value the server sent: any but the one with the
+  // focus, and that one when the value is the program's
+  function takes(el, was) {{
+    return el !== document.activeElement || (!!was && programSet(bindKey(el), was.held, was.prior, shown(el)));
+  }}
+  // the value a control takes; where it replaces what the reader sees in
+  // the focused one, the caret goes to its end
+  function put(el, v) {{
+    if (el.value === v) return;
+    el.value = v;
+    if (el !== document.activeElement) return;
+    try {{ el.setSelectionRange(v.length, v.length); }} catch(e) {{}}
   }}
   function sameKind(a, b) {{
     return a.nodeType === b.nodeType && (a.nodeType !== 1 || a.tagName === b.tagName);
@@ -3289,47 +3344,57 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
     if (node && p.op === 'remove') node = node.childNodes[p.index];
     return !!node && node.contains(active);
   }}
-  // a field shows what the server rendered, unless the reader is typing in it
-  function follow(el) {{
-    if (!el || el === document.activeElement) return;
-    if (el.tagName === 'TEXTAREA') el.value = el.defaultValue;
-    else if (el.tagName === 'OPTION' && el.parentNode && el.parentNode.tagName === 'SELECT' && el.parentNode !== document.activeElement) el.selected = el.defaultSelected;
+  // a field shows what the server rendered, unless the reader is typing in
+  // it and the value is not the program's (`takes`; `was` is the control
+  // before the change); a tick or a choice, unless its own change is still
+  // on its way
+  function follow(el, was) {{
+    if (!el) return;
+    if (el.tagName === 'TEXTAREA') {{ if (takes(el, was)) put(el, el.defaultValue); }}
+    else if (el.tagName === 'OPTION' && el.parentNode && el.parentNode.tagName === 'SELECT') {{ if (takes(el.parentNode, was)) el.selected = el.defaultSelected; }}
     else if (el.tagName === 'INPUT') {{
-      if (el.type === 'checkbox' || el.type === 'radio') el.checked = el.defaultChecked;
-      else el.value = el.defaultValue;
+      if (el.type === 'checkbox' || el.type === 'radio') {{ if (el !== document.activeElement || !(sentAt[bindKey(el)] > acked)) el.checked = el.defaultChecked; }}
+      else if (takes(el, was)) put(el, el.defaultValue);
     }}
   }}
   function applyChange(p) {{
-    var node = nodeAt(p.path), k, j, fresh;
+    var node = nodeAt(p.path), k, j, fresh, was;
     if (!node) return false;
     if (p.tag && (node.nodeType !== 1 || node.nodeName.toLowerCase() !== p.tag.toLowerCase())) return false;
     if (p['in'] && (!node.parentNode || node.parentNode.nodeName.toLowerCase() !== p['in'].toLowerCase())) return false;
     switch (p.op) {{
       case 'text':
         if (node.nodeType !== 3) return false;
+        was = before(node.parentNode);
         node.nodeValue = p.text;
-        follow(node.parentNode);
+        follow(node.parentNode, was);
         return true;
       case 'attrs':
+        was = before(node);
         for (k in p.set) node.setAttribute(k, p.set[k]);
         for (j = 0; j < p.remove.length; j++) node.removeAttribute(p.remove[j]);
-        follow(node);
+        follow(node, was);
         return true;
       case 'replace':
         if (!node.parentNode) return false;
         fresh = fragment(p.html, node.parentNode);
         if (!fresh) return false;
+        was = before(node.parentNode);
         node.parentNode.replaceChild(fresh, node);
-        follow(fresh.parentNode);
+        follow(fresh.parentNode, was);
         return true;
       case 'insert':
         fresh = fragment(p.html, node);
         if (!fresh || p.index > node.childNodes.length) return false;
+        was = before(node);
         node.insertBefore(fresh, node.childNodes[p.index] || null);
+        follow(node, was);
         return true;
       case 'remove':
         if (!node.childNodes[p.index]) return false;
+        was = before(node);
         node.removeChild(node.childNodes[p.index]);
+        follow(node, was);
         return true;
       case 'move':
         // a keyed child, moved to where the render wants it (its own node,
@@ -3524,9 +3589,18 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
       // its change, below)
       if (e.target.hasAttribute('data-crow-then') && (e.target.type === 'checkbox' || e.target.type === 'radio')) return;
       var v = e.target.type === 'checkbox' ? (e.target.checked ? 'true' : 'false') : e.target.value;
-      send({{event: ev, value: v}});
+      tell(ev, {{event: ev, value: v}});
     }}
   }});
+  // a bound input's message, numbered, so the server's answer to it tells
+  // its value from an echo of typing still on its way
+  function tell(key, msg) {{
+    var n = ++seq;
+    msg.seq = n;
+    sentAt[key] = n;
+    said[key] = msg.value;
+    send(msg);
+  }}
 
   // Widgets: the program's own modules draw them (widgets/<name>.js). A
   // module is loaded once; mount(el, props, send) draws a widget, and
@@ -3574,9 +3648,10 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
     var then = e.target.getAttribute('data-crow-then');
     if (then) {{
       var v = e.target.type === 'checkbox' ? (e.target.checked ? 'true' : 'false') : e.target.value;
-      send({{event: ev || e.target.getAttribute('data-crow-input'), value: v, then: then}});
+      var key = ev || e.target.getAttribute('data-crow-input');
+      tell(key, {{event: key, value: v, then: then}});
     }} else if (ev) {{
-      send({{event: ev, value: e.target.value}});
+      tell(ev, {{event: ev, value: e.target.value}});
     }}
   }});
 
@@ -6670,6 +6745,141 @@ mod tests {
         .unwrap();
     }
 
+    /// The form the browser test types into: a name, a note and a count,
+    /// what `add` kept, and enough rows per thing kept that adding one
+    /// comes as the whole page.
+    fn typed_page(s: &CrowLiveState) -> CrowVNode {
+        let things: Vec<String> = s.get("things").and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+        let text = |k: &str| s.get(k).and_then(|v| v.as_str().map(|x| x.to_string())).unwrap_or_default();
+        CrowVNode::div(vec![
+            CrowVNode::form(vec![
+                CrowVNode::field_typed("Name", "name", &text("name"), "text", 0),
+                CrowVNode::button(vec![CrowVNode::text("Add")]).on_click("add"),
+            ]),
+            CrowVNode::field_typed("Note", "note", &text("note"), "", 3),
+            CrowVNode::field_typed("Count", "count", &s.get_i64("count", 0).to_string(), "number", 0),
+            CrowVNode::button(vec![CrowVNode::text("Fill")]).on_click("fill"),
+            CrowVNode::button(vec![CrowVNode::text("Wipe")]).on_click("wipe"),
+            CrowVNode::p(vec![CrowVNode::text(&format!("things: {}", things.join("|")))]),
+            CrowVNode::tag("ul", (0..things.len() * 60).map(|i| CrowVNode::tag("li", vec![CrowVNode::text(&format!("row {}", i))])).collect()),
+        ])
+    }
+
+    /// A focused field in a real browser takes the value its program set
+    /// (a form cleared by its own submit had kept showing what was typed,
+    /// and the next submit sent the program's empty name): Enter in the
+    /// name runs `add`, which empties it, and the field shows it empty with
+    /// the focus and the caret still in it, from the whole page; `fill`
+    /// sets a text field, a textarea and a number field while each has the
+    /// focus, from changes, the caret at the value's end; `wipe` empties
+    /// them. An echo of an earlier key, answered while later keys are on
+    /// their way, never takes a character away. (A field set with no key
+    /// pressed keeps its draft: the two "draft" tests.)
+    /// `cargo test -p crow_web --features live,http a_focused_field_takes_the_value_its_program_set -- --ignored`
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn a_focused_field_takes_the_value_its_program_set() {
+        let mut initial = CrowLiveState::new();
+        initial.set("name", serde_json::json!(""));
+        initial.set("note", serde_json::json!(""));
+        initial.set("count", serde_json::json!(0));
+        initial.set("things", serde_json::json!([]));
+        let render = |s: &CrowLiveState| {
+            // the answer to the first key is slow: the next keys go out
+            // before its echo comes back
+            if s.get("name").and_then(|v| v.as_str().map(|x| x == "B")).unwrap_or(false) {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+            typed_page(s)
+        };
+        let handle = |s: &mut CrowLiveState, event: &str, _: Option<&str>| match event {
+            "add" => {
+                let mut things: Vec<String> = s.get("things").and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+                things.push(s.get("name").and_then(|v| v.as_str().map(|x| x.to_string())).unwrap_or_default());
+                s.set("things", serde_json::json!(things));
+                s.set("name", serde_json::json!(""));
+            }
+            "fill" => {
+                s.set("name", serde_json::json!("Robin"));
+                s.set("note", serde_json::json!("a note"));
+                s.set("count", serde_json::json!(7));
+            }
+            "wipe" => {
+                s.set("name", serde_json::json!(""));
+                s.set("note", serde_json::json!(""));
+                s.set("count", serde_json::json!(0));
+            }
+            _ => {}
+        };
+        let router = CrowLiveView::new("/_ws/", initial, render, handle).into_router("/");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        tokio::task::spawn_blocking(move || {
+            let Some(mut b) = Browser::open("typed") else { return };
+            // each message's kind, and what the name field held when it came
+            // (before the page applied it: so after the one before)
+            let hook = "(function(){var W=window.WebSocket;window.__kinds=[];window.__seen=[];window.WebSocket=function(u,p){var w=new W(u,p);\
+                w.addEventListener('message',function(e){try{var m=JSON.parse(e.data);window.__kinds.push(m.type);\
+                var f=document.querySelector('[data-crow-input=\"__field:name\"]');window.__seen.push([e.data,f?f.value:null]);}catch(x){}});return w;};\
+                window.WebSocket.prototype=W.prototype;})();";
+            b.call("Page.enable", serde_json::json!({}));
+            b.call("Page.addScriptToEvaluateOnNewDocument", serde_json::json!({ "source": hook }));
+            b.call("Page.navigate", serde_json::json!({ "url": format!("http://127.0.0.1:{}/", port) }));
+            b.until("window.__kinds && window.__kinds.indexOf('session') >= 0", "the socket");
+            const NAME: &str = "document.querySelector('[data-crow-input=\"__field:name\"]')";
+            const NOTE: &str = "document.querySelector('[data-crow-input=\"__field:note\"]')";
+            const COUNT: &str = "document.querySelector('[data-crow-input=\"__field:count\"]')";
+            let typed = |b: &mut Browser, t: &str| {
+                b.call("Input.insertText", serde_json::json!({ "text": t }));
+            };
+            let state = |b: &mut Browser, el: &str| b.eval(&format!("[document.activeElement==={0}, {0}.value, {0}.selectionStart === null ? null : {0}.selectionStart]", el));
+            // typed key by key, the first key's echo coming back after the rest went out
+            b.eval(&format!("{}.focus(); 1", NAME));
+            typed(&mut b, "B");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            for k in ["e", "l", "l"] {
+                typed(&mut b, k);
+            }
+            b.until(&format!("{}.getAttribute('value') === 'Bell'", NAME), "the last key's echo");
+            let seen = b.eval("JSON.stringify(window.__seen)").as_str().unwrap_or("").to_string();
+            let seen: Vec<(String, Option<String>)> = serde_json::from_str(&seen).unwrap();
+            let echo = seen.iter().position(|(m, _)| m.contains("\"value\":\"B\"")).unwrap_or_else(|| panic!("the first key's echo came: {:?}", seen));
+            assert!(seen[echo + 1..].iter().all(|(_, v)| v.as_deref() == Some("Bell")), "no echo took a character away: {:?}", seen);
+            assert_eq!(state(&mut b, NAME), serde_json::json!([true, "Bell", 4]), "every key kept");
+            // Enter in the form: `add` empties the name, which the field shows
+            b.call("Input.dispatchKeyEvent", serde_json::json!({ "type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "text": "\r" }));
+            b.call("Input.dispatchKeyEvent", serde_json::json!({ "type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13 }));
+            b.until("document.body.innerText.indexOf('things: Bell') >= 0", "add's render");
+            assert_eq!(state(&mut b, NAME), serde_json::json!([true, "", 0]), "the field the program emptied, the focus in it");
+            let kinds = b.eval("window.__kinds.join(',')").as_str().unwrap_or("").to_string();
+            assert!(kinds.ends_with(",html"), "add's render came as the whole page: {}", kinds);
+            // a second Enter adds the empty name the page shows
+            b.call("Input.dispatchKeyEvent", serde_json::json!({ "type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "text": "\r" }));
+            b.call("Input.dispatchKeyEvent", serde_json::json!({ "type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13 }));
+            b.until("document.body.innerText.indexOf('things: Bell|') >= 0", "the second add");
+            // the program sets each field while it has the focus, by changes
+            for (el, typing, set) in [(NAME, "Wren", "Robin"), (NOTE, "hi", "a note"), (COUNT, "4", "7")] {
+                b.eval(&format!("{}.focus(); {}.select(); 1", el, el));
+                typed(&mut b, typing);
+                b.until(&format!("{0}.tagName === 'TEXTAREA' ? {0}.defaultValue === '{1}' : {0}.getAttribute('value') === '{1}'", el, typing), "the typing's echo");
+                assert_eq!(b.eval(&format!("{}.value", el)), serde_json::json!(typing));
+                b.eval("Array.from(document.querySelectorAll('button')).find(x => x.textContent === 'Fill').click(); 1");
+                b.until(&format!("{}.value === '{}'", el, set), "fill's value in the focused field");
+                let caret = if el == COUNT { serde_json::Value::Null } else { serde_json::json!(set.len()) };
+                assert_eq!(state(&mut b, el), serde_json::json!([true, set, caret]), "the program's value, the caret at its end");
+                let kinds = b.eval("window.__kinds.join(',')").as_str().unwrap_or("").to_string();
+                assert!(kinds.ends_with(",patches"), "fill's render came as changes: {}", kinds);
+                b.eval("Array.from(document.querySelectorAll('button')).find(x => x.textContent === 'Wipe').click(); 1");
+                let empty = if el == COUNT { "0" } else { "" };
+                b.until(&format!("{}.value === '{}'", el, empty), "wipe's value in the focused field");
+                assert_eq!(b.eval(&format!("document.activeElement === {}", el)), serde_json::json!(true));
+            }
+        })
+        .await
+        .unwrap();
+    }
+
     // ── values turns (one-view-design.md 3.5) ──────────────────────
 
     static V_PAGE: ViewSpec = ViewSpec { name: "v_page", facts: &["n", "m", "name"], always: None, bound: &["n", "name"] };
@@ -7065,7 +7275,8 @@ mod tests {
 
     /// Values in a real browser: each tick's `values` message sets the text,
     /// the attributes and the bound field the server set, and the page
-    /// shows what a render makes; a field being typed in keeps its draft.
+    /// shows what a render makes; a field being typed in keeps its draft,
+    /// and takes the value the program set once its typing was answered.
     /// `cargo test -p crow_web --features live,http the_browser_applies_values
     /// -- --ignored`
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -7127,9 +7338,24 @@ mod tests {
             assert_eq!(settle(&mut b, &want(6, 3)), want(6, 3), "after more");
             b.eval(&format!("{}1", INC));
             assert_eq!(settle(&mut b, &want(7, 3)), want(7, 3), "a tick after more");
+            // typed into and answered, the focused field takes the value the
+            // program sets it by values
+            b.eval("var f=document.querySelector('input');f.focus();f.select();1");
+            b.call("Input.insertText", serde_json::json!({ "text": "typed" }));
+            b.until("document.querySelector('input').getAttribute('value') === 'typed'", "the typing's echo");
+            b.eval(&format!("{}1", INC));
+            assert_eq!(settle(&mut b, &want(8, 3)), want(8, 3), "a tick over what was typed");
+            assert_eq!(
+                b.eval("var f=document.querySelector('input');[document.activeElement===f, f.value, f.selectionStart]"),
+                serde_json::json!([true, "v8", 2]),
+                "the program's value in the focused field, the caret at its end"
+            );
+            let seen = b.eval("window.__kinds.join(',')").as_str().unwrap_or("").to_string();
+            assert!(seen.ends_with(",values"), "the tick came as values: {}", seen);
+            b.eval("document.querySelector('input').blur();1");
             // a page knocked out of shape asks for the whole page, and recovers
             b.eval(&format!("var r=document.getElementById('crow-root').firstChild;r.firstChild.removeChild(r.firstChild.firstChild);{}1", INC));
-            assert_eq!(settle(&mut b, &want(8, 3)), want(8, 3), "after the whole page came back");
+            assert_eq!(settle(&mut b, &want(9, 3)), want(9, 3), "after the whole page came back");
         })
         .await
         .unwrap();

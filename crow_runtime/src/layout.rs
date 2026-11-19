@@ -1031,6 +1031,8 @@ p{margin:0.4rem 0}
 a{color:var(--crow-accent)}
 button{font:inherit;font-size:var(--crow-control-font);color:var(--crow-text);background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:var(--crow-control-pad);min-height:var(--crow-target);min-width:var(--crow-target);cursor:pointer;transition:border-color 120ms ease,background 120ms ease}
 button:hover{border-color:var(--crow-accent)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:disabled:hover{border-color:var(--crow-border)}
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--crow-accent);outline-offset:1px}
 @media (prefers-reduced-motion:reduce){button{transition:none}}
 label{color:var(--crow-muted);font-size:var(--crow-label-font);display:inline-flex;align-items:center;gap:0.5rem}

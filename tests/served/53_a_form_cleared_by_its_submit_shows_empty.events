@@ -1,0 +1,8 @@
+[{"open": "/"}, {"expect": "things: [] 0"},
+ {"event": "__field:name", "value": "B"}, {"event": "__field:name", "value": "Be"},
+ {"event": "__field:name", "value": "Bel"}, {"event": "__field:name", "value": "Bell"},
+ {"expect": "value=\"Bell\""},
+ {"event": "add"}, {"expect": "things: [Bell] 1"}, {"absent": "value=\"Bell\""}, {"expect": "value=\"\""},
+ {"event": "add"}, {"expect": "things: [Bell|] 2"}, {"expect": "value=\"\""},
+ {"event": "__field:name", "value": "Wren"}, {"expect": "value=\"Wren\""}, {"values": 1},
+ {"event": "add"}, {"expect": "things: [Bell||Wren] 3"}, {"expect": "value=\"\""}]

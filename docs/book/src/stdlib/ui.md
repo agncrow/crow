@@ -169,7 +169,7 @@ A route's handler reads each derivation it names once, as its request begins —
 
 `slider[label, var, min = 0, max = 100, step = 1]` is a range input bound to a reactive variable, exactly as `field` binds a text input. A handler reads the variable when the reader acts (a `Seek` button beside the scrubber).
 
-A bound input keeps its variable's type: text typed into a field bound to an integer becomes an integer (a float is truncated), a float variable gets a float, a bool variable gets a bool, and text that does not parse leaves a number alone. When a handler assigns to a bound variable, every field bound to it shows the new value on the next render; only the input the reader is typing in keeps its draft.
+A bound input keeps its variable's type: text typed into a field bound to an integer becomes an integer (a float is truncated), a float variable gets a float, a bool variable gets a bool, and text that does not parse leaves a number alone. When a handler assigns to a bound variable, every field bound to it shows the new value on the next render, the one the reader is typing in included: a form its submit clears (`name = ''`) shows its field empty, the focus still in it, the caret at the end of what the program set. Only typing the server has not yet answered is kept: a value that answers an earlier key while later keys are on their way is an echo, and the field keeps what the reader typed (the page numbers each message an input sends, and the server's answer names the last it applied).
 
 ### Handlers and their helpers
 

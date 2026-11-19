@@ -276,6 +276,24 @@ history says the rest.
 
 ### Fixed
 
+- A focused field shows the value its program set: a form its own submit
+  cleared (`name = ''` after Enter) had kept showing what was typed, so
+  the page and the program disagreed until the variable changed again,
+  and the next Enter sent the empty name the field did not show (met on a
+  number field bound to a count, a row written with 0 while the field
+  showed 4). The page now numbers each message a bound input sends, as it
+  numbered clicks, and a value the server sends the input with the focus
+  is the program's, and shown, when the server has answered every message
+  the page sent for that input, the value moved from what the last render
+  put there, and the reader typed nothing the server was not sent; else it
+  is an echo of typing still on its way and the reader's text stays, as
+  before. Where the program's value replaces the text, the caret goes to
+  its end. It holds for a whole page, for changes and for a values turn,
+  in a text field, a number field, a textarea and a select (served 53; the
+  loader's browser tests `a_focused_field_takes_the_value_its_program_set`
+  and `the_browser_applies_values`). A disabled button looks it: faded,
+  with a cursor that says no, and no hover (it had looked pressable).
+
 - A training loop on the GPU keeps its speed, a batch of matrix products
   is one run of the kernel, and positions the GPU cannot count are
   refused (2026-11-17, found training a model of 870,000 parameters,
