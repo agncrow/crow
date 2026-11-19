@@ -1806,7 +1806,9 @@ fn repl_check(stmts: &[ast::Stmt]) {
     let mut ctx = type_infer::TypeContext::new();
     ctx.infer_program(stmts);
 
-    let result = checker::run_check(stmts, &ctx, false);
+    // (a function the console defines is declared in no file: its answers
+    // are kept nowhere, where they had met a file's of the same name)
+    let result = checker::run_check(stmts, &ctx, false, &|_| None);
 
     if result.issues.is_empty() {
         println!("  \x1b[32m✓ all good\x1b[0m — {} functions checked, {} edge cases generated",
@@ -2042,6 +2044,14 @@ pub(crate) fn placed_in_part(fn_name: &str, msg: &str) -> Option<String> {
     Some(format!("{}: {}", parts[prefix], as_the_part_writes(&refined, prefix)))
 }
 
+/// The program the compiled test harness builds: the test blocks and what
+/// of the top level the interpreted test keeps (checker::declarations),
+/// each statement as written.
+fn test_program(stmts: Vec<ast::Stmt>) -> Vec<ast::Stmt> {
+    let kept = checker::declared_indices(&stmts);
+    stmts.into_iter().enumerate().filter(|(i, s)| matches!(s, ast::Stmt::TestBlock { .. }) || kept.contains(i)).map(|(_, s)| s).collect()
+}
+
 /// Transpile a .co file to Rust, compile it, and return the path to the binary.
 /// If `quiet` is true, suppress cargo build output (used for `crow run`).
 /// If `release` is true, compile with --release (optimized). Otherwise, use debug mode (fast compile).
@@ -2073,11 +2083,10 @@ fn transpile_and_compile(entry: &str, quiet: bool, resources: Resources, release
     // Testing). Built whole, the harness's program had run every top-level
     // line as it started — a write the interpreted test never made — and a
     // file read by a derivation was there compiled and not interpreted.
+    // (decided over the whole program, not a line at a time: a computed
+    // fact is kept by what the program's functions and facts are)
     let stmts = if TEST_CONTROL.load(std::sync::atomic::Ordering::SeqCst) {
-        stmts
-            .into_iter()
-            .filter(|s| matches!(s, ast::Stmt::TestBlock { .. }) || !checker::declarations(std::slice::from_ref(s)).is_empty())
-            .collect()
+        test_program(stmts)
     } else {
         stmts
     };
@@ -3904,7 +3913,7 @@ fn run_check_pipeline(filename: &str) -> checker::CheckResult {
     };
     let mut ctx = type_infer::TypeContext::new();
     ctx.infer_program(&stmts);
-    let mut result = checker::run_check(&stmts, &ctx, false);
+    let mut result = checker::run_check(&stmts, &ctx, false, &|name| Some(declaring_file(filename, name)));
 
     // The app baseline: what the program does, derived from the lowered
     // program and diffed against what was accepted (app-baseline-design.md)
@@ -4199,6 +4208,22 @@ pub(crate) fn part_without_ui(name: &str) -> bool {
 fn file_of_declaration(name: &str) -> Option<String> {
     let prefix = part_prefix_of_declaration(name)?;
     EXPANSION_PARTS.with(|p| p.borrow().get(&prefix).cloned())
+}
+
+/// The file a function is declared in — its part's, by the prefix its
+/// name carries, or the entry's — by its path from the directory the
+/// check runs in, whose `.crow/` the snapshot store is (a file outside it
+/// by its whole path): what the store keeps the function's answers under
+/// (checker::snapshot_path), as the baseline keeps the entry's.
+fn declaring_file(entry: &str, name: &str) -> String {
+    let file = part_prefix_of_declaration(name)
+        .and_then(|prefix| EXPANSION_FILES.with(|f| f.borrow().get(&prefix).cloned()))
+        .or_else(|| std::fs::canonicalize(entry).ok());
+    let here = std::env::current_dir().ok().and_then(|d| std::fs::canonicalize(d).ok());
+    match (file, here) {
+        (Some(file), Some(here)) => file.strip_prefix(&here).unwrap_or(&file).display().to_string(),
+        _ => entry.to_string(),
+    }
 }
 
 /// `crow check --show`: the app as a tree; `--show name`: one declaration's
@@ -7043,8 +7068,8 @@ mod validation_gate_tests {
         let it = ir_interp::run_to_serve(&program, &ctx.registry, "app.co").unwrap();
         // every page, in order (the last alone had been served)
         assert_eq!(it.pages, vec![
-            ("/".to_string(), "render".to_string(), vec!["n".to_string()]),
-            ("/n/:n".to_string(), "render".to_string(), vec![]),
+            ("/".to_string(), "render".to_string(), vec!["n".to_string()], None),
+            ("/n/:n".to_string(), "render".to_string(), vec![], None),
         ]);
         let serve = it.serve_config.clone().expect("serve recorded");
         assert_eq!(serve.len(), 11, "the lowered serve: port, refresh, budget, theme, density, accent, wide, keep, uploads, cors, files");
@@ -8085,5 +8110,31 @@ mod compile_error_translation_tests {
         assert!(out.starts_with("error[E0382]: borrow of moved value: `x`\n  --> src/main.rs:65:32\n"), "{}", out);
         assert!(out.lines().last().is_some_and(|l| l.contains("a bug in Crow, not in this program")), "{}", out);
         assert_eq!(super::translate_rust_compile_error("error: this operation will panic at runtime\nattempt to divide `1_i64` by zero"), "error: cannot divide by zero");
+    }
+}
+
+#[cfg(test)]
+mod compiled_test_program_tests {
+    use super::*;
+
+    /// The program `crow test --compiled` builds keeps the top level the
+    /// interpreted test keeps (checker::declarations): a computed fact
+    /// too, decided over the whole program. Asked a line at a time it had
+    /// found no function, no `use ui` and no fact before it, and dropped
+    /// `a = pick[...]`, `b = a`, `c = kept['x']`: a handler writing one
+    /// stopped, `undefined variable 'd'` (tests/computed_fact_harness.co).
+    #[test]
+    fn the_compiled_test_program_keeps_what_the_interpreted_test_keeps() {
+        let src = "use web, ui\n\nfn pick[m, col, default]\n    if col in m\n        return m[col]\n    return default\n\nkept = map[x = '7']\na = pick[kept, 'x', '5']\nb = a\nc = kept['x']\nmade = write['y.txt', 'z']\nshout = upper['hi']\n\nfn bump[]\n    a = '!'\n\nview render[]\n    return p['`a` `b` `c`']\n\npage['/', render]\nserve[3584]\n\ntest t[]\n    x = app[render]\n";
+        let stmts = build(src).unwrap();
+        let names = |stmts: &[ast::Stmt]| -> Vec<String> {
+            stmts.iter().filter_map(|s| if let ast::Stmt::Assign { name, .. } = s { Some(name.clone()) } else { None }).collect()
+        };
+        let program = test_program(stmts.clone());
+        assert_eq!(names(&program), names(&checker::declarations(&stmts)));
+        assert_eq!(names(&program), ["kept", "a", "b", "c", "shout"].map(String::from).to_vec());
+        assert!(program.iter().any(|s| matches!(s, ast::Stmt::TestBlock { .. })));
+        // (top-level code a test never runs stays out: the write, the serve)
+        assert!(!program.iter().any(|s| matches!(s, ast::Stmt::ExprStmt(ast::Expr::Call { callee, .. }) if matches!(callee.as_ref(), ast::Expr::Ident(n) if n == "serve"))));
     }
 }

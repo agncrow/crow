@@ -1,0 +1,1 @@
+[{"open": "/?day=mon"}, {"expect": "day mon, opened 1, count 0"}, {"event": "bump"}, {"expect": "day mon, opened 1, count 1"}, {"event": "bump"}, {"expect": "day mon, opened 1, count 2"}, {"open": "/"}, {"expect": "no day, opened 1, count 0"}, {"open": "/other"}, {"expect": "other: no day, opened 1"}]

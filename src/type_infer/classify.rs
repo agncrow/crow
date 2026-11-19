@@ -254,6 +254,55 @@ impl TypeContext {
                     }
                 }
             }
+            // a page's init (`page[…, init = f]`, a fourth argument once
+            // lowered) runs as a handler on the session opening the page,
+            // and a test's `app[view, init = f]` as the page does: wherever
+            // the call is — the top level, a function registering pages
+            // (Myna's), a test
+            fn collect_init_handlers(stmts: &[Stmt], out: &mut std::collections::BTreeSet<String>) {
+                fn walk(e: &Expr, out: &mut std::collections::BTreeSet<String>) {
+                    if let Expr::Call { callee, args } = e {
+                        // (the page's fourth argument, as the lowering
+                        // makes it; the app's, as its row declares it)
+                        if matches!(callee.as_ref(), Expr::Ident(n) if n == "page")
+                            && args.len() == 4
+                            && let Expr::Ident(f) = &args[3]
+                        {
+                            out.insert(f.clone());
+                        }
+                        for (f, _) in crate::lower::event_handlers(callee, args) {
+                            out.insert(f.to_string());
+                        }
+                        for a in args {
+                            walk(a, out);
+                        }
+                    }
+                }
+                for st in stmts {
+                    match st {
+                        Stmt::ExprStmt(e) | Stmt::Return(Some(e)) => walk(e, out),
+                        Stmt::Assign { value, .. } => walk(value, out),
+                        Stmt::TestBlock { body, .. } | Stmt::FnDecl { body, .. } => collect_init_handlers(body, out),
+                        Stmt::If { then_body, else_body, .. } => {
+                            collect_init_handlers(then_body, out);
+                            if let Some(eb) = else_body {
+                                collect_init_handlers(eb, out);
+                            }
+                        }
+                        Stmt::For { body, .. } | Stmt::While { body, .. } => collect_init_handlers(body, out),
+                        _ => {}
+                    }
+                }
+            }
+            {
+                let mut opened = std::collections::BTreeSet::new();
+                collect_init_handlers(stmts, &mut opened);
+                for h in opened {
+                    if self.functions.contains_key(&h) {
+                        handlers.insert(h);
+                    }
+                }
+            }
             // click[a, f] inside a test block names f as a handler, and
             // click[a, f[x]] too, with the arguments it is given: the harness
             // drives handlers, so they get the reactive exemption, and a

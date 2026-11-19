@@ -55,7 +55,8 @@ fn dispatch(name: &str, args: &[CrowValue], trace: &str) -> Result<CrowValue, St
                     Value::Fraction(_) => "fraction".to_string(),
                     Value::Float(_) => "float".to_string(),
                     Value::Moment(_) => "moment".to_string(),
-                    Value::Str(_) => "str".to_string(),
+                    // (a node is its markup: text, as it had been)
+                    Value::Str(_) | Value::Node(_) => "str".to_string(),
                     Value::Bool(_) => "bool".to_string(),
                     Value::Array(_) | Value::NumArray(_) => "array".to_string(),
                     Value::IntMap(_) => "map".to_string(),
@@ -300,6 +301,8 @@ pub fn crow_to_json(trace: &str, val: &CrowValue) -> Result<serde_json::Value, S
         Value::Float(f) => Ok(crow_runtime::json::float_to_json(*f)),
         Value::Moment(m) => Ok(serde_json::Value::String(m.to_string())),
         Value::Str(s) => Ok(serde_json::Value::String(s.clone())),
+        // a node encodes as its markup
+        Value::Node(n) => Ok(serde_json::Value::String(crate::ops::tree::html(n))),
         Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
         Value::Array(items) => {
             let arr: Result<Vec<serde_json::Value>, String> = items.iter().map(|v| crow_to_json(trace, v)).collect();

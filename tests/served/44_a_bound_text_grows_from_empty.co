@@ -1,0 +1,16 @@
+--- A bound text that starts empty, and one written with an escape, as
+--- the page holds them: an empty text is no node in the browser's page,
+--- so its first value comes as a render's change; a text with an `&` in
+--- it is set as the text it reads, and set again from there.
+use web, ui
+
+said = ''
+
+fn say[t]
+    said = '`said``t`'
+
+view render[]
+    return stack[p['`said`'], button['go', click = say['x&y']]]
+
+page['/', render]
+serve[3592]

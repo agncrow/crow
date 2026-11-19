@@ -1,0 +1,6 @@
+[{"open": "/"}, {"expect": "first 1"},
+ {"event": "show_two"}, {"expect": "other 1"}, {"views": {"ran": 2, "kept": 0}},
+ {"event": "show_one"}, {"expect": "second 1"}, {"views": {"ran": 1, "kept": 1}},
+ {"event": "show_two"}, {"expect": "other 1"}, {"views": {"ran": 1, "kept": 1}},
+ {"event": "bump_a"},
+ {"event": "show_one"}, {"expect": "first 2"}, {"views": {"ran": 1, "kept": 1}}]

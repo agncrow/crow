@@ -3,11 +3,13 @@
 /// Speaks the Language Server Protocol over stdio. One in-memory document
 /// store; every change re-runs the same pipeline the compiler runs and pushes
 /// diagnostics. Features answered from the last good analysis: completion,
-/// hover, go-to-definition, document symbols. Database hazards from db_check
+/// hover, go-to-definition, document symbols, and each name's kind for the
+/// editor to colour it by (semantic tokens). Database hazards from db_check
 /// appear as warnings when the workspace crowfile sets `db = '…'`.
 
 pub mod analysis;
 pub mod features;
+pub mod semantic;
 
 use lsp_server::{Connection, Message, Notification as ServerNotification, Response};
 use lsp_types::notification::{
@@ -39,25 +41,9 @@ pub fn run_server() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     // (the editor's output pane for the server says which crow answers)
     eprintln!("crow lsp: crow {}", version);
     let (connection, io_threads) = Connection::stdio();
-    let capabilities = ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
-        completion_provider: Some(Default::default()),
-        signature_help_provider: Some(lsp_types::SignatureHelpOptions {
-            trigger_characters: Some(vec!["[".into(), ",".into()]),
-            retrigger_characters: None,
-            work_done_progress_options: Default::default(),
-        }),
-        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
-        definition_provider: Some(OneOf::Left(true)),
-        references_provider: Some(OneOf::Left(true)),
-        document_symbol_provider: Some(OneOf::Left(true)),
-        code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
-        rename_provider: Some(OneOf::Right(lsp_types::RenameOptions { prepare_provider: Some(true), work_done_progress_options: Default::default() })),
-        ..Default::default()
-    };
     let (id, init_params) = connection.initialize_start()?;
     let result = lsp_types::InitializeResult {
-        capabilities,
+        capabilities: capabilities(),
         server_info: Some(lsp_types::ServerInfo { name: "crow".into(), version: Some(version) }),
     };
     connection.initialize_finish(id, serde_json::to_value(result)?)?;
@@ -72,6 +58,35 @@ pub fn run_server() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     drop(connection);
     io_threads.join()?;
     Ok(())
+}
+
+/// What the server answers, as it tells the client when the session starts.
+fn capabilities() -> ServerCapabilities {
+    ServerCapabilities {
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        completion_provider: Some(Default::default()),
+        signature_help_provider: Some(lsp_types::SignatureHelpOptions {
+            trigger_characters: Some(vec!["[".into(), ",".into()]),
+            retrigger_characters: None,
+            work_done_progress_options: Default::default(),
+        }),
+        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+        definition_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
+        rename_provider: Some(OneOf::Right(lsp_types::RenameOptions { prepare_provider: Some(true), work_done_progress_options: Default::default() })),
+        // each name's kind, the whole document at a time (a document is
+        // analysed whole on every change, so a range or a delta would save
+        // the wire a few bytes and the server nothing)
+        semantic_tokens_provider: Some(lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(lsp_types::SemanticTokensOptions {
+            work_done_progress_options: Default::default(),
+            legend: semantic::legend(),
+            range: None,
+            full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
+        })),
+        ..Default::default()
+    }
 }
 
 pub(crate) struct State {
@@ -419,6 +434,23 @@ fn handle_request(state: &State, req: lsp_server::Request) -> Response {
                 None => Response::new_ok(req.id, serde_json::Value::Null),
             }
         }
+        lsp_types::request::SemanticTokensFullRequest::METHOD => {
+            let p: lsp_types::SemanticTokensParams = match serde_json::from_value(req.params) {
+                Ok(p) => p,
+                Err(e) => return Response::new_err(req.id, -32602, e.to_string()),
+            };
+            match state.docs.get(p.text_document.uri.as_str()) {
+                None => Response::new_ok(req.id, serde_json::Value::Null),
+                // a document that does not lex names nothing yet: the
+                // client keeps the colours it has (ContentModified, which a
+                // client shows no one), and asks again as the text changes
+                Some(a) if semantic::unlexed(a) => Response::new_err(req.id, -32801, "the document does not lex yet: its last colours stand".into()),
+                Some(a) => Response::new_ok(
+                    req.id,
+                    lsp_types::SemanticTokensResult::Tokens(lsp_types::SemanticTokens { result_id: None, data: semantic::tokens(a) }),
+                ),
+            }
+        }
         _ => Response::new_err(
             req.id,
             -32601, // MethodNotFound
@@ -528,6 +560,60 @@ mod tests {
             .sender
             .send(Message::Notification(N::new("exit".into(), serde_json::Value::Null)))
             .unwrap();
+        server.join().unwrap();
+    }
+
+    /// The editor asks each name's kind over the wire: the legend comes
+    /// with the server's capabilities, the names as five numbers each, and
+    /// a document that stops lexing is answered ContentModified, so the
+    /// editor keeps the colours it has
+    #[test]
+    fn semantic_tokens_over_the_wire() {
+        let caps = serde_json::to_value(capabilities()).unwrap();
+        let provider = &caps["semanticTokensProvider"];
+        assert_eq!(provider["legend"]["tokenTypes"], serde_json::json!(["namespace", "struct", "parameter", "variable", "property", "function", "keyword"]));
+        assert_eq!(provider["legend"]["tokenModifiers"], serde_json::json!(["declaration", "readonly", "defaultLibrary"]));
+        assert_eq!(provider["full"], serde_json::json!(true));
+
+        let (server_conn, client_conn) = Connection::memory();
+        let server = std::thread::spawn(move || {
+            let init = server_conn.initialize(serde_json::to_value(capabilities()).unwrap()).unwrap();
+            main_loop(&server_conn, init, None).unwrap();
+        });
+        let send = |m: Message| client_conn.sender.send(m).unwrap();
+        send(Message::Request(R::new(RequestId::from(1), "initialize".into(), serde_json::json!({"capabilities": {}}))));
+        let _ = client_conn.receiver.recv().unwrap();
+        send(Message::Notification(N::new("initialized".into(), serde_json::json!({}))));
+        // (the diagnostics each change publishes come first)
+        let ask = |id: i32| -> Response {
+            let params = serde_json::json!({"textDocument": {"uri": "file:///demo.co"}});
+            send(Message::Request(R::new(RequestId::from(id), lsp_types::request::SemanticTokensFullRequest::METHOD.into(), params)));
+            loop {
+                if let Message::Response(r) = client_conn.receiver.recv().unwrap() {
+                    return r;
+                }
+            }
+        };
+        let text = "fn double[x]\n    x * 2\n\nlog[double[3]]\n";
+        send(Message::Notification(N::new(
+            DidOpenTextDocument::METHOD.into(),
+            serde_json::json!({"textDocument": {"uri": "file:///demo.co", "languageId": "crow", "version": 1, "text": text}}),
+        )));
+        let result = ask(2).response_result.expect("the names of a document that lexes");
+        // `double` declared, `x` declared, `x` read, the builtin `log`,
+        // `double` called: line and start from the one before, length,
+        // type, modifiers
+        assert_eq!(result["data"], serde_json::json!([0, 3, 6, 5, 1, 0, 7, 1, 2, 1, 1, 4, 1, 2, 0, 2, 0, 3, 5, 4, 0, 4, 6, 5, 0]));
+
+        send(Message::Notification(N::new(
+            DidChangeTextDocument::METHOD.into(),
+            serde_json::json!({"textDocument": {"uri": "file:///demo.co", "version": 2}, "contentChanges": [{"text": "x = 'never closed\n"}]}),
+        )));
+        assert_eq!(ask(3).response_result.err().map(|e| e.code), Some(-32801));
+
+        send(Message::Request(R::new(RequestId::from(4), "shutdown".into(), serde_json::Value::Null)));
+        while !matches!(client_conn.receiver.recv().unwrap(), Message::Response(_)) {}
+        send(Message::Notification(N::new("exit".into(), serde_json::Value::Null)));
         server.join().unwrap();
     }
 

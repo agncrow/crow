@@ -199,11 +199,11 @@ impl Ty {
     /// Whether markup is anywhere in the type: two call signatures that
     /// differ only here are two specializations (a view given markup, and
     /// the same view given text).
-    pub fn has_markup(&self) -> bool {
+    pub fn hinto_markup(&self) -> bool {
         match self {
             Ty::Markup => true,
-            Ty::List(t) | Ty::Map(_, t) | Ty::Result(t) => t.has_markup(),
-            Ty::Fn(p, r) => p.iter().any(|t| t.has_markup()) || r.has_markup(),
+            Ty::List(t) | Ty::Map(_, t) | Ty::Result(t) => t.hinto_markup(),
+            Ty::Fn(p, r) => p.iter().any(|t| t.hinto_markup()) || r.hinto_markup(),
             _ => false,
         }
     }
@@ -1808,7 +1808,7 @@ impl TypeContext {
             };
             !matches!((rows(x), rows(y)), (Some(a), Some(b)) if a != b)
         };
-        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.has_markup() == y.has_markup() && frames_alike(x, y) && cells_alike(x, y) && rows_alike(x, y) && Self::items_alike(x, y))
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.compatible(y) && ranks_agree(x, y) && x.hinto_markup() == y.hinto_markup() && frames_alike(x, y) && cells_alike(x, y) && rows_alike(x, y) && Self::items_alike(x, y))
     }
 
     /// Whether two collections' items are alike where an int meets a
@@ -1986,7 +1986,7 @@ fn reaching(t: &Ty) -> Ty {
 
 /// Every expression of the statements, inner ones too, with the function
 /// each lies in (a test's or a derivation's body lies in none).
-fn each_expr<'a>(stmts: &'a [Stmt], within: Option<&'a str>, f: &mut dyn FnMut(&'a Expr, Option<&'a str>)) {
+pub(crate) fn each_expr<'a>(stmts: &'a [Stmt], within: Option<&'a str>, f: &mut dyn FnMut(&'a Expr, Option<&'a str>)) {
     fn expr<'a>(e: &'a Expr, within: Option<&'a str>, f: &mut dyn FnMut(&'a Expr, Option<&'a str>)) {
         f(e, within);
         match e {

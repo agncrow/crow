@@ -1,0 +1,20 @@
+--- A growing int, a decimal and a moment shown in a view's places — as a
+--- child, in a span, through a local and a parameter — show one way in
+--- both modes, as the bound places a served page sets show them
+--- (one-view-design.md 3.5): `floor[…]` of a float, an int past 64 bits,
+--- a negative one, a decimal's scale, a moment's instant.
+use ui
+
+view head[s]
+    return row[p['head `s`'], p[s]]
+
+view shown[x, big, d, at]
+    t = floor[x]
+    return stack[p[t], p['big `big`'], p[big], p['price `d`'], p['at `at`'], head[t]]
+
+fn show[]
+    for x in [0.0, 1.5, -2.5, 100000000000000000000.0]
+        big = 9223372036854775000 + int[x] * 1000
+        log[str[shown[x, big, decimal[int[x]] / decimal[4], moment[float[int[x] % 86400] * 60.0]]]]
+
+show[]

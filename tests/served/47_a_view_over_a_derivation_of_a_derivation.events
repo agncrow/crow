@@ -1,0 +1,5 @@
+[{"open": "/"}, {"expect": "at 0 s"},
+ {"event": "tick"}, {"expect": "at 10 s"}, {"values": 1},
+ {"event": "tick"}, {"expect": "at 20 s"}, {"values": 1},
+ {"event": "tick"}, {"expect": "at 30 s"}, {"expect": "band late"}, {"views": {"ran": 2, "kept": 1}},
+ {"event": "tick"}, {"expect": "at 40 s"}, {"values": 1}]

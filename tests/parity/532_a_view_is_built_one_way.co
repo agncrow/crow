@@ -1,0 +1,43 @@
+--- A view is built by one builder in both modes: the newline that opens
+--- a pre or a textarea is kept, a computed class joins the element's own
+--- as the layout table joins them, a table of a frame keeps its options,
+--- every event is wired (change too), a held call is wired outside a
+--- served page, and a text is no handler.
+
+use ui, frame
+
+fn pick[x]
+    log[x]
+
+view pre_text[t]
+    return pre[t]
+
+view area[t]
+    return textarea[t, rows = 3]
+
+view classed[c]
+    return row[p['x'], class = c, surface = 'card']
+
+view framed[f, c]
+    return table[f, class = c, click = pick, key = 'sym']
+
+view changes[]
+    return input[type = 'checkbox', change = pick]
+
+view held[]
+    return button['+', click = pick[3], confirm = 'Sure?']
+
+view string_click[]
+    return button['+', click = 'pick']
+
+fn show[]
+    f = frame.new[sym = ['A', 'B'], px = [1.5, 2.0]]
+    log[str[pre_text['\nkept']]]
+    log[str[area['\nkept']]]
+    log[str[classed['x']]]
+    log[str[framed[f, 'wide']]]
+    log[str[changes[]]]
+    log[str[held[]]]
+    log[str[string_click[]]]
+
+show[]

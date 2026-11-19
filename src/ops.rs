@@ -9,6 +9,10 @@ use crate::value::*;
 use crow_runtime::mask::Cmp;
 use crow_runtime::stops;
 use crow_runtime::tensor::CrowTensor;
+/// The view's tree (one-view-design.md 3.1): the one builder a view's
+/// elements and controls are made by, and its renderers — the interpreter
+/// reaches it here.
+pub(crate) use crow_web::view::tree;
 
 pub fn binop(
     left: &CrowValue,
@@ -21,6 +25,10 @@ pub fn binop(
     }
     if right.is_error() {
         return Ok(right.clone());
+    }
+    // a node is its markup to an operator, as it is wherever text is taken
+    if matches!(left.value, Value::Node(_)) || matches!(right.value, Value::Node(_)) {
+        return binop(&left.clone().into_markup(), op, &right.clone().into_markup());
     }
 
     let l = &left.value;
@@ -400,6 +408,7 @@ fn mask_cell(v: &Value) -> crow_runtime::mask::Cell<'_> {
         Value::Fraction(_) => Cell::Other("a fraction"),
         Value::Float(x) | Value::Dual(x, _) => Cell::Number(*x),
         Value::Str(s) => Cell::Text(s),
+        Value::Node(_) => Cell::Other("a view"),
         Value::Bool(b) => Cell::Bool(*b),
         Value::Moment(m) => Cell::Moment(m.ms),
         Value::Array(_) | Value::NumArray(_) => Cell::Other("a list"),
@@ -769,6 +778,8 @@ pub fn values_equal(a: &CrowValue, b: &CrowValue) -> bool {
         (Value::Dual(x, _), Value::Int(y)) => *x == (*y as f64),
         (Value::Int(x), Value::Dual(y, _)) => (*x as f64) == *y,
         (Value::Str(x), Value::Str(y)) => x == y,
+        // a node compares as its markup
+        (Value::Node(_), _) | (_, Value::Node(_)) => values_equal(&a.clone().into_markup(), &b.clone().into_markup()),
         (Value::Bool(x), Value::Bool(y)) => x == y,
         // (two moments are equal by instant; a list of them had compared
         // false item by item, where the compiled column compared true)
@@ -1203,252 +1214,143 @@ pub fn iter_items(iter_val: &CrowValue) -> Result<Vec<CrowValue>, String> {
     }
 }
 
-/// A view element rendered to markup from its evaluated arguments: an
-/// attribute map (scalar entries are attributes, event keys are wiring),
-/// markup children that pass through, text children escaped, a list that
-/// contributes each item, a frame that is a table's rows; layout
-/// attributes go through the kernel's table (crow_runtime::layout).
+/// A page's view as the page's nodes, by the one renderer, with the
+/// runtime's toast as the root's last child where a test's page shows one;
+/// a view that answers text is that text's markup.
+pub fn page_nodes(page: &CrowValue, notice: Option<&str>) -> tree::CrowVNode {
+    use tree::CrowVNode;
+    let nodes = match &page.value {
+        Value::Node(n) => tree::vnode(n),
+        Value::Str(s) => CrowVNode::raw(s),
+        other => CrowVNode::raw(&format!("{}", other)),
+    };
+    let Some(text) = notice else { return nodes };
+    match nodes {
+        CrowVNode::Element { tag, attrs, mut children } if !crow_runtime::layout::VOID.contains(&tag.to_ascii_lowercase().as_str()) => {
+            children.push(CrowVNode::raw(&notice_markup(text)));
+            CrowVNode::Element { tag, attrs, children }
+        }
+        other => CrowVNode::raw(&with_notice(other.to_html(), text)),
+    }
+}
+
+/// A page's view as its tree, for the live runtime: a view that answers
+/// text is that text's markup.
+pub fn page_node(page: CrowValue) -> tree::Node {
+    match page.value {
+        Value::Node(n) => std::sync::Arc::try_unwrap(n).unwrap_or_else(|n| (*n).clone()),
+        Value::Str(s) => tree::Node::Markup(s),
+        other => tree::Node::Markup(format!("{}", other)),
+    }
+}
+
+/// The runtime's toast as markup.
+fn notice_markup(text: &str) -> String {
+    format!("<div class=\"crow-notice\" role=\"status\">{}</div>", crate::harness::html_escape_text(text))
+}
+
+/// The runtime's toast written into a page's markup: before the root's
+/// end tag, or beside a page that has none.
+pub fn with_notice(html: String, text: &str) -> String {
+    let toast = notice_markup(text);
+    match html.rfind("</") {
+        Some(i) if html.ends_with('>') => format!("{}{}{}", &html[..i], toast, &html[i..]),
+        _ => format!("<div>{}{}</div>", html, toast),
+    }
+}
+
+/// A view's element as the one builder makes it (`tree`),
+/// from its evaluated options and children: the values read into what the
+/// builder takes, which decides what each is to the element.
+/// The places that are bindings (derive::bind_sites) are given as `binds`.
+pub fn view_element_bound(name: &str, attrs: &std::collections::BTreeMap<String, CrowValue>, children: &[CrowValue], tables: tree::TableState, binds: &[(tree::BindAt<'_>, u32)]) -> Result<tree::Node, String> {
+    if name == "widget" {
+        return Ok(view_widget(attrs, children));
+    }
+    let options = attrs.iter().map(|(k, v)| (k.clone(), given_option(v))).collect();
+    tree::element_bound(name, options, children.iter().map(given_child).collect(), tables, binds)
+}
+
+/// A binding's value computed again (a values turn's): a child's as the
+/// builder places it, an option's as it keeps it.
+pub fn bound_value(v: &CrowValue, option: bool) -> Option<tree::Bound> {
+    if option { tree::Bound::of_option(given_option(v)) } else { tree::Bound::of_child(given_child(v)) }
+}
+
+/// An option's value as the builder takes it: by what it holds (a missing
+/// cell's placeholder is a value an option shows), a handler by its name,
+/// a held call with the arguments it froze as the page sends them back.
+fn given_option(v: &CrowValue) -> tree::Given {
+    use tree::Given;
+    match &v.value {
+        Value::Str(s) => Given::Text(s.clone()),
+        Value::Int(n) => Given::Int(*n),
+        Value::Float(x) => Given::Float(*x),
+        Value::Bool(b) => Given::Bool(*b),
+        Value::Fn(f) => Given::Handler(f.name.clone()),
+        Value::Array(items) => match items.first().map(|i| &i.value) {
+            Some(Value::Fn(f)) => Given::Call(f.name.clone(), items[1..].iter().map(|i| crate::builtins::crow_to_json("", i).unwrap_or(serde_json::Value::Null)).collect()),
+            _ => Given::List(items.iter().map(given_option).collect()),
+        },
+        Value::Map(m) => Given::Map(m.iter().map(|(k, v)| (k.clone(), given_option(v))).collect()),
+        other => Given::Shown(format!("{}", other)),
+    }
+}
+
+/// A child as the builder takes it: a value that failed as its reason (an
+/// item of a list too: a column's missing cell), a node, markup, a list
+/// item by item, a frame (a table's rows), text; anything else as it shows.
+fn given_child(v: &CrowValue) -> tree::Given {
+    use tree::Given;
+    if v.is_error() {
+        return Given::Failed(v.reason().to_string());
+    }
+    match &v.value {
+        Value::Node(n) => Given::Node(n.clone()),
+        Value::Str(s) if v.is_markup() => Given::Markup(s.clone()),
+        Value::Str(s) => Given::Text(s.clone()),
+        Value::Array(items) => Given::List(items.iter().map(given_child).collect()),
+        Value::Frame(f) => Given::Frame(f.clone()),
+        other => Given::Shown(format!("{}", other)),
+    }
+}
+
 /// `widget[name, props = value, on = map[event = handler]]`: the element the
-/// program's own module draws — one shape for both modes.
-fn render_widget(vals: &[CrowValue]) -> String {
-    let mut module = String::new();
+/// program's own module draws — one shape for both modes. Props that failed
+/// show the reason in the widget's place, as a control shows a failed
+/// argument.
+fn view_widget(attrs: &std::collections::BTreeMap<String, CrowValue>, children: &[CrowValue]) -> tree::Node {
     let mut props = serde_json::Value::Null;
     let mut on: Vec<(String, String)> = Vec::new();
-    for v in vals {
-        match &v.value {
-            Value::Map(m) => {
-                for (k, val) in m.iter() {
-                    match (k.as_str(), &val.value) {
-                        // props that failed: the widget shows the reason in
-                        // its place, as a control shows a failed argument
-                        ("props", _) if val.is_error() => {
-                            return crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&val.reason()));
-                        }
-                        ("props", _) => props = crate::builtins::crow_to_json("", val).unwrap_or(serde_json::Value::Null),
-                        ("on", Value::Map(evs)) => {
-                            for (event, h) in evs.iter() {
-                                if let Value::Fn(f) = &h.value {
-                                    on.push((event.clone(), f.name.clone()));
-                                }
-                            }
-                        }
-                        _ => {}
+    for (k, val) in attrs.iter() {
+        match (k.as_str(), &val.value) {
+            ("props", _) if val.is_error() => return tree::failed(val.reason()),
+            ("props", _) => props = crate::builtins::crow_to_json("", val).unwrap_or(serde_json::Value::Null),
+            ("on", Value::Map(evs)) => {
+                for (event, h) in evs.iter() {
+                    if let Value::Fn(f) = &h.value {
+                        on.push((event.clone(), f.name.clone()));
                     }
                 }
             }
-            Value::Str(s) => module = s.clone(),
             _ => {}
         }
     }
-    let pairs: Vec<(&str, &str)> = on.iter().map(|(e, h)| (e.as_str(), h.as_str())).collect();
-    crow_web::view::CrowVNode::widget(&module, &props, &pairs).to_html()
+    let mut module = String::new();
+    for v in children {
+        if let Value::Str(s) = &v.value {
+            module = s.clone();
+        }
+    }
+    tree::widget(&module, props, on)
 }
 
-pub fn render_element(name: &str, vals: &[CrowValue]) -> Result<String, String> {
-    if name == "widget" {
-        return Ok(render_widget(vals));
-    }
-    // markup a view, an element or `doc` made is placed as markup; every
-    // other string is text, escaped, whatever it holds
-    fn splice(inner: &mut String, items: &[CrowValue]) {
-        for it in items {
-            // (an item that failed — a column's missing cell — shows as a
-            // failed value does: it had shown its placeholder, `0`)
-            if it.is_error() {
-                inner.push_str(&crow_web::core::response::failed_in_view(&it.reason()));
-                continue;
-            }
-            match &it.value {
-                Value::Str(s) if it.is_markup() => inner.push_str(s),
-                Value::Array(nested) => splice(inner, nested),
-                other => inner.push_str(&crate::harness::html_escape_text(&format!("{}", other))),
-            }
-        }
-    }
-    let mut inner = String::new();
-    let mut attrs: Vec<(String, String)> = Vec::new();
-    let (mut table_click, mut table_key, mut table_mark): (Option<String>, Option<String>, Option<String>) = (None, None, None);
-    let mut table_delta: Vec<String> = Vec::new();
-    let mut table_actions: Vec<(String, String)> = Vec::new();
-    let mut table_hide: Vec<String> = Vec::new();
-    let mut table_confirm: Vec<(String, String)> = Vec::new();
-    // table[frame, page = 50]: the page size, and — from the session the
-    // interpreter renders for — which paged table this is and its page
-    let (mut table_page, mut page_index, mut page_at): (Option<i64>, usize, usize) = (None, 0, 0);
-    // table[frame, sort = true]: which sorted table this is, and its order
-    let (mut table_sort, mut sort_index, mut sort_by, mut sort_desc): (bool, usize, Option<String>, bool) = (false, 0, None, false);
-    // the wiring, as the compiled page writes it: the handler a click, an
-    // input or a form calls, and the arguments a click froze
-    let mut events: Vec<(String, String)> = Vec::new();
-    let mut confirm: Option<String> = None;
-    for (at, v) in vals.iter().enumerate() {
-        if v.is_error() {
-            // a view renders what it is given: a failed value shows an id
-            // the server's log has its reason under
-            inner.push_str(&crow_web::core::response::failed_in_view(&v.reason()));
-            continue;
-        }
-        match &v.value {
-            // (the element's own attributes come first; a map among its
-            // children is text, as any value is — it had been read as
-            // attributes, which the compiled program did not build)
-            Value::Map(m) if at == 0 => {
-                for (k, val) in m.iter() {
-                    if name == "table" {
-                        match (k.as_str(), &val.value) {
-                            ("click", Value::Fn(f)) => {
-                                table_click = Some(f.name.clone());
-                                continue;
-                            }
-                            ("key", Value::Str(s)) => {
-                                table_key = Some(s.clone());
-                                continue;
-                            }
-                            ("mark", Value::Str(s)) => {
-                                table_mark = Some(s.clone());
-                                continue;
-                            }
-                            ("delta", Value::Array(items)) => {
-                                table_delta = items.iter().map(|i| format!("{}", i.value)).collect();
-                                continue;
-                            }
-                            ("actions", Value::Map(acts)) => {
-                                table_actions = acts
-                                    .iter()
-                                    .filter_map(|(label, h)| if let Value::Fn(hf) = &h.value { Some((label.clone(), hf.name.clone())) } else { None })
-                                    .collect();
-                                continue;
-                            }
-                            ("hide", Value::Array(items)) => {
-                                table_hide = items.iter().map(|i| format!("{}", i.value)).collect();
-                                continue;
-                            }
-                            ("confirm", Value::Map(texts)) => {
-                                table_confirm = texts.iter().map(|(label, t)| (label.clone(), format!("{}", t.value))).collect();
-                                continue;
-                            }
-                            ("page", Value::Int(n)) => {
-                                table_page = Some(*n);
-                                continue;
-                            }
-                            ("__page_index", Value::Int(n)) => {
-                                page_index = (*n).max(0) as usize;
-                                continue;
-                            }
-                            ("__page_at", Value::Int(n)) => {
-                                page_at = (*n).max(0) as usize;
-                                continue;
-                            }
-                            ("sort", Value::Bool(b)) => {
-                                table_sort = *b;
-                                continue;
-                            }
-                            ("__sort_index", Value::Int(n)) => {
-                                sort_index = (*n).max(0) as usize;
-                                continue;
-                            }
-                            ("__sort_by", Value::Str(s)) => {
-                                sort_by = Some(s.clone());
-                                continue;
-                            }
-                            ("__sort_desc", Value::Bool(b)) => {
-                                sort_desc = *b;
-                                continue;
-                            }
-                            _ => {}
-                        }
-                    }
-                    if k == "confirm" {
-                        confirm = Some(format!("{}", val.value));
-                        continue;
-                    }
-                    if matches!(k.as_str(), "click" | "input" | "submit" | "change") {
-                        let attr = format!("data-crow-{}", k);
-                        match &val.value {
-                            Value::Fn(f) => events.push((attr, f.name.clone())),
-                            Value::Array(items) if matches!(items.first().map(|i| &i.value), Some(Value::Fn(_))) => {
-                                if let Value::Fn(f) = &items[0].value {
-                                    let frozen: Vec<serde_json::Value> = items[1..]
-                                        .iter()
-                                        .map(|i| crate::builtins::crow_to_json("", i).unwrap_or(serde_json::Value::Null))
-                                        .collect();
-                                    events.push((attr, f.name.clone()));
-                                    events.push(("data-crow-args".to_string(), serde_json::Value::Array(frozen).to_string()));
-                                }
-                            }
-                            _ => {}
-                        }
-                        continue;
-                    }
-                    if k == "seek" {
-                        continue;
-                    }
-                    let s = match &val.value {
-                        Value::Str(s) => s.clone(),
-                        Value::Int(i) => i.to_string(),
-                        Value::Float(f) => f.to_string(),
-                        Value::Bool(b) => b.to_string(),
-                        _ => continue,
-                    };
-                    attrs.push((k.clone(), s));
-                }
-            }
-            Value::Str(s) if v.is_markup() => inner.push_str(s),
-            Value::Frame(f) if name == "table" => inner.push_str(&crow_runtime::layout::frame_table_html(
-                f,
-                table_click.as_deref(),
-                table_key.as_deref(),
-                table_mark.as_deref(),
-                &table_delta,
-                &table_actions,
-                &table_hide,
-                &table_confirm,
-                table_page.map(|size| crow_runtime::layout::Paging { size: size.max(1) as usize, index: page_index, at: page_at }),
-                table_sort.then(|| crow_runtime::layout::Sorting { index: sort_index, by: sort_by.clone().map(|c| (c, sort_desc)) }),
-            )),
-            Value::Array(items) => splice(&mut inner, items),
-            other => inner.push_str(&crate::harness::html_escape_text(&format!("{}", other))),
-        }
-    }
-    if name == "nav" {
-        if let Some((_, active)) = attrs.iter().find(|(k, _)| k == "active") {
-            inner = crow_runtime::layout::nav_active_html(&inner, active);
-        }
-    }
-    let rendered = crow_runtime::layout::render(name, &attrs);
-    if let Some(e) = rendered.errors.first() {
-        return Err(format!("{}: {}", name, e));
-    }
-    let mut out_attrs: Vec<(String, String)> = rendered.passthrough.clone();
-    if !rendered.class.is_empty() {
-        out_attrs.push(("class".to_string(), rendered.class.clone()));
-    }
-    if !rendered.style.is_empty() {
-        out_attrs.push(("style".to_string(), rendered.style.clone()));
-    }
-    out_attrs.extend(rendered.data.iter().cloned());
-    out_attrs.extend(crow_runtime::layout::confirm_wiring(events, confirm.as_deref()));
-    // an element with a click the browser does not press gets a tab stop
-    if out_attrs.iter().any(|(k, _)| k == "data-crow-click") {
-        let extra = crow_runtime::layout::press_attrs(&rendered.tag, &out_attrs);
-        out_attrs.extend(extra);
-    }
-    out_attrs.sort();
-    let attr_str: String = out_attrs.iter().map(|(k, v)| format!(" {}=\"{}\"", k, crate::harness::html_escape_attr(v))).collect();
-    // a void element has no end tag, as the compiled page writes it
-    // (`<img …></img>` had been the interpreter's, parity 465)
-    if crow_runtime::layout::VOID.contains(&rendered.tag.to_ascii_lowercase().as_str()) {
-        return Ok(format!("<{}{}>{}", rendered.tag, attr_str, inner));
-    }
-    Ok(format!("<{0}{2}>{1}</{0}>", rendered.tag, inner, attr_str))
-}
-
-/// A bound input rendered to markup: `field`, `slider`, `checkbox`,
+/// A bound input as the builder makes it: `field`, `slider`, `checkbox`,
 /// `toggle`, `radio`, `tabs`, `select`, given the variable's name (`key`)
 /// and the evaluated arguments.
-pub fn render_input(name: &str, key: &str, vals: &[CrowValue]) -> Result<String, String> {
-    use crow_web::view::CrowVNode;
+pub fn view_control(name: &str, key: &str, vals: &[CrowValue]) -> Result<tree::Node, String> {
     let s = |v: &CrowValue| format!("{}", v.value);
+    let json = |v: &CrowValue| crate::builtins::crow_to_json("", v).unwrap_or(serde_json::Value::Null);
     let num = |v: &CrowValue| match &v.value {
         Value::Int(n) => *n as f64,
         Value::Float(f) => *f,
@@ -1460,7 +1362,7 @@ pub fn render_input(name: &str, key: &str, vals: &[CrowValue]) -> Result<String,
             other => Err(format!("{}[] takes a list of options first, got {}", name, other.type_name())),
         }
     };
-    let node = match name {
+    Ok(match name {
         "field" => {
             let kind = match &vals[2].value {
                 Value::Str(k) if !k.is_empty() => k.clone(),
@@ -1474,9 +1376,9 @@ pub fn render_input(name: &str, key: &str, vals: &[CrowValue]) -> Result<String,
                 (Value::Map(m), "file") => m.get("name").map(|v| format!("{}", v.value)).unwrap_or_default(),
                 _ => s(&vals[1]),
             };
-            CrowVNode::field_typed(&s(&vals[0]), key, &current, &kind, num(&vals[3]) as i64)
+            tree::field(&s(&vals[0]), key, json(&vals[1]), &current, &kind, num(&vals[3]) as i64)
         }
-        "slider" => CrowVNode::slider(&s(&vals[0]), key, &s(&vals[1]), num(&vals[2]), num(&vals[3]), num(&vals[4])),
+        "slider" => tree::slider(&s(&vals[0]), key, json(&vals[1]), &s(&vals[1]), num(&vals[2]), num(&vals[3]), num(&vals[4])),
         "checkbox" | "toggle" => {
             let on = match &vals[1].value {
                 Value::Bool(b) => *b,
@@ -1484,10 +1386,9 @@ pub fn render_input(name: &str, key: &str, vals: &[CrowValue]) -> Result<String,
                 Value::Str(t) => t == "true",
                 _ => false,
             };
-            CrowVNode::check_input(&s(&vals[0]), key, on, name == "toggle")
+            tree::check(&s(&vals[0]), key, on, name == "toggle")
         }
-        "radio" | "tabs" => CrowVNode::choice_input(&options(&vals[0])?, key, &s(&vals[1]), name == "tabs"),
-        _ => CrowVNode::select_input(&options(&vals[0])?, key, &s(&vals[1])),
-    };
-    Ok(node.to_html())
+        "radio" | "tabs" => tree::choice(options(&vals[0])?, key, &s(&vals[1]), name == "tabs"),
+        _ => tree::select(options(&vals[0])?, key, &s(&vals[1])),
+    })
 }

@@ -940,10 +940,17 @@ pub fn derive_artifacts(stmts: &[Stmt], ctx: &TypeContext, parts: &BTreeMap<Stri
         if let Stmt::FnDecl { name, params, body, .. } = s { fns.insert(name.clone(), (params.clone(), body.clone())); }
     }
     // a helper that writes a fact belongs to the handler class for the walk
+    // — in a program that holds state: any other program's top-level names
+    // are plain variables, and a function assigning one of their names binds
+    // a local of its own (spec, Function Scope). Every function of Lory's
+    // examples that named a local `c` or `steps`, as their top levels name
+    // a variable, had been taken for a handler, and reported as one nobody
+    // can reach.
+    let holds_state = crate::lower_ir::program_holds_state(crate::lower_ir::imports_ui(stmts), ctx);
     let bodies: BTreeMap<String, Vec<Stmt>> = fns.iter().map(|(n, (_, b))| (n.clone(), b.clone())).collect();
     for (n, b) in &bodies {
         let one: BTreeMap<String, Vec<Stmt>> = [(n.clone(), b.clone())].into_iter().collect();
-        if !crate::derive::written_facts(&one, &facts).is_empty() && !views.contains(n) { handlers.insert(n.clone()); }
+        if holds_state && !crate::derive::written_facts(&one, &facts).is_empty() && !views.contains(n) { handlers.insert(n.clone()); }
     }
     let m = Model { stmts, facts: facts.clone(), derives: derives.clone(), views: views.clone(), handlers: handlers.clone(), fns: fns.clone(), parts: parts.clone(), entry: entry.to_string() };
 
@@ -1218,8 +1225,15 @@ pub fn derive_artifacts(stmts: &[Stmt], ctx: &TypeContext, parts: &BTreeMap<Stri
     let mut called: BTreeSet<String> = BTreeSet::new();
     for (_, b) in bodies.iter() { called.extend(crate::derive::called_fns(b, &bodies)); }
     for s in stmts {
-        if let Stmt::Derive { body, .. } = s { called.extend(crate::derive::called_fns(body, &bodies)); }
-        if let Stmt::TestBlock { body, .. } = s { called.extend(crate::derive::called_fns(body, &bodies)); }
+        match s {
+            Stmt::Derive { body, .. } | Stmt::TestBlock { body, .. } => called.extend(crate::derive::called_fns(body, &bodies)),
+            // (its body is read above, with every function's)
+            Stmt::FnDecl { .. } => {}
+            // a statement of the top level reaches what it calls: a helper
+            // a ui program's top level calls to set a fact had been "a
+            // handler nobody can reach"
+            top => called.extend(crate::derive::called_fns(std::slice::from_ref(top), &bodies)),
+        }
     }
     for h in &handlers {
         if views.contains(h) || ctx.view_handlers.contains(h) { continue; }
@@ -1521,9 +1535,17 @@ const BASELINE_DIR: &str = ".crow/baseline";
 /// path with separators folded so two programs checked from one root
 /// keep their own baselines.
 pub fn store_dir(entry: &str) -> std::path::PathBuf {
-    let key: String = entry.trim_end_matches(".co").chars().map(|c| if c == '/' || c == '\\' || c == '.' { '-' } else { c }).collect();
+    std::path::Path::new(BASELINE_DIR).join(store_key(entry))
+}
+
+/// A file's name in a store under `.crow/`: its path without `.co`, each
+/// separator and dot a dash (`packages/lory/main.co` is
+/// `packages-lory-main`) — the baseline's entry, and the snapshot store's
+/// file of a function (checker::snapshot_path).
+pub fn store_key(file: &str) -> String {
+    let key: String = file.trim_end_matches(".co").chars().map(|c| if c == '/' || c == '\\' || c == '.' { '-' } else { c }).collect();
     let key = key.trim_matches('-').to_string();
-    std::path::Path::new(BASELINE_DIR).join(if key.is_empty() { "main".to_string() } else { key })
+    if key.is_empty() { "main".to_string() } else { key }
 }
 
 fn file_name(key: &str) -> String {
@@ -1872,6 +1894,35 @@ mod tests {
         let dead = APP.replace("fn ask_end[]\n    ending = true\n", "fn ask_end[]\n    x = 1\n");
         let (_, rules) = artifacts(&dead);
         assert!(rules.iter().any(|r| r.detail.contains("dead control")), "{:?}", rules);
+    }
+
+    /// Only a program that holds state has handlers: a script's function
+    /// that assigns a name its top level also assigns binds a local of its
+    /// own, and is no handler, called or not (Lory's examples: `played`,
+    /// `count_of`, `made` had each been "a handler nobody can reach", and
+    /// recorded as a handler writing the top level's variables).
+    #[test]
+    fn a_scripts_function_is_no_handler() {
+        let script = "steps = 0\nfn played[n]\n    steps = n * 2\n    return steps\nfast = played[3]\nlog[fast, steps]\n";
+        let (art, rules) = artifacts(script);
+        assert!(!rules.iter().any(|r| r.detail.contains("nobody can reach")), "{:?}", rules);
+        assert!(!art.entries.contains_key("handler played"), "{:?}", art.entries.keys().collect::<Vec<_>>());
+        let uncalled = script.replace("fast = played[3]\nlog[fast, steps]\n", "log[steps]\n");
+        let (art, rules) = artifacts(&uncalled);
+        assert!(!rules.iter().any(|r| r.detail.contains("nobody can reach")), "{:?}", rules);
+        assert!(!art.entries.contains_key("handler played"), "{:?}", art.entries.keys().collect::<Vec<_>>());
+    }
+
+    /// A ui program's helper that writes a fact is reached by a call of its
+    /// top level, as by a handler's (it had been "a handler nobody can
+    /// reach"); one that nothing wires and nothing calls still is one.
+    #[test]
+    fn a_top_level_call_reaches_a_handler() {
+        let app = "use web, ui\nstatus = ''\nfn say[msg]\n    status = msg\nsay['ready']\nview render[]\n    return p['`status`']\npage['/', render]\n";
+        let (_, rules) = artifacts(app);
+        assert!(!rules.iter().any(|r| r.detail.contains("nobody can reach")), "{:?}", rules);
+        let (_, rules) = artifacts(&app.replace("say['ready']\n", ""));
+        assert!(rules.iter().any(|r| r.subject == "say" && r.detail.contains("nobody can reach")), "{:?}", rules);
     }
 
     /// A guard a helper already decided is no fork, a value from a call is

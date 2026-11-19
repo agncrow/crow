@@ -193,6 +193,9 @@ impl CrowApp {
             }
             None => router,
         };
+        // every page drawn too, at `/_drawn<path>` (one-view-design.md 3.2)
+        #[cfg(feature = "live")]
+        let router = router.merge(crate::live::drawn::router());
         set_base_url(&addr);
         println!("crow server listening on http://{}", addr);
         tokio::spawn(stop_on_signal());

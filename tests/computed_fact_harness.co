@@ -1,0 +1,39 @@
+--- A fact whose declaration is computed from what reads alone — a
+--- function of the program's, another fact, a map's item — is declared for
+--- a test's session as for the served page's (spec, Testing): a test had
+--- run only the literal declarations, so a handler that wrote such a fact
+--- found no name in the test's session, `undefined variable 'a'`, where
+--- the served page had it (finchdash's guardrails, filled from what the
+--- project keeps). A declaration that writes something is still top-level
+--- code a test never runs (top_level_harness.co). CI runs it against the
+--- interpreter and against the compiled program (crow test --compiled).
+use web, ui
+
+fn _pick[m, col, default]
+    if col in m
+        return m[col]
+    return default
+
+kept = map[x = '7']
+a = _pick[map[], 'x', '5']
+b = a
+c = kept['x']
+d = _pick[kept, 'x', '0']
+
+fn bump[]
+    a = '`a`!'
+    b = '`b`?'
+    c = '`c`+'
+    d = '`d`-'
+
+view render[]
+    return stack[p['a=`a` b=`b` c=`c` d=`d`'], button['Go', click = bump]]
+
+page['/', render]
+serve[3584]
+
+test a_computed_fact_is_declared_for_the_tests_session[]
+    t = app[render]
+    assert['a=5 b=5 c=7 d=7' in html[t], 'the page `html[t]`']
+    click[t, bump]
+    assert['a=5! b=5? c=7+ d=7-' in html[t], 'the page `html[t]`']

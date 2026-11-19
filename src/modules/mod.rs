@@ -302,6 +302,16 @@ pub fn every_module_function() -> Vec<String> {
     MODULES.iter().filter(|m| !m.internal).filter_map(|m| m.module).flat_map(|make| make().functions().iter().map(|f| f.to_string()).collect::<Vec<_>>()).collect()
 }
 
+/// Every constant of every module a program can import, by name (math's
+/// `pi`, `e`, `inf`, `nan`): names an import makes, as its functions are,
+/// which the checker's undefined-variable rule counts as defined beside
+/// `every_module_function` — it had counted the functions alone, so every
+/// read of `nan` under `use math` was "undefined" to `crow check`, which
+/// both modes run (Myna's room, Kite's candles; 2026-11-13).
+pub fn every_module_constant() -> Vec<String> {
+    MODULES.iter().filter(|m| !m.internal).filter_map(|m| m.module).flat_map(|make| make().constants().into_iter().map(|(c, _)| c.to_string()).collect::<Vec<_>>()).collect()
+}
+
 /// The standard modules written in Crow that a program carries, by the
 /// functions inlined behind their prefixes, each with its own imports
 /// (its source's `use` lines) — read from the program itself, since a

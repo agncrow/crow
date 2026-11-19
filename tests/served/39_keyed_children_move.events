@@ -1,0 +1,9 @@
+[{"open": "/"}, {"expect": "ada"},
+ {"event": "reverse_names"}, {"expect": "cy"},
+ {"event": "__page", "value": "[0,1]"}, {"expect": "51"},
+ {"event": "__sort", "value": "[0,\"v\"]"},
+ {"event": "flip"}, {"expect": "flipped true"}, {"values": 1},
+ {"event": "drop_first"},
+ {"event": "add_dee"}, {"expect": "dee"},
+ {"event": "reverse_names"},
+ {"event": "flip"}, {"expect": "flipped false"}, {"values": 1}]

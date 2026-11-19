@@ -1,0 +1,4 @@
+[{"open": "/"}, {"expect": "head 100"},
+ {"event": "play"}, {"expect": "head 100"},
+ {"event": "tick"}, {"expect": "head 101"}, {"expect": "at 101 s"}, {"values": 2},
+ {"event": "tick"}, {"expect": "head 102"}, {"values": 2, "sent": "{\"set\":[[[0,1,0,0,0,0],\"head 102\",\"p\"],[[0,1,0,0,1,0],\"at 102 s\",\"p\"]],\"type\":\"values\"}"}]

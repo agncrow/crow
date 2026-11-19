@@ -299,6 +299,16 @@ view render[]
     ]
 ```
 
+A list whose rows move — sorted, filtered, reordered — keys each row with `key`, and a reorder moves the rows rather than rewriting them:
+
+```
+view render[]
+    return stack[
+        for person in people
+            row[p['`person.name`'], key = person.name]
+    ]
+```
+
 ### Reusable Views
 
 "Components" are just functions. No component system needed.
@@ -448,7 +458,7 @@ page['/errors', render]
 
 ### 7. Performance
 
-The server re-renders the full handler on every event. For simple apps this is fast (sub-millisecond in Rust). For large DOMs, the `morphdom` JS library diffs and patches only changed elements.
+A view is kept with what it read (language-spec, *A view runs again only when what it read moved*): after an event or a tick only the views whose facts, derivations or arguments moved run again, the rest hand back their last node, and the page's nodes of a kept view are made once and shared from render to render, so the diff passes over them whole. A tick that moves one value on a page holding a 1,500-row table runs the view that shows the value and nothing else. The changes sent are the text, attributes and children that moved; keyed children (`key = …`) move as one. A view a render did not reach is kept for a later one within a budget (1,024 views, 50,000 nodes, least recently used let go first), so switching back to a tab runs only what moved while it was hidden; what a kept subtree offers the page (its clicks, its bound inputs) is read once while it is kept. The dev panel shows each render's time and how many views it ran and kept. A tick that moves only values a view shows directly (a clock's text, a price, a progress bar, a computed `disabled`) runs no view at all: the values are set on the page as it is and sent as a `values` message (language-spec, *A value shown alone is set, not rendered*); the dev panel counts them (`values`).
 
 For high-frequency interactions (drag, scroll, resize), these stay client-side in the JS runtime — no server round-trip. The JS runtime handles `mousemove` locally and only sends a final event to the server.
 
@@ -515,36 +525,38 @@ Key API:
 > fact in the page's address — `page['/trade/:trade', trade_render]` opens a
 > session with the fact `trade` read from the path, and the address follows
 > the fact — as `url = […]` puts facts in the query string. There is no
-> `init` function or `params` record: the page's state is its facts. See
-> the spec, Core (Server), and its Design Note *a page's address and its
-> head*.
+> `params` record: the page's state is its facts. See the spec, Core
+> (Server), and its Design Note *a page's address and its head*.
+>
+> **Shipped (November 2026):** `init = f` runs `f` once as a session opens
+> the page — after the address's facts are read, before the first render,
+> as a handler runs. It is handed nothing: it reads the facts the address
+> set. A click, a tick or a reconnect runs nothing; a new tab or a reload
+> is a new session and runs it again. The examples below are as built.
 
 Dynamic route segments and query parameters. Route params use `:name` syntax.
 
 ```
---- route parameters
-trade = nil
-trade_id = ''
+--- route parameters: the path's `:trade` is the fact `trade`
+trade = 0
+row = frame[]
 
-fn trade_init[params]
-    trade_id = params.id
-    trade = query[db, 'SELECT * FROM trades WHERE id = `params.id`']
+fn trade_init[]
+    row = query[db, 'SELECT * FROM trades WHERE id = `trade`']
 
 view trade_render[]
     return div[
-        h1['Trade `trade_id`'],
-        p['Symbol: `trade.symbol`'],
-        p['P&L: `trade.pnl`']
+        h1['Trade `trade`'],
+        table[row]
     ]
 
-page['/trade/:id', trade_render, init = trade_init]
+page['/trade/:trade', trade_render, init = trade_init]
 
---- query parameters
+--- query parameters: `url = ['q']` reads `?q=` into the fact `q`
 q = ''
 results = frame[]
 
-fn search_init[params]
-    q = params.q or ''
+fn search_init[]
     results = query[db, 'SELECT * FROM items WHERE name LIKE \'%`q`%\'']
 
 view search_render[]
@@ -553,28 +565,31 @@ view search_render[]
         table[results]
     ]
 
-page['/search', search_render, init = search_init]
+page['/search', search_render, url = ['q'], init = search_init]
 --- accessed via /search?q=hello
 
 --- multiple route params
-user = nil
-trade = nil
-trade_id = ''
+user_id = 0
+trade_id = 0
+user = frame[]
 
-fn user_trade_init[params]
-    trade_id = params.trade_id
-    user = query[db, 'SELECT * FROM users WHERE id = `params.user_id`']
-    trade = query[db, 'SELECT * FROM trades WHERE id = `params.trade_id`']
+fn user_trade_init[]
+    user = query[db, 'SELECT * FROM users WHERE id = `user_id`']
 
 view user_trade_render[]
     return div[
-        h1['`user.name` — Trade `trade_id`']
+        h1['User `user_id` — Trade `trade_id`'],
+        table[user]
     ]
 
 page['/user/:user_id/trade/:trade_id', user_trade_render, init = user_trade_init]
 ```
 
-The `init` function receives `params`. Route segments (`:id`) and query string (`?q=hello`) are both available on `params`. Init functions assign to reactive variables, which are then available in render functions.
+The `init` function takes no parameters: route segments (`:trade`) and the
+`url` names (`?q=hello`) are facts the session already holds when it runs.
+It assigns to reactive variables, which render functions then read; a
+function with parameters is refused before the program runs. A test opens a
+session that runs it with `app[search_render, init = search_init]`.
 
 ### 10. Shared Layout
 

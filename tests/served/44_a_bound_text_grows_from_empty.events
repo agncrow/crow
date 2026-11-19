@@ -1,0 +1,4 @@
+[{"open": "/"},
+ {"event": "say", "value": "[\"x&y\"]"}, {"expect": "x&amp;y"},
+ {"event": "say", "value": "[\"x&y\"]"}, {"expect": "x&amp;yx&amp;y"}, {"values": 1},
+ {"event": "say", "value": "[\"x&y\"]"}, {"expect": "x&amp;yx&amp;yx&amp;y"}, {"values": 1}]

@@ -363,34 +363,41 @@ pub struct Sorting {
 /// budget, never a silent cut.
 pub const TABLE_BUDGET: usize = 1000;
 
-#[allow(clippy::too_many_arguments)]
-pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>, delta: &[String], actions: &[(String, String)], hide: &[String], confirm: &[(String, String)], page: Option<Paging>, sort: Option<Sorting>) -> String {
-    use crate::frame::Column;
+/// The rows of a frame a table shows, in the order it shows them: the
+/// session's page of a paged table, its order if sorted (the one reading
+/// of both, which the page's markup and a drawn table's data share). None
+/// for more rows than a table shows unpaged (`TABLE_BUDGET`).
+pub fn table_rows(f: &crate::frame::CrowFrame, page: Option<Paging>, sort: Option<&Sorting>) -> Option<Vec<usize>> {
     let total = f.nrows();
     if page.is_none() && total > TABLE_BUDGET {
-        return format!(
-            "<tbody><tr><td class=\"crow-refused\">table: {} rows — a table shows at most {} at a time: table[frame, page = 50]</td></tr></tbody>",
-            total, TABLE_BUDGET
-        );
+        return None;
     }
+    let (first, last) = page_bounds(total, page);
+    Some(row_order(f, sort)[first..last].to_vec())
+}
+
+/// The first row a page shows and the one after its last.
+fn page_bounds(total: usize, page: Option<Paging>) -> (usize, usize) {
     // the rows this page shows
-    let (first, last) = match page {
+    match page {
         Some(p) => {
             let pages = total.div_ceil(p.size.max(1)).max(1);
             let at = p.at.min(pages - 1);
             (at * p.size, ((at + 1) * p.size).min(total))
         }
         None => (0, total),
-    };
-    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
-    let numeric: Vec<bool> = f.data.iter().map(|c| matches!(c.as_ref(), Column::Int(_) | Column::Float(_))).collect();
-    let is_delta: Vec<bool> = f.columns.iter().map(|c| delta.iter().any(|d| d == c)).collect();
-    let shown: Vec<usize> = (0..f.ncols()).filter(|i| !hide.iter().any(|h| h == &f.columns[*i])).collect();
+    }
+}
+
+/// The order a table's rows show in.
+fn row_order(f: &crate::frame::CrowFrame, sort: Option<&Sorting>) -> Vec<usize> {
+    use crate::frame::Column;
+    let total = f.nrows();
     // the order the rows show in: the frame's, or the column the reader
     // sorted by (numbers as numbers, moments by when, text alphabetically)
     // — missing cells last either way, equal cells in the frame's order
     let mut order: Vec<usize> = (0..total).collect();
-    let sorted_by = sort.as_ref().and_then(|s| s.by.as_ref()).and_then(|(col, desc)| Some((f.columns.iter().position(|x| x == col)?, *desc)));
+    let sorted_by = sort.and_then(|s| s.by.as_ref()).and_then(|(col, desc)| Some((f.columns.iter().position(|x| x == col)?, *desc)));
     if let Some((c, desc)) = sorted_by {
         order.sort_by(|&a, &b| {
             use std::cmp::Ordering;
@@ -415,103 +422,354 @@ pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: O
             }
         });
     }
-    let mut out = String::from("<thead><tr>");
-    for &i in &shown {
-        let c = &f.columns[i];
-        let class = if numeric[i] { " class=\"num\"" } else { "" };
-        match &sort {
-            // a header the reader presses to sort by its column
-            Some(s) => {
-                let sorted = match &s.by {
-                    Some((col, desc)) if col == c => if *desc { " aria-sort=\"descending\"" } else { " aria-sort=\"ascending\"" },
-                    _ => "",
-                };
-                out.push_str(&format!(
-                    "<th{}{}><button data-crow-args=\"[{},{}]\" data-crow-click=\"__sort\">{}</button></th>",
-                    class,
-                    sorted,
-                    s.index,
-                    esc(&serde_json::json!(c).to_string()),
-                    esc(c)
-                ));
+    order
+}
+
+/// One element of the markup the kernel builds (a table's parts, an icon):
+/// its tag, its attributes in the order the markup writes them, each value
+/// as the page reads it back (unescaped), and its children. The markup is
+/// these parts written out (`write`); a renderer that holds nodes makes its
+/// nodes from them, so the two never differ.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Part {
+    pub tag: &'static str,
+    pub attrs: Vec<(&'static str, String)>,
+    pub kids: Vec<Kid>,
+}
+
+/// A part's child: another part, or text as it shows.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Kid {
+    Part(Part),
+    Text(String),
+}
+
+/// What the kernel's markup escapes, in text and in attribute values
+/// alike: `&`, `<`, `>` and the quote.
+pub fn escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+impl Part {
+    fn new(tag: &'static str) -> Self {
+        Part { tag, attrs: Vec::new(), kids: Vec::new() }
+    }
+
+    fn attr(mut self, k: &'static str, v: impl Into<String>) -> Self {
+        self.attrs.push((k, v.into()));
+        self
+    }
+
+    fn kid(mut self, p: Part) -> Self {
+        self.kids.push(Kid::Part(p));
+        self
+    }
+
+    fn text(mut self, t: impl Into<String>) -> Self {
+        self.kids.push(Kid::Text(t.into()));
+        self
+    }
+
+    /// The part as markup: attributes in their order, every value and text
+    /// escaped (`escape`), an end tag for each.
+    pub fn write(&self, out: &mut String) {
+        out.push('<');
+        out.push_str(self.tag);
+        for (k, v) in &self.attrs {
+            out.push(' ');
+            out.push_str(k);
+            out.push_str("=\"");
+            out.push_str(&escape(v));
+            out.push('"');
+        }
+        out.push('>');
+        for k in &self.kids {
+            match k {
+                Kid::Part(p) => p.write(out),
+                Kid::Text(t) => out.push_str(&escape(t)),
             }
-            None => out.push_str(&format!("<th{}>{}</th>", class, esc(c))),
+        }
+        if !VOID.contains(&self.tag) {
+            out.push_str("</");
+            out.push_str(self.tag);
+            out.push('>');
         }
     }
-    if !actions.is_empty() { out.push_str("<th></th>"); }
-    out.push_str("</tr></thead><tbody>");
-    let key_i = key.and_then(|k| f.columns.iter().position(|c| c == k)).unwrap_or(0);
-    let mark_i = mark.and_then(|m| f.columns.iter().position(|c| c == m));
-    let key_json = |r: usize| -> String {
-        let cell = f.data[key_i].fmt_cell(r, f.validity[key_i][r]);
-        if numeric[key_i] && f.validity[key_i][r] { format!("[{}]", cell.trim()) } else { format!("[&quot;{}&quot;]", esc(&cell.replace('"', "\\\""))) }
-    };
-    // the same arguments as the page sends them back, before escaping
-    let raw_key_json = |r: usize| -> String {
-        let cell = f.data[key_i].fmt_cell(r, f.validity[key_i][r]);
-        if numeric[key_i] && f.validity[key_i][r] { format!("[{}]", cell.trim()) } else { serde_json::json!([cell]).to_string() }
-    };
-    for &r in &order[first..last] {
-        let mut tr = String::from("<tr");
-        if let Some(i) = mark_i {
-            if f.data[i].truthy(r) && f.validity[i][r] { tr.push_str(" class=\"marked\""); }
+}
+
+/// What a table was told of its frame's rows (`table[frame, click = f,
+/// key = 'sym', …]`), as both renderers hand it to the kernel.
+#[derive(Clone, Copy, Debug)]
+pub struct TableOf<'a> {
+    pub frame: &'a crate::frame::CrowFrame,
+    pub click: Option<&'a str>,
+    pub key: Option<&'a str>,
+    pub mark: Option<&'a str>,
+    pub delta: &'a [String],
+    pub actions: &'a [(String, String)],
+    pub hide: &'a [String],
+    pub confirm: &'a [(String, String)],
+    pub page: Option<Paging>,
+    pub sort: Option<&'a Sorting>,
+}
+
+impl TableOf<'_> {
+    fn numeric(&self, c: usize) -> bool {
+        matches!(self.frame.data[c].as_ref(), crate::frame::Column::Int(_) | crate::frame::Column::Float(_))
+    }
+
+    fn key_index(&self) -> usize {
+        self.key.and_then(|k| self.frame.columns.iter().position(|c| c == k)).unwrap_or(0)
+    }
+
+    /// A row's key cell as its click sends it back: a number as itself, a
+    /// text in quotes, its own quotes marked.
+    fn key_args(&self, r: usize) -> String {
+        let k = self.key_index();
+        let cell = self.frame.data[k].fmt_cell(r, self.frame.validity[k][r]);
+        if self.numeric(k) && self.frame.validity[k][r] { format!("[{}]", cell.trim()) } else { format!("[\"{}\"]", cell.replace('"', "\\\"")) }
+    }
+
+    /// The same cell as JSON, as an action that asks first carries it.
+    fn key_json(&self, r: usize) -> String {
+        let k = self.key_index();
+        let cell = self.frame.data[k].fmt_cell(r, self.frame.validity[k][r]);
+        if self.numeric(k) && self.frame.validity[k][r] { format!("[{}]", cell.trim()) } else { serde_json::json!([cell]).to_string() }
+    }
+
+    fn shown_columns(&self) -> Vec<usize> {
+        (0..self.frame.ncols()).filter(|i| !self.hide.iter().any(|h| h == &self.frame.columns[*i])).collect()
+    }
+
+    /// An action's click: its handler and arguments, or the question it
+    /// asks first.
+    fn action(&self, label: &str, h: &str, r: usize) -> (String, String) {
+        match self.confirm.iter().find(|(l, _)| l == label) {
+            Some((_, text)) => ("__ask".to_string(), ask_args(h, Some(&self.key_json(r)), text)),
+            None => (h.to_string(), self.key_args(r)),
         }
-        if let Some(h) = click {
+    }
+
+    /// What a drawn renderer sends from the table, as its parts carry it
+    /// (one-view-design.md 5a; none where the table refuses its rows): for
+    /// each row it shows, in the order it shows them, the row's click with
+    /// its key cell when the table has one, then each action's (an action
+    /// that asks first sends the question), with the text each of the
+    /// frame's cells shows; each sorted header's `__sort` value; and the
+    /// pager's two steps' `__page` values (none at an end).
+    pub fn sends(&self) -> Option<TableSends> {
+        let f = self.frame;
+        let total = f.nrows();
+        if self.page.is_none() && total > TABLE_BUDGET {
+            return None;
+        }
+        let (first, last) = page_bounds(total, self.page);
+        let order = row_order(f, self.sort);
+        let mut rows = Vec::new();
+        for &r in &order[first..last] {
+            let mut sends = Vec::new();
             if f.ncols() > 0 {
-                tr.push_str(&format!(" data-crow-click=\"{}\" data-crow-args=\"{}\" tabindex=\"0\"", esc(h), key_json(r)));
+                if let Some(h) = self.click {
+                    sends.push((h.to_string(), self.key_args(r)));
+                }
+                for (label, h) in self.actions {
+                    sends.push(self.action(label, h, r));
+                }
             }
+            let shown: Vec<String> = (0..f.ncols()).map(|c| f.data[c].fmt_cell(r, f.validity[c][r])).collect();
+            rows.push((sends, shown));
         }
-        tr.push('>');
+        let sorts = match self.sort {
+            Some(s) => self.shown_columns().into_iter().map(|i| (f.columns[i].clone(), sort_args(s.index, &f.columns[i]))).collect(),
+            None => Vec::new(),
+        };
+        let steps = match self.page {
+            Some(p) => self.steps(p, first, last).map(|n| n.map(|n| page_args(p.index, n))),
+            None => [None, None],
+        };
+        Some(TableSends { rows, sorts, steps })
+    }
+
+    /// The pager's two steps: the page each goes to, none at an end.
+    fn steps(&self, p: Paging, first: usize, last: usize) -> [Option<usize>; 2] {
+        let at = first / p.size.max(1);
+        [at.checked_sub(1), (last < self.frame.nrows()).then_some(at + 1)]
+    }
+}
+
+/// What a drawn renderer sends from a table (`TableOf::sends`): each shown
+/// row's sends (event, value) and its cells' texts, each sorted header's
+/// column and value, the pager's previous and next values.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableSends {
+    #[allow(clippy::type_complexity)]
+    pub rows: Vec<(Vec<(String, String)>, Vec<String>)>,
+    pub sorts: Vec<(String, String)>,
+    pub steps: [Option<String>; 2],
+}
+
+/// A sorted header's click: which sorted table, and its column.
+fn sort_args(index: usize, column: &str) -> String {
+    format!("[{},{}]", index, serde_json::json!(column))
+}
+
+/// A pager's click: which paged table, and the page.
+fn page_args(index: usize, at: usize) -> String {
+    format!("[{},{}]", index, at)
+}
+
+/// A frame's rows as the parts inside a `<table>` (its head, its body and,
+/// paged, its pager), for both renderers. `click` names a handler each row
+/// sends with the `key` column's cell as its argument (the first column when
+/// no key is given); `mark` names a column whose truthy cells put `marked`
+/// on their row; `delta` names columns whose cells are coloured by sign
+/// (`up` / `down`); `actions` adds a trailing cell of buttons, each sending
+/// the row's key to its handler (asking first where `confirm` says); `hide`
+/// keeps columns out of the table while they stay in the frame. Numeric
+/// columns are typed: their cells carry `num` and the stylesheet
+/// right-aligns them. A numeric key travels as a number, a text key as a
+/// string.
+pub fn frame_table_parts(t: &TableOf) -> Vec<Part> {
+    use crate::frame::Column;
+    let f = t.frame;
+    let total = f.nrows();
+    if t.page.is_none() && total > TABLE_BUDGET {
+        let say = format!("table: {} rows — a table shows at most {} at a time: table[frame, page = 50]", total, TABLE_BUDGET);
+        return vec![Part::new("tbody").kid(Part::new("tr").kid(Part::new("td").attr("class", "crow-refused").text(say)))];
+    }
+    let (first, last) = page_bounds(total, t.page);
+    let is_delta: Vec<bool> = f.columns.iter().map(|c| t.delta.iter().any(|d| d == c)).collect();
+    let shown = t.shown_columns();
+    let order = row_order(f, t.sort);
+    let mut head = Part::new("tr");
+    for &i in &shown {
+        let c = &f.columns[i];
+        let mut th = Part::new("th");
+        if t.numeric(i) {
+            th = th.attr("class", "num");
+        }
+        th = match t.sort {
+            // a header the reader presses to sort by its column
+            Some(s) => {
+                match &s.by {
+                    Some((col, desc)) if col == c => th = th.attr("aria-sort", if *desc { "descending" } else { "ascending" }),
+                    _ => {}
+                }
+                th.kid(Part::new("button").attr("data-crow-args", sort_args(s.index, c)).attr("data-crow-click", "__sort").text(c.as_str()))
+            }
+            None => th.text(c.as_str()),
+        };
+        head = head.kid(th);
+    }
+    if !t.actions.is_empty() {
+        head = head.kid(Part::new("th"));
+    }
+    let mut body = Part::new("tbody");
+    let mark_i = t.mark.and_then(|m| f.columns.iter().position(|c| c == m));
+    for &r in &order[first..last] {
+        let mut tr = Part::new("tr");
+        if let Some(i) = mark_i
+            && f.data[i].truthy(r)
+            && f.validity[i][r]
+        {
+            tr = tr.attr("class", "marked");
+        }
+        if let Some(h) = t.click
+            && f.ncols() > 0
+        {
+            tr = tr.attr("data-crow-click", h).attr("data-crow-args", t.key_args(r)).attr("tabindex", "0");
+        }
         for &c in &shown {
             let text = f.data[c].fmt_cell(r, f.validity[c][r]);
             let mut classes: Vec<&str> = Vec::new();
-            if numeric[c] { classes.push("num"); }
+            if t.numeric(c) {
+                classes.push("num");
+            }
             if is_delta[c] && f.validity[c][r] {
                 let sign = match f.data[c].as_ref() {
                     Column::Int(v) => v[r].signum() as f64,
                     Column::Float(v) => if v[r].is_finite() { v[r].signum() } else { 0.0 },
                     _ => text.trim().parse::<f64>().map(|x| x.signum()).unwrap_or(0.0),
                 };
-                if sign > 0.0 { classes.push("up"); } else if sign < 0.0 { classes.push("down"); }
-            }
-            if classes.is_empty() { tr.push_str(&format!("<td>{}</td>", esc(&text))); }
-            else { tr.push_str(&format!("<td class=\"{}\">{}</td>", classes.join(" "), esc(&text))); }
-        }
-        if !actions.is_empty() && f.ncols() > 0 {
-            tr.push_str("<td class=\"actions\">");
-            for (label, h) in actions {
-                match confirm.iter().find(|(l, _)| l == label) {
-                    // an action that asks first offers the question
-                    Some((_, text)) => tr.push_str(&format!(
-                        "<button data-crow-click=\"__ask\" data-crow-args=\"{}\">{}</button>",
-                        esc(&ask_args(h, Some(&raw_key_json(r)), text)),
-                        esc(label)
-                    )),
-                    None => tr.push_str(&format!("<button data-crow-click=\"{}\" data-crow-args=\"{}\">{}</button>", esc(h), key_json(r), esc(label))),
+                if sign > 0.0 {
+                    classes.push("up");
+                } else if sign < 0.0 {
+                    classes.push("down");
                 }
             }
-            tr.push_str("</td>");
+            let mut td = Part::new("td");
+            if !classes.is_empty() {
+                td = td.attr("class", classes.join(" "));
+            }
+            tr = tr.kid(td.text(text));
         }
-        tr.push_str("</tr>");
-        out.push_str(&tr);
+        if !t.actions.is_empty() && f.ncols() > 0 {
+            let mut td = Part::new("td").attr("class", "actions");
+            for (label, h) in t.actions {
+                // an action that asks first offers the question
+                let (handler, args) = t.action(label, h, r);
+                td = td.kid(Part::new("button").attr("data-crow-click", handler).attr("data-crow-args", args).text(label.as_str()));
+            }
+            tr = tr.kid(td);
+        }
+        body = body.kid(tr);
     }
-    out.push_str("</tbody>");
+    let mut parts = vec![Part::new("thead").kid(head), body];
     // the pager: which rows, and the pages either side
-    if let Some(p) = page {
-        let at = first / p.size.max(1);
-        let span = shown.len() + usize::from(!actions.is_empty());
+    if let Some(p) = t.page {
+        let span = shown.len() + usize::from(!t.actions.is_empty());
         let step = |label: &str, to: Option<usize>| match to {
-            Some(n) => format!("<button data-crow-args=\"[{},{}]\" data-crow-click=\"__page\">{}</button>", p.index, n, label),
-            None => format!("<button disabled=\"\">{}</button>", label),
+            Some(n) => Part::new("button").attr("data-crow-args", page_args(p.index, n)).attr("data-crow-click", "__page").text(label),
+            None => Part::new("button").attr("disabled", "").text(label),
         };
+        let [before, after] = t.steps(p, first, last);
         let shown_rows = if total == 0 { "0 of 0".to_string() } else { format!("{}–{} of {}", first + 1, last, total) };
-        out.push_str(&format!(
-            "<tfoot><tr><td class=\"crow-pager\" colspan=\"{}\">{}<span>{}</span>{}</td></tr></tfoot>",
-            span.max(1),
-            step("Previous", at.checked_sub(1)),
-            shown_rows,
-            step("Next", (last < total).then_some(at + 1))
-        ));
+        let pager = Part::new("td").attr("class", "crow-pager").attr("colspan", span.max(1).to_string()).kid(step("Previous", before)).kid(Part::new("span").text(shown_rows)).kid(step("Next", after));
+        parts.push(Part::new("tfoot").kid(Part::new("tr").kid(pager)));
+    }
+    parts
+}
+
+/// The clicks a table's rows offer, as the page sends them back (handler,
+/// arguments): each row's click and actions, each sorted header, the
+/// pager's steps — what its parts carry, without making them.
+pub fn frame_table_clicks(t: &TableOf) -> Vec<(String, String)> {
+    let f = t.frame;
+    let total = f.nrows();
+    let mut out = Vec::new();
+    if t.page.is_none() && total > TABLE_BUDGET {
+        return out;
+    }
+    if let Some(s) = t.sort {
+        for &i in &t.shown_columns() {
+            out.push(("__sort".to_string(), sort_args(s.index, &f.columns[i])));
+        }
+    }
+    let (first, last) = page_bounds(total, t.page);
+    if f.ncols() > 0 && (t.click.is_some() || !t.actions.is_empty()) {
+        for &r in &row_order(f, t.sort)[first..last] {
+            if let Some(h) = t.click {
+                out.push((h.to_string(), t.key_args(r)));
+            }
+            for (label, h) in t.actions {
+                out.push(t.action(label, h, r));
+            }
+        }
+    }
+    if let Some(p) = t.page {
+        for n in t.steps(p, first, last).into_iter().flatten() {
+            out.push(("__page".to_string(), page_args(p.index, n)));
+        }
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>, delta: &[String], actions: &[(String, String)], hide: &[String], confirm: &[(String, String)], page: Option<Paging>, sort: Option<Sorting>) -> String {
+    let t = TableOf { frame: f, click, key, mark, delta, actions, hide, confirm, page, sort: sort.as_ref() };
+    let mut out = String::new();
+    for p in frame_table_parts(&t) {
+        p.write(&mut out);
     }
     out
 }
@@ -606,19 +864,36 @@ pub fn icon_px(size: &str) -> Option<u32> {
 /// `icon[name, size = 'm', color = 'text']` as inline SVG, or the error
 /// that names the set.
 pub fn icon_html(name: &str, size: &str, color: &str) -> Result<String, String> {
+    let mut out = String::new();
+    icon_part(name, size, color)?.write(&mut out);
+    Ok(out)
+}
+
+/// The icon as its part: an `svg` of one stroke path, coloured by a token
+/// or by the text around it.
+pub fn icon_part(name: &str, size: &str, color: &str) -> Result<Part, String> {
     let Some((_, d)) = ICONS.iter().find(|(n, _)| *n == name) else {
         let names: Vec<&str> = ICONS.iter().map(|(n, _)| *n).collect();
         return Err(format!("icon '{}' is not in the set: {}", name, names.join(" ")));
     };
     let px = icon_px(if size.is_empty() { "m" } else { size }).ok_or_else(|| format!("size = '{}' is not a type step (xs s m l xl)", size))?;
-    let color_css = if color.is_empty() { String::new() } else {
-        format!(" style=\"color:{}\"", color_var(color).ok_or_else(|| format!("color = '{}' is not a colour token (text muted accent up down)", color))?)
-    };
     let fill = if name == "dot" { "currentColor" } else { "none" };
-    Ok(format!(
-        "<svg class=\"icon icon-{n}\" width=\"{px}\" height=\"{px}\" viewBox=\"0 0 24 24\" fill=\"{fill}\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"{color}><path d=\"{d}\"></path></svg>",
-        n = name, px = px, fill = fill, color = color_css, d = d
-    ))
+    let mut svg = Part::new("svg")
+        .attr("class", format!("icon icon-{}", name))
+        .attr("width", px.to_string())
+        .attr("height", px.to_string())
+        .attr("viewBox", "0 0 24 24")
+        .attr("fill", fill)
+        .attr("stroke", "currentColor")
+        .attr("stroke-width", "2")
+        .attr("stroke-linecap", "round")
+        .attr("stroke-linejoin", "round")
+        .attr("aria-hidden", "true");
+    if !color.is_empty() {
+        let c = color_var(color).ok_or_else(|| format!("color = '{}' is not a colour token (text muted accent up down)", color))?;
+        svg = svg.attr("style", format!("color:{}", c));
+    }
+    Ok(svg.kid(Part::new("path").attr("d", *d)))
 }
 
 /// The look an app asks for with `serve[..., theme, density, accent]`:
@@ -649,24 +924,25 @@ pub const DEFAULT_CSS: &str = r#":root{--crow-bg:#f6f7f9;--crow-surface:#ffffff;
 @media (prefers-color-scheme:dark){:root{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060;--crow-series-2:#5b9cf0;--crow-series-3:#a884ee;--crow-series-4:#3cc0c0;--crow-series-5:#ee6fa8;--crow-series-6:#f09a4a}}
 :root[data-theme="dark"]{--crow-bg:#0f1317;--crow-surface:#171d24;--crow-text:#e6e9ec;--crow-muted:#8b95a1;--crow-border:#28313c;--crow-accent:#e8a940;--crow-up:#3dbd85;--crow-down:#e06060;--crow-series-2:#5b9cf0;--crow-series-3:#a884ee;--crow-series-4:#3cc0c0;--crow-series-5:#ee6fa8;--crow-series-6:#f09a4a}
 :root[data-theme="light"]{--crow-bg:#f6f7f9;--crow-surface:#ffffff;--crow-text:#1b222b;--crow-muted:#5d6773;--crow-border:#dce1e8;--crow-accent:#9a6519;--crow-up:#177a4e;--crow-down:#bd3a3a;--crow-series-2:#2f6fb5;--crow-series-3:#7c4dbd;--crow-series-4:#178a8a;--crow-series-5:#c23d7a;--crow-series-6:#d2701a}
+:root{--crow-font-size:15px;--crow-line-height:1.55;--crow-page-max:860px;--crow-page-pad:2.2rem 1.25rem 4rem;--crow-heading-1:1.45rem;--crow-heading-2:0.8rem;--crow-heading-3:0.95rem;--crow-control-font:0.92rem;--crow-control-pad:0.42rem 0.95rem;--crow-field-pad:0.4rem 0.6rem;--crow-label-font:0.88rem;--crow-table-font:0.92rem;--crow-column-head:0.72rem;--crow-head-pad:0.45rem 0.9rem 0.45rem 0;--crow-cell-pad:0.5rem 0.9rem 0.5rem 0;--crow-card-label:0.68rem;--crow-action-font:0.8rem;--crow-action-pad:0.15rem 0.55rem;--crow-tab-pad:0.5rem 0.9rem;--crow-link-pad:0.35rem 0.6rem;--crow-target:auto}
 *{box-sizing:border-box}
-body{margin:0 auto;max-width:860px;padding:2.2rem 1.25rem 4rem;background:var(--crow-bg);color:var(--crow-text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:15px;line-height:1.55}
-h1{font-size:1.45rem;font-weight:650;letter-spacing:-0.015em;margin:0 0 0.25rem}
-h2{font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.09em;color:var(--crow-muted);margin:2.2rem 0 0.7rem}
-h3{font-size:0.95rem;margin:1.2rem 0 0.4rem}
+body{margin:0 auto;max-width:var(--crow-page-max);padding:var(--crow-page-pad);background:var(--crow-bg);color:var(--crow-text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:var(--crow-font-size);line-height:var(--crow-line-height)}
+h1{font-size:var(--crow-heading-1);font-weight:650;letter-spacing:-0.015em;margin:0 0 0.25rem}
+h2{font-size:var(--crow-heading-2);font-weight:600;text-transform:uppercase;letter-spacing:0.09em;color:var(--crow-muted);margin:2.2rem 0 0.7rem}
+h3{font-size:var(--crow-heading-3);margin:1.2rem 0 0.4rem}
 p{margin:0.4rem 0}
 a{color:var(--crow-accent)}
-button{font:inherit;font-size:0.92rem;color:var(--crow-text);background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:0.42rem 0.95rem;cursor:pointer;transition:border-color 120ms ease,background 120ms ease}
+button{font:inherit;font-size:var(--crow-control-font);color:var(--crow-text);background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:var(--crow-control-pad);min-height:var(--crow-target);min-width:var(--crow-target);cursor:pointer;transition:border-color 120ms ease,background 120ms ease}
 button:hover{border-color:var(--crow-accent)}
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--crow-accent);outline-offset:1px}
 @media (prefers-reduced-motion:reduce){button{transition:none}}
-label{color:var(--crow-muted);font-size:0.88rem;display:inline-flex;align-items:center;gap:0.5rem}
-input,select,textarea{font:inherit;font-size:0.92rem;color:var(--crow-text);background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:0.4rem 0.6rem}
+label{color:var(--crow-muted);font-size:var(--crow-label-font);display:inline-flex;align-items:center;gap:0.5rem}
+input,select,textarea{font:inherit;font-size:var(--crow-control-font);color:var(--crow-text);background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:var(--crow-field-pad);min-height:var(--crow-target)}
 input{width:9.5rem}
 pre,code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:0.9em}
-table{border-collapse:collapse;width:100%;font-size:0.92rem}
-th{text-align:left;font-weight:600;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.08em;color:var(--crow-muted);border-bottom:1px solid var(--crow-border);padding:0.45rem 0.9rem 0.45rem 0}
-td{border-bottom:1px solid var(--crow-border);padding:0.5rem 0.9rem 0.5rem 0;font-variant-numeric:tabular-nums}
+table{border-collapse:collapse;width:100%;font-size:var(--crow-table-font)}
+th{text-align:left;font-weight:600;font-size:var(--crow-column-head);text-transform:uppercase;letter-spacing:0.08em;color:var(--crow-muted);border-bottom:1px solid var(--crow-border);padding:var(--crow-head-pad)}
+td{border-bottom:1px solid var(--crow-border);padding:var(--crow-cell-pad);font-variant-numeric:tabular-nums}
 th button{font:inherit;text-transform:inherit;letter-spacing:inherit;color:inherit;background:none;border:0;border-radius:0;padding:0;cursor:pointer}
 th[aria-sort="ascending"] button::after{content:" ▲"}
 th[aria-sort="descending"] button::after{content:" ▼"}
@@ -678,10 +954,10 @@ td.crow-refused{color:var(--crow-down)}
 .controls{display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin:0.9rem 0}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.6rem;margin:1.1rem 0}
 .card{background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;padding:0.75rem 0.9rem}
-.card h3{margin:0 0 0.3rem;font-size:0.68rem;font-weight:600;text-transform:uppercase;letter-spacing:0.09em;color:var(--crow-muted)}
+.card h3{margin:0 0 0.3rem;font-size:var(--crow-card-label);font-weight:600;text-transform:uppercase;letter-spacing:0.09em;color:var(--crow-muted)}
 .card p{margin:0}
 header{display:flex;align-items:center;padding:0.5rem 0.9rem;background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px}
-td.actions{white-space:nowrap}td.actions button{padding:0.15rem 0.55rem;font-size:0.8rem;margin-right:0.35rem}
+td.actions{white-space:nowrap}td.actions button{padding:var(--crow-action-pad);font-size:var(--crow-action-font);margin-right:0.35rem}
 button.primary{background:var(--crow-accent);border-color:var(--crow-accent);color:var(--crow-bg);font-weight:600}
 button.primary:hover{filter:brightness(1.08)}
 .up{color:var(--crow-up)}
@@ -696,17 +972,17 @@ tr.marked td{background:color-mix(in srgb,var(--crow-up) 14%,transparent)}
 hr.divider{border:0;border-top:1px solid var(--crow-border);margin:0;width:100%;height:0}
 .row > hr.divider{width:0;height:auto;align-self:stretch;border-top:0;border-left:1px solid var(--crow-border);min-height:1.5em}
 details{border:1px solid var(--crow-border);border-radius:4px;background:var(--crow-surface);padding:0.5rem 0.75rem}
-summary{cursor:pointer;font-weight:600;list-style:none;display:flex;align-items:center;gap:0.5rem}
+summary{min-height:var(--crow-target);cursor:pointer;font-weight:600;list-style:none;display:flex;align-items:center;gap:0.5rem}
 summary::-webkit-details-marker{display:none}
 summary::before{content:'';width:0.4em;height:0.4em;border-right:2px solid var(--crow-muted);border-bottom:2px solid var(--crow-muted);transform:rotate(-45deg);transition:transform 120ms ease;flex:none}
 details[open] > summary::before{transform:rotate(45deg)}
 details > :not(summary){margin-top:0.5rem}
 .dropdown{position:relative;display:inline-block;border:0;padding:0;background:transparent}
-.dropdown > summary{border:1px solid var(--crow-border);border-radius:4px;padding:0.42rem 0.95rem;background:var(--crow-surface);font-weight:400;font-size:0.92rem}
+.dropdown > summary{border:1px solid var(--crow-border);border-radius:4px;padding:var(--crow-control-pad);background:var(--crow-surface);font-weight:400;font-size:var(--crow-control-font)}
 .dropdown > summary::before{order:2;margin-left:0.25rem}
 .dropdown > :not(summary){position:absolute;top:calc(100% + 4px);left:0;z-index:20;min-width:12rem;margin:0;padding:0.35rem;background:var(--crow-surface);border:1px solid var(--crow-border);border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,.18)}
 .dropdown[data-side="right"] > :not(summary){left:auto;right:0}
-.dropdown > :not(summary) > button,.dropdown > :not(summary) > a{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:3px;padding:0.4rem 0.6rem;color:var(--crow-text);text-decoration:none}
+.dropdown > :not(summary) > button,.dropdown > :not(summary) > a{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:3px;padding:0.4rem 0.6rem;min-height:var(--crow-target);color:var(--crow-text);text-decoration:none}
 .dropdown > :not(summary) > button:hover,.dropdown > :not(summary) > a:hover{background:color-mix(in srgb,var(--crow-accent) 12%,transparent)}
 .modal{display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.45);align-items:center;justify-content:center;padding:1rem}
 .modal[data-open="true"]{display:flex}
@@ -719,17 +995,17 @@ details > :not(summary){margin-top:0.5rem}
 .toast[style*="color:"]{border-left-color:currentColor}
 .toast[data-open="true"]{display:block;animation:crow-toast 4s ease forwards}
 @keyframes crow-toast{0%{opacity:0;transform:translateY(8px)}8%{opacity:1;transform:none}85%{opacity:1}100%{opacity:0;visibility:hidden}}
-.crow-check{display:inline-flex;align-items:center;gap:0.5rem;color:var(--crow-text);font-size:0.92rem;cursor:pointer}
+.crow-check{display:inline-flex;align-items:center;gap:0.5rem;color:var(--crow-text);font-size:var(--crow-control-font);min-height:var(--crow-target);cursor:pointer}
 .crow-check input{width:auto;margin:0;accent-color:var(--crow-accent)}
 .crow-toggle input{appearance:none;-webkit-appearance:none;width:2.2rem;height:1.25rem;border-radius:999px;background:var(--crow-border);position:relative;padding:0;border:0;transition:background 120ms ease;cursor:pointer}
 .crow-toggle input::after{content:'';position:absolute;top:2px;left:2px;width:calc(1.25rem - 4px);height:calc(1.25rem - 4px);border-radius:50%;background:var(--crow-surface);box-shadow:0 1px 2px rgba(0,0,0,.3);transition:transform 120ms ease}
 .crow-toggle input:checked{background:var(--crow-accent)}
 .crow-toggle input:checked::after{transform:translateX(0.95rem)}
 .crow-radio{display:inline-flex;gap:1rem;flex-wrap:wrap;align-items:center}
-.crow-radio label{color:var(--crow-text);cursor:pointer}
+.crow-radio label{color:var(--crow-text);min-height:var(--crow-target);cursor:pointer}
 .crow-radio input{width:auto;margin:0;accent-color:var(--crow-accent)}
 .crow-tabs{display:flex;gap:0;border-bottom:1px solid var(--crow-border);align-items:stretch}
-.crow-tabs label{cursor:pointer;padding:0.5rem 0.9rem;margin-bottom:-1px;border-bottom:2px solid transparent;color:var(--crow-muted);font-size:0.92rem;font-weight:500;white-space:nowrap;position:relative}
+.crow-tabs label{cursor:pointer;padding:var(--crow-tab-pad);min-height:var(--crow-target);margin-bottom:-1px;border-bottom:2px solid transparent;color:var(--crow-muted);font-size:var(--crow-control-font);font-weight:500;white-space:nowrap;position:relative}
 .crow-tabs label[aria-selected="true"]{color:var(--crow-text);border-bottom-color:var(--crow-accent)}
 .crow-tabs input{position:absolute;opacity:0;width:0;height:0;margin:0;padding:0;border:0}
 progress.crow-progress{display:block;width:100%;height:0.5rem;appearance:none;-webkit-appearance:none;border:0;border-radius:999px;overflow:hidden;background:var(--crow-border);accent-color:var(--crow-accent)}
@@ -740,7 +1016,7 @@ svg.icon{display:inline-block;vertical-align:-0.2em;flex:none}
 .icon-loader{animation:crow-spin 1s linear infinite}
 @keyframes crow-spin{to{transform:rotate(360deg)}}
 nav:not(.doc-nav):not(.doc-pager){display:flex;gap:0.25rem;align-items:center;flex-wrap:wrap}
-nav:not(.doc-nav):not(.doc-pager) a{color:var(--crow-muted);text-decoration:none;padding:0.35rem 0.6rem;border-radius:4px}
+nav:not(.doc-nav):not(.doc-pager) a{color:var(--crow-muted);text-decoration:none;padding:var(--crow-link-pad);min-height:var(--crow-target);border-radius:4px}
 nav:not(.doc-nav):not(.doc-pager) a:hover{color:var(--crow-text)}
 nav:not(.doc-nav):not(.doc-pager) a[aria-current="page"]{color:var(--crow-text);background:color-mix(in srgb,var(--crow-accent) 14%,transparent)}
 td.num,th.num{text-align:right}
@@ -778,6 +1054,130 @@ pub const RESPONSIVE_CSS: &str = "\
 [data-below=\"phone\"][data-columns-then=\"1\"]{grid-template-columns:repeat(1,minmax(0,1fr))!important}\
 [data-below=\"phone\"][data-columns-then=\"2\"]{grid-template-columns:repeat(2,minmax(0,1fr))!important}\
 [data-hidden-below=\"phone\"]{display:none!important}}";
+
+/// Where the mobile theme applies: a phone, held either way up — a coarse
+/// pointer with a side under the phone width. A narrow window on a desktop
+/// keeps the desktop look (the layout engine and its conformance fixture
+/// at 390px model that look); `<html data-surface="mobile">` asks for the
+/// mobile theme anywhere, and `data-surface="desktop"` keeps a phone on
+/// the desktop's.
+pub const MOBILE_WHEN: &str = "(pointer:coarse) and (max-width:599px),(pointer:coarse) and (max-height:599px)";
+
+/// The mobile theme (one-view-design.md, 3.3): the kernel's size tokens
+/// given a phone's values, then the few structural rules a phone needs —
+/// rows that wrap, grids that collapse, wide things that scroll in their
+/// own box, the layers and the runtime's own boxes inside the safe area.
+/// One rule a line; `mobile_css()` scopes each to `MOBILE_WHEN` and to
+/// `data-surface="mobile"` with no specificity added, so an app's own
+/// stylesheet, which comes after, still wins where it speaks. (A rule
+/// about the root element starts with `:root` or `html`.)
+///
+/// The tokens (desktop's value in the kernel stylesheet -> the phone's):
+/// --crow-font-size 15px -> 16px (body copy; 16px also keeps iOS from
+/// zooming into a field), --crow-line-height 1.55 -> 1.5, --crow-page-max
+/// 860px -> none, --crow-page-pad -> 12px 16px 32px beside the safe area,
+/// --crow-heading-1/-2/-3 1.45rem/0.8rem/0.95rem -> 1.75rem/13px/1.125rem,
+/// --crow-control-font 0.92rem -> 16px (buttons, fields, selects, tabs,
+/// checks, a dropdown's summary), --crow-control-pad, --crow-field-pad,
+/// --crow-label-font 0.88rem -> 16px, --crow-table-font 0.92rem -> 16px,
+/// --crow-column-head 0.72rem -> 12.5px (a caption), --crow-head-pad,
+/// --crow-cell-pad (a row 44px tall), --crow-card-label 0.68rem -> 12.5px
+/// (a caption), --crow-action-font 0.8rem -> 16px, --crow-action-pad,
+/// --crow-tab-pad, --crow-link-pad, --crow-target auto -> 44px (the least
+/// height, and a button's least width, of every control), and the
+/// phone's own: --crow-grid-min 280px (a grid's least column), the type
+/// steps --crow-type-xs/-s/-l/-xl 13/16/22/26px for `size =` 12/14/20/24,
+/// and --crow-surface-name `mobile` (what a check reads to know the theme
+/// is on).
+pub const MOBILE_RULES: &str = r#":root{--crow-surface-name:mobile;--crow-font-size:16px;--crow-line-height:1.5;--crow-page-max:none;--crow-page-pad:max(12px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) calc(32px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));--crow-heading-1:1.75rem;--crow-heading-2:13px;--crow-heading-3:1.125rem;--crow-control-font:16px;--crow-control-pad:0.55rem 1rem;--crow-field-pad:0.55rem 0.75rem;--crow-label-font:16px;--crow-table-font:16px;--crow-column-head:12.5px;--crow-head-pad:10px 16px 10px 0;--crow-cell-pad:10px 16px 10px 0;--crow-card-label:12.5px;--crow-action-font:16px;--crow-action-pad:0.5rem 0.75rem;--crow-tab-pad:0.5rem 1rem;--crow-link-pad:0.5rem 0.75rem;--crow-target:44px;--crow-grid-min:280px;--crow-type-xs:13px;--crow-type-s:16px;--crow-type-l:22px;--crow-type-xl:26px}
+body{-webkit-text-size-adjust:100%;text-size-adjust:100%;overflow-wrap:break-word}
+:root[data-wide="true"] body,:root[data-density="compact"] body{max-width:none;padding:var(--crow-page-pad);font-size:var(--crow-font-size);line-height:var(--crow-line-height)}
+:root[data-density="compact"] h1{font-size:var(--crow-heading-1)}
+:root[data-density="compact"] button{padding:var(--crow-control-pad);font-size:var(--crow-control-font)}
+:root[data-density="compact"] input,:root[data-density="compact"] select,:root[data-density="compact"] textarea{padding:var(--crow-field-pad);font-size:var(--crow-control-font)}
+:root[data-density="compact"] th{padding:var(--crow-head-pad)}
+:root[data-density="compact"] td{padding:var(--crow-cell-pad)}
+[style*="font-size:12px;line-height:18px"]{font-size:var(--crow-type-xs)!important}
+[style*="font-size:14px;line-height:20px"]{font-size:var(--crow-type-s)!important;line-height:24px!important}
+[style*="font-size:20px;line-height:28px"]{font-size:var(--crow-type-l)!important}
+[style*="font-size:24px;line-height:32px"]{font-size:var(--crow-type-xl)!important}
+.row{flex-wrap:wrap!important}
+header,.crow-field{flex-wrap:wrap}
+#crow-root > *,.stack > *,.row > *,.grid > *,.card > *,form > *,.crow-field > *{max-width:100%}
+.grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,var(--crow-grid-min)),1fr))!important}
+table{display:block;overflow-x:auto;max-width:100%}
+th:first-child,td:first-child{position:sticky;left:0;z-index:1;background:var(--crow-bg)}
+.card th:first-child,.card td:first-child,.modal th:first-child,.modal td:first-child,.drawer th:first-child,.drawer td:first-child{background:var(--crow-surface)}
+td.crow-pager{text-align:left}
+pre{overflow-x:auto;max-width:100%}
+img,video,canvas,iframe,svg:not(.icon){max-width:100%}
+img{height:auto}
+input,select,textarea{max-width:100%}
+.crow-tabs{overflow-x:auto;scrollbar-width:none;max-width:100%}
+nav:not(.doc-nav):not(.doc-pager) a{display:inline-flex;align-items:center}
+.dropdown > :not(summary) > a{display:flex;align-items:center}
+:where(.stack,.row) > a[href]{display:flex;align-items:center;gap:0.4em;min-height:var(--crow-target)}
+select{min-width:var(--crow-target)}
+[data-crow-click]:not(tr):not(td){min-height:var(--crow-target)}
+.crow-check:not(.crow-toggle) input,.crow-radio input{width:20px;height:20px}
+.dropdown > :not(summary){max-width:calc(100vw - 32px)}
+.modal{padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+.modal > *{max-width:100%;max-height:100%}
+.drawer{max-width:100vw;padding-top:calc(1.25rem + env(safe-area-inset-top));padding-bottom:calc(1.25rem + env(safe-area-inset-bottom))}
+.toast,.crow-notice{left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));bottom:calc(12px + env(safe-area-inset-bottom));max-width:none}
+.crow-notice{font-size:var(--crow-font-size)}
+.crow-confirm{padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+.crow-confirm-box{max-width:100%;font-size:var(--crow-font-size)}
+.crow-confirm-actions button{flex:1 1 0}
+html[data-crow-offline]::after{top:calc(8px + env(safe-area-inset-top));right:max(12px,env(safe-area-inset-right));font-size:14px}"#;
+
+/// The mobile theme as the page carries it, after the kernel and the
+/// runtime's own rules: every rule of `MOBILE_RULES` under `MOBILE_WHEN`
+/// (unless the page says `data-surface="desktop"`) and again for
+/// `data-surface="mobile"`, scoped by `:where`, which adds no specificity.
+pub fn mobile_css() -> &'static str {
+    static CSS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CSS.get_or_init(|| {
+        let scoped = |when: &str| -> String {
+            let mut out = String::new();
+            for line in MOBILE_RULES.lines().filter(|l| !l.trim().is_empty()) {
+                let (selectors, body) = line.split_once('{').unwrap_or((line, ""));
+                let mut parts = Vec::new();
+                let (mut depth, mut start) = (0i32, 0usize);
+                for (i, c) in selectors.char_indices() {
+                    match c {
+                        '(' | '[' => depth += 1,
+                        ')' | ']' => depth -= 1,
+                        ',' if depth == 0 => {
+                            parts.push(&selectors[start..i]);
+                            start = i + 1;
+                        }
+                        _ => {}
+                    }
+                }
+                parts.push(&selectors[start..]);
+                let scoped: Vec<String> = parts
+                    .iter()
+                    .map(|s| {
+                        let s = s.trim();
+                        // the root itself: the scope joins its own compound
+                        for root in [":root", "html"] {
+                            if let Some(rest) = s.strip_prefix(root) {
+                                return format!("{}:where({}){}", root, when, rest);
+                            }
+                        }
+                        format!(":where(:root{}) {}", when, s)
+                    })
+                    .collect();
+                out.push_str(&scoped.join(","));
+                out.push('{');
+                out.push_str(body);
+            }
+            out
+        };
+        format!("@media {}{{{}}}{}", MOBILE_WHEN, scoped(":not([data-surface=\"desktop\"])"), scoped("[data-surface=\"mobile\"]"))
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -939,6 +1339,71 @@ mod tests {
             }
         }
     }
+    /// The mobile theme is the desktop's tokens with other values: every
+    /// size token it sets is one the kernel stylesheet defines and uses
+    /// (bar the few a phone alone needs), and every token the kernel uses
+    /// it defines.
+    #[test]
+    fn the_mobile_theme_sets_the_kernels_own_tokens() {
+        let defined = |css: &str, root: &str| -> Vec<String> {
+            let block = css.split(&format!("\n{}{{", root)).nth(1).or_else(|| css.strip_prefix(&format!("{}{{", root))).unwrap_or("");
+            let block = block.split('}').next().unwrap_or("");
+            block.split(';').filter_map(|d| d.trim().strip_prefix("--crow-")).filter_map(|d| d.split(':').next()).map(str::to_string).collect()
+        };
+        let sizes = DEFAULT_CSS.lines().find(|l| l.starts_with(":root{--crow-font-size:")).expect("the kernel's size tokens");
+        let kernel: Vec<String> = defined(sizes, ":root");
+        assert!(kernel.len() >= 20, "{:?}", kernel);
+        for t in &kernel {
+            assert!(DEFAULT_CSS.contains(&format!("var(--crow-{})", t)), "the kernel defines --crow-{} and never uses it", t);
+        }
+        let mobile = defined(MOBILE_RULES, ":root");
+        const PHONE_ONLY: &[&str] = &["surface-name", "grid-min", "type-xs", "type-s", "type-l", "type-xl"];
+        for t in &mobile {
+            assert!(kernel.contains(t) || PHONE_ONLY.contains(&t.as_str()), "the mobile theme sets --crow-{}, which the kernel has not", t);
+        }
+        for t in &kernel {
+            assert!(mobile.contains(t), "the mobile theme leaves --crow-{} at the desktop's value", t);
+        }
+        for t in PHONE_ONLY {
+            assert!(*t == "surface-name" || MOBILE_RULES.contains(&format!("var(--crow-{})", t)), "--crow-{} is set and never used", t);
+        }
+    }
+    /// Every rule of the mobile theme is scoped to the phone (or to a page
+    /// that asks for it) and adds no specificity, so the desktop is left as
+    /// it was and an app's stylesheet still wins where it speaks.
+    #[test]
+    fn the_mobile_theme_is_scoped_and_adds_no_specificity() {
+        let css = mobile_css();
+        let (media, forced) = css.split_at(css.find("}}").expect("the media block closes") + 2);
+        assert!(media.starts_with(&format!("@media {}{{", MOBILE_WHEN)), "{}", &media[..80]);
+        let rules = MOBILE_RULES.lines().filter(|l| !l.trim().is_empty()).count();
+        for (block, when) in [(&media[MOBILE_WHEN.len() + 8..media.len() - 1], ":not([data-surface=\"desktop\"])"), (forced, "[data-surface=\"mobile\"]")] {
+            let mut seen = 0;
+            for rule in block.split('}').filter(|r| !r.is_empty()) {
+                seen += 1;
+                let selectors = rule.split('{').next().unwrap_or("");
+                let mut parts = Vec::new();
+                let (mut depth, mut start) = (0i32, 0usize);
+                for (i, c) in selectors.char_indices() {
+                    match c {
+                        '(' | '[' => depth += 1,
+                        ')' | ']' => depth -= 1,
+                        ',' if depth == 0 => {
+                            parts.push(&selectors[start..i]);
+                            start = i + 1;
+                        }
+                        _ => {}
+                    }
+                }
+                parts.push(&selectors[start..]);
+                for s in parts {
+                    let scoped = s.starts_with(&format!(":where(:root{}) ", when)) || s.starts_with(&format!(":root:where({})", when)) || s.starts_with(&format!("html:where({})", when));
+                    assert!(scoped, "an unscoped selector: {} in {}", s, rule);
+                }
+            }
+            assert_eq!(seen, rules, "{}", block);
+        }
+    }
     #[test]
     fn grid_columns_and_responsive_rules() {
         let r = render("grid", &[("columns".into(), "2".into()), ("below".into(), "phone".into()), ("columns_then".into(), "1".into())]);
@@ -951,5 +1416,62 @@ mod tests {
         assert_eq!(r.tag, "p");
         assert_eq!(r.errors.len(), 1);
         assert_eq!(r.passthrough, vec![("href".to_string(), "/x".to_string())]);
+    }
+    /// The clicks a table offers are the ones its parts carry, for every
+    /// table of thousands made at random: clicks, keys of every kind,
+    /// actions that ask first, sorted headers, pagers, a refused table.
+    #[test]
+    fn a_tables_clicks_are_the_ones_its_parts_carry() {
+        use crate::frame::{Column, CrowFrame};
+        fn carried(p: &Part, out: &mut Vec<(String, String)>) {
+            if let Some((_, h)) = p.attrs.iter().find(|(k, _)| *k == "data-crow-click") {
+                let args = p.attrs.iter().find(|(k, _)| *k == "data-crow-args").map(|(_, v)| v.clone()).unwrap_or_default();
+                out.push((h.clone(), args));
+            }
+            for k in &p.kids {
+                if let Kid::Part(q) = k {
+                    carried(q, out);
+                }
+            }
+        }
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move |n: usize| -> usize {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        const CELLS: &[&str] = &["IMRN", "a\"b", "P&L", "<x>", "", " ", "a\\b", "née", "\n"];
+        for round in 0..2000 {
+            let n = next(7) + if round % 50 == 0 { 1001 } else { 0 };
+            let s: Vec<String> = (0..n).map(|_| CELLS[next(CELLS.len())].to_string()).collect();
+            let x: Vec<f64> = (0..n).map(|_| [1.5, -2.0, f64::NAN][next(3)]).collect();
+            let valid: Vec<bool> = (0..n).map(|_| next(5) != 0).collect();
+            let f = CrowFrame::new(vec!["sym".into(), "px".into()], vec![Column::strs(s), Column::Float(x)], vec![vec![true; n], valid]);
+            let actions: Vec<(String, String)> = (0..next(3)).map(|i| (["Buy", "Sell & go"][i % 2].to_string(), ["buy", "sell"][i % 2].to_string())).collect();
+            let confirm: Vec<(String, String)> = if next(2) == 0 { vec![("Sell & go".into(), "Sure \"now\"?".into())] } else { vec![] };
+            let sort = (next(2) == 0).then(|| Sorting { index: next(3), by: (next(2) == 0).then(|| ("px".to_string(), next(2) == 0)) });
+            let hide: Vec<String> = if next(3) == 0 { vec!["sym".to_string()] } else { vec![] };
+            let t = TableOf {
+                frame: &f,
+                click: (next(2) == 0).then_some("focus"),
+                key: [None, Some("px"), Some("sym"), Some("gone")][next(4)],
+                mark: None,
+                delta: &[],
+                actions: &actions,
+                hide: &hide,
+                confirm: &confirm,
+                page: (next(2) == 0).then(|| Paging { size: next(4) + 1, index: next(3), at: next(5) }),
+                sort: sort.as_ref(),
+            };
+            let mut from_parts = Vec::new();
+            for p in frame_table_parts(&t) {
+                carried(&p, &mut from_parts);
+            }
+            let mut clicks = frame_table_clicks(&t);
+            from_parts.sort();
+            clicks.sort();
+            assert_eq!(clicks, from_parts);
+        }
     }
 }

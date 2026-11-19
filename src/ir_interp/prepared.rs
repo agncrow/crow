@@ -1448,13 +1448,33 @@ impl IrInterp {
         if let Some(reason) = failed {
             give_back(&mut regs, args);
             self.reg_pool.give(regs, bare);
-            return Ok(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&reason))));
+            return Ok(CrowValue::node(crate::ops::tree::failed(&reason)));
         }
         if p.recursive && let Err(e) = self.deeper(p.first_line) {
             give_back(&mut regs, args);
             self.reg_pool.give(regs, bare);
             return Err(e);
         }
+        // a view in a served render: its kept node, when nothing it read
+        // moved (crow_web/src/live/views.rs)
+        let kept = if p.view && self.served.is_some() {
+            let vals: Vec<&CrowValue> = p.params.iter().map(|r| &regs[*r as usize]).collect();
+            self.view_kept(name, &vals)
+        } else {
+            None
+        };
+        let running = match kept {
+            Some(Ok(super::ViewCall::Reuse(node, _))) => {
+                if p.recursive {
+                    self.depth -= 1;
+                }
+                give_back(&mut regs, args);
+                self.reg_pool.give(regs, bare);
+                return Ok(CrowValue::node(node));
+            }
+            Some(Ok(super::ViewCall::Run(r))) => Some(r),
+            _ => None,
+        };
         let saved_line = self.line;
         if p.view {
             self.in_view += 1;
@@ -1463,7 +1483,11 @@ impl IrInterp {
         let r = self.run_body(p, &mut regs, &mut bare);
         give_back(&mut regs, args);
         self.reg_pool.give(regs, bare);
-        self.call_ended(r, p.view, p.recursive, saved_line)
+        let r = self.call_ended(r, p.view, p.recursive, saved_line);
+        match running {
+            Some(running) => self.view_ran(running, r),
+            None => r,
+        }
     }
 
     /// A slice or a length of a text read with what is known of its start

@@ -1,0 +1,28 @@
+--- A view that grows a list with `push` of nodes and places the list is
+--- served alike in both modes (it had not built compiled): the cards are
+--- the page's nodes, and a click adds one.
+use web, ui
+
+names = ['ada', 'bo']
+other = 0
+
+view card[n]
+    return row[p['card `n`'], key = n]
+
+view cards[]
+    out = []
+    for n in names
+        out = push[out, card[n]]
+    return stack[out]
+
+fn add[]
+    names = push[names, 'cy']
+
+fn bump[]
+    other = other + 1
+
+view render[]
+    return stack[row[button['Add', click = add], button['Bump', click = bump]], p['other `other`'], cards[]]
+
+page['/', render]
+serve[3591]

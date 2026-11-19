@@ -182,6 +182,11 @@ pub(crate) struct Emitter {
     /// HTTP (`crow_web::live::test_control`), a part without a page too.
     pub(crate) test_control: bool,
     pub(crate) has_noapp_web: bool,
+    /// A function registers a page or a route (`fn pages[]` calling
+    /// `page[…]`): the app and the state are main's, so the registration
+    /// is queued where it is called and main lands the queue on its app
+    /// before it serves (`__crow_later`, `__crow_landed`).
+    pub(crate) registers_later: bool,
     /// facts: name → (type, the Rust default)
     pub(crate) reactive_vars: BTreeMap<String, (Ty, String)>,
     /// Each fact's declared value as main computes it, where it reads a fact
@@ -229,6 +234,15 @@ pub(crate) struct Emitter {
     /// state main holds, not a view's.
     pub(crate) in_main: bool,
     pub(crate) view_mark: bool,
+    /// What each view reads (derive::view_reads, the analysis the
+    /// interpreter keeps its views by too), and whether a view was emitted
+    /// that keeps its last node (then `__refresh_derive` is emitted)
+    pub(crate) view_reads: BTreeMap<String, crate::derive::ViewReads>,
+    pub(crate) views_kept: bool,
+    /// the locals of the view being emitted held as nodes (`node_locals`)
+    pub(crate) node_locals: BTreeSet<String>,
+    /// each view's parameters held as nodes (`node_params`), by index
+    pub(crate) node_params: BTreeMap<String, BTreeSet<usize>>,
     pub(crate) closure_depth: usize,
     pub(crate) current_line: usize,
     /// Whether the function being emitted is a standard module's written
@@ -260,7 +274,16 @@ impl Emitter {
         let structs: BTreeMap<String, StructDef> = part.structs.iter().map(|s| (s.name.clone(), s.clone())).collect();
         let derives: BTreeMap<String, Derive> = part.derives.iter().map(|d| (d.name.clone(), d.clone())).collect();
         let views: BTreeSet<String> = part.fns.iter().filter(|f| f.kind == FnKind::View).map(|f| f.name.clone()).collect();
+        let view_reads = {
+            let all: Vec<&Fn> = part.fns.iter().collect();
+            let fields: BTreeMap<String, Vec<Ty>> = part.structs.iter().map(|s| (s.name.clone(), s.fields.iter().map(|(_, t)| t.clone()).collect())).collect();
+            crate::derive::view_reads(&all, &fields)
+        };
         Emitter {
+            view_reads,
+            views_kept: false,
+            node_locals: BTreeSet::new(),
+            node_params: Self::node_params(&fns),
             part,
             registry,
             source_file: source_file.to_string(),
@@ -310,6 +333,7 @@ impl Emitter {
             app_state: false,
             test_control: false,
             has_noapp_web: false,
+            registers_later: false,
             reactive_vars: BTreeMap::new(),
             fact_inits: BTreeMap::new(),
             static_handle_vars: BTreeSet::new(),

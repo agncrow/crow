@@ -1,0 +1,5 @@
+[{"open": "/"}, {"expect": "count 0"}, {"expect": "parity even"},
+ {"event": "bump"}, {"expect": "count 1"}, {"expect": "parity odd"}, {"values": 2},
+ {"event": "bump_twice"}, {"expect": "count 3"}, {"expect": "parity odd"}, {"values": 1},
+ {"event": "bump_other"}, {"expect": "other 1"}, {"values": 1, "sent": "{\"set\":[[[0,2,0],\"other 1\",\"p\"]],\"type\":\"values\"}"},
+ {"event": "relabel"}, {"expect": "cell x b"}, {"expect": "cell y b"}, {"views": {"ran": 3, "kept": 3}}]

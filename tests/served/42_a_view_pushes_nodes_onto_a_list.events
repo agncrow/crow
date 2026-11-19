@@ -1,0 +1,3 @@
+[{"open": "/"}, {"expect": "card bo"},
+ {"event": "add"}, {"expect": "card cy"},
+ {"event": "bump"}, {"expect": "other 1"}, {"expect": "card ada"}]

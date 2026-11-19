@@ -1,0 +1,45 @@
+--- A place a view computes from the session's scalar facts and
+--- derivations alone is a binding (one-view-design.md 3.5, phase 3): when
+--- only what the page's views read in their bindings moved, the page is
+--- sent the values that changed and no view runs — a clock's text, a
+--- derivation over it, a progress bar, a button's `disabled`, a bound
+--- field. A fact
+--- the page's structure reads (the rows) renders as before, and the views
+--- whose values were set are kept. A second session keeps its own.
+use web, ui
+
+clock = 0
+name = 'ada'
+rows = ['x', 'y']
+
+derive half
+    return clock / 2
+
+derive late
+    return clock gte 3
+
+view top_bar[]
+    return row[p['clock `clock`'], p['half `half`'], progress[clock, 10]]
+
+view listing[]
+    out = for r in rows
+        p['row `r`']
+    return stack[out]
+
+view name_form[]
+    return stack[field['Name', name, 'text', 0], p['hello `name`']]
+
+fn tick[]
+    clock = clock + 1
+
+fn add_row[]
+    rows = push[rows, 'z']
+
+fn rename[]
+    name = 'bo'
+
+view render[]
+    return stack[top_bar[], listing[], name_form[], row[button['Tick', click = tick], button['Add', click = add_row], button['Rename', click = rename, disabled = late]]]
+
+page['/', render]
+serve[3589]

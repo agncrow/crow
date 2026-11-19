@@ -32,8 +32,9 @@ pub struct Status {
     /// None for values computed here and now. Flows like error metadata: a
     /// derived value is as old as its oldest input (see age[]).
     pub captured: Option<f64>,
-    /// Markup a view, an element or `doc` made: the one kind of string a
-    /// view places as markup. Every other string is text, whatever it holds.
+    /// Markup `doc`, `menu` or `pager` made, or a node a view made where it
+    /// was handed on as text: the one kind of string a view places as
+    /// markup. Every other string is text, whatever it holds.
     pub markup: bool,
     /// A column of no rows, held as the list of its cells, carries its kind
     /// here — an empty column of it — so it reads back as the column it was
@@ -92,12 +93,27 @@ impl CrowValue {
         }
     }
 
-    /// Markup a view, an element or `doc` made — placed as markup when it
-    /// is a child of an element.
+    /// Markup `doc`, `menu` or `pager` made, or a markup value — placed as
+    /// markup when it is a child of an element.
     pub fn markup(html: String) -> Self {
         let mut v = CrowValue::ok(Value::Str(html));
         v.set_markup(true);
         v
+    }
+
+    /// The node a view, an element or a control made.
+    pub fn node(node: crate::ops::tree::Node) -> Self {
+        CrowValue::ok(Value::Node(std::sync::Arc::new(node)))
+    }
+
+    /// A node as its markup, where text is taken (a builtin's argument, an
+    /// operand): the markup it had been before views were nodes. Any other
+    /// value is itself.
+    pub fn into_markup(self) -> Self {
+        match &self.value {
+            Value::Node(n) => CrowValue::markup(crate::ops::tree::html(n)),
+            _ => self,
+        }
     }
 
     #[inline(always)]
@@ -360,6 +376,11 @@ pub enum Value {
     /// (crow_runtime::autograd). A number inside such a function is a
     /// tensor of no dimensions.
     Traced(Box<crow_runtime::autograd::Traced>),
+    /// What a view, an element or a control made: the node of what it says
+    /// (`ops::tree`, one-view-design.md 3.1), which its parent
+    /// holds as it is and the page's renderer writes. Where text is taken
+    /// it is its markup, as the markup it had been.
+    Node(std::sync::Arc<crate::ops::tree::Node>),
     App(Box<AppSession>), // headless app session for test blocks
     GradFn(FnValue), // gradient function wrapping a user function
     Done, // represents no value (from 'done' status)
@@ -517,7 +538,7 @@ impl Value {
             Value::Fraction(_) => "fraction",
             Value::Float(_) => "float",
             Value::Moment(_) => "moment",
-            Value::Str(_) => "string",
+            Value::Str(_) | Value::Node(_) => "string",
             Value::Bool(_) => "bool",
             Value::Array(_) => "array",
             Value::NumArray(_) => "array",
@@ -553,6 +574,7 @@ impl fmt::Display for Value {
             Value::Float(n) => write!(f, "{}", n),
             Value::Moment(m) => write!(f, "{}", m),
             Value::Str(s) => write!(f, "{}", s),
+            Value::Node(n) => write!(f, "{}", crate::ops::tree::html(n)),
             Value::Bool(b) => write!(f, "{}", b),
             // a list, a map and a record as the one display writes them
             // (crow_runtime::display), the compiled program's typed values alike

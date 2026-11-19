@@ -595,32 +595,27 @@ fn reads_inputs(msg: &str, laws: &BTreeSet<usize>, lines: &BTreeSet<usize>) -> b
 /// so probing it here is vacuous — it becomes meaningful as a compiled-mode
 /// contract, queued with the compiled test-runner milestone.)
 pub fn run_determinism_probe(
-    ctx: &TypeContext,
     stmts: &[Stmt],
     pure_fns: &BTreeSet<String>,
     recursive_fns: &BTreeSet<String>,
 ) -> Vec<Issue> {
     let mut issues = Vec::new();
-    let decls: Vec<Stmt> = declarations(stmts);
-    // the declarations lowered once; every probe runs on a fresh walker
-    let Ok((program, pctx)) = crate::ir_interp::prepare(&decls, "check") else { return issues };
+    // the program lowered once, as the edge cases' is; every probe runs on
+    // a fresh walker
+    let Some((program, registry)) = probe_program(stmts) else { return issues };
     for name in pure_fns {
         if recursive_fns.contains(name) {
             continue;
         }
-        let sig = match ctx.functions.get(name) {
-            Some(s) => s,
-            None => continue,
-        };
-        if !can_generate_edge_cases(sig)
+        let Some(sig) = lowered_signature(&program, name) else { continue };
+        if !can_generate_edge_cases(&sig)
             || sig.params.iter().any(|(_, ty)| matches!(ty, Ty::Unknown))
         {
             continue;
         }
-        for combo in generate_input_combos(sig).iter().take(2) {
-            let mut it = crate::ir_interp::IrInterp::new(&pctx.registry, "check");
+        for combo in generate_input_combos(&sig).iter().take(2) {
+            let mut it = crate::ir_interp::IrInterp::new(&registry, "check");
             it.load(&program);
-            let _ = it.run_main(&program);
             let a = it.call(name, combo.clone());
             let b = it.call(name, combo.clone());
             let (Ok(a), Ok(b)) = (a, b) else { continue };
@@ -1436,6 +1431,21 @@ pub(crate) fn left_out_of(stmts: &[Stmt], decls: &[Stmt]) -> BTreeSet<String> {
 }
 
 pub(crate) fn declarations(stmts: &[Stmt]) -> Vec<Stmt> {
+    declarations_from(stmts).into_iter().map(|(_, s)| s).collect()
+}
+
+/// Which top-level statements `declarations` keeps, by index into `stmts`
+/// — decided over the whole program, as a computed fact's keeping reads
+/// the program's functions, its `use` lines and the facts kept before it.
+/// The compiled test program (`crow test --compiled`) keeps these: asked
+/// one statement at a time, a computed fact had found no function, no
+/// `use ui` and no fact before it, and was dropped there though the
+/// interpreted test kept it (`undefined variable 'd'`).
+pub(crate) fn declared_indices(stmts: &[Stmt]) -> BTreeSet<usize> {
+    declarations_from(stmts).into_iter().map(|(i, _)| i).collect()
+}
+
+fn declarations_from(stmts: &[Stmt]) -> Vec<(usize, Stmt)> {
     // Declarations only — the boundary: tests see what callers see. Literal
     // top-level assigns ride along: they are reactive-state defaults, which
     // app[]-harness scenarios read and handlers write.
@@ -1480,17 +1490,110 @@ pub(crate) fn declarations(stmts: &[Stmt]) -> Vec<Stmt> {
             _ => false,
         }
     }
-    stmts
-        .iter()
-        .filter(|s| match s {
+    // In a program that holds state (a ui program, or a web program that
+    // derives), a fact's value computed from what reads alone — another
+    // fact, an item of a map, a function of the program's (`a = pick[m,
+    // 'x', '5']`) — is its declaration too, as the served page runs it:
+    // every session starts from it (spec, A fact gets one value at the top
+    // level). A script's computed values stay top-level code. Left out, a handler that wrote the fact found no such
+    // name in a test's session (`undefined variable 'a'`), though the
+    // served page had it; finchdash's guardrails, filled from what the
+    // project keeps. One that reaches further — writes a file or a table,
+    // asks the network, says something — is top-level code, and a test
+    // still never runs it; nor one that reads a value left out.
+    let fns: BTreeMap<&str, &[Stmt]> = stmts.iter().filter_map(|s| if let Stmt::FnDecl { name, body, .. } = s { Some((name.as_str(), body.as_slice())) } else { None }).collect();
+    let top: BTreeSet<&str> = stmts.iter().filter_map(|s| if let Stmt::Assign { name, .. } = s { Some(name.as_str()) } else { None }).collect();
+    let uses = |m: &dyn Fn(&str) -> bool| stmts.iter().any(|s| matches!(s, Stmt::Use { path, .. } if m(path)));
+    let holds_state = uses(&|p| p == "ui" || p == "web.ui") || (uses(&|p| p == "web" || p.starts_with("web.")) && stmts.iter().any(|s| matches!(s, Stmt::Derive { .. })));
+    let mut kept: BTreeSet<String> = BTreeSet::new();
+    let mut out = Vec::new();
+    for (i, s) in stmts.iter().enumerate() {
+        let keep = match s {
             Stmt::FnDecl { .. } | Stmt::StructDecl { .. } | Stmt::Use { .. } => true,
             // a derivation is a declaration: what a value is, from what
             Stmt::Derive { .. } => true,
-            Stmt::Assign { value, .. } => is_literal(value) || is_connect(value),
+            Stmt::Assign { name, value } => {
+                let keep = is_literal(value) || is_connect(value) || (holds_state && reads_only(value, &fns, &top, &kept));
+                if keep {
+                    kept.insert(name.clone());
+                }
+                keep
+            }
+            // a page's init is a handler a test's session runs (`app[view,
+            // init = f]`), as the served page's does: the page is kept for
+            // that wiring — its path and view, its init, not its address's
+            // facts, which a test sets itself — and registering it serves
+            // nothing in a test. Left out, an init a test did not name was
+            // a function writing facts it cannot see.
+            Stmt::ExprStmt(Expr::Call { callee, args }) if matches!(callee.as_ref(), Expr::Ident(n) if n == "page") => {
+                if let Some(init) = args.iter().find(|a| matches!(a, Expr::Named { name, .. } if name == "init")) {
+                    let positional: Vec<Expr> = args.iter().take_while(|a| !matches!(a, Expr::Named { .. })).take(2).cloned().collect();
+                    let mut kept_args = positional;
+                    kept_args.extend(args.iter().filter(|a| matches!(a, Expr::Named { name, .. } if name == "view" || name == "path")).cloned());
+                    kept_args.push(init.clone());
+                    out.push((i, Stmt::ExprStmt(Expr::Call { callee: callee.clone(), args: kept_args })));
+                }
+                false
+            }
             _ => false,
-        })
-        .cloned()
-        .collect()
+        };
+        if keep {
+            out.push((i, s.clone()));
+        }
+    }
+    out
+}
+
+/// Whether a top-level value reaches nothing but reads — through the
+/// functions of the program it calls, at any depth — and reads no
+/// top-level value but those `kept` before it (declarations).
+fn reads_only(value: &Expr, fns: &BTreeMap<&str, &[Stmt]>, top: &BTreeSet<&str>, kept: &BTreeSet<String>) -> bool {
+    use crate::effects::Effect;
+    // (a request is a read as often as not — Magpie reads a folder served
+    // over HTTP with one — and the served page makes it as it starts; what
+    // the process holds is the program's own, a cache a read keeps)
+    let reads = |kinds: Vec<Effect>| kinds.iter().all(|k| matches!(k, Effect::Files | Effect::DbRead | Effect::Network | Effect::Clock | Effect::Random | Effect::Process | Effect::Memory | Effect::MemoryWrite));
+    let mut ok = true;
+    let mut todo: Vec<String> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let line = [Stmt::ExprStmt(value.clone())];
+    // (the value itself: the top-level names it reads are declared ones)
+    crate::type_infer::each_expr(&line, None, &mut |e, _| match e {
+        Expr::Ident(n) if top.contains(n.as_str()) && !kept.contains(n) => ok = false,
+        _ => {}
+    });
+    let mut look = |stmts: &[Stmt], ok: &mut bool, todo: &mut Vec<String>| {
+        crate::type_infer::each_expr(stmts, None, &mut |e, _| {
+            if let Expr::Call { callee, .. } = e {
+                match callee.as_ref() {
+                    Expr::Ident(n) if fns.contains_key(n.as_str()) => todo.push(n.clone()),
+                    // (a row, or an item of a value: `m[k]` is written as a call)
+                    Expr::Ident(n) => *ok &= reads(crate::table::effects_of(n)),
+                    Expr::FieldAccess { object, field } => match object.as_ref() {
+                        Expr::Ident(m) if fns.contains_key(format!("{}.{}", m, field).as_str()) => todo.push(format!("{}.{}", m, field)),
+                        // (a module's row, or one it lacks; else an item of a
+                        // value's field, `s.settings[k]`: a part's function
+                        // is called by its whole name)
+                        Expr::Ident(m) if crate::table::ROWS.iter().any(|r| r.module == m.as_str()) => *ok &= crate::table::rows_named_in(m, field).next().is_some() && reads(crate::table::effects_of_in(m, field)),
+                        _ => {}
+                    },
+                    // (an item of what an expression answers)
+                    _ => {}
+                }
+            }
+        });
+    };
+    look(&line, &mut ok, &mut todo);
+    while ok {
+        let Some(f) = todo.pop() else { break };
+        if !seen.insert(f.clone()) {
+            continue;
+        }
+        if let Some(body) = fns.get(f.as_str()) {
+            look(body, &mut ok, &mut todo);
+        }
+    }
+    ok
 }
 
 /// Full stdlib export vocabulary, built once — keeps the undefined-variable
@@ -1501,6 +1604,12 @@ fn stdlib_names() -> &'static BTreeSet<String> {
     NAMES.get_or_init(|| {
         let mut names: BTreeSet<String> = crate::modules::ModuleRegistry::with_stdlib().all_function_names().into_iter().map(|s| s.to_string()).collect();
         names.extend(crate::modules::every_module_function());
+        // every module's constants, as the lowering counts them defined
+        // beside its functions (`const_names`): `nan`, `inf`, `pi` and `e`
+        // read under `use math` had each been reported as an undefined
+        // variable, though both modes and every build run them (Myna's
+        // room, Kite's candles)
+        names.extend(crate::modules::every_module_constant());
         // every module's rows, an internal one's included: a package may
         // import `sys`, which the registry leaves out of what it offers a
         // program (Magpie's `frame_of_json` and `byte` had been reported as
@@ -1698,15 +1807,22 @@ pub fn run_static_checks(ctx: &TypeContext, top_level_stmts: &[Stmt]) -> Vec<Iss
             _ => None,
         })
         .collect();
+    // in a program that holds state, a function's assignment to a fact's
+    // name writes the fact, whatever calls the function — the lowering's
+    // rule (`is_fact`; spec, Function Scope)
+    let holds_state = crate::lower_ir::program_holds_state(crate::lower_ir::imports_ui(top_level_stmts), ctx);
     // Check user-defined functions
     for (name, sig) in &ctx.functions {
         let param_names: Vec<String> = sig.params.iter().map(|(n, _)| n.clone()).collect();
         let checked_params: &[String] = if route_handlers.contains(name) { &[] } else { &param_names };
         // Views, handlers, derivations and their helpers write reactive
-        // state; those assignments are the point of the fn, never "unused
-        // locals".
+        // state, and in a program that holds state so does any function
+        // assigning a fact; those assignments are the point of the fn,
+        // never "unused locals". (Counted for the reactive ones alone, a
+        // helper that only the top level calls to set a fact had been told
+        // `say has unused variable 'status'`.)
         let state_writes: BTreeSet<String> =
-            if reactive.contains(name) {
+            if reactive.contains(name) || holds_state {
                 top_level_stmts
                     .iter()
                     .filter_map(|s| match s {
@@ -1761,10 +1877,13 @@ pub fn find_fn_lines(stmts: &[Stmt]) -> BTreeMap<String, usize> {
 
 // --- Edge case generation ---
 
-/// Generate boundary values for a Ty.
+/// Generate boundary values for a Ty: each held as the program holds a
+/// value of the type, so a body lowered for it reads the value as it reads
+/// its callers'.
 fn boundary_values(ty: &Ty) -> Option<Vec<CrowValue>> {
     match ty {
-        Ty::Int => Some(vec![
+        // (an int the width pass holds as a growing one is an int)
+        Ty::Int | Ty::Big => Some(vec![
             CrowValue::ok(Value::Int(0)),
             CrowValue::ok(Value::Int(1)),
             CrowValue::ok(Value::Int(-1)),
@@ -1816,23 +1935,17 @@ fn boundary_values(ty: &Ty) -> Option<Vec<CrowValue>> {
             }
         }
         Ty::Tensor(inner, _) => {
-            // Same boundary values as Array but for numeric arrays
+            // The same numbers as a list's, held as the program holds a
+            // tensor (`ops::array_literal`: numbers as one, which an index
+            // reads as an int or a float by the tensor's element): handed
+            // as a list of ints, a float vector's items had been read as
+            // ints, which met its floats unconverted — Lory's `_unit[[1, 2,
+            // 3]]`, "an int met a float in 'div' without a conversion"
             match inner.as_ref() {
-                Ty::Int | Ty::Float => Some(vec![
-                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![]))),
-                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![CrowValue::ok(Value::Int(0))]))),
-                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![
-                        CrowValue::ok(Value::Int(1)),
-                        CrowValue::ok(Value::Int(2)),
-                        CrowValue::ok(Value::Int(3)),
-                    ]))),
-                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![CrowValue::ok(Value::Int(1))]))),
-                    CrowValue::ok(Value::Array(std::sync::Arc::new(vec![
-                        CrowValue::ok(Value::Int(-1)),
-                        CrowValue::ok(Value::Int(0)),
-                        CrowValue::ok(Value::Int(1)),
-                    ]))),
-                ]),
+                Ty::Int | Ty::Float => [vec![], vec![0], vec![1, 2, 3], vec![1], vec![-1, 0, 1]]
+                    .into_iter()
+                    .map(|ns: Vec<i64>| crate::ops::array_literal(ns.into_iter().map(|n| CrowValue::ok(Value::Int(n))).collect()).ok())
+                    .collect(),
                 _ => None,
             }
         }
@@ -1885,10 +1998,36 @@ fn format_call(name: &str, args: &[CrowValue]) -> String {
     format!("{}[{}]", name, arg_strs.join(", "))
 }
 
+/// The program the probes call: the whole program, lowered as `crow run`
+/// lowers it, and never run — a pure function reads no top-level name and
+/// no fact, so it needs nothing the top level sets, and the top level's
+/// code, which could do something, does not run. Every call in it types
+/// what it calls, a test's and the top level's among them: lowered from
+/// the declarations alone, a function only a test or the top level calls
+/// had had no types, its body lowered with no conversion, and the probes'
+/// ints met its floats (Lory's `nice[1]`, "an int met a float in 'pow'
+/// without a conversion — a bug in Crow", every check).
+fn probe_program(stmts: &[Stmt]) -> Option<(Arc<crate::ir::Program>, crate::modules::ModuleRegistry)> {
+    crate::ir_interp::prepare(stmts, "check").ok().map(|(p, c)| (Arc::new(p), c.registry))
+}
+
+/// A function's parameters as the probed program lowered them, for the
+/// values handed it: of these types, its body reads them as it reads its
+/// callers'. (The checker's own inference, run without the lowering, can
+/// type a parameter otherwise, and numbers a copy, `name__N`, by its own
+/// order.)
+fn lowered_signature(program: &crate::ir::Program, name: &str) -> Option<FnSig> {
+    let f = program.parts.iter().flat_map(|p| p.fns.iter()).find(|f| f.name == name)?;
+    Some(FnSig {
+        params: f.params.iter().map(|(p, t)| (p.clone(), crate::lower_ir::as_inferred(t))).collect(),
+        return_type: Ty::Unit,
+        body: Vec::new(),
+    })
+}
+
 /// Run edge case generation on pure functions.
 /// Returns (issues, snapshots) where snapshots are input→output pairs.
 pub fn run_edge_cases(
-    ctx: &TypeContext,
     stmts: &[Stmt],
     pure_fns: &BTreeSet<String>,
     recursive_fns: &BTreeSet<String>,
@@ -1897,31 +2036,21 @@ pub fn run_edge_cases(
     let mut issues = Vec::new();
     let mut snapshots: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
 
-    // The declarations as tests see them — skip top-level code to avoid
-    // side effects. Without the imports, derivations and facts a function
-    // or a view reads, the program did not lower and every probe was
-    // skipped (a ui app's views read its facts and derivations).
-    let decls_only: Vec<Stmt> = declarations(stmts);
-
     // Suppress panic output during edge case testing
     let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
 
-    // the declarations lowered once, shared by every probe's thread
-    let prepared: Option<(Arc<crate::ir::Program>, crate::modules::ModuleRegistry)> =
-        crate::ir_interp::prepare(&decls_only, "check").ok().map(|(p, c)| (Arc::new(p), c.registry));
+    // the program lowered once, shared by every probe's thread
+    let prepared = probe_program(stmts);
 
     for name in pure_fns {
         // Skip recursive functions — edge cases with boundary values cause stack overflow
         if recursive_fns.contains(name) { continue; }
-        let sig = match ctx.functions.get(name) {
-            Some(s) => s,
-            None => continue,
-        };
-        if !can_generate_edge_cases(sig) { continue; }
+        let Some(sig) = prepared.as_ref().and_then(|(program, _)| lowered_signature(program, name)) else { continue };
+        if !can_generate_edge_cases(&sig) { continue; }
         if sig.params.iter().any(|(_, ty)| matches!(ty, Ty::Unknown)) { continue; }
 
-        let combos = generate_input_combos(sig);
+        let combos = generate_input_combos(&sig);
         let mut fn_snapshots = Vec::new();
 
         for combo in &combos {
@@ -1936,11 +2065,10 @@ pub fn run_edge_cases(
             let (tx, rx) = std::sync::mpsc::channel();
             let handle = std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let (program, registry) = prepared_clone.ok_or_else(|| "the declarations do not lower".to_string())?;
+                    let (program, registry) = prepared_clone.ok_or_else(|| "the program does not lower".to_string())?;
                     let mut it = crate::ir_interp::IrInterp::new(&registry, "check");
                     it.set_cancel_flag(cancel_clone);
                     it.load(&program);
-                    let _ = it.run_main(&program);
                     it.call(&fn_name, combo_clone)
                 }));
                 let _ = tx.send(result);
@@ -2036,48 +2164,69 @@ fn snap_unescaped(s: &str) -> String {
     out
 }
 
-/// Load existing snapshots from disk.
-fn load_snapshots() -> BTreeMap<String, Vec<(String, String)>> {
+/// Where a function's snapshot is kept: under the file that declares it,
+/// that file named as the baseline names an entry
+/// (`.crow/snapshots/<file>/<function>.snap`: `packages/lory/gui.co`'s
+/// `_fresh` in `packages-lory-gui/_fresh.snap`), so the functions of one
+/// name in two files never meet. Kept under the function's name alone,
+/// each file's `_fresh` had been compared with the one checked last in
+/// the directory, and Lory's main.co, gui.co and plot.co, checked in
+/// turn, had each reported "_fresh behavior changed".
+fn snapshot_path(store: &std::path::Path, file: &str, name: &str) -> std::path::PathBuf {
+    store.join(crate::baseline::store_key(file)).join(format!("{}.snap", name))
+}
+
+/// The snapshots kept of these functions, each by the file declaring it.
+/// One the store kept under the function's name alone, as it did before
+/// 2026-11-13 (`.crow/snapshots/<function>.snap`), is not read: it cannot
+/// say which file's function it held.
+fn load_snapshots_in(store: &std::path::Path, declared: &BTreeMap<String, String>) -> BTreeMap<String, Vec<(String, String)>> {
     let mut all = BTreeMap::new();
-    let dir = std::path::Path::new(SNAPSHOT_DIR);
-    if !dir.exists() { return all; }
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().map(|e| e == "snap").unwrap_or(false) {
-                let name = path.file_stem().unwrap().to_string_lossy().to_string();
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    let mut pairs = Vec::new();
-                    for line in content.lines() {
-                        if let Some((input, output)) = line.split_once(" = ") {
-                            pairs.push((snap_unescaped(input), snap_unescaped(output)));
-                        }
-                    }
-                    all.insert(name, pairs);
-                }
-            }
-        }
+    for (name, file) in declared {
+        let Ok(content) = std::fs::read_to_string(snapshot_path(store, file, name)) else { continue };
+        let pairs = content
+            .lines()
+            .filter_map(|line| line.split_once(" = "))
+            .map(|(input, output)| (snap_unescaped(input), snap_unescaped(output)))
+            .collect();
+        all.insert(name.clone(), pairs);
     }
     all
 }
 
-/// Save snapshots to disk.
-fn save_snapshots(snapshots: &BTreeMap<String, Vec<(String, String)>>) {
+/// Each function's answers written under the file declaring it, and the
+/// file the store had kept under the function's name alone removed: it is
+/// never read again.
+fn save_snapshots_in(store: &std::path::Path, snapshots: &BTreeMap<String, Vec<(String, String)>>, declared: &BTreeMap<String, String>) {
+    for (name, pairs) in snapshots {
+        let Some(file) = declared.get(name) else { continue };
+        let path = snapshot_path(store, file, name);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).ok();
+        }
+        let content: String = pairs.iter()
+            .map(|(input, output)| format!("{} = {}", snap_escaped(input), snap_escaped(output)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if std::fs::write(&path, content).is_ok() {
+            let _ = std::fs::remove_file(store.join(format!("{}.snap", name)));
+        }
+    }
+}
+
+/// The project's store's snapshots of these functions.
+fn load_snapshots(declared: &BTreeMap<String, String>) -> BTreeMap<String, Vec<(String, String)>> {
+    load_snapshots_in(std::path::Path::new(SNAPSHOT_DIR), declared)
+}
+
+/// Save snapshots to the project's store.
+fn save_snapshots(snapshots: &BTreeMap<String, Vec<(String, String)>>, declared: &BTreeMap<String, String>) {
     // the store is the project's, version-controlled; a unit test running
     // the check pipeline from the crate root must not write into it
     if cfg!(test) {
         return;
     }
-    let dir = std::path::Path::new(SNAPSHOT_DIR);
-    std::fs::create_dir_all(dir).ok();
-    for (name, pairs) in snapshots {
-        let path = dir.join(format!("{}.snap", name));
-        let content: String = pairs.iter()
-            .map(|(input, output)| format!("{} = {}", snap_escaped(input), snap_escaped(output)))
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(path, content).ok();
-    }
+    save_snapshots_in(std::path::Path::new(SNAPSHOT_DIR), snapshots, declared);
 }
 
 /// Compare new snapshots with existing ones, returning regression issues.
@@ -2185,10 +2334,14 @@ pub fn describe_derivations(stmts: &[Stmt]) -> Vec<String> {
 }
 
 /// Run the full check pipeline on parsed + type-inferred code.
+/// `declared_in` names the file a function is declared in, by its path
+/// from where the check runs, for the snapshot store; a function no file
+/// declares (the REPL's) has its answers kept nowhere.
 pub fn run_check(
     stmts: &[Stmt],
     ctx: &TypeContext,
     _verbose: bool,
+    declared_in: &dyn Fn(&str) -> Option<String>,
 ) -> CheckResult {
     let all_fns: BTreeSet<String> = ctx.functions.keys().cloned().collect();
     let pure_fns = find_pure_functions(ctx);
@@ -2211,7 +2364,7 @@ pub fn run_check(
     let recursive_for_probe = find_recursive_functions(ctx);
     let reactive_for_probe = reactive_readers(ctx);
     let probed: BTreeSet<String> = pure_fns.iter().filter(|f| !reactive_for_probe.contains(*f)).cloned().collect();
-    issues.extend(run_determinism_probe(ctx, stmts, &probed, &recursive_for_probe));
+    issues.extend(run_determinism_probe(stmts, &probed, &recursive_for_probe));
 
     // 1b. Handlers reaching builtins that wait hold the session's clicks.
     issues.extend(find_blocking_in_handlers(ctx, &fn_lines));
@@ -2245,12 +2398,13 @@ pub fn run_check(
         .filter(|f| !reactive.contains(*f) && !crate::from_dependency(f))
         .cloned()
         .collect();
-    let (edge_issues, new_snapshots) = run_edge_cases(ctx, stmts, &edge_candidates, &recursive_fns);
+    let (edge_issues, new_snapshots) = run_edge_cases(stmts, &edge_candidates, &recursive_fns);
     let edge_cases_generated = new_snapshots.values().map(|v| v.len()).sum::<usize>();
     issues.extend(edge_issues);
 
-    // 3. Regression snapshots
-    let old_snapshots = load_snapshots();
+    // 3. Regression snapshots, each function's under its file
+    let declared: BTreeMap<String, String> = new_snapshots.keys().filter_map(|name| declared_in(name).map(|file| (name.clone(), file))).collect();
+    let old_snapshots = load_snapshots(&declared);
     let regression_issues = compare_snapshots(&old_snapshots, &new_snapshots);
     let snapshots_unchanged = new_snapshots.len().saturating_sub(
         regression_issues.iter()
@@ -2261,8 +2415,8 @@ pub fn run_check(
     issues.extend(regression_issues);
 
     // Save new snapshots
-    let snapshots_saved = new_snapshots.len();
-    save_snapshots(&new_snapshots);
+    let snapshots_saved = declared.len();
+    save_snapshots(&new_snapshots, &declared);
 
     CheckResult {
         test_counts,
@@ -2299,6 +2453,64 @@ mod tests {
             assert_eq!(snap_unescaped(input), "two[]");
             assert_eq!(snap_unescaped(output), text, "{:?}", line);
         }
+    }
+
+    /// Two files' functions of one name keep their answers apart, each under
+    /// the file declaring it: kept under the name alone, Lory's main.co,
+    /// gui.co and plot.co, checked in turn, had each met the `_fresh` checked
+    /// before it and reported "_fresh behavior changed". The file a store
+    /// kept as before (`<function>.snap`) is not read, and is gone once the
+    /// function's answers are kept under its file; a changed answer of one
+    /// file's own function is still found.
+    #[test]
+    fn two_files_functions_of_one_name_keep_their_answers_apart() {
+        let store = std::env::temp_dir().join(format!("crow_snapshots_by_file_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        std::fs::create_dir_all(&store).unwrap();
+        let answers = |out: &str| BTreeMap::from([("_fresh".to_string(), vec![("_fresh[1]".to_string(), out.to_string())])]);
+        let main = BTreeMap::from([("_fresh".to_string(), "packages/lory/main.co".to_string())]);
+        let gui = BTreeMap::from([("_fresh".to_string(), "packages/lory/gui.co".to_string())]);
+        // the store as an older crow left it: one `_fresh`, whichever file's was checked last
+        std::fs::write(store.join("_fresh.snap"), "_fresh[1] = 9").unwrap();
+        assert!(load_snapshots_in(&store, &main).is_empty(), "the old file is not read");
+        save_snapshots_in(&store, &answers("1"), &main);
+        assert!(!store.join("_fresh.snap").exists(), "the old file is removed once main.co's `_fresh` is kept");
+        assert!(store.join("packages-lory-main").join("_fresh.snap").exists());
+        // gui.co's `_fresh` answers otherwise, and meets nothing of main.co's
+        let before = load_snapshots_in(&store, &gui);
+        assert!(compare_snapshots(&before, &answers("2")).is_empty(), "{:?}", before);
+        save_snapshots_in(&store, &answers("2"), &gui);
+        assert!(store.join("packages-lory-gui").join("_fresh.snap").exists());
+        // main.co checked again meets its own answer, and no other
+        let before = load_snapshots_in(&store, &main);
+        assert!(compare_snapshots(&before, &answers("1")).is_empty(), "{:?}", before);
+        let changed = compare_snapshots(&before, &answers("5"));
+        assert!(
+            matches!(changed.as_slice(), [Issue::RegressionChange { func, was, now, .. }] if func == "_fresh" && was == "1" && now == "5"),
+            "{:?}",
+            changed.iter().map(|i| i.summary()).collect::<Vec<_>>()
+        );
+        let _ = std::fs::remove_dir_all(&store);
+    }
+
+    /// In a program that holds state, a fact computed from what reads alone
+    /// is declared for a test, as the served page declares it: through a
+    /// function of the program's, another fact, an item of a map. One whose
+    /// value writes — itself or through a function — stays top-level code,
+    /// and so does one that reads a value left out. (A test had run only the
+    /// literal facts: a handler writing a computed one found no such name,
+    /// `undefined variable 'a'`; tests/computed_fact_harness.co.)
+    #[test]
+    fn a_fact_computed_from_reads_is_a_declaration_and_one_that_writes_is_not() {
+        let src = "use web, ui\n\nfn pick[m, col, default]\n    if col in m\n        return m[col]\n    return default\n\nfn saved[]\n    w = write['x.txt', 'y']\n    return 1\n\nkept = map[x = '7']\na = pick[kept, 'x', '5']\nb = a\nc = kept['x']\nmade = write['y.txt', 'z']\nd = made\ne = saved[]\nf = upper['hi']\n";
+        let stmts = crate::build(src).unwrap();
+        let decls = declarations(&stmts);
+        let left_out = left_out_of(&stmts, &decls);
+        assert_eq!(left_out.iter().cloned().collect::<Vec<String>>(), vec!["d".to_string(), "e".to_string(), "made".to_string()]);
+        // a script's computed value is top-level code, as it was
+        let script = "f = upper['hi']\ng = 'hi'\n";
+        let stmts = crate::build(script).unwrap();
+        assert_eq!(left_out_of(&stmts, &declarations(&stmts)).into_iter().collect::<Vec<String>>(), vec!["f".to_string()]);
     }
 
     /// A test reading a top-level value the declarations leave out (a
@@ -2348,6 +2560,56 @@ mod tests {
         ctx.infer_program(&stmts);
         let issues = run_static_checks(&ctx, &stmts);
         assert!(!issues.iter().any(|i| matches!(i, Issue::UndefinedVariable { .. })), "{:?}", issues);
+    }
+
+    /// A module's constant is a name its import makes, as its functions
+    /// are: each of the four the spec lists (`pi`, `e`, `inf`, `nan`), read
+    /// under `use math` in a function and at the top level, had been
+    /// reported as an undefined variable by every `crow check`, though both
+    /// modes run them (Myna's room and Kite's candles read `nan`, Lory's
+    /// `cylinder` reads `pi`).
+    fn reads_a_defined_constant(c: &str) {
+        let src = format!("use math\nfn spread[a]\n    y = {c}\n    a + y\nlog[spread[1.0]]\nlog[{c} + 1.0]\n");
+        let (stmts, ctx) = parse_and_infer(&src);
+        let issues = run_static_checks(&ctx, &stmts);
+        assert!(!issues.iter().any(|i| matches!(i, Issue::UndefinedVariable { .. })), "{}: {:?}", c, issues);
+    }
+
+    #[test]
+    fn nan_is_a_defined_name() {
+        reads_a_defined_constant("nan");
+    }
+
+    #[test]
+    fn inf_is_a_defined_name() {
+        reads_a_defined_constant("inf");
+    }
+
+    #[test]
+    fn pi_is_a_defined_name() {
+        reads_a_defined_constant("pi");
+    }
+
+    #[test]
+    fn e_is_a_defined_name() {
+        reads_a_defined_constant("e");
+    }
+
+    /// Every constant a module has is a defined name — the spec's four
+    /// among them, and one added later with them — and a name nothing
+    /// makes is still undefined.
+    #[test]
+    fn a_modules_constants_are_defined_names() {
+        let constants = crate::modules::every_module_constant();
+        for c in ["pi", "e", "inf", "nan"] {
+            assert!(constants.iter().any(|k| k == c), "{} among {:?}", c, constants);
+        }
+        for c in &constants {
+            reads_a_defined_constant(c);
+        }
+        let (stmts, ctx) = parse_and_infer("use math\nfn spread[a]\n    a + nann\nlog[spread[1.0]]\n");
+        let issues = run_static_checks(&ctx, &stmts);
+        assert!(issues.iter().any(|i| matches!(i, Issue::UndefinedVariable { var, .. } if var == "nann")), "{:?}", issues);
     }
 
     /// A fact declared with a negative number is a declaration: the
@@ -2717,6 +2979,35 @@ mod tests {
         assert!(issues.iter().any(|i| matches!(i, Issue::UnusedVariable { func, var, .. } if func == "other" && var == "extra")));
     }
 
+    /// In a program that holds state, a function's assignment to a fact
+    /// writes the fact, whatever calls the function (the lowering's rule,
+    /// spec Function Scope): a helper that only the top level calls, or
+    /// that nothing calls, had been told its write was an unused variable
+    /// (`say has unused variable 'status'`). A helper's own local, never
+    /// read, is still one; so is a script's function's local named like
+    /// its top level's variable, which it has nothing to do with.
+    #[test]
+    fn a_fact_a_helper_writes_is_no_unused_variable() {
+        let unused = |src: &str| -> Vec<(String, String)> {
+            let (stmts, ctx) = parse_and_infer(src);
+            run_static_checks(&ctx, &stmts)
+                .into_iter()
+                .filter_map(|i| match i {
+                    Issue::UnusedVariable { func, var, .. } => Some((func, var)),
+                    _ => None,
+                })
+                .collect()
+        };
+        let app = "use web, ui\nstatus = ''\nfn say[msg]\n    status = msg\nsay['ready']\nview render[]\n    return p['`status`']\npage['/', render]\n";
+        assert!(unused(app).is_empty(), "{:?}", unused(app));
+        let uncalled = app.replace("say['ready']\n", "");
+        assert!(unused(&uncalled).is_empty(), "{:?}", unused(&uncalled));
+        let with_local = app.replace("    status = msg\n", "    other = msg\n    status = msg\n");
+        assert_eq!(unused(&with_local), vec![("say".to_string(), "other".to_string())]);
+        let script = "steps = 0\nfn played[n]\n    steps = n * 2\n    return n\nlog[played[3], steps]\n";
+        assert_eq!(unused(script), vec![("played".to_string(), "steps".to_string())]);
+    }
+
     #[test]
     fn test_no_false_positive_used_var() {
         let src = "fn add[a, b]\n    a + b\nresult = add[1, 2]\n";
@@ -2786,7 +3077,7 @@ mod tests {
         let (stmts, ctx) = parse_and_infer(src);
         let pure = find_pure_functions(&ctx);
         let recursive = find_recursive_functions(&ctx);
-        let (issues, _snapshots) = run_edge_cases(&ctx, &stmts, &pure, &recursive);
+        let (issues, _snapshots) = run_edge_cases(&stmts, &pure, &recursive);
         let crashes: Vec<_> = issues.iter().filter(|i| matches!(i, Issue::EdgeCaseCrash { error, .. } if error.contains("division by zero"))).collect();
         assert!(!crashes.is_empty(), "share should crash dividing by zero");
     }
@@ -2799,7 +3090,7 @@ mod tests {
         let (stmts, ctx) = parse_and_infer(src);
         let pure = find_pure_functions(&ctx);
         let recursive = find_recursive_functions(&ctx);
-        let (issues, _snapshots) = run_edge_cases(&ctx, &stmts, &pure, &recursive);
+        let (issues, _snapshots) = run_edge_cases(&stmts, &pure, &recursive);
         let crashes: Vec<_> = issues.iter().filter(|i| matches!(i, Issue::EdgeCaseCrash { .. })).collect();
         assert!(crashes.is_empty(), "{:?}", crashes);
     }
@@ -2810,7 +3101,7 @@ mod tests {
         let (stmts, ctx) = parse_and_infer(src);
         let pure = find_pure_functions(&ctx);
         let recursive = find_recursive_functions(&ctx);
-        let (issues, _) = run_edge_cases(&ctx, &stmts, &pure, &recursive);
+        let (issues, _) = run_edge_cases(&stmts, &pure, &recursive);
         let crashes: Vec<_> = issues.iter().filter(|i| matches!(i, Issue::EdgeCaseCrash { error, .. } if error.contains("index 0 is out of range for an array of 0 items"))).collect();
         assert!(!crashes.is_empty(), "first[[]] should crash with index out of bounds");
     }
@@ -2821,7 +3112,7 @@ mod tests {
         let (stmts, ctx) = parse_and_infer(src);
         let pure = find_pure_functions(&ctx);
         let recursive = find_recursive_functions(&ctx);
-        let (issues, snapshots) = run_edge_cases(&ctx, &stmts, &pure, &recursive);
+        let (issues, snapshots) = run_edge_cases(&stmts, &pure, &recursive);
         assert!(issues.is_empty(), "recursive fib should be skipped, no issues");
         assert!(snapshots.is_empty(), "recursive fib should be skipped, no snapshots");
     }
@@ -2832,9 +3123,59 @@ mod tests {
         let (stmts, ctx) = parse_and_infer(src);
         let pure = find_pure_functions(&ctx);
         let recursive = find_recursive_functions(&ctx);
-        let (issues, snapshots) = run_edge_cases(&ctx, &stmts, &pure, &recursive);
+        let (issues, snapshots) = run_edge_cases(&stmts, &pure, &recursive);
         assert!(issues.is_empty(), "impure greet should not be tested");
         assert!(snapshots.is_empty(), "impure greet should not be tested");
+    }
+
+    /// Each probed function's answers, by its name.
+    type Answers = BTreeMap<String, Vec<(String, String)>>;
+
+    /// The probes' findings and answers, and whether any of them is the
+    /// lowering's slip — an int and a float met with no conversion between.
+    fn probed(src: &str) -> (Vec<Issue>, Answers) {
+        let (stmts, ctx) = parse_and_infer(src);
+        let pure = find_pure_functions(&ctx);
+        let recursive = find_recursive_functions(&ctx);
+        let (issues, snapshots) = run_edge_cases(&stmts, &pure, &recursive);
+        let unconverted: Vec<&Issue> = issues.iter().filter(|i| matches!(i, Issue::EdgeCaseCrash { error, .. } if error.contains("without a conversion"))).collect();
+        assert!(unconverted.is_empty(), "{:?}", unconverted);
+        (issues, snapshots)
+    }
+
+    /// A function only a test calls is probed as its test types it: the
+    /// probes call the program as `crow run` lowers it, every call in it
+    /// typing what it calls. Lowered from the declarations alone, `nice`
+    /// and `ticks` had had no types, their bodies no conversion, and every
+    /// check had said `nice[1]` stops with "an int met a float in 'pow'
+    /// without a conversion — a bug in Crow" and `ticks[0, 1, 0]` the same
+    /// in 'add' (Lory's solid.co, plot.co).
+    #[test]
+    fn a_function_only_a_test_calls_is_probed_as_the_test_types_it() {
+        let (_, snapshots) = probed("use math\n\nfn nice[rough]\n    if rough lte 0.0\n        return 1.0\n    return 10.0 ^ floor[log10[rough]]\n\nfn ticks[lo, hi, n]\n    return lo + hi / max[1.0, 0.0 + n]\n\ntest scale[]\n    nice[0.3] eq 0.1\n    ticks[0.0, 1.0, 4] eq 0.25\n");
+        assert!(snapshots.get("nice").is_some_and(|s| s.iter().any(|(i, o)| i == "nice[1]" && o == "1")), "{:?}", snapshots);
+        assert!(snapshots.get("ticks").is_some_and(|s| s.iter().any(|(i, o)| i == "ticks[0, 1, 0]" && o == "1")), "{:?}", snapshots);
+    }
+
+    /// A function only the top level calls is probed as the top level types
+    /// it, the top level never run (Lory's `sphere[0, 1]` had stopped in
+    /// 'div', its `n` an int its body had no conversion of).
+    #[test]
+    fn a_function_only_the_top_level_calls_is_probed_as_it_types_it() {
+        let (_, snapshots) = probed("fn share[r, n]\n    return r / n * 2.0\n\nlog[share[1.0, 4]]\n");
+        assert!(snapshots.get("share").is_some_and(|s| s.iter().any(|(i, o)| i == "share[1, 1]" && o == "2")), "{:?}", snapshots);
+    }
+
+    /// A vector of floats is handed as the program holds one, a tensor whose
+    /// items read as floats: a list of ints had been read item by item as
+    /// ints, which met the body's floats unconverted (Lory's `_unit[[1, 2,
+    /// 3]]`, in 'div'). An index past its end is still the crash it is.
+    #[test]
+    fn a_vector_of_floats_is_probed_with_floats() {
+        let (issues, snapshots) = probed("use math\n\nfn _dot[a, b]\n    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]\n\nfn _unit[a]\n    n = sqrt[_dot[a, a]]\n    if n eq 0.0\n        return [0.0, 1.0, 0.0]\n    return [a[0] / n, a[1] / n, a[2] / n]\n\nlog[_unit[[-0.4, -1.0, -0.3]]]\n");
+        assert!(snapshots.get("_dot").is_some_and(|s| s.iter().any(|(i, o)| i == "_dot[[1, 2, 3], [1, 2, 3]]" && o == "14")), "{:?}", snapshots);
+        assert!(snapshots.get("_unit").is_some_and(|s| s.iter().any(|(i, _)| i == "_unit[[1, 2, 3]]")), "{:?}", snapshots);
+        assert!(issues.iter().any(|i| matches!(i, Issue::EdgeCaseCrash { func, error, .. } if func == "_unit" && error.contains("out of range"))), "{:?}", issues);
     }
 
     // === Full pipeline ===
@@ -2849,7 +3190,7 @@ mod tests {
     fn the_probes_lower_a_ui_app_and_leave_its_views_alone() {
         let src = "use web, ui\nn = 0\nderive stamp\n    return fmt[now[], style = 'iso']\nfn half[x]\n    return x / 2.0\nlog[half[4.0]]\nview v[]\n    return p['`stamp` `n`']\npage['/', v]\n";
         let (stmts, ctx) = parse_and_infer(src);
-        let result = run_check(&stmts, &ctx, false);
+        let result = run_check(&stmts, &ctx, false, &|_| None);
         assert!(!result.issues.iter().any(|i| matches!(i, Issue::Nondeterministic { .. })), "{:?}", result.issues);
         assert!(result.edge_cases_generated > 0, "the pure function was not probed");
     }
@@ -2858,7 +3199,7 @@ mod tests {
     fn test_run_check_clean_program() {
         let src = "fn double[x]\n    x * 2\nresult = double[5]\nlog[result]\n";
         let (stmts, ctx) = parse_and_infer(src);
-        let result = run_check(&stmts, &ctx, false);
+        let result = run_check(&stmts, &ctx, false, &|_| None);
         assert!(result.pure_fns.contains("double"));
         assert!(result.total_functions == 1);
     }

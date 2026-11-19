@@ -260,6 +260,28 @@ pub struct Program {
     pub parts: Vec<Part>,
 }
 
+/// Where a binding stands in an element: a child by its place among the
+/// children written, an option by its name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BindAt {
+    Child(usize),
+    Option(String),
+}
+
+/// A place of a view whose value the program computes from the session's
+/// scalar facts and derivations alone (one-view-design.md 3.5,
+/// derive::bind_sites): its id, the element it stands in, whether it is an
+/// option (else a child: a text or a bound control), the expression that
+/// computes it, and the facts and derivations it reads.
+#[derive(Debug, Clone)]
+pub struct Binding {
+    pub id: u32,
+    pub element: String,
+    pub option: bool,
+    pub expr: Expr,
+    pub inputs: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Part {
     /// The part's name: the entry file's stem, or the module prefix.
@@ -277,6 +299,8 @@ pub struct Part {
     pub derives: Vec<Derive>,
     pub fns: Vec<Fn>,
     pub tests: Vec<Test>,
+    /// The program's bindings, by id (derive::bind_sites).
+    pub bindings: Vec<Binding>,
     /// The statements of a script, or a ui program's top level, in order.
     pub main: Block,
     /// Every effect the top level reaches, by the part its statements
@@ -435,6 +459,24 @@ pub struct Fn {
     /// calls count toward the recursion limit, in both modes
     /// (crow_runtime::stops::DEPTH).
     pub recursive: bool,
+    /// What each parameter of a view's copy made for its call sites is
+    /// handed (`derive::specialize`, one-view-design.md 3.4, 3.5): empty for
+    /// every other function, whose parameters are all keyed by value.
+    pub args: Vec<ArgKey>,
+}
+
+/// What a view's parameter is handed at the call sites its copy was made
+/// for (`derive::specialize`): its value, compared as the view's key; a
+/// value the program computes from the session's scalar facts and
+/// derivations alone, read by the view only in its bindings (left out of
+/// the key: its places are set from `expr`); or a fact's or a
+/// derivation's value, or a field of one, keyed by that source's version
+/// (`root`, a derivation when `derive`).
+#[derive(Debug, Clone)]
+pub enum ArgKey {
+    Value,
+    Bound(Expr),
+    Source { root: String, derive: bool, expr: Expr },
 }
 
 /// A function copied per signature is named `name·N` (`copy_name`, made
@@ -545,6 +587,22 @@ pub fn dual_name(f: &str) -> String {
     kind_name(f, "dual")
 }
 
+/// A view's copy for the call sites that hand it the same kinds of value
+/// (crate::derive's `specialize`): `f·site3··`, the copy's number after
+/// `site`. It is no copy per signature: the view itself is still compiled
+/// for the calls that hand it plain values.
+pub fn site_name(f: &str, k: usize) -> String {
+    kind_name(f, &format!("site{}", k))
+}
+
+/// The view a copy for call sites was made of (`site_name`).
+pub fn site_base(name: &str) -> Option<&str> {
+    let rest = name.strip_suffix(crate::PART_JOIN)?.strip_suffix(crate::PART_JOIN)?;
+    let (base, kind) = rest.rsplit_once(crate::PART_JOIN)?;
+    let n = kind.strip_prefix("site")?;
+    (!base.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then_some(base)
+}
+
 fn kind_name(f: &str, kind: &str) -> String {
     format!("{}{}{}{}{}", f, crate::PART_JOIN, kind, crate::PART_JOIN, crate::PART_JOIN)
 }
@@ -587,6 +645,8 @@ pub fn made_base(name: &str) -> &str {
         }) {
             name = base;
         } else if let Some(base) = ["handed", "traced", "dual"].iter().find_map(|k| kind_base(name, k)) {
+            name = base;
+        } else if let Some(base) = site_base(name) {
             name = base;
         } else {
             name = copy_base(name);
@@ -880,8 +940,10 @@ pub enum Expr {
     ListLit(Vec<Expr>, Ty),
     MapLit(Vec<(String, Expr)>, Ty),
     RecordLit { name: String, fields: Vec<Expr> },
-    /// A view node: element, attributes, children.
-    Tree { element: String, attrs: Vec<(String, Expr)>, children: Vec<Expr> },
+    /// A view node: element, attributes, children, and which of its
+    /// places are bindings (`binds`, by id in the part's `bindings`:
+    /// derive::bind_sites).
+    Tree { element: String, attrs: Vec<(String, Expr)>, children: Vec<Expr>, binds: Vec<(BindAt, u32)> },
     /// The collecting loop; the body's last expression is what each
     /// iteration yields, an iteration that yields nothing is skipped.
     /// `parallel` as for the statement form.
@@ -1979,7 +2041,7 @@ pub fn expr(e: &Expr) -> String {
         Expr::RecordLit { name, fields } => {
             format!("{}{{{}}}", name, fields.iter().map(expr).collect::<Vec<_>>().join(", "))
         }
-        Expr::Tree { element, attrs, children } => {
+        Expr::Tree { element, attrs, children, .. } => {
             let a = if attrs.is_empty() {
                 String::new()
             } else {

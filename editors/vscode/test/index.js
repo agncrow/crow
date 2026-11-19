@@ -1,8 +1,9 @@
 // The extension driven inside VS Code (editors/vscode/test.sh): every
 // feature it relays — diagnostics, hover, completion, definition, symbols,
-// references, signature help, rename, code actions — then the server
-// killed and started again, the document told again. What it saw goes to
-// CROW_EXT_TEST_OUT as JSON; any step that fails fails the run.
+// references, signature help, rename, code actions, each name's kind —
+// then the server killed and started again, the document told again. What
+// it saw goes to CROW_EXT_TEST_OUT as JSON; any step that fails fails the
+// run.
 const vscode = require("vscode");
 const fs = require("fs");
 const OUT = process.env.CROW_EXT_TEST_OUT;
@@ -43,6 +44,19 @@ exports.run = async function () {
     r.rename_edits = edit ? edit.entries().reduce((n, [, es]) => n + es.length, 0) : 0;
     const actions = await vscode.commands.executeCommand("vscode.executeCodeActionProvider", uri, diags[0].range);
     r.code_actions = (actions || []).map((a) => a.title);
+    // each name's kind, by the legend the server announced: `double`
+    // (line 0, from character 3, six long) a function declared
+    const legend = await until("the semantic tokens' legend", () => vscode.commands.executeCommand("vscode.provideDocumentSemanticTokensLegend", uri));
+    const told = () => vscode.commands.executeCommand("vscode.provideDocumentSemanticTokens", uri).then((t) => (t && t.data && t.data.length ? t : null), () => null);
+    const firstName = (t) => {
+      const d = Array.from(t.data.slice(0, 5));
+      return [d[0], d[1], d[2], legend.tokenTypes[d[3]], legend.tokenModifiers.filter((_, i) => d[4] & (1 << i)).join(" ")].join(",");
+    };
+    r.semantic_first = firstName(await until("semantic tokens", told));
+    if (r.semantic_first !== "0,3,6,function,declaration") throw new Error("the first name told: " + r.semantic_first);
+    // and shown whatever the theme says: the extension turns it on for Crow
+    r.semantic_highlighting = vscode.workspace.getConfiguration("editor", { languageId: "crow" }).get("semanticHighlighting.enabled");
+    if (r.semantic_highlighting !== true) throw new Error("semantic highlighting for Crow: " + r.semantic_highlighting);
     // the server killed: started again, the document told again, its
     // diagnostics back
     const first = api.server.child.pid;
@@ -51,6 +65,7 @@ exports.run = async function () {
     const again = await until("diagnostics after the restart", () => { const d = vscode.languages.getDiagnostics(uri); return d.length ? d : null; });
     r.restarted = true;
     r.diagnostics_after_restart = again.length;
+    r.semantic_first_after_restart = firstName(await until("semantic tokens after the restart", told));
     r.ok = true;
   } catch (e) {
     r.error = String(e && e.stack || e);

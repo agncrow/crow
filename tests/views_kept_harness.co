@@ -1,0 +1,53 @@
+use ui
+
+--- Views kept with what they read (one-view-design.md, phase 2): a test's
+--- page after each click is the page every view run again makes — the
+--- view a click did not touch is kept where the runtime keeps views, a
+--- derivation recomputed to an equal value leaves its view as it was, and
+--- keyed rows follow their keys.
+count = 0
+names = ['ada', 'bo', 'cy']
+
+derive parity
+    if count % 2 eq 0
+        return 'even'
+    return 'odd'
+
+view counter[]
+    return p['count `count`']
+
+view parity_view[]
+    return p['parity `parity`']
+
+view people[]
+    out = for n in names
+        row[p['`n`'], key = n]
+    return stack[out]
+
+fn bump_twice[]
+    count = count + 2
+
+fn bump[]
+    count = count + 1
+
+fn reverse_names[]
+    names = reverse[names]
+
+view render[]
+    head = row[button['Bump', click = bump], button['Twice', click = bump_twice], button['Reverse', click = reverse_names]]
+    return stack[head, counter[], parity_view[], people[]]
+
+test kept_views_show_what_a_full_render_shows[]
+    a = app[render]
+    assert['count 0' in html[a]]
+    click[a, bump_twice]
+    h = html[a]
+    assert['count 2' in h]
+    assert['parity even' in h]
+    click[a, bump]
+    assert['parity odd' in html[a]]
+    click[a, reverse_names]
+    h = html[a]
+    after_cy = split[h, '<p>cy</p>']
+    assert['<p>ada</p>' in after_cy[1]]
+    assert['key="cy"' in h]

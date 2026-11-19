@@ -352,6 +352,15 @@ impl Emitter {
                     }
                 }
             },
+            // (`and`/`or` typed as a result — a chain one of whose truths
+            // could fail, its steps held in locals by the lowering — whose
+            // two sides are now plain truths: the plain truth they make,
+            // as a result that did not fail; `a and b and c` with `b` read
+            // from a field that can fail had not built — parity 537)
+            Expr::Binary { op, l, r, ty } if matches!(op.as_str(), "and" | "or") && ty.is_result() && !self.tt(l).is_result() && !self.tt(r).is_result() => {
+                let plain = self.binary(op, l, r);
+                format!("CrowResult {{ ok: true, value: {}, reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", plain)
+            }
             Expr::Binary { op, l, r, .. } => self.binary(op, l, r),
             Expr::Unary { op, expr, .. } => self.unary(op, expr),
             Expr::Index { base, indices, .. } => self.index(base, indices, e),
@@ -361,7 +370,7 @@ impl Emitter {
             Expr::ListLit(items, ty) => self.list_lit(items, ty),
             Expr::MapLit(pairs, ty) => self.map_lit(pairs, ty),
             Expr::RecordLit { name, fields } => self.record_lit(name, fields),
-            Expr::Tree { element, attrs, children } => self.tree(element, attrs, children),
+            Expr::Tree { element, attrs, children, binds } => self.tree(element, attrs, children, binds),
             Expr::ForExpr { var, iter, body, parallel, .. } => self.for_expr(var, iter, body, *parallel, e),
             Expr::Deferred { name, .. } => format!("compile_error!(\"a held call to '{}' outside an event attribute\")", name),
         }
@@ -2690,7 +2699,7 @@ impl Emitter {
                         let mut checks: Vec<String> = Vec::new();
                         for (k, &i) in result_idx.iter().enumerate() {
                             pre.push_str(&format!("let _va{}· = &({}); ", k, orig[k]));
-                            checks.push(format!("if !_va{k}·.ok {{ CrowVNode::failed(&_va{k}·.reason) }} else", k = k));
+                            checks.push(format!("if !_va{k}·.ok {{ tree::failed(&_va{k}·.reason) }} else", k = k));
                             bound[i] = match &through[i] {
                                 Some((node, _)) => self.printed_over(&raw_args[i], *node, format!("_va{}·.value.clone()", k)),
                                 None => format!("_va{}·.value.clone()", k),
@@ -3501,7 +3510,12 @@ impl Emitter {
                     Kind::Item | Kind::ItemRef => {
                         let at = self.tt(a);
                         // (a local read for the last time moves into the collection)
-                        let s = if *k == Kind::Item && !self.moved_local(a) { Self::kept(a, &s) } else { s };
+                        // (and one only lent — `x in xs` — but made a result
+                        // to meet a list whose items can fail is held by
+                        // that result: a copy, the local read on after it —
+                        // parity 536)
+                        let wrapped = matches!(&items, Some(Ty::Result(_))) && !Self::inner(&at).is_result();
+                        let s = if (*k == Kind::Item || wrapped) && !self.moved_local(a) { Self::kept(a, &s) } else { s };
                         // a function kept is the collection's function type
                         let s = match &at {
                             Ty::Fn(..) => format!("({} as {})", s, at.to_rust_type()),
@@ -3543,6 +3557,13 @@ impl Emitter {
             self.needs_serde_json = true;
         }
         let mut strs = arg_strs.to_vec();
+        // a view's or an element's tree handed to a builtin is its markup
+        // (a list a view grows with `push` holds the markup of its nodes)
+        for (i, a) in args.iter().enumerate() {
+            if self.makes_node(a) {
+                strs[i] = format!("({}).to_html()", strs[i]);
+            }
+        }
         self.args_by_kind(row, args, &mut strs, whole);
         if let Some(call) = self.taken_call(row, args, &strs) {
             return call;
@@ -3598,7 +3619,27 @@ impl Emitter {
             return format!("{}({})", crate::ir::dual_name(&Self::rust_fn_name(name)), arg_strs.join(", "));
         }
         let params: Vec<Ty> = self.fns.get(name).map(|f| f.params.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
+        // a view's parameter held as a node (`node_params`) is handed the
+        // node: a view's or an element's as it is made, a node local's
+        // copy, and markup as the markup node it places
+        let node_ps = self.node_params.get(name).cloned().unwrap_or_default();
         for (i, a) in args.iter().enumerate() {
+            if node_ps.contains(&i) {
+                let held = match Emitter::raw(a) {
+                    Expr::Local(n, _) | Expr::Move(n, _) => self.local_ty(n) == Some(Ty::Node),
+                    _ => false,
+                };
+                if let Some(s) = arg_strs.get_mut(i) {
+                    *s = if self.makes_node(a) {
+                        format!("tree::Node::from({})", s)
+                    } else if held {
+                        if matches!(Emitter::raw(a), Expr::Move(..)) || s.ends_with(".clone()") { s.clone() } else { format!("{}.clone()", s) }
+                    } else {
+                        format!("tree::Node::Markup(({}).to_string())", s)
+                    };
+                }
+                continue;
+            }
             if self.makes_node(a) {
                 if let Some(s) = arg_strs.get_mut(i) {
                     *s = format!("({}).to_html()", s);

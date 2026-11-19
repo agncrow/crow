@@ -1,238 +1,223 @@
-//! Views: elements, their children and attributes, frame tables, the
-//! widget, the bound inputs and charts.
+//! Views: elements, their children and options, the widget, the bound
+//! inputs and charts, each made by the one builder both modes call
+//! (the web crate's `view::tree`).
 
 use super::program::{fn_named, map_literal_pairs};
 use super::*;
 
-/// Elements with no children.
-const VOID_ELEMENTS: &[&str] = &["input", "img", "divider", "meta"];
-
 impl Emitter {
-    fn lit(e: &Expr) -> Option<String> {
-        match Emitter::raw(e) {
-            Expr::Const(Const::Str(s), _) => Some(s.clone()),
-            Expr::Const(Const::Int(n), _) => Some(n.to_string()),
-            Expr::Const(Const::Bool(b), _) => Some(b.to_string()),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn tree(&mut self, element: &str, attrs: &[(String, Expr)], children: &[Expr]) -> String {
+    /// An element, as the one builder makes it (`tree::element`). The
+    /// options are computed first, in the order the program wrote them, as
+    /// the interpreter runs them; so a child that moves a local an option
+    /// reads comes after the option has its value. They are handed over in
+    /// name order, then the children, and the builder decides what each is
+    /// to the element. An option the layout vocabulary refuses stops the
+    /// render.
+    pub(crate) fn tree(&mut self, element: &str, attrs: &[(String, Expr)], children: &[Expr], binds: &[(crate::ir::BindAt, u32)]) -> String {
         if element == "widget" {
             return self.widget(attrs, children);
         }
-        // table[frame]: the frame's rows; a table of element children is an
-        // ordinary element
-        if element == "table" && children.len() == 1 && matches!(Self::inner(&self.tt(&children[0])), Ty::Frame(_)) {
-            return self.frame_table(attrs, &children[0]);
+        let mut out = String::from("{ ");
+        let mut named: Vec<(String, String)> = Vec::new();
+        for (i, (k, v)) in attrs.iter().enumerate() {
+            let g = self.given_option(v);
+            let local = format!("_o{}·", i);
+            out.push_str(&format!("let {}: tree::Given = {}; ", local, g));
+            // (the last of a name given twice, as a map keeps it)
+            named.retain(|(n, _)| n != k);
+            named.push((k.clone(), local));
         }
-        let rust_name = if element == "main" { "main_el" } else { crow_runtime::layout::html_tag(element) };
-        let is_void = VOID_ELEMENTS.contains(&element);
-
-        // the attributes are computed before the children, as the IR orders
-        // them and the interpreter runs them: where a child moves a local an
-        // attribute reads (`button['`_arrow[key]`', click = sort_by[key]]`,
-        // the last read of `key` inside the text), the element is made with
-        // its attributes first and given its children after — printed in
-        // place, the children had moved the value the attributes then read
-        // (E0382; Myna's sort headers, parity 463)
-        if !is_void && !children.is_empty() && Self::children_move_what_attrs_read(attrs, children) {
-            let empty: Vec<Expr> = Vec::new();
-            let made = self.tree(element, attrs, &empty);
-            let kids = self.children_vec(children);
-            return format!("{{ let _made· = {}; let _kids· = {}; _made·.with_children(_kids·) }}", made, kids);
-        }
-
-        // children: a list child is spliced, each item a node
-        let mut spliced: Vec<bool> = Vec::new();
-        let mut child_strs: Vec<String> = Vec::new();
-        for c in children {
-            let (s, sp) = self.child(c);
-            child_strs.push(s);
-            spliced.push(sp);
-        }
-        let base = if is_void {
-            format!("CrowVNode::{}()", rust_name)
-        } else if spliced.iter().any(|s| *s) {
-            let pushes: Vec<String> = child_strs.iter().zip(&spliced).map(|(c, s)| if *s { format!("_k·.extend({});", c) } else { format!("_k·.push({});", c) }).collect();
-            format!("CrowVNode::{}({{ let mut _k·: Vec<CrowVNode> = Vec::new(); {} _k· }})", rust_name, pushes.join(" "))
+        named.sort_by(|a, b| a.0.cmp(&b.0));
+        let pairs: Vec<String> = named.iter().map(|(k, l)| format!("({}, {})", super::exprs::rust_str_lit(k), l)).collect();
+        out.push_str(&format!("let _o·: Vec<(String, tree::Given)> = vec![{}]; ", pairs.join(", ")));
+        // a table's place among the render's paged and sorted ones, and the
+        // page and order the session holds for it
+        let tables = if element == "table" && self.reactive_render_fns.contains(&self.cur_fn) {
+            format!("state.table_state({:?}, &_o·)", element)
         } else {
-            format!("CrowVNode::{}(vec![{}])", rust_name, child_strs.join(", "))
+            "tree::TableState::default()".to_string()
         };
-
-        // layout attributes (literals) through the kernel's table, as the
-        // interpreter renders them; the rest are attributes and events
-        let mut literal_layout: Vec<(String, String)> = Vec::new();
-        let mut other: Vec<(String, Expr)> = Vec::new();
-        // (a layout attribute computed as the page renders: the whole
-        // layout goes through the table then, the literals beside it)
-        let mut computed_layout: Vec<(String, Expr)> = Vec::new();
-        for (k, v) in attrs {
-            // (a class through the table for every element, as the
-            // interpreter renders it: joined to the element's own)
-            let is_layout = crow_runtime::layout::LAYOUT_ATTRS.contains(&k.as_str()) || k == "class";
-            match (is_layout, Self::lit(v)) {
-                (true, Some(s)) => literal_layout.push((k.clone(), s)),
-                (true, None) if k != "class" && k != "active" => computed_layout.push((k.clone(), v.clone())),
-                _ => other.push((k.clone(), v.clone())),
-            }
+        out.push_str(&format!("let _t· = {}; ", tables));
+        let kids: Vec<String> = children.iter().map(|c| self.given_child(element, c)).collect();
+        out.push_str(&format!("let _k·: Vec<tree::Given> = vec![{}]; ", kids.join(", ")));
+        // its bindings (derive::bind_sites), placed by a served render
+        // alone: a node a handler builds holds none
+        if !binds.is_empty() && self.in_live() {
+            let bs: Vec<String> = binds
+                .iter()
+                .map(|(at, id)| match at {
+                    crate::ir::BindAt::Child(i) => format!("(tree::BindAt::Child({}), {})", i, id),
+                    crate::ir::BindAt::Option(n) => format!("(tree::BindAt::Option({:?}), {})", n, id),
+                })
+                .collect();
+            out.push_str(&format!(
+                "tree::element_bound({:?}, _o·, _k·, _t·, if state.binding() {{ &[{}] }} else {{ &[] }}){} }}",
+                element,
+                bs.join(", "),
+                self.or_stop()
+            ));
+            return out;
         }
-        if !computed_layout.is_empty() {
-            let mut pairs: Vec<String> = literal_layout.iter().map(|(k, v)| format!("({:?}.to_string(), {:?}.to_string())", k, v)).collect();
-            for (k, v) in &computed_layout {
-                let x = self.expr(v);
-                pairs.push(format!("({:?}.to_string(), format!(\"{{}}\", {}))", k, x));
-            }
-            let mut result = format!("{}.with_layout({:?}, &[{}]){}", base, element, pairs.join(", "), self.or_stop());
-            if element == "nav" {
-                if let Some((_, a)) = literal_layout.iter().find(|(k, _)| k == "active") {
-                    result = format!("{}.mark_active(\"{}\")", result, a);
-                }
-            }
-            return self.tree_rest(element, result, other);
-        }
-        let rendered = crow_runtime::layout::render(element, &literal_layout);
-        let mut result = base;
-        // (each value a Rust string literal: a class or a passed attribute
-        // written with a quote or a backslash had not built)
-        if !rendered.class.is_empty() {
-            result = format!("{}.attr(\"class\", {:?})", result, rendered.class);
-        }
-        if !rendered.style.is_empty() {
-            result = format!("{}.attr(\"style\", {:?})", result, rendered.style);
-        }
-        for (k, v) in &rendered.data {
-            result = format!("{}.attr({:?}, {:?})", result, k, v);
-        }
-        for (k, v) in &rendered.passthrough {
-            result = format!("{}.attr({:?}, {:?})", result, k, v);
-        }
-        if element == "nav" {
-            if let Some((_, a)) = literal_layout.iter().find(|(k, _)| k == "active") {
-                result = format!("{}.mark_active(\"{}\")", result, a);
-            }
-        }
-        self.tree_rest(element, result, other)
+        out.push_str(&format!("tree::element({:?}, _o·, _k·, _t·){} }}", element, self.or_stop()));
+        out
     }
 
-    /// An element's children as a `Vec<CrowVNode>`, a list child spliced.
-    fn children_vec(&mut self, children: &[Expr]) -> String {
-        let mut pushes: Vec<String> = Vec::new();
-        for c in children {
-            let (s, sp) = self.child(c);
-            pushes.push(if sp { format!("_k·.extend({});", s) } else { format!("_k·.push({});", s) });
-        }
-        format!("{{ let mut _k·: Vec<CrowVNode> = Vec::new(); {} _k· }}", pushes.join(" "))
+    /// The program's bindings (derive::bind_sites) as a served page's
+    /// values turn asks for them (the live runtime's `Values`): what each reads,
+    /// and each computed for a session as a view's place computes it — the
+    /// same code the view's element is given, in a render's context.
+    /// Whether the program's bindings are emitted (`emit_values`).
+    pub(crate) fn values_emitted(&self) -> bool {
+        !self.part.bindings.is_empty() && self.needs_ui && self.has_page_routes
     }
 
-    /// Whether a child moves a local some attribute reads.
-    fn children_move_what_attrs_read(attrs: &[(String, Expr)], children: &[Expr]) -> bool {
-        let mut read: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for (_, v) in attrs {
-            crate::ir::visit_expr(v, &mut |e| {
-                if let Expr::Local(n, _) | Expr::Move(n, _) = e {
-                    read.insert(n.clone());
-                }
-            });
+    pub(crate) fn emit_values(&mut self) {
+        let bindings = self.part.bindings.clone();
+        if !self.values_emitted() {
+            return;
         }
-        let mut moved = false;
-        for c in children {
-            crate::ir::visit_expr(c, &mut |e| {
-                if let Expr::Move(n, _) = e {
-                    moved |= read.contains(n);
-                }
-            });
+        self.needs_crow_runtime = true;
+        let name = "__crow_bound".to_string();
+        self.views.insert(name.clone());
+        self.reactive_render_fns.insert(name.clone());
+        let saved = (std::mem::take(&mut self.scopes), std::mem::replace(&mut self.cur_fn, name.clone()), self.facts_in_state, self.cur_ret.take(), self.returns_unit, self.view_mark);
+        self.facts_in_state = true;
+        self.view_mark = false;
+        self.line("#[allow(unused_variables, unused_mut, unused_braces, non_snake_case, unreachable_code, clippy::all)]");
+        self.line("fn __crow_bound(state: &CrowLiveState, id: u32) -> Option<tree::Bound> {");
+        self.indent += 1;
+        self.line("match id {");
+        self.indent += 1;
+        for b in &bindings {
+            self.scopes = vec![HashMap::new()];
+            self.cur_ret = Some(Ty::Unknown);
+            self.returns_unit = false;
+            self.line(&format!("{} => {{", b.id));
+            self.indent += 1;
+            let g = if b.option { self.given_option(&b.expr) } else { self.given_child(&b.element, &b.expr) };
+            self.line(&format!("let _g·: tree::Given = {};", g));
+            self.line(if b.option { "tree::Bound::of_option(_g·)" } else { "tree::Bound::of_child(_g·)" });
+            self.indent -= 1;
+            self.line("}");
         }
-        moved
+        self.line("_ => None,");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("#[allow(dead_code)]");
+        self.line("fn __crow_values_eval(state: &CrowLiveState, ids: &[u32]) -> Option<Vec<tree::Bound>> {");
+        self.indent += 1;
+        self.line("// (one that stops is the render's to stop, as the program does)");
+        self.line("crow_runtime::stops::guarded(|| ids.iter().map(|id| __crow_bound(state, *id)).collect::<Option<Vec<_>>>()).ok().flatten()");
+        self.indent -= 1;
+        self.line("}");
+        self.line("struct __CrowValues;");
+        self.line("impl crow_web::live::Values for __CrowValues {");
+        self.indent += 1;
+        self.line("fn inputs(&self, id: u32) -> &'static [&'static str] {");
+        self.indent += 1;
+        self.line("match id {");
+        self.indent += 1;
+        for b in &bindings {
+            let names: Vec<String> = b.inputs.iter().map(|n| format!("{:?}", n)).collect();
+            self.line(&format!("{} => &[{}],", b.id, names.join(", ")));
+        }
+        self.line("_ => &[],");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("fn refresh(&self, state: &CrowLiveState, name: &str) {");
+        self.indent += 1;
+        self.line("match name {");
+        self.indent += 1;
+        for d in self.part.derives.clone() {
+            self.line(&format!("{:?} => {{ let _ = __derive_{}(state); }}", d.name, d.name));
+        }
+        self.line("_ => {}");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("fn eval(&self, state: &CrowLiveState, ids: &[u32]) -> Option<Vec<tree::Bound>> {");
+        self.indent += 1;
+        self.line("__crow_values_eval(state, ids)");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        let (scopes, cur_fn, facts, ret, unit, mark) = saved;
+        self.scopes = scopes;
+        self.cur_fn = cur_fn;
+        self.facts_in_state = facts;
+        self.cur_ret = ret;
+        self.returns_unit = unit;
+        self.view_mark = mark;
+        self.views.remove(&name);
+        self.reactive_render_fns.remove(&name);
     }
 
-    /// An element's attributes and events that are no layout, after its
-    /// layout is placed.
-    fn tree_rest(&mut self, element: &str, mut result: String, other: Vec<(String, Expr)>) -> String {
-        let mut confirm: Option<String> = None;
-        for (k, v) in &other {
-            if k == "confirm" {
-                confirm = Some(self.expr(v));
-                continue;
+    /// An option's value as the builder takes it (`tree::Given`): a
+    /// handler by its name, a held call with the arguments it froze as
+    /// the page sends them back, a literal map or list item by item, and
+    /// a value by its type; one that failed is left out.
+    fn given_option(&mut self, v: &Expr) -> String {
+        match Emitter::raw(v) {
+            Expr::FnRef(f, _) => return format!("tree::Given::Handler({})", super::exprs::rust_str_lit(f)),
+            Expr::Deferred { name, args } => {
+                self.needs_serde_json = true;
+                let strs: Vec<String> = args.iter().map(|x| format!("serde_json::json!(({}))", self.expr(x))).collect();
+                return format!("tree::Given::Call({}, vec![{}])", super::exprs::rust_str_lit(name), strs.join(", "));
             }
-            // a handler with its arguments: frozen at render, called at the event
-            if k == "click" {
-                if let Expr::Deferred { name, args } = Emitter::raw(v) {
-                    if self.reactive_event_handlers.contains(name) {
-                        let strs: Vec<String> = args.iter().map(|x| format!("({})", self.expr(x))).collect();
-                        self.needs_serde_json = true;
-                        result = format!("{}.on_click_args(\"{}\", &serde_json::json!([{}]).to_string())", result, name, strs.join(", "));
-                        continue;
-                    }
-                }
+            Expr::ListLit(items, _) => {
+                let gs: Vec<String> = items.iter().map(|i| self.given_option(i)).collect();
+                return format!("tree::Given::List(vec![{}])", gs.join(", "));
             }
-            let is_fn_ref = matches!(Emitter::raw(v), Expr::FnRef(f, _) if self.reactive_event_handlers.contains(f));
-            let event = if is_fn_ref {
-                format!("\"{}\"", fn_named(v).unwrap_or_default())
-            } else {
-                self.expr(v)
-            };
-            match k.as_str() {
-                "open" => {
-                    let o = self.expr(v);
-                    result = format!("{}.open_attr({{ let _o· = {}; _o· }})", result, o);
-                }
-                "active" if element == "nav" => {
-                    let a = self.expr(v);
-                    result = format!("{}.attr(\"data-active\", &{a}).mark_active(&{a})", result, a = a);
-                }
-                "tip" => {
-                    let t = self.expr(v);
-                    result = format!("{}.attr(\"title\", &format!(\"{{}}\", {}))", result, t);
-                }
-                b if crow_runtime::layout::BOOL_ATTRS.contains(&b) && !matches!(Emitter::raw(v), Expr::Const(Const::Str(_), _)) => {
-                    let x = self.expr(v);
-                    result = format!("{}.bool_attr(\"{}\", {{ let _b·: bool = {}; _b· }})", result, b, x);
-                }
-                // (a class computed as the page renders joins the element's own)
-                "class" => {
-                    let x = self.expr(v);
-                    result = format!("{}.with_class(&format!(\"{{}}\", {}))", result, x);
-                }
-                "click" => result = if is_fn_ref { format!("{}.on_click({})", result, event) } else { format!("{}.on_click(&{})", result, event) },
-                "input" => result = if is_fn_ref { format!("{}.on_input({})", result, event) } else { format!("{}.on_input(&{})", result, event) },
-                "submit" => result = if is_fn_ref { format!("{}.on_submit({})", result, event) } else { format!("{}.on_submit(&{})", result, event) },
-                _ => {
-                    let x = self.expr(v);
-                    let key = super::exprs::rust_str_lit(k);
-                    // as the interpreter writes an attribute (ops.rs
-                    // `render_element`): a number or a truth as its text, and
-                    // one whose value failed left out — `rows = 4` had been
-                    // handed as an int, a derivation that can fail as its
-                    // result, and the page did not build (parity 465)
-                    result = match self.tt(v) {
-                        Ty::Result(_) => format!("{{ let _e· = {}; let _v· = &({}); if _v·.ok {{ _e·.attr(&{}, &format!(\"{{}}\", _v·.value)) }} else {{ _e· }} }}", result, x, key),
-                        Ty::Int | Ty::Float | Ty::Bool | Ty::Big => format!("{}.attr(&{}, &format!(\"{{}}\", {}))", result, key, x),
-                        _ => format!("{}.attr(&{}, &{})", result, key, x),
-                    };
-                }
-            }
+            _ => {}
         }
-        if let Some(t) = confirm {
-            result = format!("{}.confirm(&format!(\"{{}}\", {}))", result, t);
+        if let Some(pairs) = map_literal_pairs(v) {
+            let gs: Vec<String> = pairs.iter().map(|(k, x)| format!("({}, {})", super::exprs::rust_str_lit(k), self.given_option(x))).collect();
+            return format!("tree::Given::Map(vec![{}])", gs.join(", "));
         }
-        result
+        let ty = self.tt(v);
+        let x = self.expr(v);
+        match ty {
+            Ty::Result(inner) => format!("{{ let _v· = &({}); if _v·.ok {{ {} }} else {{ tree::Given::Shown(String::new()) }} }}", x, Self::given_value("_v·.value", &inner)),
+            other => Self::given_value(&format!("({})", x), &other),
+        }
     }
 
-    /// A child as a node, and whether it is a list to splice.
-    fn child(&mut self, c: &Expr) -> (String, bool) {
+    /// A value of a type as an option's: text, a number, a truth, a list
+    /// of them; any other as it shows, which no option reads.
+    fn given_value(x: &str, ty: &Ty) -> String {
+        match ty {
+            Ty::Str | Ty::Markup => format!("tree::Given::Text({}.to_string())", x),
+            Ty::Int => format!("tree::Given::Int({} as i64)", x),
+            Ty::Float => format!("tree::Given::Float({} as f64)", x),
+            Ty::Bool => format!("tree::Given::Bool({})", x),
+            Ty::List(item) if matches!(item.as_ref(), Ty::Str | Ty::Markup) => format!("tree::Given::List({}.iter().map(|_i·| tree::Given::Text(_i·.to_string())).collect())", x),
+            _ => format!("{{ let _ = &{}; tree::Given::Shown(String::new()) }}", x),
+        }
+    }
+
+    /// A child as the builder takes it: a value that failed as its reason,
+    /// a node, markup (a node a local holds is its markup), a list item by
+    /// item, a frame's column cell by cell, a table's frame as its rows,
+    /// text; anything else as `log` writes it.
+    fn given_child(&mut self, element: &str, c: &Expr) -> String {
         let raw = Emitter::raw(c);
         // a literal text, or text with spans: a failed span shows its reason
         if matches!(raw, Expr::Const(Const::Str(_), _) | Expr::Interp(_)) {
             let s = self.expr(raw);
             if matches!(self.tt(raw), Ty::Result(_)) {
-                return (format!("{{ let _c· = &({}); if !_c·.ok {{ CrowVNode::failed(&_c·.reason) }} else {{ CrowVNode::text(&_c·.value) }} }}", s), false);
+                return format!("{{ let _c· = &({}); if !_c·.ok {{ tree::Given::Failed(_c·.reason.clone()) }} else {{ tree::Given::Text(_c·.value.to_string()) }} }}", s);
             }
-            return (format!("CrowVNode::text(&{})", s), false);
+            return format!("tree::Given::Text(({}).to_string())", s);
         }
         // (`[]` contributes nothing, whatever its items would have been)
         if matches!(raw, Expr::ListLit(items, _) if items.is_empty()) {
-            return ("Vec::<CrowVNode>::new()".to_string(), true);
+            return "tree::Given::List(Vec::new())".to_string();
         }
         // trees: an element, a view, a chart, a bound input
         let is_node = match raw {
@@ -244,7 +229,7 @@ impl Emitter {
             _ => false,
         };
         if is_node {
-            return (self.expr(raw), false);
+            return format!("tree::Given::from({})", self.expr(raw));
         }
         // a local reads as the type it was declared with (markup when it
         // holds a node's markup); anything else as the IR types it
@@ -252,53 +237,28 @@ impl Emitter {
             Expr::Local(n, _) | Expr::Move(n, _) => self.local_ty(n).unwrap_or_else(|| self.tt_full(raw)),
             _ => self.tt_full(raw),
         };
-        let fallible = matches!(ty, Ty::Result(_));
-        let inner = Self::inner(&ty);
         let s = self.expr(raw);
-        if let Ty::List(item) = &inner {
-            if fallible {
-                return (format!("{{ let _c· = &({}); if !_c·.ok {{ vec![CrowVNode::failed(&_c·.reason)] }} else {{ {} }} }}", s, Self::child_items("(&_c·.value)", item)), true);
-            }
-            return (Self::child_items(&format!("(&{})", s), item), true);
+        match ty {
+            Ty::Result(inner) => format!("{{ let _c· = &({}); if !_c·.ok {{ tree::Given::Failed(_c·.reason.clone()) }} else {{ {} }} }}", s, Self::given_kid("(&_c·.value)", &inner, element)),
+            other => Self::given_kid(&format!("(&{})", s), &other, element),
         }
-        // (a frame's column contributes each cell, as a list does)
-        if let Ty::Column(_) = &inner {
-            if fallible {
-                return (format!("{{ let _c· = &({}); if !_c·.ok {{ vec![CrowVNode::failed(&_c·.reason)] }} else {{ crow_web::view::column_children(&_c·.value) }} }}", s), true);
-            }
-            return (format!("crow_web::view::column_children(&{})", s), true);
-        }
-        let text = match inner {
-            Ty::Markup if fallible => format!("{{ let _c· = &({}); if !_c·.ok {{ CrowVNode::failed(&_c·.reason) }} else {{ CrowVNode::raw(&_c·.value) }} }}", s),
-            Ty::Str if fallible => format!("{{ let _c· = &({}); if !_c·.ok {{ CrowVNode::failed(&_c·.reason) }} else {{ CrowVNode::text(&_c·.value) }} }}", s),
-            Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool if fallible => {
-                format!("{{ let _c· = &({}); if !_c·.ok {{ CrowVNode::failed(&_c·.reason) }} else {{ CrowVNode::text(&format!(\"{{}}\", _c·.value)) }} }}", s)
-            }
-            // markup a view, an element or doc made is markup; a string is text
-            Ty::Markup => format!("CrowVNode::raw(&{})", s),
-            Ty::Str => format!("CrowVNode::text(&{})", s),
-            Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool => format!("CrowVNode::text(&format!(\"{{}}\", {}))", s),
-            Ty::Node => s,
-            // anything else is text, as `log` writes it (spec, Views): a
-            // tensor, a map, a record, a moment, a parsed value, a frame (it
-            // had been handed over as it is, and the program did not build)
-            _ if fallible => format!("{{ let _c· = &({}); if !_c·.ok {{ CrowVNode::failed(&_c·.reason) }} else {{ CrowVNode::text(&crow_runtime::display::CrowDisplay::crow_fmt(&_c·.value)) }} }}", s),
-            _ => format!("CrowVNode::text(&crow_runtime::display::CrowDisplay::crow_fmt(&{}))", s),
-        };
-        (text, false)
     }
 
-    /// The nodes a list child contributes, `list` an expression that lends
-    /// it: markup as markup, a list's items each as their kind does (a list
-    /// of lists flattened, as the interpreter splices it), every other item
-    /// as the text `log` writes for it.
-    fn child_items(list: &str, item: &Ty) -> String {
-        match item {
-            Ty::Markup => format!("crow_web::view::markup_children({})", list),
-            Ty::Node => format!("({}).to_vec()", list),
-            Ty::Str => format!("({}).iter().map(|_i·| CrowVNode::text(_i·)).collect::<Vec<CrowVNode>>()", list),
-            Ty::List(inner) => format!("({}).iter().flat_map(|_l·| {}).collect::<Vec<CrowVNode>>()", list, Self::child_items("_l·", inner)),
-            _ => format!("({}).iter().map(|_i·| CrowVNode::text(&crow_runtime::display::CrowDisplay::crow_fmt(_i·))).collect::<Vec<CrowVNode>>()", list),
+    /// A child's value, `x` an expression that lends it, by its type.
+    fn given_kid(x: &str, ty: &Ty, element: &str) -> String {
+        match ty {
+            Ty::Markup => format!("tree::Given::Markup({}.to_string())", x),
+            Ty::Str => format!("tree::Given::Text({}.to_string())", x),
+            Ty::Int | Ty::Big | Ty::Decimal | Ty::Fraction | Ty::Float | Ty::Bool => format!("tree::Given::Text(format!(\"{{}}\", {}))", x),
+            Ty::Node => format!("tree::Given::from({}.clone())", x),
+            Ty::List(item) => format!("tree::Given::List({}.iter().map(|_i·| {}).collect())", x, Self::given_kid("_i·", item, element)),
+            // (a frame's column contributes each cell, as a list does)
+            Ty::Column(_) => format!("tree::Given::column({})", x),
+            Ty::Frame(_) if element == "table" => format!("tree::Given::Frame(Box::new({}.clone()))", x),
+            // anything else is text, as `log` writes it (spec, Views): a
+            // tensor, a map, a record, a moment, a parsed value, a frame
+            // outside a table
+            _ => format!("tree::Given::Text(crow_runtime::display::CrowDisplay::crow_fmt({}))", x),
         }
     }
 
@@ -323,87 +283,18 @@ impl Emitter {
                 "on" => {
                     for (event, h) in map_literal_pairs(v).unwrap_or_default() {
                         if let Some(f) = fn_named(&h) {
-                            on.push(format!("({:?}, {:?})", event, f));
+                            on.push(format!("({}, {})", super::exprs::rust_str_lit(&event), super::exprs::rust_str_lit(f)));
                         }
                     }
                 }
                 _ => {}
             }
         }
-        let widget = format!("CrowVNode::widget({:?}, &{}, &[{}])", module, props, on.join(", "));
+        let widget = format!("tree::widget({:?}, {}, vec![{}])", module, props, on.join(", "));
         match failed {
-            Some(p) => format!("{{ let _p· = &({}); if !_p·.ok {{ CrowVNode::failed(&_p·.reason) }} else {{ {} }} }}", p, widget),
+            Some(p) => format!("{{ let _p· = &({}); if !_p·.ok {{ tree::failed(&_p·.reason) }} else {{ {} }} }}", p, widget),
             None => widget,
         }
-    }
-
-    /// `table[frame, click = f, key = 'col', …]`: the kernel's rows.
-    fn frame_table(&mut self, attrs: &[(String, Expr)], frame: &Expr) -> String {
-        let frame_ty = self.tt(frame);
-        let f = self.expr(frame);
-        let (mut click, mut key, mut mark) = ("None".to_string(), "None".to_string(), "None".to_string());
-        let (mut delta, mut actions, mut hide, mut confirm) = ("&[]".to_string(), "&[]".to_string(), "&[]".to_string(), "&[]".to_string());
-        let mut page = "None".to_string();
-        let mut sort = "None".to_string();
-        let live = self.reactive_render_fns.contains(&self.cur_fn);
-        let names = |e: &Expr| -> Vec<String> {
-            match Emitter::raw(e) {
-                Expr::ListLit(items, _) => items.iter().filter_map(|i| if let Expr::Const(Const::Str(s), _) = Emitter::raw(i) { Some(format!("\"{}\".to_string()", s)) } else { None }).collect(),
-                _ => vec![],
-            }
-        };
-        for (k, v) in attrs {
-            match k.as_str() {
-                "click" => {
-                    if let Some(h) = fn_named(v) {
-                        click = format!("Some(\"{}\")", h);
-                    }
-                }
-                "key" => {
-                    if let Some(s) = Self::lit(v) {
-                        key = format!("Some(\"{}\")", s);
-                    }
-                }
-                "mark" => {
-                    if let Some(s) = Self::lit(v) {
-                        mark = format!("Some(\"{}\")", s);
-                    }
-                }
-                "delta" => delta = format!("&[{}]", names(v).join(", ")),
-                "hide" => hide = format!("&[{}]", names(v).join(", ")),
-                "actions" => {
-                    if let Some(pairs) = map_literal_pairs(v) {
-                        let ps: Vec<String> = pairs.iter().filter_map(|(label, h)| fn_named(h).map(|f| format!("(\"{}\".to_string(), \"{}\".to_string())", label, f))).collect();
-                        actions = format!("&[{}]", ps.join(", "));
-                    }
-                }
-                "confirm" => {
-                    if let Some(pairs) = map_literal_pairs(v) {
-                        let ps: Vec<String> = pairs
-                            .iter()
-                            .filter_map(|(label, t)| if let Expr::Const(Const::Str(text), _) = Emitter::raw(t) { Some(format!("(\"{}\".to_string(), {:?}.to_string())", label, text)) } else { None })
-                            .collect();
-                        confirm = format!("&[{}]", ps.join(", "));
-                    }
-                }
-                "page" => {
-                    let size = format!("(({}) as i64).max(1) as usize", self.expr(v));
-                    page = if live { format!("Some(state.table_page({}, _f·.nrows()))", size) } else { format!("Some(crow_runtime::layout::Paging {{ size: {}, index: 0, at: 0 }})", size) };
-                }
-                "sort" if matches!(Emitter::raw(v), Expr::Const(Const::Bool(true), _)) => {
-                    sort = if live { "Some(state.table_sort())".to_string() } else { "Some(crow_runtime::layout::Sorting::default())".to_string() };
-                }
-                _ => {}
-            }
-        }
-        let rows = format!(
-            "CrowVNode::table(vec![CrowVNode::raw(&crow_runtime::layout::frame_table_html(_f·, {}, {}, {}, {}, {}, {}, {}, {}, {}))])",
-            click, key, mark, delta, actions, hide, confirm, page, sort
-        );
-        if matches!(frame_ty, Ty::Result(_)) {
-            return format!("{{ let _fr· = &({}); if !_fr·.ok {{ CrowVNode::failed(&_fr·.reason) }} else {{ let _f· = &_fr·.value; {} }} }}", f, rows);
-        }
-        format!("{{ let _f· = &{}; {} }}", f, rows)
     }
 
     /// The bound inputs, a progress bar, an icon and a chart.
@@ -415,12 +306,13 @@ impl Emitter {
         Some(match name {
             "slider" if n == 5 => {
                 let key = Self::bound_key_of(&args[1]);
-                format!("CrowVNode::slider(&{}, \"{}\", &format!(\"{{}}\", {}), ({}) as f64, ({}) as f64, ({}) as f64)", a[0], key, a[1], a[2], a[3], a[4])
+                let json = self.json_of(&args[1], "_v·");
+                format!("{{ let _v· = &({}); tree::slider(&{}, \"{}\", {}, &format!(\"{{}}\", _v·), ({}) as f64, ({}) as f64, ({}) as f64) }}", a[1], a[0], key, json, a[2], a[3], a[4])
             }
             "field" if n == 4 => {
                 let key = Self::bound_key_of(&args[1]);
                 if matches!(Emitter::raw(&args[2]), Expr::Const(Const::Str(s), _) if s == "file") {
-                    return Some(format!("CrowVNode::field_typed(&{}, \"{}\", &({}).get(\"name\").cloned().unwrap_or_default(), \"file\", 0)", a[0], key, a[1]));
+                    return Some(format!("tree::field(&{}, \"{}\", serde_json::Value::Null, &({}).get(\"name\").cloned().unwrap_or_default(), \"file\", 0)", a[0], key, a[1]));
                 }
                 let kind = match Emitter::raw(&args[2]) {
                     Expr::Const(Const::Str(s), _) if s.is_empty() => match self.tt(&args[1]) {
@@ -429,25 +321,38 @@ impl Emitter {
                     },
                     _ => format!("&{}", a[2]),
                 };
-                format!("CrowVNode::field_typed(&{}, \"{}\", &format!(\"{{}}\", {}), {}, ({}) as i64)", a[0], key, a[1], kind, a[3])
+                let json = self.json_of(&args[1], "_v·");
+                format!("{{ let _v· = &({}); tree::field(&{}, \"{}\", {}, &format!(\"{{}}\", _v·), {}, ({}) as i64) }}", a[1], a[0], key, json, kind, a[3])
             }
             "checkbox" | "toggle" if n == 2 => {
                 let key = Self::bound_key_of(&args[1]);
-                format!("CrowVNode::check_input(&{}, \"{}\", format!(\"{{}}\", {}) == \"true\", {})", a[0], key, a[1], name == "toggle")
+                format!("tree::check(&{}, \"{}\", format!(\"{{}}\", {}) == \"true\", {})", a[0], key, a[1], name == "toggle")
             }
             "radio" | "tabs" if n == 2 => {
                 let key = Self::bound_key_of(&args[1]);
-                format!("CrowVNode::choice_input(&{}, \"{}\", &format!(\"{{}}\", {}), {})", a[0], key, a[1], name == "tabs")
+                format!("tree::choice(({}).iter().map(|_i·| _i·.to_string()).collect(), \"{}\", &format!(\"{{}}\", {}), {})", a[0], key, a[1], name == "tabs")
             }
-            "progress" if n == 2 => format!("CrowVNode::progress(({}) as f64, ({}) as f64)", a[0], a[1]),
-            "icon" if n == 3 => format!("CrowVNode::icon(&{}, &{}, &{})", a[0], a[1], a[2]),
+            "progress" if n == 2 => format!("tree::progress(({}) as f64, ({}) as f64)", a[0], a[1]),
+            // (a name, a size or a colour the set does not hold is the
+            // render's stop, as the interpreter has it)
+            "icon" if n == 3 => format!("tree::icon(&{}, &{}, &{}){}", a[0], a[1], a[2], self.or_stop()),
             "select" if n == 2 => {
                 let key = Self::bound_key_of(&args[1]);
-                format!("CrowVNode::select_input(&{}, \"{}\", &format!(\"{{}}\", {}))", a[0], key, a[1])
+                format!("tree::select(({}).iter().map(|_i·| _i·.to_string()).collect(), \"{}\", &format!(\"{{}}\", {}))", a[0], key, a[1])
             }
             "chart" if n == 12 => self.chart(args, a),
             _ => return None,
         })
+    }
+
+    /// A bound variable's value as the data form holds it, `at` the
+    /// expression that lends it: text, a number, a truth as themselves.
+    fn json_of(&mut self, var: &Expr, at: &str) -> String {
+        self.needs_serde_json = true;
+        match self.tt(var) {
+            Ty::Str | Ty::Int | Ty::Float | Ty::Bool => format!("crow_runtime::json::ToJson::to_json({})", at),
+            _ => format!("serde_json::Value::String(format!(\"{{}}\", {}))", at),
+        }
     }
 
     fn bound_key_of(e: &Expr) -> String {
@@ -469,7 +374,7 @@ impl Emitter {
             _ => "None".to_string(),
         };
         let core = format!(
-            "CrowVNode::chart_from_frame(_f·, &{x}, &{cd}, &{ln}, &{by}, {{ let _m·: f64 = ({mk}) as f64; if _m· <= 0.0 {{ f64::NAN }} else {{ _m· }} }}, &{tz}, ({h}) as f64, &{pn}, &{lv}, _pts·, {sk})",
+            "tree::chart(_f·, &{x}, &{cd}, &{ln}, &{by}, {{ let _m·: f64 = ({mk}) as f64; if _m· <= 0.0 {{ f64::NAN }} else {{ _m· }} }}, &{tz}, ({h}) as f64, &{pn}, &{lv}, _pts·, {sk})",
             x = a[1],
             cd = a[2],
             ln = a[3],
@@ -487,7 +392,7 @@ impl Emitter {
             _ => format!("{{ let _pf·: &crow_runtime::frame::CrowFrame = &{}; let _pts· = Some(_pf·); {} }}", a[10], core),
         };
         if matches!(frame_ty, Ty::Result(_)) {
-            return format!("{{ let _fr· = &({}); if !_fr·.ok {{ CrowVNode::failed(&_fr·.reason) }} else {{ let _f· = &_fr·.value; {} }} }}", a[0], with_points);
+            return format!("{{ let _fr· = &({}); if !_fr·.ok {{ tree::failed(&_fr·.reason) }} else {{ let _f· = &_fr·.value; {} }} }}", a[0], with_points);
         }
         format!("{{ let _f· = &{}; {} }}", a[0], with_points)
     }

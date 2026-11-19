@@ -1,0 +1,40 @@
+--- A growing int, a decimal and a moment are bound as an int is
+--- (one-view-design.md 3.5): `floor[…]` of the clock, an int past 64
+--- bits, and an int widened to a growing one where a function takes one
+--- (`minutes` is handed both), shown as a child, through a local
+--- assigned once and through a view's parameter, show after each tick
+--- what a render shows, and the tick runs no view.
+use web, ui
+
+clock = 0
+
+derive secs
+    return floor[float[clock] * 1.5]
+
+derive huge
+    return 9223372036854775000 + clock * 1000
+
+derive price
+    return decimal[clock] / decimal[4]
+
+derive at
+    return moment[float[clock] * 60.0]
+
+fn minutes[s]
+    return '`s / 60`:`s % 60`'
+
+view play_bar[s]
+    return row[p['head `s`'], p[s]]
+
+view top[]
+    t = secs
+    return stack[p[secs], p['huge `huge`'], p[huge], p['price `price`'], p['at `at`'], p['local `t`'], p['at `minutes[clock]`'], p[minutes[t]], play_bar[t]]
+
+fn tick[]
+    clock = clock + 1
+
+view render[]
+    return stack[top[], button['Tick', click = tick]]
+
+page['/', render]
+serve[3593]

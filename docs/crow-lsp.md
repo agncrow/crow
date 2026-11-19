@@ -46,6 +46,24 @@ with the compiler.
   and never a record's field of the same name (`p.f` is not `f`).
 - **Document outline** — the file's own functions, records and
   variables; a part's are its own file's outline.
+- **Semantic highlighting** — each name told by what it is, for the
+  editor to colour it by over the grammar's colours: a parameter, a local
+  or a fact, a function (declared, called, or handed on as a value:
+  `draw` in `sys.frames[draw]`), a struct (`App[3, 2]` makes one), a
+  field (`a.copies`, and a key of a struct or a map made: `P[x = 1]`,
+  `map[k = v]`), a parameter named in a call (`go[1, far = 3]`), a module
+  (`gui` in `gui.row[…]`). A builtin, a constant (`pi`) and a standard
+  module's function are marked as Crow's own (`defaultLibrary`), a
+  derivation and a module's value as read-only, each declaration as one;
+  the names in a string's backtick pieces are told where they stand.
+  Where a grammar sees `b[0]` as a call, the server knows `b` is a
+  parameter indexed. VS Code asks through the extension, which turns
+  semantic highlighting on for Crow's files (`"[crow]":
+  {"editor.semanticHighlighting.enabled": true}`, where a theme would
+  otherwise decide) and colours a `keyword` the server tells (`test`
+  where a test starts, `as`) as the grammar colours `fn`
+  (`semanticTokenScopes`: VS Code's own default for it is a control
+  word's colour, `if`'s); Neovim (0.9+) colours by them unasked.
 
 ## Editor setup
 
@@ -76,9 +94,9 @@ not on PATH; a change to it starts the server again.
 itself: VS Code's extension test host loads `editors/vscode/test/index.js`,
 which asks every feature through VS Code's own commands — diagnostics,
 hover, completion, definition, symbols, references, signature help,
-rename, code actions — then kills the server and waits for the extension
-to start it again and the diagnostics to come back. A window opens for the
-run. The crow it tests is the checkout's `target/release/crow` unless
+rename, code actions, each name's kind — then kills the server and waits
+for the extension to start it again and the diagnostics and the names'
+kinds to come back. A window opens for the run. The crow it tests is the checkout's `target/release/crow` unless
 named, and `CROW_VSCODE` names the VS Code binary (macOS's application by
 default).
 
@@ -144,3 +162,24 @@ generic LSP configuration for the language `crow` on files ending in `.co`.
 - **When in doubt, show nothing.** Hover and completion answer from the
   latest analysis, which keeps every statement that parsed; the server
   never invents information the pipeline didn't compute.
+- **Names read off the tokens.** Semantic tokens (`src/lsp/semantic.rs`)
+  are read from the document's tokens, as a rename reads them, never from
+  the program lowered, whose names a part's inlining and the lowerings
+  rename. A declaration runs to the next line at column 1 (a `fn`,
+  `struct` or other declaration's word there starts one whatever brackets
+  a line above left open, so a bracket being typed does not run the file
+  together); its parameters are its brackets' names, its locals the names
+  its statements assign and its loops bind, and the top level's facts the
+  names it assigns. A name read is then what it names there: a parameter
+  or a local of its declaration first, then what the file declares, then
+  a module it uses, then Crow's own (`BUILTINS`), then the analysis's
+  functions and structs (a part's); a name that names nothing known is a
+  function where it is called, a struct where that name is capitalised,
+  and a variable elsewhere. The legend is the server's
+  (`semantic::legend`: namespace, struct, parameter, variable, property,
+  function, keyword; declaration, readonly, defaultLibrary), and the
+  extension registers with the legend the server announces, so a crow
+  with a new kind needs no change to the extension. A lexer's refusal is
+  the whole file's, so a document that does not lex is answered
+  `ContentModified`: VS Code keeps the colours it has, moved with the
+  edits, until the document lexes again.

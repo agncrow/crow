@@ -360,6 +360,11 @@ const Crow = (() => {
           field.value = '';
         });
       }
+      // (inside a headset's session a page's field given the focus raises
+      // the headset's own keyboard (Meta's browser, 26.1 on), whose keys
+      // reach the page only as the field's whole value: a drawing that
+      // draws its own keys there asks for none, and none is focused)
+      if (how === 'open' && session) return null;
       if (how === 'open') {
         field.value = '';
         field.focus({ preventScroll: true });
@@ -606,6 +611,9 @@ const Crow = (() => {
       await gl.makeXRCompatible();
       session = await navigator.xr.requestSession(kind, { optionalFeatures: ['local-floor'] });
       mode = kind;
+      // (nothing of the page keeps the focus into the session: a field that
+      // held it would raise the headset's own keyboard over the drawing's)
+      if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
       session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
       try {
         space = await session.requestReferenceSpace('local-floor');

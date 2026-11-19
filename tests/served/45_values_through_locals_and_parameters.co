@@ -1,0 +1,58 @@
+--- A value read into a local and handed down is followed (one-view-design.md
+--- 3.5, phase 3): a local given its one value from the session's scalar
+--- facts and derivations is read where it is read, and a view handed one
+--- for a parameter it reads only in its bindings is called as a copy whose
+--- places are set from the caller's expression. A tick of the clock moves
+--- only bound places, through a local and two levels of parameters, and no
+--- view runs. Where a view whose parameter decides its shape is shown, the
+--- tick renders: that view and those that call it run, and the views beside
+--- it are kept, their bound values set anew (`top`, whose local moved only
+--- its bindings, among them).
+use web, ui
+
+clock = 0
+label = 'card'
+shaped = true
+
+derive secs
+    return clock * 10
+
+fn clock_words[s]
+    return 'at `s` s'
+
+view clock_text[s]
+    return p[clock_words[s]]
+
+view card[title, s]
+    return stack[p[title], p['card `s`'], clock_text[s]]
+
+view top[]
+    t = secs
+    half = t / 2
+    return stack[p['local `half`'], clock_text[t], card[label, t]]
+
+view shape[s]
+    if s gt 25
+        return p['late `s`']
+    return p['early `s`']
+
+view bottom[]
+    t = secs
+    return stack[shape[t], clock_text[t + 1]]
+
+fn tick[]
+    clock = clock + 1
+
+fn relabel[]
+    label = 'deck'
+
+fn flat[]
+    shaped = false
+
+view render[]
+    if shaped
+        return stack[top[], bottom[], button['Tick', click = tick], button['Flat', click = flat]]
+    return stack[top[], button['Tick', click = tick], button['Relabel', click = relabel]]
+
+page['/', render]
+serve[3590]

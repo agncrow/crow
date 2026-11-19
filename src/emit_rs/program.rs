@@ -273,13 +273,15 @@ impl Emitter {
         }
 
         if self.needs_ui {
-            // page[path, render] and page[path, render, handle]
+            // page[path, render], page[path, render, handle] and
+            // page[path, render, url, init]
             let mut has_page = false;
+            let mut inits: Vec<String> = Vec::new();
             for b in &blocks {
                 visit_block(b, &mut |e| {
                     if call_name(e).as_deref() == Some("page") {
                         let args = call_args(e);
-                        if args.len() == 2 || args.len() == 3 {
+                        if (2..=4).contains(&args.len()) {
                             has_page = true;
                             if let Some(r) = args.get(1).and_then(fn_named) {
                                 self.live_render_fns.insert(r.to_string());
@@ -288,6 +290,9 @@ impl Emitter {
                                 if let Expr::FnRef(h, _) = Emitter::raw(&args[2]) {
                                     self.live_handle_fns.insert(h.clone());
                                 }
+                            }
+                            if let Some(f) = args.get(3).and_then(fn_named) {
+                                inits.push(f.to_string());
                             }
                         }
                     }
@@ -359,6 +364,12 @@ impl Emitter {
                         if self.fns.contains_key(&f) {
                             self.reactive_event_handlers.insert(f);
                         }
+                    }
+                }
+                // a page's init is dispatched as an event, by its name
+                for f in inits {
+                    if self.fns.contains_key(&f) {
+                        self.reactive_event_handlers.insert(f);
                     }
                 }
                 for h in self.reactive_event_handlers.clone() {
@@ -473,6 +484,14 @@ impl Emitter {
             if !lent.is_empty() {
                 self.lent_params.insert(n, lent);
             }
+        }
+        // the facts' declared values printed again, now that what each
+        // function borrows is known: one that calls a function lending its
+        // parameters had handed them by value (`a = pick[map[], 'x', '5']`
+        // compiled to `pick(map_new(), …)` for a `&BTreeMap`, E0308)
+        if !self.reactive_vars.is_empty() || !self.static_handle_vars.is_empty() || !self.data_source_vars.is_empty() {
+            self.fact_inits.clear();
+            self.read_facts();
         }
 
         // a tensor anywhere needs the runtime
@@ -810,7 +829,7 @@ impl Emitter {
             self.line("use std::sync::Arc;");
             if self.needs_ui {
                 self.line("#[allow(unused_imports)]");
-                self.line("use crow_web::view::CrowVNode;");
+                self.line("use crow_web::view::tree;");
                 self.line("#[allow(unused_imports)]");
                 self.line("use crow_web::live::{CrowLiveView, CrowLiveState};");
             } else if self.app_state {
@@ -919,6 +938,25 @@ impl Emitter {
                 return Err(format!("derive {} needs a program that serves — a page's views and handlers read it, or a route's handler (derive-design.md)", d.name));
             }
             self.emit_derive(d);
+        }
+        // the bindings a values turn sets (one-view-design.md 3.5)
+        self.emit_values();
+        // a kept view brings the derivations it read up to date, by name,
+        // before it is handed back (crow_web/src/live/views.rs)
+        if self.views_kept {
+            self.line("#[allow(dead_code, unused_variables)]");
+            self.line("fn __refresh_derive(state: &CrowLiveState, name: &str) {");
+            self.indent += 1;
+            self.line("match name {");
+            self.indent += 1;
+            for d in &derives {
+                self.line(&format!("{:?} => {{ let _ = __derive_{}(state); }}", d.name, d.name));
+            }
+            self.line("_ => {}");
+            self.indent -= 1;
+            self.line("}");
+            self.indent -= 1;
+            self.line("}");
         }
         if self.needs_grad {
             for g in self.grad_functions.iter().chain(self.dual_helpers.iter()).cloned().collect::<Vec<_>>() {
@@ -1281,7 +1319,7 @@ impl Emitter {
     fn emit_test_tables(&mut self) {
         self.needs_serde_json = true;
         self.line("#[allow(unused_variables, dead_code)]");
-        self.line("fn __crow_view(state: &CrowLiveState, name: &str) -> Option<CrowVNode> {");
+        self.line("fn __crow_view(state: &CrowLiveState, name: &str) -> Option<tree::Node> {");
         self.indent += 1;
         self.line("match name {");
         self.indent += 1;
@@ -1465,6 +1503,22 @@ impl Emitter {
     }
 
     fn emit_main(&mut self) {
+        // a function that registers a page or a route queues it, and main
+        // lands the queue on its app (registers_later)
+        if self.needs_crow_web {
+            let mut later = false;
+            for f in &self.part.fns {
+                visit_block(&f.body, &mut |e| {
+                    let name = call_name(e);
+                    let n = call_args(e).len();
+                    later |= (name.as_deref() == Some("route") && (2..=4).contains(&n)) || (name.as_deref() == Some("page") && (2..=4).contains(&n) && self.needs_ui);
+                });
+            }
+            self.registers_later = later;
+            if later && !self.has_page_routes {
+                self.has_noapp_web = true;
+            }
+        }
         // no-app route[]/serve[] calls (plain `use web`, no page) still need
         // the implicit app
         if self.needs_crow_web && !self.has_page_routes {
@@ -1656,6 +1710,11 @@ impl Emitter {
                 self.line("crow_web::live::hold_app(&__crow_state);");
             }
             self.emit_block(&other);
+            // (what the program's functions registered, on the app)
+            let landed = self.landed();
+            if !landed.is_empty() {
+                self.line(&landed);
+            }
             if self.test_control {
                 // the harness's routes beside the pages, on the port the
                 // test gave (CROW_PORT)
@@ -1706,6 +1765,18 @@ impl Emitter {
         }
         self.indent -= 1;
         self.line("}");
+        if self.registers_later {
+            // the pages and routes the program's functions registered,
+            // queued for main's app (builtins.rs, `later`)
+            let state = if self.has_page_routes || self.app_state { "&CrowLiveState" } else { "&()" };
+            self.line("");
+            self.line(&format!("type __CrowLater = Box<dyn FnOnce({}, CrowApp) -> CrowApp>;", state));
+            self.line("thread_local! { static __CROW_LATER: std::cell::RefCell<Vec<__CrowLater>> = const { std::cell::RefCell::new(Vec::new()) }; }");
+            self.line("#[allow(dead_code)]");
+            self.line("fn __crow_later(f: __CrowLater) { __CROW_LATER.with(|l| l.borrow_mut().push(f)); }");
+            self.line("#[allow(dead_code)]");
+            self.line(&format!("fn __crow_landed(mut app: CrowApp, state: {}) -> CrowApp {{ let queued: Vec<__CrowLater> = __CROW_LATER.with(|l| std::mem::take(&mut *l.borrow_mut())); for f in queued {{ app = f(state, app); }} app }}", state));
+        }
     }
 
     /// The locals a block rebinds or changes in place: they are `mut`.

@@ -8,7 +8,10 @@ The extension gives `.co` files syntax highlighting and connects the
 editor to Crow's own language server, `crow lsp`, which is the compiler
 itself: the diagnostics you see are the ones `crow run` would give, with
 the same words, and so are the completions, the hover text, signature
-help, go to definition, find references and the document outline. Rename
+help, go to definition, find references and the document outline. Each
+name is coloured by what the server knows it is — a parameter, a local, a
+function, a struct, a field, a module, Crow's own — where the grammar
+alone sees `b[0]` and `len[b]` as the same call. Rename
 changes a name everywhere it means the same thing, and the quick fixes
 put a misspelled name's nearest in its place or add the import a function
 needs.

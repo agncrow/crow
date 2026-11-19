@@ -93,11 +93,28 @@ fn lower_checked(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &Ha
     lower_checked_as(stmts, ctx, part_name, known, &[], false)
 }
 
+/// Whether a program's statements import ui (`use ui`, `use web.ui`).
+pub(crate) fn imports_ui(stmts: &[S]) -> bool {
+    stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui"))
+}
+
+/// Whether a program holds state: it imports ui, or imports web and
+/// declares a derivation (spec, Function Scope; the imports and the
+/// derivations as inference left them in the context). Its top-level
+/// names are then facts, which views and handlers reach; any other
+/// program's are plain variables, which a function's local of the same
+/// name has nothing to do with. One rule, the lowering's and the
+/// baseline's.
+pub(crate) fn program_holds_state(in_ui: bool, ctx: &TypeContext) -> bool {
+    let web = ctx.bare_modules.iter().chain(ctx.module_aliases.values()).any(|m| m == "web" || m.starts_with("web."));
+    in_ui || (web && !ctx.derives.is_empty())
+}
+
 fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: &HashSet<String>, earlier: &[&Fn], fragment: bool) -> Result<Program, Refusal> {
     // (a console cell is in a ui program when an earlier cell imported ui:
     // the session's imports are its context's — a view typed after `use ui`
     // in a cell of its own had been refused, `add use ui`)
-    let in_ui = stmts.iter().any(|s| matches!(s, S::Use { path, .. } if path == "ui" || path == "web.ui")) || (fragment && (ctx.bare_modules.contains("ui") || ctx.bare_modules.contains("web.ui")));
+    let in_ui = imports_ui(stmts) || (fragment && (ctx.bare_modules.contains("ui") || ctx.bare_modules.contains("web.ui")));
     let mut l = Lowerer::new(ctx, in_ui);
     l.fragment = fragment;
     if fragment {
@@ -161,6 +178,10 @@ fn lower_checked_as(stmts: &[S], ctx: &mut TypeContext, part_name: &str, known: 
         }
     }
     callers_lines(&mut program);
+    // the views' copies for the call sites that hand them a binding's
+    // value or a source's, then the places a live page sets with no view run
+    crate::derive::specialize(&mut program);
+    crate::derive::bind_sites(&mut program);
     Ok(program)
 }
 
@@ -1064,6 +1085,10 @@ struct Lowerer<'a> {
     /// that learn types read the top level a statement at a time, and keep
     /// its variables from round to round — `top_landed`).
     top_declared: HashMap<String, Ty>,
+    /// The functions only the top level calls (`top_only_fns`): no
+    /// handler, view, derivation or test reaches them, so one that assigns
+    /// a top-level name keeps its own scope, as a script's does.
+    top_only: BTreeSet<String>,
 }
 
 /// `map[keys, values]` of a tensor: the tensor as a list of the item kind,
@@ -1168,8 +1193,7 @@ fn mask_pick(base: &Ty, index: &Ty) -> Option<(&'static crate::table::Row, Ty)> 
 
 impl<'a> Lowerer<'a> {
     fn new(ctx: &'a mut TypeContext, in_ui: bool) -> Self {
-        let web = ctx.bare_modules.iter().chain(ctx.module_aliases.values()).any(|m| m == "web" || m.starts_with("web."));
-        let holds_state = in_ui || (web && !ctx.derives.is_empty());
+        let holds_state = program_holds_state(in_ui, ctx);
         Lowerer {
             ctx,
             fragment: false,
@@ -1211,6 +1235,7 @@ impl<'a> Lowerer<'a> {
             returns_none: HashSet::new(),
             failed: Vec::new(),
             top_declared: HashMap::new(),
+            top_only: BTreeSet::new(),
         }
     }
 
@@ -1332,7 +1357,7 @@ impl<'a> Lowerer<'a> {
             FnKind::View
         } else if self.ctx.view_handlers.contains(name) {
             FnKind::Handler
-        } else if self.in_ui && !crate::modules::is_crow_fn(name) && assigns_any(body, &own_facts(name, &self.ctx.facts)) {
+        } else if self.in_ui && !crate::modules::is_crow_fn(name) && !self.top_only.contains(name) && assigns_any(body, &own_facts(name, &self.ctx.facts)) {
             // (a script has no facts: its function's first assignment of a
             // name is a local, whatever the top level calls)
             FnKind::Helper
@@ -1639,6 +1664,7 @@ impl<'a> Lowerer<'a> {
             derives: vec![],
             fns: vec![],
             tests: vec![],
+            bindings: vec![],
             main: vec![],
             main_effects: BTreeMap::new(),
             traced: std::collections::BTreeSet::new(),
@@ -2049,7 +2075,7 @@ impl<'a> Lowerer<'a> {
         self.ctx.leave_body(scope);
         let param_set: HashSet<String> = params.iter().cloned().collect();
         place_moves_in(&mut block, &HashSet::new(), Some(&param_set));
-        Ok(Fn { name: name.to_string(), params: ps, ret, body: block, kind, effects: vec![], tables_written: vec![], recursive: false })
+        Ok(Fn { name: name.to_string(), params: ps, ret, body: block, kind, effects: vec![], tables_written: vec![], recursive: false, args: Vec::new() })
     }
 
     /// A function that answers a value answers one on every path (spec,
@@ -2425,7 +2451,13 @@ impl<'a> Lowerer<'a> {
         let (Some(Expr::Local(holder, _)), Some(item)) = (lowered.first(), lowered.get(1)) else { return };
         let held = full(&lowered[0]);
         let open = matches!(held, Ty::Unknown) || matches!(&held, Ty::List(inner) if matches!(inner.as_ref(), Ty::Unknown));
-        let item_ty = read(item);
+        // (a node a view pushes is markup, as a loop collecting nodes holds
+        // them: read as text, the list had held text, and the node pushed
+        // onto it did not build compiled)
+        let item_ty = match full(item) {
+            Ty::Markup => Ty::Markup,
+            _ => read(item),
+        };
         if open && !matches!(item_ty, Ty::Unknown | Ty::Unit) {
             let refined = Ty::List(Box::new(item_ty));
             if self.pass == Pass::Scan {
@@ -4394,7 +4426,12 @@ impl<'a> Lowerer<'a> {
             let ty = (self.ctx.vars.get(name).unwrap_or(&Ty::Unknown)).clone();
             return Stmt::Let { var: name.to_string(), ty, expr };
         }
-        if self.is_fact(name) && self.sees_facts() {
+        // (a view reads the facts and moves none: a top-level name it
+        // assigns is its own local, as a function's is — Lory's sample page
+        // held its chapters in a `toc` beside the top level's, and the view
+        // had written the top level's interpreted and, compiled, assigned a
+        // name it never bound, E0425)
+        if self.is_fact(name) && self.sees_facts() && self.at != Where::In(FnKind::View) {
             return Stmt::Store { fact: name.to_string(), expr };
         }
         if self.declared(name) {
@@ -6910,7 +6947,7 @@ impl<'a> Lowerer<'a> {
             self.check_call(&name, args, &checks);
             self.scan_call(callee, args, &types);
             self.check_tree_columns(&name, &attrs, &children);
-            return Ok(Expr::Tree { element: name, attrs, children });
+            return Ok(Expr::Tree { element: name, attrs, children, binds: Vec::new() });
         }
         // arguments: a fallible one reaches the callee as its payload, and
         // an error among them is the call's value (`propagates`); a view
@@ -7227,6 +7264,18 @@ impl<'a> Lowerer<'a> {
         let ty = self.call_type(callee, args, &arg_types, &full_types, None);
         let ty = self.frame_typed(callee, args, &arg_types, &lowered, ty);
         let ty = self.column_typed(callee, args, &arg_types, &lowered, ty);
+        // a list a view grows with nodes (`out = push[out, p[…]]`) holds
+        // their markup, as one a loop collects them into does: inference's
+        // rules read the node as text, and the compiled program had pushed
+        // a node onto a list of text, which did not build
+        let ty = match (&ty, full_types.get(1), lowered.first().map(|x| x.ty())) {
+            (Ty::List(item), Some(Ty::Markup), Some(Ty::List(held)))
+                if name == "push" && module.is_none() && lowered.len() == 2 && !self.ctx.functions.contains_key(&name) && **item == Ty::Str && matches!(*held, Ty::Unknown | Ty::Markup) =>
+            {
+                Ty::List(Box::new(Ty::Markup))
+            }
+            _ => ty,
+        };
         if name == "chart" && matches!(module.as_deref(), None | Some("chart")) {
             self.check_chart_columns(&lowered);
         }
@@ -9695,6 +9744,49 @@ fn yield_of(body: &Block) -> Ty {
 
 /// The facts a function can write: a part's function any part's, whose
 /// names carry that part's prefix — an unprefixed name there is a local.
+/// The functions only the program's top level calls: called there by
+/// their bare name, and named nowhere else — in no function's, view's,
+/// derivation's or test's body, and never handed as a value (`page['/',
+/// home]`, `click = bump`). No handler reaches one, so it is no helper of
+/// a handler's, and a top-level name it assigns is its own local, as a
+/// script's is (Lory's site counted its examples in a local `n` beside a
+/// top-level `n`: a helper of the session, it wrote the top level's `n`
+/// interpreted, and compiled it assigned a name the function never bound,
+/// E0425). A name is matched by its last segment, so a part's function
+/// called as `part.f` anywhere but the top level counts as reached.
+fn top_only_fns(stmts: &[S], functions: impl Iterator<Item = String>) -> BTreeSet<String> {
+    let bare = |n: &str| n.rsplit('.').next().unwrap_or(n).to_string();
+    let mut called: HashMap<String, usize> = HashMap::new();
+    let mut named: HashMap<String, usize> = HashMap::new();
+    let mut elsewhere: BTreeSet<String> = BTreeSet::new();
+    for s in stmts {
+        let inner = matches!(s, S::FnDecl { .. } | S::Derive { .. } | S::TestBlock { .. });
+        crate::type_infer::each_expr(std::slice::from_ref(s), None, &mut |e, _| match e {
+            A::Ident(n) if inner => {
+                elsewhere.insert(bare(n));
+            }
+            A::Ident(n) => *named.entry(bare(n)).or_default() += 1,
+            A::FieldAccess { field, .. } => {
+                elsewhere.insert(field.clone());
+            }
+            A::Call { callee, .. } if !inner => {
+                if let A::Ident(n) = callee.as_ref() {
+                    *called.entry(bare(n)).or_default() += 1;
+                }
+            }
+            _ => {}
+        });
+    }
+    // (a name the top level writes as a value as well as calls is handed on)
+    functions
+        .filter(|f| {
+            let b = bare(f);
+            let calls = called.get(&b).copied().unwrap_or(0);
+            calls > 0 && named.get(&b).copied().unwrap_or(0) == calls && !elsewhere.contains(&b)
+        })
+        .collect()
+}
+
 fn own_facts(f: &str, facts: &BTreeSet<String>) -> BTreeSet<String> {
     match crate::part_prefix_of_declaration(f) {
         // any part's (a part writes one it uses), never the entry's
@@ -11142,6 +11234,22 @@ log[drive[3]]
         assert!(refused.contains("page[…, url = …]: no reactive fact named 'gone'"), "{}", refused);
         assert!(!refused.contains("':card'"), "{}", refused);
         assert_eq!(refusal_of("use web, ui\ncard = 1\nview v[]\n    return p['`card`']\nserve[3999]\npage['/card/:card', v]\n"), "");
+    }
+
+    /// A page's init runs as a session opens the page and is handed
+    /// nothing (spec, LiveView / Pages): a function with parameters is
+    /// refused, in both modes, and so is anything but a function; one of
+    /// none is a page's init (`page` had taken no `init`: "'page' has no
+    /// parameter named 'init'").
+    #[test]
+    fn a_page_s_init_is_a_function_of_none() {
+        let head = "use web, ui\nn = 0\nfn load[x]\n    n = x\nfn open[]\n    n = 1\nview v[]\n    return p['`n`']\nserve[3999]\n";
+        let refused = refusal_of(&format!("{}page['/', v, init = load]\n", head));
+        assert!(refused.contains("page[…, init = load]: load takes 1 parameter, and init is handed none — it runs as a session opens the page, after the page's url facts are read from the address; read those facts instead"), "{}", refused);
+        let refused = refusal_of(&format!("{}page['/', v, init = 'open']\n", head));
+        assert!(refused.contains("page[…, init = …] takes a function of the program, with no parameters: init = load"), "{}", refused);
+        assert_eq!(refusal_of(&format!("{}page['/', v, url = ['n'], init = open]\n", head)), "");
+        assert_eq!(refusal_of(&format!("{}fn pages[]\n    page['/', v, init = open]\npages[]\n", head)), "");
     }
 
     /// The tables a program declares on each connection: every literal

@@ -34,6 +34,17 @@ history says the rest.
 
 ### Added
 
+- A mobile theme for served pages: on a phone (a coarse pointer, a side
+  under 600px) every page gets 16px text, 44px controls, rows that wrap,
+  grids in one column, tables and code that scroll in their own box, and
+  layers inside the safe area, with no change to its views. The kernel
+  stylesheet's sizes are now tokens (`--crow-font-size`,
+  `--crow-control-font`, `--crow-target`, …) set to the values they had,
+  so the desktop look is unchanged; the theme gives them a phone's
+  values. `data-surface="mobile"` / `"desktop"` on `<html>` forces either.
+  The page shell's viewport meta adds `viewport-fit=cover`.
+  `tests/mobile/check.py` measures pages as a phone in headless Chrome
+  and holds the desktop's computed styles to a recording.
 - `*` of tensors of more than two axes is the matrix product of each
   batch item: it multiplies over the last two axes, the axes before them a
   batch that broadcasts as an element-wise operation's shapes do (`a * b`
@@ -42,6 +53,142 @@ history says the rest.
   stays on the GPU. It had taken two matrices only, so a batch was a loop
   in Crow over its items. A tensor of one axis is still refused, in new
   words (`needs tensors of two axes or more`).
+- A widget may state what a headset's drawn page draws it as:
+  `widgets/<name>.drawn.json` beside its module, served at
+  `/_widget<page>?m=<name>&drawn=1` (404 where there is none). Lory's
+  drawn page draws charts, tables and words from it
+  (one-view-design.md, phase 4).
+- An `img`'s `src`, `width` and `height`, and an `svg` the page writes
+  as markup, reach the tree's JSON: the svg with a `data:` address of
+  its markup (`src`), so a drawn page draws it as a picture.
+- A served page's views are kept with what they read (one-view-design.md,
+  phase 2): after an event or a tick only the views whose facts,
+  derivations or arguments moved run again, in both modes, and the rest
+  hand back their last node, whose page nodes are shared from render to
+  render so the diff passes over them. A view that reads the clock,
+  draws a random number, or reads `captured`, `running` or the notice
+  runs at every render. The page is the page running every view makes:
+  `CROW_VIEW_CACHE=check` runs every view and stops a render that would
+  differ, `CROW_VIEW_CACHE=off` runs every view. On a page with a ticking
+  value beside a 1,500-row table a tick's server time went from 7.7 ms to
+  0.2 ms; finchdash's pages, whose events move the view that holds their
+  big table, held level at an event and ticked up to a third faster. A
+  view handed arguments whose text passes 4 KiB (a list of a thousand
+  rows) is not kept, and runs. The dev panel shows how many views each
+  render ran and kept. A view a render did not reach — a tab not shown —
+  is kept for a later one, up to 1,024 views holding 50,000 nodes, the
+  least recently used let go first: finchdash's /reports switched tabs in
+  4.95 ms of server time at the median, from 7.5 ms. What a kept view's
+  subtree offers the page is read once while it is kept. The test
+  harness's interpreted pages keep views as a served page does.
+- A served page's live values are set, not rendered (one-view-design.md,
+  phase 3): a text, number or truth a view shows from facts and
+  derivations alone (a clock, a price, a progress bar, a computed
+  `disabled`) is a binding the compiler finds, and a turn in which only
+  such values moved runs no view and sends them as a `values` message,
+  in both modes, the page byte for byte the page a render makes.
+  Nothing is written in the program. On a page with a ticking clock
+  beside a 1,500-row table a tick ran no view where it ran two, and sent
+  110 bytes where it sent 202. `CROW_VIEW_CACHE=check` renders after a
+  values turn too and stops a session whose pages differ;
+  `CROW_VALUES=off` renders every turn. Two served scripts' dev panel
+  counts read the values set where they read views run and kept.
+- Live values are followed through a local a view assigns once, through
+  a function of the program's that only computes, and through a
+  parameter of a view that shows it only in bound places: the call gets
+  a copy for its site that leaves that argument out of its key, and is
+  kept, its places set, when only that value moved (one-view-design.md,
+  phase 3 finished). A list, frame or record handed straight from a fact
+  or a derivation keys a view's call by the source's version, not its
+  contents. A render in which nothing moved checks no kept view's
+  derivations but those that answer by the moment. A test's own reads of
+  a derivation go through its session's cache, interpreted, as compiled.
+  A client that draws the page opens its socket with `drawn=1` and is
+  sent the tree as data (`{"type": "tree"}`) and the values by binding id
+  (`{"type": "values", "ids": {...}}`); an HTML page is sent what it was.
+  `CROW_FOLLOW=off` and `CROW_SETTLE=off` turn the following and the
+  idle check off, to measure against. The served script
+  `41_a_tab_switched_back_keeps_its_views` reads one view run and one
+  kept where it read two run: its tab's fact is read only in bound texts.
+- A growing int (`floor[…]`, `round[…]`, an int past 64 bits), a
+  decimal and a moment are live values as an int is: shown as a child,
+  through a local or through a view's parameter, they are set by a
+  `values` message with no view run, in both modes, as a render shows
+  them; an int widened into a function that takes a growing int is
+  followed too. On a page with a ticking `floor[…]` clock beside a
+  1,500-row table a tick ran no view where it ran three, and sent 174
+  bytes where it sent 344. finchdash's playing Simulation tick runs 10
+  views where it ran 13 (its play bar is set), and still renders: its
+  play-head reaches widget props. A bound control's variable stays a
+  text, an int, a float or a truth. `crow test --served` fails a
+  `.events` script that is not a JSON list of steps, which it had run as
+  no steps. Following values was measured again on finchdash's /reports
+  tab switches, two servers interleaved switch by switch: it costs
+  nothing measurable (−0.3 to +0.4 ms paired, around 8 ms); the
+  millisecond noted before was the spread between runs.
+- A served page is drawn in a headset from its own `ui` view
+  (one-view-design.md, phase 4). With the `live` feature a server serves
+  a drawn page at `/_drawn<path>`, from `CROW_DRAWN` or `~/.crow/drawn`.
+  Lory's `packages/drawn` is the page; it is not shipped with Crow. The
+  drawn page draws the tree in WebGL and sends every event back as the
+  HTML page does. The tree as data says more for it:
+  - a click that asks first says what it then sends (`ask`);
+  - an event says its value as the page sends it (`value`);
+  - a table's rows say each row's sends and shown texts, its sorted
+    headers' and its pager's values (`TableOf::sends`);
+  - a chart says its moments as seconds and what its seek bands send;
+  - markup, which a compiled page hands on for a node it kept in a
+    variable, is also read back as the tree's own kinds (`read`): its
+    fields, checks, choices, selects, sliders, icons and frame tables,
+    and its elements with their wiring.
+
+  An HTML page is sent what it was, byte for byte.
+- A drawn client that opens its socket with `changes=1` is sent the tree
+  whole only on connecting, on a route change and on a resync; any other
+  answer that moves the page's structure is `{"type": "changes"}`, each
+  change a node replaced, an element's own fields set or its children
+  spliced, at a path through the tree's children
+  (one-view-design.md, "Phase 4, after the first headset run"). The
+  server falls back to the whole tree when the changes are not under
+  three quarters of it. A pager's press on finchdash's Execution page is
+  answered by 3.2 KB where it was the 24 KB tree. The tree sent a drawn
+  client leaves out a markup node's `html` beside its `read`, and a
+  frame table's row markup. A client without `changes=1`, and an HTML
+  page, are sent what they were.
+- Compiled, `p.c = f[p.c]` hands the field to the call and takes it back,
+  where it copied it.
+- `key = …` on an element keys it among its siblings: a reorder moves
+  keyed children (a `move` change), each with what it holds.
+- A page runs a function as a session opens it: `page['/budgets',
+  render, url = ['day'], init = load]` runs `load` once on each new
+  session, after the address's facts are read and before the first
+  render, as a handler runs — one transaction that writes the session's
+  facts, reads derivations and may `notice`; a stop lands nothing and
+  is told as a stopped click's is. A click, a tick, a resync and a tab
+  coming back to its session run nothing; a new tab or a reload is a
+  new session and runs it again. `init` is handed nothing (the page's
+  `url` facts carry what the address holds), and a function with
+  parameters is refused, in both modes; a page a function registers
+  carries it too. A test opens a session that runs it with
+  `app[render, init = load]`, compiled or not, and a test's program
+  keeps a page's init wired though it runs no top-level line. Before,
+  a page's values to be read fresh for each reader were facts computed
+  once as the server started (finchdash's guardrails, stale after a
+  save until a restart).
+- The editor colours each name by what it is: `crow lsp` answers
+  semantic tokens — a parameter, a variable, a function, a struct, a
+  field, a module — told from the document's own declarations as a
+  rename reads them. The grammar had coloured every `name[` as a call,
+  a variable indexed (`b[0]`) and a struct made (`App[3, 2]`) alike, and
+  left a function handed on (`sys.frames[draw]`) plain. A builtin, a
+  constant and a standard module's function are marked as Crow's own, a
+  derivation and a module's value as read-only, and each declaration as
+  one; the names in a string's interpolations are told too. VS Code's
+  extension asks for them by the legend the server announces (package
+  and install it again from a checkout) and shows them in `.co` files
+  whatever the theme decides for other languages, and a document that
+  does not lex keeps its last colours until it does. The grammar knows `derive`,
+  `break`, `continue` and `then`, and `test` where a test starts.
 - A page enters a headset with the room seen through the drawing:
   WebXR's `immersive-ar`, by the page's Enter AR button or the program's
   `@ar`, as `@vr` enters one's own world. A frame says whether one can be
@@ -53,6 +200,35 @@ history says the rest.
   its channels, when it starts (seconds from now, on the page's audio
   clock) and its samples, the channels interleaved, as `f32:…` or
   `base64f32:…`. `@tone` had been a page's only sound, one oscillator's.
+
+### Changed
+
+- A served interpreted page reads its derivations through the session's
+  cache, as the compiled program does: computed once per change, not at
+  every read — its handlers and the test harness's pages too, a fact a
+  handler writes moving what reads it before the handler's next read. A
+  handler runs on the render thread's copy of the program with only the
+  facts that moved loaded, where a copy had been made at every event. A derivation recomputed to an equal list, map or record keeps
+  its readers as they are (early cutoff), in both modes; numbers, texts
+  and bools already did.
+
+- A view interpreted is a tree of what it says, not markup: each
+  element's kind and options, its events, each control with the fact it
+  is bound to, a table's rows, a chart, a widget, text, and markup that
+  arrives as HTML (`crow_web::view::tree`, one-view-design.md). One
+  builder makes it and one renderer writes the page from it, the markup
+  each page had, byte for byte; the tree as data (`tree::to_json`) is
+  what a headset's renderer will read. A view handed to a builtin, an
+  operator or JSON is its markup, as it was. A page the browser builds
+  from its markup as written is no longer written and read back for the
+  live runtime or a test's `html[a]` (a page of 1,500 rows rendered 200
+  times in a test: 1.94 s, now 1.35 s).
+- A compiled view builds the same tree through the same builder: the
+  emitted code hands `tree::element` and the control builders its values
+  and bakes no layout or tags in. A table's rows, an icon and a chart are
+  the page's nodes in both modes, not markup read back, and the events a
+  page offers are read from its tree; only markup (`doc.markdown`,
+  `menu`, `pager`, a markup value) is scanned.
 
 ### Fixed
 
@@ -111,6 +287,94 @@ history says the rest.
   that leaves it out (Lory's pass, whose canvas no test made), it had
   been refused as `a list whose items can fail`, and the IR's check had
   called the program a bug in Crow (parity 531).
+- Compiled, `x in xs` where the list's items can fail no longer moves `x`
+  (a text, a list, a record) into the result it is met as: the word read
+  after the question had made the program refuse to build (E0382). Parity
+  536.
+- Compiled, `a and b and c` where `b` is read from a value that can fail
+  (its refusal waits for `a`, so the lowering holds the chain's steps in
+  locals) builds: its last step, two plain truths, was written as a plain
+  truth where a result was asked (E0308). Parity 537.
+- Three faults a real app found in kept views and live values (finchdash,
+  2026-11-16; one-view-design.md §7). A derivation brought up to date
+  inside a view's run no longer counts what it reads among the view's
+  reads, in both modes: a view that reads `d` depends on `d`'s version
+  alone, so a text over a derivation of another (`words` over `secs`) is
+  a binding, and a tick that moves `d`'s inputs and not `d` runs no view (`CrowLiveState::deriving`). A compiled view
+  handed a node for a parameter it only places (an element's child, its
+  answer, a local it may give another node, or handed on to such a view)
+  holds the node, not its markup, as
+  the interpreter does: a page handed whole to a view that frames it
+  (finchdash's to Myna's `workbench.screen`) had lost its bindings and
+  kept views inside the markup, so a clock shown only in bindings stood
+  still on the compiled page, and under `CROW_VIEW_CACHE=check` a date
+  field written with `__field:` showed its old value in the kept node.
+  Such a view is no longer keyed by its node's markup, as the interpreter
+  keys none handed a node.
+- A web build in a headset's immersive session focuses no field of the
+  page: `keyboard('open')` asks for nothing while a session runs, and a
+  focus held as one starts is let go. Meta's browser raised its own
+  keyboard over the drawing's for a focused field, and its typing never
+  reached the program (one-view-design.md, "Phase 4, after the second
+  headset run"). Outside a session a desk's keys type as before. In the
+  same run Lory's drawn page gained panels moved by a controller's grip
+  or a handle, nodes kept by key, a change's work spread over three
+  frames with an honest `@shown` measure, and `drawn_press` and
+  `drawn_type` for runs with nobody in the headset.
+- A compiled view that grows a list of nodes with `push` and places it
+  builds (`expected String, found Node`), and shows what the interpreter
+  shows. A list of text a node is pushed onto, or a loop collects text and
+  nodes into, is text in both modes: its markup shows escaped, as the
+  compiled page showed it; the interpreter had placed it as markup.
+- A `pre` or a `textarea` whose text opens with a newline keeps it
+  interpreted, as compiled: the browser drops the first newline there,
+  and the interpreter's page had lost it.
+- A computed class joins a compiled element's own where the layout table
+  puts it, as interpreted (`row[…, class = c, surface = 'card']` is
+  `row x card`; compiled, it had been `row card x`).
+- A compiled `table` of a frame keeps its other options (`class`, `id`,
+  layout), as interpreted; they had been dropped.
+- A text given as a handler (`click = 'inc'`) wires nothing compiled, as
+  interpreted; the compiled page had wired it.
+- An icon the set lacks stops a compiled render with the interpreter's
+  reason; the compiled page had shown `error: …` in its place.
+- A compiled view outside a served page that holds a handler (`click =
+  f`, `click = f[3]`) builds; it had not (`a held call … outside an event
+  attribute`).
+- A page's `title` and `meta` leave its body interpreted as compiled
+  where the browser would repair the page's markup: the interpreter's
+  page had been markup, and such a page had kept them in its body.
+- A later session a test opens on the compiled program starts where the
+  first did, as the interpreter's does: it had started from the facts
+  the session before had moved to.
+- A page a function registers with `url = […]` builds compiled: the
+  queued registration had bound the list, and an empty one had no type
+  (E0282; served 37).
+- A page or a route a function registers (`fn pages[]` calling
+  `page['/', code.render, …]`, as Myna's workbench does) is served
+  compiled as interpreted: the function had named the app and the state
+  main holds, and the program did not build (`cannot find value
+  __crow_state`), so finchdash ran interpreted alone (served 35, 36).
+- In a ui program, a function only the top level calls keeps its own
+  names, and a view's assignment of a top-level name is its own local:
+  each had written the top level's name interpreted and, compiled,
+  assigned a name it never bound (Lory's site, `cannot find value n`;
+  parity 530).
+- A fact computed from what reads alone — a function of the program's,
+  another fact, a map's item — is declared for a test's session as for
+  the served page's: a handler that wrote one found no such name in a
+  test (`undefined variable 'a'`). A computed fact whose value writes
+  stays top-level code a test never runs (tests/computed_fact_harness.co).
+  A fact's declared value that calls a function lending its parameters
+  builds compiled (it had handed them by value, E0308).
+- A form's submit button shows it is working while its handler runs, as
+  a clicked button does: the form renders `aria-busy`, the buttons that
+  submit it `disabled` and `aria-busy`, and the page marks the button
+  the moment the form is submitted until its answer arrives.
+- A map of a frame's columns encodes each as the list of its cells
+  compiled, as interpreted (it had not built: finchdash's charts; parity
+  531).
+
 - A method written in square brackets is refused before the program
   runs, in both modes: a function's name read as a value's — the
   program's, a builtin's, a module's — is told the call it means
@@ -205,6 +469,11 @@ history says the rest.
   mean 'sort'?`. A name that is something and takes none — a builtin
   with no named parameters, a value holding a function — is told so, as
   it was.
+- `crow check` knows a module's constants as names its import makes:
+  `nan`, `inf`, `pi` and `e` read under `use math` had each been
+  reported as an undefined variable (`_numbers_of uses undefined
+  variable 'nan'`), though both modes and every build run them. The
+  check had counted a module's functions and not its constants.
 - A file a package reaches outside itself — through a link in the
   package's own `crow_modules/`, or in the `crow_modules/` beside it,
   where `crow install` puts a package's dependencies — is named by its
@@ -215,6 +484,52 @@ history says the rest.
   (`crow_modules/window//Users/…/lory/gui.co`). An app holding such a
   part reports the old reach as removed until it is accepted once
   (`crow check`, then `a`).
+- `crow install` takes one folder spelled two ways for one source: a
+  project naming `../../packages/lory` beside a package that names its
+  own `../lory` had been refused (`lory is wanted at two sources`), the
+  two spellings compared as text. A local path is compared by the
+  folder it names, its links followed; two folders are still refused.
+- `crow check`'s edge cases and determinism probe call a function as
+  `crow run` lowers it — the whole program, its top level and tests
+  included — with values of the types that lowering gives its
+  parameters, and a vector of floats as one. They had lowered the
+  declarations alone, so a function that only a test or the top level
+  calls had a body typed by nothing; handed the check's own guess at its
+  types, it had stopped as a bug in Crow (`nice crashes on nice[1] —
+  internal error: an int met a float in 'pow' without a conversion`:
+  Lory's `nice`, `ticks`, `_mod`, `_unit`, `sphere`, Kite's `plot_of`).
+  A function whose lowering leaves a parameter untyped is not probed.
+- Only a program that holds state has handlers (spec, Function Scope):
+  a script's function assigning a name its top level assigns binds a
+  local of its own, and is no longer reported as "a handler nobody can
+  reach" (Lory's examples: `played`, `count_of`, `made`, `aimed`,
+  `framed`). A helper the top level calls is reached by that call; in a
+  ui program, a function that writes a fact and that nothing wires and
+  nothing calls is still reported. A script's baseline from an earlier
+  check reports its `handler …` entries removed and its `fact …`
+  entries' writers changed, once, until accepted (`crow check`, then
+  `a`).
+- In a program that holds state, `crow check` counts a function's
+  assignment to a fact as the fact's write whatever calls the function,
+  as the lowering stores it: a helper only the top level calls to set a
+  fact had been told `say has unused variable 'status'`, since only
+  views, handlers, derivations and what they call were counted as
+  writing state. A helper's own local that nothing reads is still
+  reported, and so is a script's function's local named like its top
+  level's variable.
+- `crow check` keeps a function's snapshot under the file that declares
+  it, `.crow/snapshots/<file>/<function>.snap` (the file's path from the
+  folder the check runs in, named as the baseline names an entry:
+  `packages/lory/gui.co`'s `_fresh` in `packages-lory-gui/_fresh.snap`),
+  so two files' functions of one name never meet. Kept under the name
+  alone, Lory's main.co, gui.co and plot.co, checked in turn from one
+  folder, had each met the `_fresh` checked before it and reported
+  "_fresh behavior changed". A snapshot kept the old way
+  (`.crow/snapshots/<function>.snap`) is not read, since it cannot say
+  whose function it held: the first check after the upgrade records each
+  function's answers afresh, reports none of them changed, and removes
+  the old file of each name it records. A function the REPL defines is
+  declared in no file, and its answers are kept nowhere.
 
 ## v0.9.0 — 2026-11-08
 

@@ -195,6 +195,13 @@ fn trade_ticket(port: u16, url: &str, jar: &mut Option<String>) -> Result<(), St
 struct Shown {
     title: String,
     address: String,
+    /// the views the last render ran and kept, as the dev panel tells them
+    /// (a script with a `views` step serves with the panel on)
+    views: Option<(u64, u64)>,
+    /// the bound places the last turn set, when it was a values turn (no
+    /// view run: one-view-design.md 3.5), and the last `values` message
+    values: Option<u64>,
+    values_sent: Option<String>,
 }
 
 impl Shown {
@@ -209,7 +216,7 @@ fn open_page(port: u16, path: &str, jar: &Option<String>) -> Result<(CrowVNode, 
     use tungstenite::client::IntoClientRequest;
     let first = request(port, "GET", path, jar)?;
     let title = first.split("<title>").nth(1).and_then(|t| t.split("</title>").next()).unwrap_or("").to_string();
-    let shown = Shown { title, address: path.to_string() };
+    let shown = Shown { title, address: path.to_string(), views: None, values: None, values_sent: None };
     let token: String = first.split("pageToken = '").nth(1).unwrap_or("").chars().take_while(|c| c.is_ascii_hexdigit()).collect();
     let page = CrowVNode::raw(
         &first
@@ -260,6 +267,10 @@ fn settle(ws: &mut Socket, page: &mut CrowVNode, shown: &mut Shown, port: u16, j
                     if let Some(t) = m["head"]["title"].as_str() {
                         shown.title = t.to_string();
                     }
+                    if m["type"] == "dev" && m["panel"]["views"].is_object() {
+                        shown.views = Some((m["panel"]["views"]["ran"].as_u64().unwrap_or(0), m["panel"]["views"]["kept"].as_u64().unwrap_or(0)));
+                        shown.values = m["panel"]["values"].as_u64();
+                    }
                     if m["type"] == "url" {
                         let (path, query) = (m["path"].as_str().unwrap_or(""), m["query"].as_str().unwrap_or(""));
                         let path = if path.is_empty() { shown.address.split('?').next().unwrap_or("/").to_string() } else { path.to_string() };
@@ -270,6 +281,15 @@ fn settle(ws: &mut Socket, page: &mut CrowVNode, shown: &mut Shown, port: u16, j
                     } else if m["type"] == "patches" {
                         let changes = m["patches"].as_array().cloned().unwrap_or_default();
                         page.apply(&changes).map_err(|e| format!("a change did not fit the page: {}", e))?;
+                    } else if m["type"] == "values" {
+                        // the bound places a values turn set, as the page sets them
+                        let changes = crow_web::live::values_changes(&m["set"]).ok_or_else(|| format!("a values message the page cannot read: {}", t))?;
+                        page.apply(&changes).map_err(|e| format!("a value did not fit the page: {}", e))?;
+                        let mut kept = m.clone();
+                        if let Some(o) = kept.as_object_mut() {
+                            o.remove("ack");
+                        }
+                        shown.values_sent = Some(kept.to_string());
                     } else if m["type"] == "sign" {
                         trade_ticket(port, m["url"].as_str().unwrap_or(""), jar)?;
                     } else if m["type"] == "upload" {
@@ -321,6 +341,9 @@ pub(crate) fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path
         .arg(file.file_name().unwrap_or_default())
         .current_dir(dir)
         .env("CROW_BUILD_PROFILE", "dev")
+        // (the dev panel tells the views a render ran, for a `views` step,
+        // and the values a turn set, for a `values` step)
+        .envs(steps.iter().any(|s| s.get("views").is_some() || s.get("values").is_some()).then_some(("CROW_DEV", "served-parity")))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -415,6 +438,42 @@ pub(crate) fn page_steps(port: u16, dir: &std::path::Path, steps: &[serde_json::
             if let Some(unwanted) = step["absent"].as_str() {
                 if now.contains(unwanted) {
                     return Err(format!("the page holds {:?}: {}", unwanted, now));
+                }
+                continue;
+            }
+            // `{"views": {"ran": 2, "kept": 1}}`: the views the last render
+            // ran and the ones it kept (crow_web/src/live/views.rs); with
+            // the cache off (CROW_VIEW_CACHE=off or check) every view runs:
+            // `ran` and `kept` in all, or `all` where a kept view holds
+            // views of its own (they run too)
+            if let Some(want) = step.get("views") {
+                let (ran, kept) = (want["ran"].as_u64().unwrap_or(0), want["kept"].as_u64().unwrap_or(0));
+                let all = want["all"].as_u64().unwrap_or(ran + kept);
+                let want = match std::env::var("CROW_VIEW_CACHE").as_deref() {
+                    Ok("off") | Ok("0") | Ok("check") => (all, 0),
+                    _ => (ran, kept),
+                };
+                if shown.views != Some(want) {
+                    return Err(format!("the last render ran and kept {:?} views, not {:?}", shown.views, want));
+                }
+                continue;
+            }
+            // `{"values": 2}`: the last turn ran no view and set two bound
+            // places (one-view-design.md 3.5); with the cache off
+            // (CROW_VIEW_CACHE=off) every turn is a render, and the step
+            // is passed over. `{"values": 1, "sent": "…"}` holds the
+            // message's bytes too, which both modes send alike.
+            if let Some(want) = step.get("values").and_then(|v| v.as_u64()) {
+                if matches!(std::env::var("CROW_VIEW_CACHE").as_deref(), Ok("off") | Ok("0")) {
+                    continue;
+                }
+                if shown.views != Some((0, 0)) || shown.values != Some(want) {
+                    return Err(format!("the last turn ran and kept {:?} views and set {:?} values, not a values turn of {}", shown.views, shown.values, want));
+                }
+                if let Some(sent) = step.get("sent").and_then(|v| v.as_str())
+                    && shown.values_sent.as_deref() != Some(sent)
+                {
+                    return Err(format!("the values message was {:?}, not {:?}", shown.values_sent, sent));
                 }
                 continue;
             }
@@ -546,10 +605,18 @@ pub fn run(only: &[String]) -> i32 {
             failures += 1;
             continue;
         };
-        let steps: Vec<serde_json::Value> = std::fs::read_to_string(file.with_extension("events"))
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default();
+        // (a script that does not parse fails: it had driven nothing, and passed)
+        let steps: Vec<serde_json::Value> = match std::fs::read_to_string(file.with_extension("events")) {
+            Ok(t) => match serde_json::from_str(&t) {
+                Ok(s) => s,
+                Err(e) => {
+                    println!("  FAIL  {}: its .events script is no JSON list of steps: {}", name, e);
+                    failures += 1;
+                    continue;
+                }
+            },
+            Err(_) => Vec::new(),
+        };
         // an app is served from a fresh copy in each mode
         let serve = |mode: &[&str]| match app {
             Some(a) => fresh_copy(a).and_then(|copy| drive(&exe, mode, &copy, port, &steps)),

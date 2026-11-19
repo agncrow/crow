@@ -1,0 +1,10 @@
+--- A map of a frame's columns encodes each column as the list of its
+--- cells (spec, JSON): compiled, a column had no JSON form, and the
+--- program did not build (E0277, finchdash's charts: `encode[map[s =
+--- b.et_secs, t = b.ts_ms, …]]`).
+use frame
+
+f = frame.new[a = [1, 2], b = [1.5, 2.0], s = ['x', 'y'], up = [true, false]]
+log[encode[map[a = f.a, b = f.b]]]
+log[encode[map[s = f.s]]]
+log[encode[map[up = f.up]]]

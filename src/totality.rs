@@ -75,6 +75,7 @@ fn every_value() -> Vec<Value> {
         Value::Bytes(crow_runtime::sys::Bytes(vec![1u8, 2])),
         Value::Json(std::sync::Arc::new(serde_json::json!({"a": 1}))),
         Value::Dual(1.5, 0.5),
+        Value::Node(std::sync::Arc::new(crate::ops::tree::Node::Text("a".into()))),
         Value::Done,
     ]
 }
@@ -87,7 +88,7 @@ fn value_variant(v: &Value) -> &'static str {
         Value::Fn(_) => "Fn", Value::StructInstance(_) => "StructInstance", Value::Sparse(_) => "Sparse",
         Value::Frame(_) => "Frame", Value::DbConn(_) => "DbConn", Value::Mailer(_) => "Mailer", Value::Socket(_) => "Socket",
         Value::Bytes(_) => "Bytes", Value::Stream(_) => "Stream", Value::Response(_) => "Response", Value::Json(_) => "Json",
-        Value::Dual(..) => "Dual", Value::Traced(_) => "Traced", Value::App(_) => "App", Value::GradFn(_) => "GradFn",
+        Value::Dual(..) => "Dual", Value::Traced(_) => "Traced", Value::Node(_) => "Node", Value::App(_) => "App", Value::GradFn(_) => "GradFn",
         Value::Done => "Done",
     }
 }

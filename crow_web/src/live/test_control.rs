@@ -13,7 +13,7 @@ use super::*;
 
 /// A view by name, rendered from a session's state: `None` for a name that
 /// is not a view without parameters.
-pub type ViewFn = fn(&CrowLiveState, &str) -> Option<CrowVNode>;
+pub type ViewFn = fn(&CrowLiveState, &str) -> Option<Node>;
 /// The program's event dispatch (`__crow_handle`).
 pub type HandleFn = fn(&mut CrowLiveState, &str, Option<&str>);
 /// A derivation by name, as JSON: `None` for a name that is not one, or
@@ -81,7 +81,7 @@ impl Session {
         for _ in 0..32 {
             html = caught(|| {
                 crow_runtime::moments::at(self.moment(), || {
-                    self.state.render_with(&|s: &CrowLiveState| view(s, &name).unwrap_or_else(|| CrowVNode::text(""))).as_built().to_html()
+                    tree::vnode(&self.state.render_with(&|s: &CrowLiveState| view(s, &name).unwrap_or_else(|| Node::Text(String::new())))).as_built().to_html()
                 })
             })?;
             // a render that read a value still pending is stale, even when
@@ -175,7 +175,18 @@ async fn answer(c: &Control, op: &str, body: serde_json::Value) -> Result<serde_
         let clock = body.get("now").and_then(|v| v.as_f64());
         // nothing renders until the test asks: a view may read what the
         // test sets next (the reader)
-        let session = Session { view, state, clock, later: rx };
+        let mut session = Session { view, state, clock, later: rx };
+        // `app[view, init = f]`: the page's init, run as a session starting
+        // on the page runs it (run_init), at the session's moment; a stop
+        // is the session's notice, as a served page's is
+        if let Some(init) = body.get("init").and_then(|v| v.as_str()) {
+            let moment = session.moment();
+            let handle = c.handle;
+            let state = std::mem::take(&mut session.state);
+            session.state = crow_runtime::moments::at(moment, || run_init(state, Some(init), &handle));
+            session.settle();
+            session.state.next_tick();
+        }
         let id = session.state.session_id;
         c.sessions.lock().await.insert(id, session);
         return Ok(serde_json::json!({ "session": id }));

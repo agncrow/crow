@@ -24,13 +24,17 @@
 //! ```
 
 use std::collections::HashMap;
+use crate::view::tree::{self, Node};
 use crate::view::{CrowVNode, Head};
 
+pub mod drawn;
 pub mod files;
 pub mod signin;
 pub mod test_control;
 mod facts;
 pub use facts::{facts_map, Facts, JsonFacts};
+mod views;
+pub use views::{key_of, key_within, mode as view_cache_mode, Mode as ViewCacheMode, Values, ViewCall, ViewRunning, ViewSpec, KEY_MAX as VIEW_KEY_MAX};
 
 /// Internal action type for the WebSocket event loop.
 enum LiveAction {
@@ -277,6 +281,7 @@ const NOTICE_SECS: f64 = 4.0;
 /// woken to catch up.
 fn publish_table(table: &str, version: u64, except: u64) {
     TABLE_VERSIONS.write().unwrap_or_else(|p| p.into_inner()).insert(table.to_string(), version);
+    TABLE_MOVES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     wake_sessions(except, |reads| reads.tables.contains(table));
 }
 
@@ -381,6 +386,11 @@ pub struct CrowLiveState {
     /// one entry per view being rendered: whether it read a value still
     /// being recomputed, which marks its root `data-crow-stale`
     view_stale: std::sync::Mutex<Vec<bool>>,
+    /// how deep the reads under way are inside a derivation's own reading
+    /// (its inputs brought up to date, its body computed): what a
+    /// derivation reads is its own, never the view's that read it
+    /// (`deriving`, one-view-design.md §7, 2026-11-16)
+    deriving: std::sync::atomic::AtomicUsize,
     /// a handler's working copy (core-design.md §1): its writes land when it
     /// commits, as one, or not at all
     copy: bool,
@@ -413,6 +423,21 @@ pub struct CrowLiveState {
     tables_drawn: std::sync::atomic::AtomicUsize,
     /// sorted tables drawn so far in the render under way
     sorts_drawn: std::sync::atomic::AtomicUsize,
+    /// the views the last render ran, each with what it read (views.rs)
+    views: std::sync::Mutex<views::ViewCache>,
+    /// how long the last render took, the views alone (the dev panel's)
+    pub(crate) render_ms: f64,
+    /// the page's nodes of the subtrees kept views hold (tree::vnode_memo)
+    vnode_memo: std::sync::Mutex<tree::VnodeMemo>,
+    /// what the subtrees kept views hold offer (Offers::of_tree_memo)
+    offers_memo: std::sync::Mutex<OffersMemo>,
+    /// the page's tree as the last render or values turn made it, its head
+    /// taken out: what a drawn renderer's `tree` message carries
+    /// (one-view-design.md 5a)
+    drawn_tree: std::sync::Mutex<Option<Node>>,
+    /// a drawn renderer reads this session (its socket asked, `drawn=1`):
+    /// only then is the tree kept
+    drawn: std::sync::atomic::AtomicBool,
     /// files the last commits handed the reader, for the page to fetch
     pub(crate) downloads: Vec<(String, Vec<u8>)>,
     /// the messages the session sent, kept for a test (`mails[a]`)
@@ -429,6 +454,13 @@ static SHARED_DERIVED: std::sync::LazyLock<std::sync::RwLock<HashMap<String, Der
     std::sync::LazyLock::new(|| std::sync::RwLock::new(HashMap::new()));
 /// Tables this program wrote, versioned app-wide: a write in any session
 /// is a write every session's derivations see.
+/// How many table writes have landed in the app, and how many times a
+/// derivation's value moved, anywhere: a render that finds both where the
+/// last left them, and the session's facts too, finds every derivation
+/// where it was (`views::settle`).
+pub(crate) static TABLE_MOVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub(crate) static DERIVE_MOVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 static TABLE_VERSIONS: std::sync::LazyLock<std::sync::RwLock<HashMap<String, u64>>> =
     std::sync::LazyLock::new(|| std::sync::RwLock::new(HashMap::new()));
 
@@ -551,6 +583,7 @@ static WRITE_LOGS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, WriteLog
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
 fn log_write(version: u64, keys: crow_runtime::sql::WriteKeys) {
+    TABLE_MOVES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let mut logs = WRITE_LOGS.lock().unwrap_or_else(|p| p.into_inner());
     let log = logs.entry(keys.table.clone()).or_insert_with(|| WriteLog { writes: std::collections::VecDeque::new(), dropped: 0 });
     log.writes.push_back((version, std::sync::Arc::new(keys)));
@@ -1002,13 +1035,234 @@ pub struct Offers {
     /// the bound inputs that take any text (a field), whose fact a choice
     /// beside them does not hold to its options
     free: std::collections::HashSet<String>,
+    /// what the subtrees a kept view holds offer, each read once while it is
+    /// kept (`OffersMemo`): this render offers them too
+    kept: Vec<std::sync::Arc<Offers>>,
+}
+
+/// What two renders offer is the same when every event one allows the other
+/// does, however it was read (whole, or partly from kept subtrees).
+impl PartialEq for Offers {
+    fn eq(&self, other: &Offers) -> bool {
+        let (a, b) = (self.flat(), other.flat());
+        a.clicks == b.clicks && a.named == b.named && a.uploads == b.uploads && a.widget_handlers == b.widget_handlers && a.choices == b.choices && a.free == b.free
+    }
+}
+
+/// What a served session's kept subtrees offer, by the subtree, as
+/// `tree::VnodeMemo` keeps their page nodes: a subtree a kept view holds is
+/// walked once while it is kept, not at every render (one-view-design.md
+/// §7: on finchdash's ticks the walk had been 9–10% of a render's server
+/// time, 3% after).
+/// An entry holds its subtree weakly: the address that keys it is not
+/// reused while it does, and it keeps alive nothing the view cache and the
+/// page's nodes let go (a strong hold here and the page nodes' memo would
+/// each count the other's, and keep every subtree for good).
+#[derive(Default)]
+pub struct OffersMemo {
+    made: HashMap<usize, (std::sync::Weak<Node>, std::sync::Arc<Offers>)>,
+    used: std::collections::HashSet<usize>,
+}
+
+impl std::fmt::Debug for OffersMemo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "OffersMemo({} subtrees)", self.made.len())
+    }
 }
 
 impl Offers {
+    /// What a page's nodes offer, read from them: an element's event
+    /// attributes, markup scanned. The page's own nodes (`Node::Html`) are
+    /// read so; a view's tree is read as a tree (`of_tree`).
     pub fn of(node: &CrowVNode) -> Offers {
         let mut o = Offers::default();
         o.collect(node);
         o
+    }
+
+    /// What a view's tree offers, read from what it says: each element's
+    /// events (a click that asks first offers the question), each bound
+    /// control's fact, a select's and a radio's values, a file field's
+    /// upload, each table row's click and actions, a sorted table's headers
+    /// and a paged one's steps, a widget's handlers, a chart's seek bands.
+    /// A closed layer or a hidden element offers nothing under it. Markup is
+    /// scanned, as markup is all it is.
+    pub fn of_tree(node: &Node) -> Offers {
+        let mut o = Offers::default();
+        o.tree(node, &mut None);
+        o
+    }
+
+    /// `of_tree`, with what each subtree a kept view holds offers read from
+    /// the memo, or read and kept there; the subtrees no render reached and
+    /// nothing else holds are let go.
+    pub fn of_tree_memo(node: &Node, memo: &mut OffersMemo) -> Offers {
+        memo.used.clear();
+        let mut o = Offers::default();
+        o.tree(node, &mut Some(&mut *memo));
+        let used = std::mem::take(&mut memo.used);
+        memo.made.retain(|k, (held, _)| used.contains(k) || held.strong_count() > 0);
+        memo.used = used;
+        o
+    }
+
+    /// A child's offers: from the memo when something else holds it too (a
+    /// kept view's subtree), as `tree::vnode_memo` decides which to share.
+    fn child(&mut self, c: &std::sync::Arc<Node>, memo: &mut Option<&mut OffersMemo>) {
+        let Some(m) = memo.as_deref_mut() else {
+            return self.tree(c, memo);
+        };
+        if std::sync::Arc::strong_count(c) < 2 || !matches!(**c, Node::Element(_) | Node::Rows(_)) {
+            return self.tree(c, memo);
+        }
+        let key = std::sync::Arc::as_ptr(c) as usize;
+        m.used.insert(key);
+        if let Some((held, o)) = m.made.get(&key)
+            && held.strong_count() > 0
+        {
+            self.kept.push(o.clone());
+            return;
+        }
+        let mut o = Offers::default();
+        o.tree(c, memo);
+        let o = std::sync::Arc::new(o);
+        if let Some(m) = memo.as_deref_mut() {
+            m.made.insert(key, (std::sync::Arc::downgrade(c), o.clone()));
+        }
+        self.kept.push(o);
+    }
+
+    /// Every offer in one, the kept subtrees' merged in.
+    fn flat(&self) -> std::borrow::Cow<'_, Offers> {
+        if self.kept.is_empty() {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut all = Offers { kept: Vec::new(), ..self.clone() };
+        for k in &self.kept {
+            let k = k.flat();
+            all.clicks.extend(k.clicks.iter().cloned());
+            all.named.extend(k.named.iter().cloned());
+            all.uploads.extend(k.uploads.iter().cloned());
+            all.widget_handlers.extend(k.widget_handlers.iter().cloned());
+            for (e, vs) in &k.choices {
+                all.choices.entry(e.clone()).or_default().extend(vs.iter().cloned());
+            }
+            all.free.extend(k.free.iter().cloned());
+        }
+        std::borrow::Cow::Owned(all)
+    }
+
+    /// Whether this render, or a kept subtree in it, says so.
+    fn any(&self, says: &dyn Fn(&Offers) -> bool) -> bool {
+        says(self) || self.kept.iter().any(|k| k.any(says))
+    }
+
+    fn tree(&mut self, node: &Node, memo: &mut Option<&mut OffersMemo>) {
+        match node {
+            Node::Element(e) => {
+                // (the element's attributes as the page writes them, where
+                // it has events or can be closed: what the page sends back
+                // is what they say)
+                let says = !e.events.is_empty() || e.options.iter().any(|(k, _)| k == "open" || k == "hidden");
+                if says {
+                    let (tag, attrs) = tree::written(e);
+                    let get = |name: &str| attrs.iter().find(|(k, _)| k == name).map(|(_, v)| v);
+                    if get("data-open").is_some_and(|v| v == "false") || get("hidden").is_some() {
+                        return;
+                    }
+                    if let Some(h) = get("data-crow-click") {
+                        self.clicks.insert((h.clone(), get("data-crow-args").cloned()));
+                    }
+                    for a in ["data-crow-input", "data-crow-change", "data-crow-submit"] {
+                        if let Some(n) = get(a) {
+                            self.named.insert(n.clone());
+                        }
+                    }
+                    if let Some(event) = get("data-crow-change").or_else(|| get("data-crow-input")) {
+                        match (tag.as_str(), get("type").map(String::as_str)) {
+                            ("select", _) => {
+                                let values = self.choices.entry(event.clone()).or_default();
+                                for c in &e.children {
+                                    if let Node::Element(o) = c.as_ref()
+                                        && o.kind == "option"
+                                        && let Some(v) = tree::written(o).1.into_iter().find(|(k, _)| k == "value")
+                                    {
+                                        values.insert(v.1);
+                                    }
+                                }
+                            }
+                            ("input", Some("radio")) => {
+                                self.choices.entry(event.clone()).or_default().extend(get("value").cloned());
+                            }
+                            _ => {
+                                self.free.insert(event.clone());
+                            }
+                        }
+                    }
+                }
+                for c in &e.children {
+                    self.child(c, memo);
+                }
+            }
+            Node::Rows(r) => {
+                let t = tree::table_of(r);
+                for (h, args) in crow_runtime::layout::frame_table_clicks(&t) {
+                    self.clicks.insert((h, Some(args)));
+                }
+            }
+            Node::Control(c) => match c {
+                tree::Control::Field { bind, kind, .. } if kind == "file" => {
+                    self.uploads.insert(format!("__field:{}", bind));
+                }
+                tree::Control::Field { bind, .. } | tree::Control::Slider { bind, .. } | tree::Control::Check { bind, .. } => {
+                    let event = format!("__field:{}", bind);
+                    self.named.insert(event.clone());
+                    self.free.insert(event);
+                }
+                tree::Control::Choice { options, bind, .. } => {
+                    if !options.is_empty() {
+                        let event = format!("__field:{}", bind);
+                        self.named.insert(event.clone());
+                        self.choices.entry(event).or_default().extend(options.iter().cloned());
+                    }
+                }
+                tree::Control::Select { options, bind, .. } => {
+                    let event = format!("__select:{}", bind);
+                    self.named.insert(event.clone());
+                    self.choices.entry(event).or_default().extend(options.iter().cloned());
+                }
+                tree::Control::Progress { .. } | tree::Control::Icon { .. } => {}
+            },
+            Node::Chart(c) => {
+                if let Some(h) = &c.seek {
+                    let ts = c.frame.col_native(&c.x).map(|col| col.to_f64_vec()).unwrap_or_default();
+                    let spec = crow_runtime::chart::ChartSpec {
+                        ts: &ts,
+                        candles: (&[], &[], &[], &[]),
+                        lines: vec![],
+                        volume: &[],
+                        marker: f64::NAN,
+                        tz: &c.tz,
+                        width: 0.0,
+                        height: 0.0,
+                        panes: vec![],
+                        points: vec![],
+                        seek: Some(h),
+                    };
+                    for (h, args) in crow_runtime::chart::seek_clicks(&spec) {
+                        self.clicks.insert((h, Some(args)));
+                    }
+                }
+            }
+            Node::Widget(w) => {
+                for (_, h) in &w.on {
+                    self.widget_handlers.insert(h.clone());
+                }
+            }
+            Node::Markup(m) => self.collect_markup(m),
+            Node::Html(v) => self.collect(v),
+            Node::Text(_) | Node::Failed(_) => {}
+        }
     }
 
     fn collect(&mut self, node: &CrowVNode) {
@@ -1062,6 +1316,7 @@ impl Offers {
             }
             CrowVNode::Raw(html) => self.collect_markup(html),
             CrowVNode::Text(_) => {}
+            CrowVNode::Shared(sh) => self.collect(sh.node()),
         }
     }
 
@@ -1133,28 +1388,27 @@ impl Offers {
     /// Whether this render offered the event: a bound input, select or form
     /// by name; a click by its handler and exactly the arguments it froze.
     pub fn allows(&self, event: &str, value: Option<&str>) -> bool {
-        // (a choice takes one of the values it drew)
-        if let Some(values) = self.choices.get(event)
-            && !self.free.contains(event)
-        {
-            return value.is_some_and(|v| values.contains(v));
+        // (a choice takes one of the values it drew, in any part of the page)
+        if self.any(&|o| o.choices.contains_key(event)) && !self.any(&|o| o.free.contains(event)) {
+            return value.is_some_and(|v| self.any(&|o| o.choices.get(event).is_some_and(|values| values.contains(v))));
         }
-        if self.named.contains(event) {
+        if self.any(&|o| o.named.contains(event)) {
             return true;
         }
         // what a widget the page drew sends its handler
-        if self.widget_handlers.contains(event) {
+        if self.any(&|o| o.widget_handlers.contains(event)) {
             return true;
         }
         // a file for a file field the page drew
         if event == "__upload" {
             let field = value.and_then(|v| serde_json::from_str::<Vec<serde_json::Value>>(v).ok()).and_then(|v| v.first().and_then(|f| f.as_str().map(|s| s.to_string())));
-            return field.map_or(false, |f| self.uploads.contains(&f));
+            return field.is_some_and(|f| self.any(&|o| o.uploads.contains(&f)));
         }
         if event.starts_with("__field:") || event.starts_with("__select:") {
             return false;
         }
-        self.clicks.contains(&(event.to_string(), value.map(|v| v.to_string())))
+        let click = (event.to_string(), value.map(|v| v.to_string()));
+        self.any(&|o| o.clicks.contains(&click))
     }
 }
 
@@ -1176,6 +1430,8 @@ struct Parked {
     state: CrowLiveState,
     vnode: CrowVNode,
     head: Head,
+    /// what the render it holds offered
+    offers: Offers,
     /// a session that had a page before: its tab shows an old render, so it
     /// is sent its render when it comes back
     resumed: bool,
@@ -1194,13 +1450,14 @@ impl PendingSessions {
     /// At most this many sessions wait at once; the soonest to expire give way.
     const MAX: usize = 1000;
 
-    fn park(&self, state: CrowLiveState, vnode: CrowVNode, head: Head) -> String {
+    fn park(&self, state: CrowLiveState, vnode: CrowVNode, head: Head, offers: Offers) -> String {
         let token = new_token();
-        self.park_as(token.clone(), state, vnode, head, Self::WAIT, false);
+        self.park_as(token.clone(), state, vnode, head, offers, Self::WAIT, false);
         token
     }
 
-    fn park_as(&self, token: String, state: CrowLiveState, vnode: CrowVNode, head: Head, wait: std::time::Duration, resumed: bool) {
+    #[allow(clippy::too_many_arguments)]
+    fn park_as(&self, token: String, state: CrowLiveState, vnode: CrowVNode, head: Head, offers: Offers, wait: std::time::Duration, resumed: bool) {
         let now = std::time::Instant::now();
         let mut parked = self.parked.lock().unwrap_or_else(|p| p.into_inner());
         parked.retain(|_, p| p.until > now);
@@ -1211,14 +1468,14 @@ impl PendingSessions {
                 None => break,
             }
         }
-        parked.insert(token, Parked { until: now + wait, state, vnode, head, resumed });
+        parked.insert(token, Parked { until: now + wait, state, vnode, head, offers, resumed });
     }
 
     /// Take a waiting session by its token — once: a token is good once.
-    fn claim(&self, token: &str) -> Option<(CrowLiveState, CrowVNode, Head, bool)> {
+    fn claim(&self, token: &str) -> Option<(CrowLiveState, CrowVNode, Head, Offers, bool)> {
         let mut parked = self.parked.lock().unwrap_or_else(|p| p.into_inner());
         match parked.remove(token) {
-            Some(p) if p.until > std::time::Instant::now() => Some((p.state, p.vnode, p.head, p.resumed)),
+            Some(p) if p.until > std::time::Instant::now() => Some((p.state, p.vnode, p.head, p.offers, p.resumed)),
             _ => None,
         }
     }
@@ -1230,46 +1487,33 @@ fn next_session_id() -> u64 {
     NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
 }
 
-/// Add what the runtime draws (a toast, a dialog) as the page's last child:
-/// inside the root element, whether the view built it as nodes (compiled)
-/// or as markup (the interpreter), so both modes serve one page.
-fn append_child(vnode: CrowVNode, child: CrowVNode) -> CrowVNode {
-    match vnode {
-        CrowVNode::Element { tag, attrs, mut children } => {
-            children.push(child);
-            CrowVNode::Element { tag, attrs, children }
-        }
-        CrowVNode::Raw(html) if html.ends_with('>') => match html.rfind("</") {
-            Some(at) => CrowVNode::Raw(format!("{}{}{}", &html[..at], child.to_html(), &html[at..])),
-            None => CrowVNode::tag("div", vec![CrowVNode::Raw(html), child]),
-        },
-        other => CrowVNode::tag("div", vec![other, child]),
-    }
+/// An element the runtime draws, by the one builder.
+fn drawn(kind: &str, options: &[(&str, &str)], events: &[(&str, &str)], children: Vec<Node>) -> Node {
+    let mut given: Vec<(String, tree::Given)> = options.iter().map(|(k, v)| (k.to_string(), tree::Given::Text(v.to_string()))).collect();
+    given.extend(events.iter().map(|(k, h)| (k.to_string(), tree::Given::Handler(h.to_string()))));
+    given.sort_by(|a, b| a.0.cmp(&b.0));
+    let kids = children.into_iter().map(tree::Given::node).collect();
+    tree::element(kind, given, kids, tree::TableState::default()).unwrap_or_else(Node::Text)
 }
 
 /// The runtime's toast, added to a page that shows no notice itself: the
-/// session's latest notice, fading after a few seconds.
-fn with_toast(vnode: CrowVNode, text: &str) -> CrowVNode {
-    let toast = CrowVNode::tag("div", vec![CrowVNode::text(text)])
-        .attr("class", "crow-notice")
-        .attr("role", "status");
-    append_child(vnode, toast)
+/// session's latest notice, fading after a few seconds — the page's last
+/// child, inside its root element.
+fn with_toast(page: Node, text: &str) -> Node {
+    let toast = drawn("div", &[("class", "crow-notice"), ("role", "status")], &[], vec![Node::Text(text.to_string())]);
+    tree::with_child(page, toast)
 }
 
 /// The runtime's dialog for a click that asks first: the question, and the
 /// two buttons that answer it — offered only while it is open.
-fn with_dialog(vnode: CrowVNode, text: &str) -> CrowVNode {
-    let dialog = CrowVNode::tag("div", vec![CrowVNode::tag("div", vec![
-        CrowVNode::p(vec![CrowVNode::text(text)]),
-        CrowVNode::tag("div", vec![
-            CrowVNode::button(vec![CrowVNode::text("Cancel")]).on_click("__cancel").attr("aria-keyshortcuts", "Escape"),
-            CrowVNode::button(vec![CrowVNode::text("Confirm")]).on_click("__confirm").attr("class", "primary"),
-        ]).attr("class", "crow-confirm-actions"),
-    ]).attr("class", "crow-confirm-box")])
-    .attr("class", "crow-confirm")
-    .attr("role", "dialog")
-    .attr("aria-modal", "true");
-    append_child(vnode, dialog)
+fn with_dialog(page: Node, text: &str) -> Node {
+    let cancel = drawn("button", &[("aria-keyshortcuts", "Escape")], &[("click", "__cancel")], vec![Node::Text("Cancel".to_string())]);
+    let confirm = drawn("button", &[("class", "primary")], &[("click", "__confirm")], vec![Node::Text("Confirm".to_string())]);
+    let actions = drawn("div", &[("class", "crow-confirm-actions")], &[], vec![cancel, confirm]);
+    let question = drawn("p", &[], &[], vec![Node::Text(text.to_string())]);
+    let boxed = drawn("div", &[("class", "crow-confirm-box")], &[], vec![question, actions]);
+    let dialog = drawn("div", &[("aria-modal", "true"), ("class", "crow-confirm"), ("role", "dialog")], &[], vec![boxed]);
+    tree::with_child(page, dialog)
 }
 
 /// Run a session's registered fetch[] sources once, so its first render has
@@ -1421,13 +1665,22 @@ fn log_stop(stopped: &Stopped, dev_events: &mut Vec<String>) {
 /// its database writes commit with it, or roll back when it stopped, and a
 /// commit the database refuses is a stop too. The copy comes back for the
 /// session to commit.
-fn run_handler<H>(mut copy: CrowLiveState, event: &str, value: Option<&str>, handle: &H) -> CrowLiveState
+fn run_handler<H>(copy: CrowLiveState, event: &str, value: Option<&str>, handle: &H) -> CrowLiveState
+where
+    H: Fn(&mut CrowLiveState, &str, Option<&str>),
+{
+    run_handler_at(copy, event, value, handle, crow_runtime::moments::clock())
+}
+
+/// `run_handler`, as one event that began at `moment` (a test's session
+/// holds its own clock).
+fn run_handler_at<H>(mut copy: CrowLiveState, event: &str, value: Option<&str>, handle: &H, moment: f64) -> CrowLiveState
 where
     H: Fn(&mut CrowLiveState, &str, Option<&str>),
 {
     let t0 = std::time::Instant::now();
     crow_runtime::txn::begin();
-    crow_runtime::moments::at(crow_runtime::moments::clock(), || handle(&mut copy, event, value));
+    crow_runtime::moments::at(moment, || handle(&mut copy, event, value));
     if let Err(e) = crow_runtime::txn::finish(!copy.is_stopped()) {
         copy.stop(format!("{} stopped: {}", event, e));
     }
@@ -1443,21 +1696,54 @@ where
 
 /// A running handler shows on the page: every element that offers it is
 /// disabled and marked busy until it ends (session-layer-design.md §3.3).
+/// A form whose `submit = h` runs is marked busy, and so is each button
+/// that submits it: a form's button had looked dead for the seconds its
+/// handler took (finchdash's Scan, Quote, Start session).
 fn mark_running(node: CrowVNode, handler: &str) -> CrowVNode {
+    mark_running_in(node, handler, false)
+}
+
+fn mark_running_in(node: CrowVNode, handler: &str, in_form: bool) -> CrowVNode {
     match node {
         CrowVNode::Element { tag, mut attrs, children } => {
-            if attrs.get("data-crow-click").map(|h| h == handler).unwrap_or(false) {
+            let submits = in_form && submits_its_form(&tag, &attrs);
+            if submits || attrs.get("data-crow-click").map(|h| h == handler).unwrap_or(false) {
                 attrs.insert("disabled".to_string(), String::new());
                 attrs.insert("aria-busy".to_string(), "true".to_string());
             }
-            let children = children.into_iter().map(|c| mark_running(c, handler)).collect();
+            let form = attrs.get("data-crow-submit").map(|h| h == handler).unwrap_or(false);
+            if form {
+                attrs.insert("aria-busy".to_string(), "true".to_string());
+            }
+            let children = children.into_iter().map(|c| mark_running_in(c, handler, in_form || form)).collect();
             CrowVNode::Element { tag, attrs, children }
         }
         CrowVNode::Raw(html) => {
             let needle = format!("data-crow-click=\"{}\"", handler);
-            CrowVNode::Raw(html.replace(&needle, &format!("{} disabled aria-busy=\"true\"", needle)))
+            let form = format!("data-crow-submit=\"{}\"", handler);
+            CrowVNode::Raw(html.replace(&needle, &format!("{} disabled aria-busy=\"true\"", needle)).replace(&form, &format!("{} aria-busy=\"true\"", form)))
+        }
+        // a shared node is marked only where it holds what is running
+        CrowVNode::Shared(sh) => {
+            let html = sh.html();
+            if html.contains(&format!("data-crow-click=\"{}\"", handler)) || html.contains(&format!("data-crow-submit=\"{}\"", handler)) || (in_form && (html.contains("<button") || html.contains("type=\"submit\""))) {
+                mark_running_in(sh.node().clone(), handler, in_form)
+            } else {
+                CrowVNode::Shared(sh)
+            }
         }
         text => text,
+    }
+}
+
+/// Whether an element inside a form submits it: a button of no type or
+/// of type submit, or a submit input.
+fn submits_its_form(tag: &str, attrs: &std::collections::HashMap<String, String>) -> bool {
+    let ty = attrs.get("type").map(|t| t.to_ascii_lowercase());
+    match tag {
+        "button" => ty.as_deref().is_none_or(|t| t == "submit"),
+        "input" => ty.as_deref() == Some("submit"),
+        _ => false,
     }
 }
 
@@ -1502,6 +1788,7 @@ impl CrowLiveState {
             waker: None,
             tables_written: std::sync::Mutex::new(std::collections::HashSet::new()),
             view_stale: std::sync::Mutex::new(Vec::new()),
+            deriving: std::sync::atomic::AtomicUsize::new(0),
             copy: false,
             local_tables: std::sync::Mutex::new(HashMap::new()),
             local_writes: std::sync::Mutex::new(Vec::new()),
@@ -1514,6 +1801,12 @@ impl CrowLiveState {
             signing: None,
             tables_drawn: std::sync::atomic::AtomicUsize::new(0),
             sorts_drawn: std::sync::atomic::AtomicUsize::new(0),
+            views: std::sync::Mutex::new(views::ViewCache::default()),
+            render_ms: 0.0,
+            vnode_memo: std::sync::Mutex::new(tree::VnodeMemo::default()),
+            offers_memo: std::sync::Mutex::new(OffersMemo::default()),
+            drawn_tree: std::sync::Mutex::new(None),
+            drawn: std::sync::atomic::AtomicBool::new(false),
             downloads: Vec::new(),
             mails: Vec::new(),
             app: false,
@@ -1877,6 +2170,7 @@ impl CrowLiveState {
             waker: self.handle.as_ref().map(std::sync::Arc::downgrade),
             tables_written: std::sync::Mutex::new(std::collections::HashSet::new()),
             view_stale: std::sync::Mutex::new(Vec::new()),
+            deriving: std::sync::atomic::AtomicUsize::new(0),
             copy: false,
             local_tables: std::sync::Mutex::new(HashMap::new()),
             local_writes: std::sync::Mutex::new(Vec::new()),
@@ -1889,6 +2183,12 @@ impl CrowLiveState {
             signing: None,
             tables_drawn: std::sync::atomic::AtomicUsize::new(0),
             sorts_drawn: std::sync::atomic::AtomicUsize::new(0),
+            views: std::sync::Mutex::new(views::ViewCache::default()),
+            render_ms: 0.0,
+            vnode_memo: std::sync::Mutex::new(tree::VnodeMemo::default()),
+            offers_memo: std::sync::Mutex::new(OffersMemo::default()),
+            drawn_tree: std::sync::Mutex::new(None),
+            drawn: std::sync::atomic::AtomicBool::new(false),
             downloads: Vec::new(),
             mails: Vec::new(),
             app: false,
@@ -1899,6 +2199,12 @@ impl CrowLiveState {
         self.mode.load(std::sync::atomic::Ordering::SeqCst) == MODE_RENDER
     }
 
+    /// Whether a view's element built now holds its bindings: in a served
+    /// render (a node a handler builds, which a fact may keep, holds none).
+    pub fn binding(&self) -> bool {
+        self.rendering() && !self.copy && !self.app
+    }
+
     /// A render begins: reads go ahead with what they have, and what they
     /// read is recorded for the wakes.
     pub fn begin_render(&self) {
@@ -1907,6 +2213,7 @@ impl CrowLiveState {
         self.sorts_drawn.store(0, std::sync::atomic::Ordering::SeqCst);
         self.notice_read.store(false, std::sync::atomic::Ordering::SeqCst);
         self.view_stale.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        self.views_begin();
         if let Some(h) = &self.handle {
             let mut reads = h.reads.lock().unwrap_or_else(|p| p.into_inner());
             reads.derives.clear();
@@ -1917,25 +2224,32 @@ impl CrowLiveState {
     /// The render is done: the event it answered is over, and the next
     /// read is a handler's or a recompute's.
     pub fn end_render(&self) {
+        self.views_end();
         self.mode.store(MODE_FRESH, std::sync::atomic::Ordering::SeqCst);
         self.tables_written.lock().unwrap_or_else(|p| p.into_inner()).clear();
     }
 
     /// Render `render` against this session as a page render does.
-    pub fn render_with<R: Fn(&CrowLiveState) -> CrowVNode>(&self, render: &R) -> CrowVNode {
+    pub fn render_with<R: Render + ?Sized>(&self, render: &R) -> Node {
         // a render is one event: every view and derivation in it reads one
         // moment, the event's it runs inside (a test's held clock), else now
         let moment = crow_runtime::moments::event_moment().unwrap_or_else(crow_runtime::moments::clock);
         crow_runtime::moments::at(moment, || {
             self.begin_render();
-            let vnode = render(self);
+            let vnode = render.render(self);
             self.end_render();
             // a page that shows no notice of its own gets the runtime's toast
-            let vnode = match &self.notice {
+            let toast = match &self.notice {
                 Some((text, at)) if !self.notice_read.load(std::sync::atomic::Ordering::SeqCst)
                     && !text.is_empty()
-                    && crow_runtime::moments::now() - at < NOTICE_SECS => with_toast(vnode, text),
-                _ => vnode,
+                    && crow_runtime::moments::now() - at < NOTICE_SECS => Some(text.clone()),
+                _ => None,
+            };
+            // (the page a values turn starts from: one view's node alone)
+            self.views_page(&vnode, toast.is_some() || self.asking.is_some());
+            let vnode = match toast {
+                Some(text) => with_toast(vnode, &text),
+                None => vnode,
             };
             // a question a click asked is part of the page until answered
             match &self.asking {
@@ -1949,6 +2263,7 @@ impl CrowLiveState {
         if !self.rendering() {
             return;
         }
+        self.view_note_spec(spec);
         if let Some(h) = &self.handle {
             let mut reads = h.reads.lock().unwrap_or_else(|p| p.into_inner());
             reads.derives.insert(spec.name);
@@ -1971,27 +2286,37 @@ impl CrowLiveState {
     }
 
     /// A view's result: marked `data-crow-stale` when the view read a value
-    /// still being recomputed, so the page can show it is catching up.
-    pub fn view_exit(&self, depth: usize, node: CrowVNode) -> CrowVNode {
+    /// still being recomputed, so the page can show it is catching up — a
+    /// view that showed a value it read as it caught up (`error: loading`,
+    /// a derivation with none yet) is marked too, so the harness renders it
+    /// again when the value lands (it had been taken as settled).
+    pub fn view_exit(&self, depth: usize, node: impl Into<Node>) -> Node {
+        let node = node.into();
         let stale = {
             let mut stack = self.view_stale.lock().unwrap_or_else(|p| p.into_inner());
             let s = stack.get(depth).copied().unwrap_or(false);
             stack.truncate(depth);
             s
         };
-        match node {
-            n if !stale => n,
-            n @ CrowVNode::Element { .. } => n.attr("data-crow-stale", ""),
-            // a view that showed a value it read as it caught up — `error:
-            // loading`, a derivation with none yet — is marked too, so the
-            // harness renders it again when the value lands (it had been
-            // taken as settled)
-            other => {
-                let mut attrs = HashMap::new();
-                attrs.insert("data-crow-stale".to_string(), String::new());
-                CrowVNode::el("span", attrs, vec![other])
-            }
-        }
+        if stale { tree::stale(node) } else { node }
+    }
+
+    /// What this render's session holds of a table the view draws
+    /// (`tree::table_state`): which paged table it is and its page, which
+    /// sorted one and its order, counted as the render draws them.
+    pub fn table_state(&self, kind: &str, options: &[(String, tree::Given)]) -> tree::TableState {
+        tree::table_state(
+            kind,
+            options,
+            || {
+                let index = self.tables_drawn.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                (index, self.table_pages().get(&index).copied().unwrap_or(0))
+            },
+            || {
+                let index = self.sorts_drawn.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                (index, self.table_sorts().remove(&index))
+            },
+        )
     }
 
     /// `running[x]` for a derivation: is a recompute of it in flight?
@@ -2099,6 +2424,31 @@ impl CrowLiveState {
         }
     }
 
+    /// Run `f` as a derivation's own reading: bringing its inputs up to
+    /// date, or computing its body. A derivation read inside it is the
+    /// derivation's input, not a read of the view being rendered: a view
+    /// that reads D depends on D's version, and what D reads moving with D's
+    /// value the same moves nothing the view read (one-view-design.md §7,
+    /// "Three faults a real app found"). Both modes call it: the compiled
+    /// `__derive_*` around its inputs, the interpreter's `served_read`, and
+    /// `compute_now` around every body.
+    pub fn deriving<R>(&self, f: impl FnOnce() -> R) -> R {
+        struct Out<'a>(&'a std::sync::atomic::AtomicUsize);
+        impl Drop for Out<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        self.deriving.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _out = Out(&self.deriving);
+        f()
+    }
+
+    /// Whether a derivation's own reading is under way (`deriving`).
+    pub(crate) fn in_derivation(&self) -> bool {
+        self.deriving.load(std::sync::atomic::Ordering::SeqCst) > 0
+    }
+
     /// `derive` with a computation that can stop instead of answering (the
     /// interpreter's, whose stops are values): a stop is cached nowhere, and
     /// the readers waiting for it compute for themselves.
@@ -2110,10 +2460,12 @@ impl CrowLiveState {
     ) -> Result<T, E> {
         self.note_read(spec);
         let inputs = self.inputs_now(spec);
-        if let Found::Fresh(v) = self.lookup::<T>(spec, &inputs) {
-            return Ok(v);
-        }
-        self.compute_and_store(spec, inputs, compute, equal)
+        let out = match self.lookup::<T>(spec, &inputs) {
+            Found::Fresh(v) => Ok(v),
+            _ => self.compute_and_store(spec, inputs, compute, equal),
+        };
+        self.view_read_derive(spec.name);
+        out
     }
 
     /// Read a derivation that reaches out — its read set includes a table or
@@ -2124,6 +2476,19 @@ impl CrowLiveState {
     /// first — while `refresh` recomputes it on a worker thread, and the
     /// page renders again when it lands.
     pub fn derive_bg<T: Clone + Send + Sync + 'static>(
+        &self,
+        spec: &'static DeriveSpec,
+        compute: fn(&CrowLiveState) -> T,
+        equal: fn(&T, &T) -> bool,
+        pending: Option<fn() -> T>,
+        refresh: fn(&CrowLiveState) -> T,
+    ) -> T {
+        let v = self.derive_bg_read(spec, compute, equal, pending, refresh);
+        self.view_read_derive(spec.name);
+        v
+    }
+
+    fn derive_bg_read<T: Clone + Send + Sync + 'static>(
         &self,
         spec: &'static DeriveSpec,
         compute: fn(&CrowLiveState) -> T,
@@ -2278,7 +2643,7 @@ impl CrowLiveState {
         equal: impl Fn(&T, &T) -> bool,
     ) -> Result<T, E> {
         let stamp = STAMP.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        let value = compute(self)?;
+        let value = self.deriving(|| compute(self))?;
         // a recompute stopped under its query answers nobody: its value
         // (the query's "cancelled") is never cached
         if crow_runtime::cancel::current_stopped() {
@@ -2294,6 +2659,9 @@ impl CrowLiveState {
             Some(slot) => (slot.version, !slot.value.downcast_ref::<T>().map(|old| equal(old, &value)).unwrap_or(false)),
             None => (0, true),
         };
+        if changed {
+            DERIVE_MOVES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
         cache.insert(spec.name.to_string(), DerivedSlot {
             value: std::sync::Arc::new(value.clone()),
             version: if changed { old_version + 1 } else { old_version },
@@ -2517,6 +2885,7 @@ impl Clone for CrowLiveState {
             waker: self.waker.clone(),
             tables_written: std::sync::Mutex::new(std::collections::HashSet::new()),
             view_stale: std::sync::Mutex::new(Vec::new()),
+            deriving: std::sync::atomic::AtomicUsize::new(0),
             copy: false,
             local_tables: std::sync::Mutex::new(HashMap::new()),
             local_writes: std::sync::Mutex::new(Vec::new()),
@@ -2529,6 +2898,12 @@ impl Clone for CrowLiveState {
             signing: None,
             tables_drawn: std::sync::atomic::AtomicUsize::new(0),
             sorts_drawn: std::sync::atomic::AtomicUsize::new(0),
+            views: std::sync::Mutex::new(views::ViewCache::default()),
+            render_ms: 0.0,
+            vnode_memo: std::sync::Mutex::new(tree::VnodeMemo::default()),
+            offers_memo: std::sync::Mutex::new(OffersMemo::default()),
+            drawn_tree: std::sync::Mutex::new(None),
+            drawn: std::sync::atomic::AtomicBool::new(false),
             downloads: Vec::new(),
             mails: Vec::new(),
             app: false,
@@ -2705,6 +3080,15 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
           morphChildren(root, tmp);
         }}
         resyncing = false;
+      }} else if (msg.type === 'values' && !resyncing) {{
+        // the bound places a turn set, no view run: each a text, or an
+        // element's attributes; one that does not fit asks for the page
+        var ok = true;
+        for (var i = 0; ok && i < msg.set.length; i++) {{
+          var v = msg.set[i];
+          ok = applyChange(v.length === 4 ? {{op: 'attrs', path: v[0], tag: v[1], set: v[2], remove: v[3]}} : {{op: 'text', path: v[0], text: v[1], 'in': v[2]}});
+        }}
+        if (!ok) {{ resyncing = true; send({{event: '__resync'}}); }}
       }} else if (msg.type === 'patches' && !resyncing) {{
         // what changed; a change that does not fit this page, or would take
         // away the field being typed in, asks for the whole page instead
@@ -2747,21 +3131,27 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
   function sameKind(a, b) {{
     return a.nodeType === b.nodeType && (a.nodeType !== 1 || a.tagName === b.tagName);
   }}
+  // a child's key: its `key` (an element's `key = …`), else its id
+  function kid(c) {{
+    if (c.nodeType !== 1) return null;
+    var k = c.getAttribute('key');
+    return k !== null ? 'k:' + k : (c.id ? '#' + c.id : null);
+  }}
   function morphKids(from, to) {{
-    var byId = {{}}, wanted = {{}}, c;
-    for (c = to.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && c.id) wanted[c.id] = true;
-    for (c = from.firstChild; c; c = c.nextSibling) if (c.nodeType === 1 && c.id) byId[c.id] = c;
+    var byId = {{}}, wanted = {{}}, c, k;
+    for (c = to.firstChild; c; c = c.nextSibling) if ((k = kid(c))) wanted[k] = true;
+    for (c = from.firstChild; c; c = c.nextSibling) if ((k = kid(c))) byId[k] = c;
     var cur = from.firstChild;
     for (var n = to.firstChild; n; n = n.nextSibling) {{
       // a keyed child the new render dropped goes now, so its unkeyed
       // neighbours still line up by position
-      while (cur && cur.nodeType === 1 && cur.id && !wanted[cur.id]) {{
+      while (cur && kid(cur) && !wanted[kid(cur)]) {{
         var gone = cur; cur = cur.nextSibling; from.removeChild(gone);
       }}
-      var match = null;
-      if (n.nodeType === 1 && n.id) {{
-        if (byId[n.id]) {{ match = byId[n.id]; delete byId[n.id]; }}
-      }} else if (cur && !(cur.nodeType === 1 && cur.id) && sameKind(cur, n)) {{
+      var match = null, nk = kid(n);
+      if (nk) {{
+        if (byId[nk]) {{ match = byId[nk]; delete byId[nk]; }}
+      }} else if (cur && !kid(cur) && sameKind(cur, n)) {{
         match = cur;
       }}
       if (match) {{
@@ -2881,6 +3271,12 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
       case 'remove':
         if (!node.childNodes[p.index]) return false;
         node.removeChild(node.childNodes[p.index]);
+        return true;
+      case 'move':
+        // a keyed child, moved to where the render wants it (its own node,
+        // with what the reader typed in it)
+        if (!node.childNodes[p.from] || p.index > p.from) return false;
+        node.insertBefore(node.childNodes[p.from], node.childNodes[p.index]);
         return true;
     }}
     return false;
@@ -3078,7 +3474,16 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
       e.preventDefault();
       var data = {{}};
       new FormData(e.target).forEach(function(v, k) {{ data[k] = v; }});
-      send({{event: ev, form: data}});
+      // marked busy as a click is, until the answer to it arrives: the
+      // button that submitted it, or (Enter in a field) the form's own
+      var n = ++seq;
+      if (send({{event: ev, form: data, seq: n}})) {{
+        var by = e.submitter ? [e.submitter] : e.target.querySelectorAll('button:not([type]), button[type=submit], input[type=submit]');
+        for (var i = 0; i < by.length; i++) {{
+          by[i].setAttribute('data-crow-busy', '');
+          busy.push({{n: n, el: by[i]}});
+        }}
+      }}
     }}
   }});
 
@@ -3113,15 +3518,15 @@ fn page_shell(body_html: &str, head: &Head, js: &str) -> String {
 <html lang="en"{look}>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 {head}
 <style>{css}</style>
-<style>{offline}{live}</style>
+<style>{offline}{live}{mobile}</style>
 {project}
 </head>
 <body>
 <div id="crow-root">{body}</div>
-{js}{dev}
+{js}{dev}{drawn}
 </body>
 </html>"#,
         look = look_attrs(),
@@ -3130,9 +3535,11 @@ fn page_shell(body_html: &str, head: &Head, js: &str) -> String {
         project = project_css(),
         offline = OFFLINE_CSS,
         live = LIVE_CSS,
+        mobile = crow_runtime::layout::mobile_css(),
         body = body_html,
         js = js,
-        dev = if dev_token().is_some() { DEV_JS } else { "" }
+        dev = if dev_token().is_some() { DEV_JS } else { "" },
+        drawn = drawn::entry()
     )
 }
 
@@ -3161,11 +3568,11 @@ color:var(--crow-text,#eee);border:1px solid var(--crow-border,#444)}";
 
 /// A LiveView endpoint with separate render and handle functions.
 ///
-/// - `R`: render function `Fn(&CrowLiveState) -> CrowVNode`
+/// - `R`: render function `Fn(&CrowLiveState) -> Node` (`Render`)
 /// - `H`: event handler `Fn(&mut CrowLiveState, &str, Option<&str>)` (event, optional value)
 pub struct CrowLiveView<R, H>
 where
-    R: Fn(&CrowLiveState) -> CrowVNode + Send + Sync + 'static,
+    R: Render + Send + Sync + 'static,
     H: Fn(&mut CrowLiveState, &str, Option<&str>) + Send + Sync + 'static,
 {
     pub initial_state: CrowLiveState,
@@ -3175,6 +3582,40 @@ where
     /// `page[…, url = …]`: the facts the page's address carries, as (the
     /// query's name, the fact)
     pub url: Vec<(String, String)>,
+    /// `page[…, init = f]`: the handler a session starting on the page runs
+    /// once, before its first render
+    pub init: Option<String>,
+    /// the program's bindings (`with_values`): a turn whose moved reads are
+    /// all bound sets them on the page with no view run
+    pub values: Option<std::sync::Arc<dyn Values>>,
+}
+
+/// `page[…, init = f]`: a session starting on the page runs f once, after
+/// its address is read and before its first render, as a handler runs —
+/// one event and one transaction on a working copy, committed as one; a
+/// stop lands nothing and is the session's notice and the log's, as a
+/// stopped handler's is. A kept session coming back, a reconnect that
+/// claims its session, a tick and a render run nothing.
+pub fn run_init<H>(mut state: CrowLiveState, init: Option<&str>, handle: &H) -> CrowLiveState
+where
+    H: Fn(&mut CrowLiveState, &str, Option<&str>),
+{
+    let Some(init) = init else { return state };
+    let copy = state.working_copy();
+    // (at the event's moment where one is held — a test's session — else now)
+    let moment = crow_runtime::moments::now();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_handler_at(copy, init, None, handle, moment))) {
+        Ok(copy) => {
+            if let Some(stopped) = state.commit(copy) {
+                log_stop(&stopped, &mut Vec::new());
+            }
+        }
+        Err(p) => {
+            let stopped = state.stopped_by(init, &crow_runtime::stops::panic_words(p.as_ref()));
+            log_stop(&stopped, &mut Vec::new());
+        }
+    }
+    state
 }
 
 /// A fact as its address writes it: text as it stands, anything else as
@@ -3275,16 +3716,269 @@ fn head_message(head: &Head) -> serde_json::Value {
     serde_json::json!({ "title": head.shown_title(), "meta": metas })
 }
 
-/// A render as a served page takes it: its head taken out, then read as
-/// the browser builds it.
-fn served_render<R: Fn(&CrowLiveState) -> CrowVNode>(state: &CrowLiveState, render: &R) -> (CrowVNode, Head) {
-    let (body, head) = state.render_with(render).split_head();
-    (body.as_built(), head)
+/// A page's render: the view's tree for a session (`Node`), or nodes a
+/// program of crow_web's made as HTML (`CrowVNode`).
+pub trait Render {
+    fn render(&self, state: &CrowLiveState) -> Node;
+}
+
+impl<F, P> Render for F
+where
+    F: Fn(&CrowLiveState) -> P,
+    P: Into<Node>,
+{
+    fn render(&self, state: &CrowLiveState) -> Node {
+        self(state).into()
+    }
+}
+
+/// A render as a served page takes it: its head taken out of the tree, the
+/// events it offers read from the tree, and the tree as the page's nodes,
+/// as the browser builds them.
+fn served_render<R: Render + ?Sized>(state: &CrowLiveState, render: &R) -> (CrowVNode, Head, Offers) {
+    served_tree(state, state.render_with(render))
+}
+
+/// A values turn's changes as the values they set, for the page's `values`
+/// message: `[path, text]` (with the tag of the element holding the text
+/// when the change names it: `[path, text, in]`) for a text, `[path, tag,
+/// set, remove]` for an element's attributes. None when a change is any
+/// other (the page takes the changes as `patches`): a text written with an
+/// escape in it is replaced as markup, so it is set as the text it reads.
+/// A text is set only where the page holds it as a text node of its own
+/// (`own_text`): an empty text is no node in the browser's page, and two
+/// texts side by side are one.
+fn values_message(changes: &[serde_json::Value], last: &CrowVNode, page: &CrowVNode) -> Option<Vec<serde_json::Value>> {
+    use serde_json::json;
+    let mut out = Vec::with_capacity(changes.len());
+    for c in changes {
+        let path = c.get("path")?;
+        let op = c["op"].as_str()?;
+        if op != "attrs" {
+            let at: Vec<usize> = path.as_array()?.iter().map(|i| i.as_u64().map(|n| n as usize)).collect::<Option<_>>()?;
+            if !own_text(last, &at) {
+                return None;
+            }
+        }
+        match op {
+            "text" => match c.get("in") {
+                Some(within) => out.push(json!([path, c["text"], within])),
+                None => out.push(json!([path, c["text"]])),
+            },
+            "attrs" => out.push(json!([path, c["tag"], c["set"], c["remove"]])),
+            // markup replaced: a text written with an escape, set as the
+            // text it reads (the page holds a text node there)
+            "replace" if c.get("in").is_some() => {
+                let at: Vec<usize> = path.as_array()?.iter().map(|i| i.as_u64().map(|n| n as usize)).collect::<Option<_>>()?;
+                let CrowVNode::Raw(written) = page.node_at(&at)? else { return None };
+                let text = crate::view::unescape_text(written)?;
+                out.push(json!([path, text, c["in"]]));
+            }
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// Whether the node at `at` in the page last sent is a text the browser
+/// holds as a node of its own: not empty, and neither sibling a text it
+/// would have joined.
+fn own_text(last: &CrowVNode, at: &[usize]) -> bool {
+    fn text(n: &CrowVNode) -> Option<String> {
+        match n {
+            CrowVNode::Text(t) => Some(t.clone()),
+            CrowVNode::Raw(w) => crate::view::unescape_text(w),
+            _ => None,
+        }
+    }
+    let Some((i, up)) = at.split_last() else { return false };
+    let Some(CrowVNode::Element { children, .. }) = last.node_at(up) else { return false };
+    let at_text = |j: usize| children.get(j).and_then(|c| text(c.plain()));
+    at_text(*i).is_some_and(|t| !t.is_empty()) && (*i == 0 || at_text(*i - 1).is_none()) && at_text(*i + 1).is_none()
+}
+
+/// A `values` message's entries as the changes the page applies
+/// (`values_message` the other way): a text set, an element's attributes.
+/// None for an entry of no such shape.
+pub fn values_changes(set: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    use serde_json::json;
+    set.as_array()?
+        .iter()
+        .map(|v| {
+            let e = v.as_array()?;
+            match e.len() {
+                2 => Some(json!({ "op": "text", "path": e[0], "text": e[1] })),
+                3 => Some(json!({ "op": "text", "path": e[0], "text": e[1], "in": e[2] })),
+                4 => Some(json!({ "op": "attrs", "path": e[0], "tag": e[1], "set": e[2], "remove": e[3] })),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// The page as a drawn renderer takes it (one-view-design.md 5a): the
+/// tree the last render or values turn made, as data, with its bindings
+/// (`tree::drawn_json`).
+fn drawn_tree(state: &CrowLiveState) -> serde_json::Value {
+    let held = state.drawn_tree.lock().unwrap_or_else(|p| p.into_inner());
+    held.as_ref().map(tree::drawn_json).unwrap_or(serde_json::Value::Null)
+}
+
+/// What a drawn renderer was last sent of the page, which the next render
+/// is sent as changes to: the tree as data, or — after a values turn,
+/// whose bindings the renderer set into the tree it holds — the tree that
+/// turn made, made data only when a render needs it (a tick computes no
+/// tree as data).
+enum DrawnHeld {
+    Data(serde_json::Value),
+    Tree(Option<tree::Node>),
+}
+
+impl DrawnHeld {
+    fn data(self) -> serde_json::Value {
+        match self {
+            DrawnHeld::Data(v) => v,
+            DrawnHeld::Tree(t) => t.as_ref().map(tree::drawn_json).unwrap_or(serde_json::Value::Null),
+        }
+    }
+}
+
+/// A render as a drawn renderer takes it: the changes to the tree it was
+/// last sent (`tree::drawn_changes`) where it takes changes (`changes=1` on
+/// its socket), it holds a tree, and they are smaller than the tree; else
+/// the tree whole. What it now holds is kept in `held`.
+fn drawn_message(state: &CrowLiveState, held: &mut Option<DrawnHeld>, takes_changes: bool) -> serde_json::Value {
+    let tree = drawn_tree(state);
+    let message = match held.take() {
+        Some(before) if takes_changes => {
+            let changes = tree::drawn_changes(&before.data(), &tree);
+            let changes = serde_json::Value::Array(changes);
+            if changes.to_string().len() * 4 < tree.to_string().len() * 3 {
+                serde_json::json!({ "type": "changes", "changes": changes })
+            } else {
+                serde_json::json!({ "type": "tree", "tree": tree.clone() })
+            }
+        }
+        _ => serde_json::json!({ "type": "tree", "tree": tree.clone() }),
+    };
+    *held = Some(DrawnHeld::Data(tree));
+    message
+}
+
+/// A values turn as a drawn renderer takes it: each binding whose value is
+/// not the one last sent, by id (`bound_json`). None when none moved.
+fn ids_message(values: &[(u32, tree::Bound)], sent: &mut HashMap<u32, serde_json::Value>) -> Option<serde_json::Value> {
+    let mut ids = serde_json::Map::new();
+    for (id, v) in values {
+        let v = tree::drawn_bound_json(v);
+        if sent.get(id) != Some(&v) {
+            sent.insert(*id, v.clone());
+            ids.insert(id.to_string(), v);
+        }
+    }
+    (!ids.is_empty()).then(|| serde_json::json!({ "type": "values", "ids": ids }))
+}
+
+/// A values turn as `values_render` makes it: the page's nodes, head and
+/// offers, the bound places it set, and the bindings it computed by id.
+type ValuesTurned = (CrowVNode, Head, Offers, usize, Vec<(u32, tree::Bound)>);
+
+/// A values turn as a served page takes it (one-view-design.md 3.5): the
+/// page's tree with the bindings that moved set, no view run, made into
+/// the page's nodes as a render's tree is — or none, and the page renders.
+/// Under `CROW_VIEW_CACHE=check` the page is rendered too, every view run,
+/// and must be the page the turn made, node for node, with the same head
+/// and offers.
+fn values_render<R: Render + ?Sized>(state: &CrowLiveState, render: &R, values: &dyn Values) -> Option<ValuesTurned> {
+    // (CROW_VALUES=off: every turn renders, as before phase 3 — to compare)
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *OFF.get_or_init(|| matches!(std::env::var("CROW_VALUES").as_deref(), Ok("off") | Ok("0"))) {
+        return None;
+    }
+    // the runtime's toast and a question asked are a render's to place
+    if state.asking.is_some() {
+        return None;
+    }
+    let moment = crow_runtime::moments::event_moment().unwrap_or_else(crow_runtime::moments::clock);
+    if let Some((text, at)) = &state.notice
+        && !text.is_empty()
+        && moment - *at < NOTICE_SECS
+    {
+        return None;
+    }
+    let turn = crow_runtime::moments::at(moment, || {
+        // (its reads are a render's: a value still being computed is read
+        // as it stands, and marks the turn, which a render then makes)
+        state.mode.store(MODE_RENDER, std::sync::atomic::Ordering::SeqCst);
+        let turn = state.values_turn(values);
+        state.mode.store(MODE_FRESH, std::sync::atomic::Ordering::SeqCst);
+        turn
+    })?;
+    let (v, head, offers) = served_tree(state, turn.page);
+    if views::mode() == views::Mode::Check {
+        let (full, full_head, full_offers) = served_render(state, render);
+        assert!(
+            CrowVNode::changes(&v, &full).is_empty() && v.to_html() == full.to_html(),
+            "CROW_VIEW_CACHE=check: the page a values turn made differs from the page a render makes\nturn:   {}\nrender: {}",
+            v.to_html(),
+            full.to_html()
+        );
+        assert!(head == full_head, "CROW_VIEW_CACHE=check: a values turn's head differs from a render's");
+        assert!(offers == full_offers, "CROW_VIEW_CACHE=check: a values turn's offers differ from a render's");
+        state.views_counted_zero();
+    }
+    Some((v, head, offers, turn.set, turn.values))
+}
+
+/// A page's tree made into what a served page takes: its head taken out,
+/// the events it offers read from it, and its nodes as the browser builds
+/// them.
+fn served_tree(state: &CrowLiveState, page: Node) -> (CrowVNode, Head, Offers) {
+    let (body, head) = tree::split_head(page);
+    // (an element's children are shared: keeping it costs its own options)
+    if state.drawn.load(std::sync::atomic::Ordering::Relaxed) {
+        *state.drawn_tree.lock().unwrap_or_else(|p| p.into_inner()) = Some(body.clone());
+    }
+    let offers = {
+        let mut memo = state.offers_memo.lock().unwrap_or_else(|p| p.into_inner());
+        match views::mode() {
+            views::Mode::On => Offers::of_tree_memo(&body, &mut memo),
+            views::Mode::Off => Offers::of_tree(&body),
+            // (CROW_VIEW_CACHE=check: what the kept subtrees offer is what
+            // they offer read anew)
+            views::Mode::Check => {
+                let kept = Offers::of_tree_memo(&body, &mut memo);
+                assert!(kept == Offers::of_tree(&body), "CROW_VIEW_CACHE=check: the page's kept offers differ from its offers read anew");
+                kept
+            }
+        }
+    };
+    let v = {
+        let mut memo = state.vnode_memo.lock().unwrap_or_else(|p| p.into_inner());
+        match views::mode() {
+            views::Mode::On => tree::vnode_memo(&body, &mut memo),
+            views::Mode::Off => tree::vnode(&body),
+            // (CROW_VIEW_CACHE=check: the shared nodes are the nodes made anew)
+            views::Mode::Check => {
+                let shared = tree::vnode_memo(&body, &mut memo);
+                let made = tree::vnode(&body);
+                assert_eq!(shared.to_html(), made.to_html(), "CROW_VIEW_CACHE=check: the page's shared nodes differ from its nodes made anew");
+                shared
+            }
+        }
+    };
+    let built = v.as_built();
+    if std::env::var_os("CROW_CHECK_OFFERS").is_some() {
+        // (a check the tests turn on: the tree offers what its page's nodes do)
+        let read = Offers::of(&built);
+        assert!(offers == read || !matches!(built, CrowVNode::Element { .. }), "the tree offers {:?}, its page {:?}", offers, read);
+    }
+    (built, head, offers)
 }
 
 impl<R, H> CrowLiveView<R, H>
 where
-    R: Fn(&CrowLiveState) -> CrowVNode + Send + Sync + Clone + 'static,
+    R: Render + Send + Sync + Clone + 'static,
     H: Fn(&mut CrowLiveState, &str, Option<&str>) + Send + Sync + Clone + 'static,
 {
     pub fn new(ws_path: &str, initial: CrowLiveState, render: R, handle: H) -> Self {
@@ -3294,7 +3988,25 @@ where
             handle,
             ws_path: ws_path.to_string(),
             url: Vec::new(),
+            init: None,
+            values: None,
         }
+    }
+
+    /// The program's bindings (one-view-design.md 3.5): after an event or a
+    /// tick that moved only what the page's views read in their bindings,
+    /// the page's bound places are set (a `values` message) and no view
+    /// runs (`values_render`).
+    pub fn with_values(mut self, values: std::sync::Arc<dyn Values>) -> Self {
+        self.values = Some(values);
+        self
+    }
+
+    /// `page[…, init = f]`: f, a handler of no parameters, runs once on
+    /// each session that starts on the page (`run_init`).
+    pub fn with_init(mut self, init: &str) -> Self {
+        self.init = Some(init.to_string());
+        self
     }
 
     /// `page[…, url = …]`: these facts come from the page's query string and
@@ -3313,6 +4025,7 @@ where
             std::process::exit(1);
         }
         let ws_path = self.ws_path.clone();
+        let values = self.values.clone();
         let render = std::sync::Arc::new(self.render);
         let handle = std::sync::Arc::new(self.handle);
         // every session holds its reader (nobody, to begin with) with its
@@ -3347,6 +4060,9 @@ where
         // GET page: the session rendered once and parked for its socket,
         // which the page's token claims
         let r1 = render.clone();
+        let h1 = handle.clone();
+        let opens = std::sync::Arc::new(self.init);
+        let o1 = opens.clone();
         let s1 = init_state.clone();
         let p1 = pending.clone();
         let ws_p = ws_path.clone();
@@ -3358,6 +4074,8 @@ where
                   query: axum::extract::Query<HashMap<String, String>>,
                   headers: axum::http::HeaderMap| {
             let r1 = r1.clone();
+            let h1 = h1.clone();
+            let o1 = o1.clone();
             let s1 = s1.clone();
             let p1 = p1.clone();
             let ws_p = ws_p.clone();
@@ -3379,17 +4097,19 @@ where
                 }
                 fetch_sources(&mut state, &mut Vec::new()).await;
                 state.next_tick();
-                // a render runs off the threads that carry the sockets
+                // a render runs off the threads that carry the sockets, and
+                // the page's init before it
                 let rendered = tokio::task::spawn_blocking(move || {
-                    let (vnode, head) = served_render(&state, &*r1);
-                    (state, vnode, head)
+                    let state = run_init(state, o1.as_deref(), &*h1);
+                    let (vnode, head, offers) = served_render(&state, &*r1);
+                    (state, vnode, head, offers)
                 })
                 .await;
-                let Ok((state, vnode, head)) = rendered else {
+                let Ok((state, vnode, head, offers)) = rendered else {
                     return axum::response::Html("<p>the page failed to render; the server log says why</p>".to_string()).into_response();
                 };
                 let body_html = vnode.to_html();
-                let token = p1.park(state, vnode, head.clone());
+                let token = p1.park(state, vnode, head.clone(), offers);
                 let js = page_js(ws_b.as_deref(), &ws_p, &token);
                 axum::response::Html(page_shell(&body_html, &head, &js)).into_response()
             }
@@ -3399,7 +4119,9 @@ where
         // background deltas and wakes, each answered by one render, sent
         // when it changed. Handlers and renders run on worker threads.
         let r2 = render.clone();
+        let v2 = values.clone();
         let h2 = handle.clone();
+        let o2 = opens.clone();
         let s2 = init_state.clone();
         let p2 = pending.clone();
         let u2 = url.clone();
@@ -3409,7 +4131,9 @@ where
                   headers: axum::http::HeaderMap,
                   query: axum::extract::Query<HashMap<String, String>>| {
                 let r2 = r2.clone();
+                let v2 = v2.clone();
                 let h2 = h2.clone();
+                let o2 = o2.clone();
                 let s2 = s2.clone();
                 let p2 = p2.clone();
                 let u2 = u2.clone();
@@ -3427,6 +4151,14 @@ where
                     // the tab's own session, if it had one; else the page's
                     let tab_token = query.get("t").cloned();
                     let page_token = query.get("p").cloned();
+                    // a drawn renderer (a Lory host) asks for the page as
+                    // data: `tree` and id-keyed `values` in place of the
+                    // page's HTML, its patches and its values by path
+                    // (one-view-design.md 5a)
+                    let drawn = query.get("drawn").is_some_and(|v| v == "1");
+                    // …and is sent a render as the changes to the tree it
+                    // holds where it says it takes them (`changes=1`)
+                    let takes_changes = drawn && query.get("changes").is_some_and(|v| v == "1");
                     // the page's address, which a fresh session starts from:
                     // its path is the socket's, its query string handed on
                     let address_path = path.map(|p| p.0).unwrap_or_default();
@@ -3466,21 +4198,21 @@ where
                                     state.next_tick();
                                     let r = r2.clone();
                                     let rendered = tokio::task::spawn_blocking(move || {
-                                        let (vnode, head) = served_render(&state, &*r);
-                                        (state, vnode, head)
+                                        let (vnode, head, offers) = served_render(&state, &*r);
+                                        (state, vnode, head, offers)
                                     })
                                     .await;
-                                    let Ok((state, vnode, head)) = rendered else { return };
-                                    Some((state, vnode, head, true))
+                                    let Ok((state, vnode, head, offers)) = rendered else { return };
+                                    Some((state, vnode, head, offers, true))
                                 }
                                 None => None,
                             },
                         };
-                        let (mut state, mut last_vnode, mut last_head, mut send_first) =
+                        let (mut state, mut last_vnode, mut last_head, mut last_offers, mut send_first) =
                             match claimed {
                                 // a session its tab comes back to is sent its
                                 // render: the tab shows an old one
-                                Some((state, vnode, head, resumed)) => (state, vnode, head, resumed),
+                                Some((state, vnode, head, offers, resumed)) => (state, vnode, head, offers, resumed),
                                 None => {
                                     let mut state = start_session(&s2);
                                     if let Some((record, sid)) = signed {
@@ -3492,28 +4224,36 @@ where
                                     fetch_sources(&mut state, &mut Vec::new()).await;
                                     state.next_tick();
                                     let r = r2.clone();
+                                    let (h, o) = (h2.clone(), o2.clone());
                                     let rendered = tokio::task::spawn_blocking(move || {
-                                        let (vnode, head) = served_render(&state, &*r);
-                                        (state, vnode, head)
+                                        let state = run_init(state, o.as_deref(), &*h);
+                                        let (vnode, head, offers) = served_render(&state, &*r);
+                                        (state, vnode, head, offers)
                                     })
                                     .await;
-                                    let Ok((state, vnode, head)) = rendered else { return };
-                                    (state, vnode, head, true)
+                                    let Ok((state, vnode, head, offers)) = rendered else { return };
+                                    (state, vnode, head, offers, true)
                                 }
                             };
                         // a sign-in signed out while the tab was away is gone:
                         // the tab is drawn again as nobody's
-                        if state.drop_ended_sign_in() {
+                        // a drawn renderer: the tree is kept from here on, and the
+                        // page it is first sent is a render it was kept from
+                        if drawn {
+                            state.drawn.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        if state.drop_ended_sign_in() || (drawn && state.drawn_tree.lock().unwrap_or_else(|p| p.into_inner()).is_none()) {
                             let r = r2.clone();
                             let rendered = tokio::task::spawn_blocking(move || {
-                                let (vnode, head) = served_render(&state, &*r);
-                                (state, vnode, head)
+                                let (vnode, head, offers) = served_render(&state, &*r);
+                                (state, vnode, head, offers)
                             })
                             .await;
-                            let Ok((s, vnode, head)) = rendered else { return };
+                            let Ok((s, vnode, head, offers)) = rendered else { return };
                             state = s;
                             last_vnode = vnode;
                             last_head = head;
+                            last_offers = offers;
                             send_first = true;
                         }
                         let (later_tx, mut later_rx) = tokio::sync::mpsc::unbounded_channel::<LaterDone>();
@@ -3530,9 +4270,20 @@ where
                                 match h { Some(h) => h, None => return }
                             }
                         };
-                        if send_first {
+                        // the bindings' values a drawn renderer was last sent
+                        let mut drawn_sent: HashMap<u32, serde_json::Value> = HashMap::new();
+                        // what a drawn renderer holds of the page
+                        let mut drawn_held: Option<DrawnHeld> = None;
+                        if send_first || drawn {
                             // with its head: the tab shows another session's
-                            let payload = serde_json::json!({ "type": "html", "html": last_vnode.to_html(), "head": head_message(&last_head) });
+                            // (a drawn renderer holds no page: it is sent the tree)
+                            let payload = if drawn {
+                                let mut m = drawn_message(&state, &mut drawn_held, false);
+                                m["head"] = head_message(&last_head);
+                                m
+                            } else {
+                                serde_json::json!({ "type": "html", "html": last_vnode.to_html(), "head": head_message(&last_head) })
+                            };
                             if futures_util::SinkExt::send(&mut socket, Message::Text(payload.to_string().into()))
                                 .await
                                 .is_err()
@@ -3566,7 +4317,7 @@ where
                         }
                         // What the last two renders the page received offered:
                         // a click may cross the render that removed its button.
-                        let mut offers = Offers::of(&last_vnode);
+                        let mut offers = std::mem::take(&mut last_offers);
                         let mut offers_before = Offers::default();
 
                         // Build poll intervals — collect sources that have interval_secs
@@ -3917,6 +4668,7 @@ where
                             // The render runs on a worker thread, from the committed
                             // facts: a handler running meanwhile is never seen halfway
                             let r = r2.clone();
+                            let vals = v2.clone();
                             let busy = running.as_ref().map(|(h, _, _)| h.clone());
                             let mut state_out = std::mem::take(&mut state);
                             let render_began = std::time::Instant::now();
@@ -3926,7 +4678,17 @@ where
                                     state.next_tick();
                                 }
                                 let t0 = std::time::Instant::now();
-                                let (mut v, head) = served_render(&state, &*r);
+                                // only bound reads moved: the bindings set,
+                                // no view run; else the page renders
+                                let valued = vals.as_deref().and_then(|vals| values_render(&state, &*r, vals));
+                                let (mut v, head, new_offers, set) = match valued {
+                                    Some((v, head, offers, set, values)) => (v, head, offers, Some((set, values))),
+                                    None => {
+                                        let (v, head, offers) = served_render(&state, &*r);
+                                        (v, head, offers, None)
+                                    }
+                                };
+                                state.render_ms = t0.elapsed().as_secs_f64() * 1000.0;
                                 if let Some(budget) = budget_ms() {
                                     let ms = t0.elapsed().as_millis();
                                     if ms > budget {
@@ -3939,10 +4701,10 @@ where
                                 if let Some(h) = &busy {
                                     v = mark_running(v, h);
                                 }
-                                (state, v, head)
+                                (state, v, head, new_offers, set)
                             })
                             .await;
-                            let (moved_state, new_vnode, new_head) = match turn {
+                            let (moved_state, new_vnode, new_head, new_offers, values_set) = match turn {
                                 Ok(t) => t,
                                 // a render panicked: the session is gone
                                 Err(_) => break,
@@ -3959,19 +4721,52 @@ where
                             // both renders are trees the browser builds as read
                             let changes = CrowVNode::changes(&last_vnode, &new_vnode);
                             let placeable = matches!((&last_vnode, &new_vnode), (CrowVNode::Element { .. }, CrowVNode::Element { .. }));
+                            // a values turn's changes, each a text or an
+                            // element's attributes, go as the values they set
+                            let set_values = if values_set.is_some() && placeable && !whole_page && !drawn { values_message(&changes, &last_vnode, &new_vnode) } else { None };
                             let payload = if !changes.is_empty() || whole_page {
-                                let html = new_vnode.to_html();
-                                let patch = serde_json::Value::Array(changes);
-                                let mut msg = if placeable && !whole_page && patch.to_string().len() * 4 < html.len() * 3 {
-                                    serde_json::json!({ "type": "patches", "patches": patch })
-                                } else {
-                                    serde_json::json!({ "type": "html", "html": html })
+                                // a drawn renderer: a values turn's bindings by
+                                // id, else the whole tree
+                                let drawn_msg = drawn.then(|| {
+                                    let by_id = match &values_set {
+                                        Some((_, values)) if !whole_page => ids_message(values, &mut drawn_sent),
+                                        _ => None,
+                                    };
+                                    match by_id {
+                                        // (the renderer sets them into the tree it holds)
+                                        Some(m) => {
+                                            if drawn_held.is_some() {
+                                                drawn_held = Some(DrawnHeld::Tree(state.drawn_tree.lock().unwrap_or_else(|p| p.into_inner()).clone()));
+                                            }
+                                            m
+                                        }
+                                        None => {
+                                            drawn_sent.clear();
+                                            // (asked for anew, the tree is sent whole)
+                                            if whole_page {
+                                                drawn_held = None;
+                                            }
+                                            drawn_message(&state, &mut drawn_held, takes_changes)
+                                        }
+                                    }
+                                });
+                                let mut msg = match drawn_msg.or_else(|| set_values.map(|set| serde_json::json!({ "type": "values", "set": set }))) {
+                                    Some(m) => m,
+                                    None => {
+                                        let html = new_vnode.to_html();
+                                        let patch = serde_json::Value::Array(changes);
+                                        if placeable && !whole_page && patch.to_string().len() * 4 < html.len() * 3 {
+                                            serde_json::json!({ "type": "patches", "patches": patch })
+                                        } else {
+                                            serde_json::json!({ "type": "html", "html": html })
+                                        }
+                                    }
                                 };
                                 whole_page = false;
                                 if let Some(n) = ack {
                                     msg["ack"] = serde_json::json!(n);
                                 }
-                                offers_before = std::mem::replace(&mut offers, Offers::of(&new_vnode));
+                                offers_before = std::mem::replace(&mut offers, new_offers);
                                 Some(msg)
                             } else {
                                 // a click the page marked busy is answered even
@@ -4002,7 +4797,17 @@ where
                             }
                             // the dev panel's word on this render
                             if dev_token().is_some() {
-                                let word = dev_panel(&state.facts_map(), &mut dev_facts, std::mem::take(&mut dev_events), render_ms, sent);
+                                let mut word = dev_panel(&state.facts_map(), &mut dev_facts, std::mem::take(&mut dev_events), render_ms, sent);
+                                // the views the render ran and kept, and the
+                                // render's own time (the rest is the diff and
+                                // the send)
+                                let (ran, kept) = state.views_counted();
+                                word["panel"]["views"] = serde_json::json!({ "ran": ran, "kept": kept });
+                                // a values turn: the bound places it changed
+                                if let Some((n, _)) = values_set {
+                                    word["panel"]["values"] = serde_json::json!(n);
+                                }
+                                word["panel"]["view_ms"] = serde_json::json!((state.render_ms * 10.0).round() / 10.0);
                                 if futures_util::SinkExt::send(&mut socket, Message::Text(word.to_string().into())).await.is_err() {
                                     break;
                                 }
@@ -4030,7 +4835,7 @@ where
                         // a session lost to a panicking render has nothing to keep
                         if state.session_id == session_id && session_id != 0 {
                             keep_session(&resume, &state);
-                            p2.park_as(resume, state, last_vnode, last_head, PendingSessions::GRACE, true);
+                            p2.park_as(resume, state, last_vnode, last_head, offers, PendingSessions::GRACE, true);
                         }
                     })
                     .into_response()
@@ -4112,12 +4917,27 @@ where
         );
 
         // GET /_widget/…?m=name: the program's module widgets/name.js, and
-        // nothing else of its files
+        // nothing else of its files; with `drawn`, what the widget says a
+        // drawn renderer draws it as, widgets/name.drawn.json (a headset
+        // cannot run the module: one-view-design.md, phase 4)
         let widget_route = axum::routing::get(move |query: axum::extract::Query<HashMap<String, String>>| async move {
             use axum::response::IntoResponse;
             let name = query.get("m").cloned().unwrap_or_default();
             if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
                 return (axum::http::StatusCode::NOT_FOUND, "no such widget").into_response();
+            }
+            if query.contains_key("drawn") {
+                return match std::fs::read_to_string(std::path::Path::new("widgets").join(format!("{}.drawn.json", name))) {
+                    Ok(said) => (
+                        [
+                            (axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8"),
+                            (axum::http::header::CACHE_CONTROL, "no-cache"),
+                        ],
+                        said,
+                    )
+                        .into_response(),
+                    Err(_) => (axum::http::StatusCode::NOT_FOUND, format!("no widgets/{}.drawn.json", name)).into_response(),
+                };
             }
             match std::fs::read_to_string(std::path::Path::new("widgets").join(format!("{}.js", name))) {
                 Ok(js) => (
@@ -4185,6 +5005,136 @@ fn sign_message(state: &mut CrowLiveState, sign_path: &str) -> Option<serde_json
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a render offers, read from its tree, is what its markup offers
+    /// when the browser has read it (as the served page's were read
+    /// before views were trees): over many trees of elements with every
+    /// event, held calls and confirmations, closed and hidden layers,
+    /// tables with clicks, actions, pages and sorts, every control, charts
+    /// that seek (some that cannot draw), widgets and markup.
+    #[test]
+    fn a_trees_offers_are_the_ones_its_markup_offers() {
+        use crate::view::tree::{self, Given, TableState};
+        use crow_runtime::frame::{Column, CrowFrame};
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self, n: u64) -> u64 {
+                self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (self.0 >> 33) % n
+            }
+        }
+        let empty = || CrowFrame { columns: Vec::new(), data: Vec::new(), validity: Vec::new() };
+        let rows = |n: usize| {
+            empty()
+                .with_column("sym", Column::Str((0..n).map(|i| format!("S\"{}&", i)).collect::<Vec<_>>().into()))
+                .unwrap()
+                .with_column("px", Column::Float((0..n).map(|i| i as f64 * 1.5).collect()))
+                .unwrap()
+        };
+        let times = |n: usize| empty().with_column("ts", Column::Int((0..n as i64).map(|i| 1_700_000_000 + 60 * i).collect())).unwrap();
+        fn el(kind: &str, mut o: Vec<(String, Given)>, kids: Vec<Given>, t: TableState) -> Given {
+            o.sort_by(|a, b| a.0.cmp(&b.0));
+            Given::node(tree::element(kind, o, kids, t).expect("builds"))
+        }
+        let handlers = ["inc", "pick", "go"];
+        fn grow(r: &mut Rng, depth: u32, rows: &dyn Fn(usize) -> CrowFrame, times: &dyn Fn(usize) -> CrowFrame, handlers: &[&str]) -> Given {
+            let opt = |k: &str, v: Given| (k.to_string(), v);
+            let h = |r: &mut Rng| handlers[r.next(handlers.len() as u64) as usize].to_string();
+            let held = |r: &mut Rng| -> Given {
+                match r.next(3) {
+                    0 => Given::Handler(h(r)),
+                    1 => Given::Call(h(r), vec![serde_json::json!(r.next(4)), serde_json::json!("a\"b")]),
+                    _ => Given::Call(h(r), vec![]),
+                }
+            };
+            let pick = if depth == 0 { 10 + r.next(14) } else { r.next(24) };
+            match pick {
+                // containers, some closed or hidden
+                0..=4 => {
+                    let kind = ["div", "stack", "row", "section", "modal"][r.next(5) as usize];
+                    let mut o = Vec::new();
+                    match r.next(5) {
+                        0 => o.push(opt("open", Given::Bool(r.next(2) == 0))),
+                        1 => o.push(opt("hidden", Given::Bool(r.next(2) == 0))),
+                        2 => o.push(opt("click", held(r))),
+                        _ => {}
+                    }
+                    let kids = (0..r.next(4)).map(|_| grow(r, depth - 1, rows, times, handlers)).collect();
+                    el(kind, o, kids, TableState::default())
+                }
+                // (a form holds no form: the browser would drop the inner one)
+                5 => el("form", vec![opt("submit", Given::Handler(h(r)))], vec![grow(r, 0, rows, times, handlers)], TableState::default()),
+                6 => el("details", vec![opt("open", Given::Bool(r.next(2) == 0))], vec![grow(r, depth - 1, rows, times, handlers)], TableState::default()),
+                7 => {
+                    let options = (0..r.next(3)).map(|i| el("option", vec![opt("value", Given::Text(format!("v{}", i)))], vec![Given::Text(format!("V{}", i))], TableState::default())).collect();
+                    el("select", vec![opt("change", Given::Handler(h(r)))], options, TableState::default())
+                }
+                8 => el("input", vec![opt("input", Given::Handler(h(r))), opt("type", Given::Text(["text", "radio", "range"][r.next(3) as usize].into())), opt("value", Given::Text("x".into()))], vec![], TableState::default()),
+                9 => Given::Markup(format!("<button data-crow-click=\"{}\" data-crow-args=\"[1]\">m</button>", h(r))),
+                // leaves
+                10 | 11 => {
+                    let mut o = vec![opt("click", held(r))];
+                    if r.next(3) == 0 {
+                        o.push(opt("confirm", Given::Text("Sure \"now\"?".into())));
+                    }
+                    el("button", o, vec![Given::Text("b".into())], TableState::default())
+                }
+                12 | 13 => {
+                    let n = r.next(5) as usize;
+                    let mut o = Vec::new();
+                    if r.next(2) == 0 {
+                        o.push(opt("click", Given::Handler(h(r))));
+                        if r.next(2) == 0 {
+                            o.push(opt("key", Given::Text(["sym", "px", "gone"][r.next(3) as usize].into())));
+                        }
+                    }
+                    if r.next(2) == 0 {
+                        o.push(opt("actions", Given::Map(vec![("Drop".into(), Given::Handler(h(r)))])));
+                        if r.next(2) == 0 {
+                            o.push(opt("confirm", Given::Map(vec![("Drop".into(), Given::Text("Drop it?".into()))])));
+                        }
+                    }
+                    let mut t = TableState::default();
+                    if r.next(2) == 0 {
+                        o.push(opt("page", Given::Int(1 + r.next(3) as i64)));
+                        t.page = Some((r.next(2) as usize, r.next(3) as usize));
+                    }
+                    if r.next(2) == 0 {
+                        o.push(opt("sort", Given::Bool(true)));
+                        t.sort = Some((r.next(2) as usize, if r.next(2) == 0 { None } else { Some(("px".into(), r.next(2) == 0)) }));
+                    }
+                    el("table", o, vec![Given::Frame(Box::new(rows(n)))], t)
+                }
+                14 => Given::node(tree::field("F", &h(r), serde_json::json!(""), "", ["text", "file", "number", ""][r.next(4) as usize], r.next(2) as i64)),
+                15 => Given::node(tree::slider("S", &h(r), serde_json::json!(1), "1", 0.0, 2.0, 1.0)),
+                16 => Given::node(tree::check("C", &h(r), r.next(2) == 0, r.next(2) == 0)),
+                17 => Given::node(tree::choice((0..r.next(3)).map(|i| format!("o{}", i)).collect(), &h(r), "o0", r.next(2) == 0)),
+                18 => Given::node(tree::select((0..r.next(3)).map(|i| format!("o{}", i)).collect(), &h(r), "o1")),
+                19 => {
+                    let n = r.next(4) as usize;
+                    let tz = ["", "America/New_York", "Nowhere/Never"][r.next(3) as usize];
+                    let seek = if r.next(4) == 0 { None } else { Some(h(r)) };
+                    Given::node(tree::chart(&times(n), "ts", &[], &[], "", f64::NAN, tz, 120.0, &[], &(), None, seek.as_deref()))
+                }
+                20 => Given::node(tree::widget("grid", serde_json::json!({"a": 1}), vec![("pick".into(), h(r))])),
+                21 => Given::node(tree::progress(1.0, 2.0)),
+                22 => Given::node(tree::icon("check", "", "").unwrap()),
+                _ => Given::Text("t".into()),
+            }
+        }
+        let mut r = Rng(7);
+        let mut offering = 0;
+        for i in 0..3000 {
+            let kids = (0..1 + r.next(4)).map(|_| grow(&mut r, 3, &rows, &times, &handlers)).collect();
+            let page = tree::element("stack", vec![], kids, TableState::default()).unwrap();
+            let from_tree = Offers::of_tree(&page);
+            let from_markup = Offers::of(&CrowVNode::Raw(tree::html(&page)).as_built());
+            assert_eq!(from_tree, from_markup, "tree {}: {}", i, tree::html(&page));
+            assert_eq!(from_tree, Offers::of(&tree::vnode(&page).as_built()), "tree {}", i);
+            offering += usize::from(!from_tree.clicks.is_empty());
+        }
+        assert!(offering > 1500, "{}", offering);
+    }
 
     /// A socket opens only from the app's own page; a page on another site
     /// (it deleted a session through finch's socket) is refused, and a
@@ -4337,9 +5287,9 @@ mod tests {
         let mut state = CrowLiveState::new();
         state.set("n", serde_json::json!(4));
         let head = Head { title: Some("Four".to_string()), metas: Vec::new() };
-        let token = pending.park(state, CrowVNode::text("four"), head.clone());
+        let token = pending.park(state, CrowVNode::text("four"), head.clone(), Offers::default());
         assert_eq!(token.len(), 32, "a random token: {}", token);
-        let (claimed, vnode, held, resumed) = pending.claim(&token).expect("the page's socket claims its session");
+        let (claimed, vnode, held, _, resumed) = pending.claim(&token).expect("the page's socket claims its session");
         assert_eq!(claimed.get_i64("n", 0), 4);
         assert_eq!(vnode.to_html(), "four");
         assert_eq!(held, head, "and the head its render placed");
@@ -4405,12 +5355,12 @@ mod tests {
         let pending = PendingSessions::default();
         let mut state = CrowLiveState::new();
         state.set("n", serde_json::json!(9));
-        pending.park_as("tabtoken".to_string(), state, CrowVNode::text("nine"), Head::default(), PendingSessions::GRACE, true);
-        let (back, _, _, resumed) = pending.claim("tabtoken").expect("the tab resumes its session");
+        pending.park_as("tabtoken".to_string(), state, CrowVNode::text("nine"), Head::default(), Offers::default(), PendingSessions::GRACE, true);
+        let (back, _, _, _, resumed) = pending.claim("tabtoken").expect("the tab resumes its session");
         assert_eq!(back.get_i64("n", 0), 9, "the same facts");
         assert!(resumed, "a resumed session is sent its render");
         assert!(pending.claim("tabtoken").is_none(), "the token is good once");
-        pending.park_as("gone".to_string(), CrowLiveState::new(), CrowVNode::text(""), Head::default(), std::time::Duration::from_millis(0), true);
+        pending.park_as("gone".to_string(), CrowLiveState::new(), CrowVNode::text(""), Head::default(), Offers::default(), std::time::Duration::from_millis(0), true);
         assert!(pending.claim("gone").is_none(), "a session past its wait is gone");
     }
 
@@ -4502,9 +5452,20 @@ mod tests {
                 CrowVNode::p(vec![CrowVNode::text(&format!("slow={} quick={}", s.get_i64("slow", 0), s.get_i64("quick", 0)))]),
                 CrowVNode::button(vec![CrowVNode::text("slow")]).on_click("slow"),
                 CrowVNode::button(vec![CrowVNode::text("quick")]).on_click("quick"),
+                CrowVNode::form(vec![
+                    CrowVNode::input().attr("type", "text").attr("data-crow-input", "__field:q"),
+                    CrowVNode::button(vec![CrowVNode::text("Send")]),
+                    CrowVNode::button(vec![CrowVNode::text("Clear")]).attr("type", "button"),
+                ])
+                .on_submit("sent"),
             ])
         };
         let handle = |s: &mut CrowLiveState, event: &str, _: Option<&str>| match event {
+            "sent" => {
+                std::thread::sleep(std::time::Duration::from_millis(600));
+                let n = s.get_i64("slow", 0);
+                s.set("slow", serde_json::json!(n + 1));
+            }
             "slow" => {
                 std::thread::sleep(std::time::Duration::from_millis(600));
                 let n = s.get_i64("slow", 0);
@@ -4517,6 +5478,83 @@ mod tests {
             _ => {}
         };
         CrowLiveView::new("/_ws/", initial, render, handle).into_router("/")
+    }
+
+    /// A form's slow handler shows on the page as a slow click's does: the
+    /// render that answers the submit has the form busy and the button that
+    /// submits it disabled and busy, and no other button (a form's button
+    /// had looked dead for the seconds its handler took: finchdash's Scan,
+    /// Quote, Start session). The page marks the submitter busy the moment
+    /// it submits, numbered as a click is, until the answer arrives.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_slow_forms_button_shows_it_is_working() {
+        let script = page_js(None, "/_ws/", "");
+        assert!(script.contains("send({event: ev, form: data, seq: n})") && script.contains("e.submitter"), "the submit is numbered and its button marked");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, slow_router()).await.unwrap() });
+        tokio::task::spawn_blocking(move || {
+            use tungstenite::Message as M;
+            let (mut ws, _) = tungstenite::connect(format!("ws://127.0.0.1:{}/_ws/", port)).expect("the socket opens");
+            if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_mut() {
+                s.set_read_timeout(Some(std::time::Duration::from_millis(3000))).unwrap();
+            }
+            let mut read = || -> serde_json::Value {
+                loop {
+                    match ws.read() {
+                        Ok(M::Text(t)) => {
+                            let m: serde_json::Value = serde_json::from_str(&t).unwrap();
+                            if m["type"] != "session" {
+                                return m;
+                            }
+                        }
+                        other => panic!("expected a message, got {:?}", other),
+                    }
+                }
+            };
+            let mut page = CrowVNode::text("");
+            assert!(follow_page(&mut page, &read()));
+            drop(read);
+            ws.send(M::Text(r#"{"event":"sent","form":{},"seq":1}"#.into())).unwrap();
+            let mut read = || -> serde_json::Value {
+                loop {
+                    match ws.read() {
+                        Ok(M::Text(t)) => {
+                            let m: serde_json::Value = serde_json::from_str(&t).unwrap();
+                            if m["type"] != "session" {
+                                return m;
+                            }
+                        }
+                        other => panic!("expected a message, got {:?}", other),
+                    }
+                }
+            };
+            let working = read();
+            assert!(follow_page(&mut page, &working), "the page answers the submit with a render: {}", working);
+            let html = page.to_html();
+            assert!(html.contains("slow=0"), "nothing landed yet: {}", html);
+            let form = html.split("<form").nth(1).and_then(|f| f.split("</form>").next()).unwrap_or_default().to_string();
+            assert!(form.split('>').next().unwrap_or_default().contains("aria-busy=\"true\""), "the form is busy: {}", form);
+            let send = form.split("<button").find(|b| b.contains(">Send")).unwrap_or_default();
+            assert!(send.contains("disabled") && send.contains("aria-busy=\"true\""), "the button that submits it shows it is working: {}", form);
+            let clear = form.split("<button").find(|b| b.contains(">Clear")).unwrap_or_default();
+            assert!(!clear.contains("aria-busy"), "a button that submits nothing is not: {}", form);
+            let slow = html.split("<button").find(|b| b.contains("data-crow-click=\"slow\"")).unwrap_or_default();
+            assert!(!slow.contains("aria-busy"), "nor a click's button: {}", html);
+            let mut last = String::new();
+            loop {
+                let m = read();
+                if follow_page(&mut page, &m) {
+                    last = page.to_html();
+                }
+                if m["ack"].as_u64() == Some(1) {
+                    break;
+                }
+            }
+            assert!(last.contains("slow=1") && !last.contains("aria-busy"), "it ran, and nothing is busy after: {}", last);
+        })
+        .await
+        .unwrap();
     }
 
     /// A slow handler runs off the page's loop: the page answers the click at
@@ -4646,6 +5684,106 @@ mod tests {
             let mut stale = open(&format!("?t={}", token));
             let (fresh, _) = hello(&mut stale);
             assert!(fresh.contains("n=0"), "a used token starts fresh: {}", fresh);
+        })
+        .await
+        .unwrap();
+    }
+
+    /// page[…, init = f]: a session starting on the page runs f once,
+    /// after its address is read and before its first render, as a
+    /// handler runs; a click, a resync and a tab coming back to its session
+    /// run nothing, and an init that stops lands nothing and is told
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_page_s_init_runs_once_as_a_session_opens() {
+        let mut initial = CrowLiveState::new();
+        initial.set("n", serde_json::json!(0));
+        initial.set("opened", serde_json::json!(0));
+        initial.set("seen", serde_json::json!(""));
+        let render = |s: &CrowLiveState| {
+            CrowVNode::div(vec![
+                CrowVNode::p(vec![CrowVNode::text(&format!("n={} opened={} seen={}", s.get_i64("n", 0), s.get_i64("opened", 0), s.get_str("seen", "")))]),
+                CrowVNode::button(vec![CrowVNode::text("inc")]).on_click("inc"),
+            ])
+        };
+        let handle = |s: &mut CrowLiveState, event: &str, _value: Option<&str>| match event {
+            "inc" => {
+                let n = s.get_i64("n", 0);
+                s.set("n", serde_json::json!(n + 1));
+            }
+            "open" => {
+                let opened = s.get_i64("opened", 0);
+                s.set("opened", serde_json::json!(opened + 1));
+                // the address is read before init runs
+                let seen = s.get_i64("n", 0).to_string();
+                s.set("seen", serde_json::json!(seen));
+            }
+            "refuse" => {
+                s.set("opened", serde_json::json!(99));
+                s.stop("refuse stopped: no".to_string());
+            }
+            _ => {}
+        };
+        let router = CrowLiveView::new("/_ws/", initial.clone(), render, handle).with_url(vec![("n", "n")]).with_init("open").into_router("/")
+            .merge(CrowLiveView::new("/_ws/stops", initial, render, handle).with_init("refuse").into_router("/stops"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        tokio::task::spawn_blocking(move || {
+            use tungstenite::Message as M;
+            type Ws = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
+            let get = |path: &str| -> String {
+                let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+                std::io::Write::write_all(&mut s, format!("GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", path).as_bytes()).unwrap();
+                let mut out = String::new();
+                std::io::Read::read_to_string(&mut s, &mut out).unwrap();
+                out
+            };
+            // the page's first render has run init, from the address
+            let page = get("/?n=4");
+            assert!(page.contains("n=4 opened=1 seen=4"), "{}", page);
+            // an init that stops lands nothing, and the reader is told
+            let stopped = get("/stops");
+            assert!(stopped.contains("opened=0"), "{}", stopped);
+            assert!(stopped.contains("refuse stopped, and nothing changed"), "{}", stopped);
+            let open = |q: &str| -> Ws {
+                let (mut ws, _) = tungstenite::connect(format!("ws://127.0.0.1:{}/_ws/{}", port, q)).expect("the socket opens");
+                if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_mut() {
+                    s.set_read_timeout(Some(std::time::Duration::from_millis(3000))).unwrap();
+                }
+                ws
+            };
+            let hello = |ws: &mut Ws| -> (String, String) {
+                let (mut html, mut token) = (String::new(), String::new());
+                while html.is_empty() || token.is_empty() {
+                    if let Ok(M::Text(t)) = ws.read() {
+                        let m: serde_json::Value = serde_json::from_str(&t).unwrap();
+                        if let Some(h) = m["html"].as_str() { html = h.to_string(); }
+                        if let Some(k) = m["token"].as_str() { token = k.to_string(); }
+                    }
+                }
+                (html, token)
+            };
+            // a socket with no page's token is a fresh session: it runs init
+            let mut ws = open("?q=n%3D2");
+            let (first, token) = hello(&mut ws);
+            assert!(first.contains("n=2 opened=1 seen=2"), "{}", first);
+            // a click and a resync render again, and run nothing more
+            ws.send(M::Text(r#"{"event":"inc","seq":1}"#.into())).unwrap();
+            ws.send(M::Text(r#"{"event":"__resync","seq":2}"#.into())).unwrap();
+            ws.send(M::Text(r#"{"event":"inc","seq":3}"#.into())).unwrap();
+            loop {
+                if let Ok(M::Text(t)) = ws.read() {
+                    assert!(!t.contains("opened=2"), "{}", t);
+                    if t.contains("n=4") { break; }
+                }
+            }
+            ws.close(None).unwrap();
+            let _ = ws.read();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            // the tab coming back to its session runs nothing
+            let mut back = open(&format!("?t={}", token));
+            let (html, _) = hello(&mut back);
+            assert!(html.contains("n=4 opened=1"), "the session came back as it was: {}", html);
         })
         .await
         .unwrap();
@@ -5290,6 +6428,9 @@ mod tests {
             CrowVNode::raw(&format!("<p>{} &amp; more</p>", n)),
             CrowVNode::input().attr("data-crow-input", "__field:name").attr("value", &format!("v{}", n)),
             CrowVNode::tag("ul", (0..200).map(|i| CrowVNode::tag("li", vec![CrowVNode::text(&format!("row {}", i))])).collect()),
+            // keyed children, turned one place and one dropped or back at
+            // each render: they move (a `move` change)
+            CrowVNode::tag("ol", (0..5).map(|i| (i + n) % 5).filter(|k| n % 3 != 1 || *k != 2).map(|k| CrowVNode::tag("li", vec![CrowVNode::text(&format!("item {}", k))]).attr("key", &format!("k{}", k))).collect()),
         ])
     }
 
@@ -5307,6 +6448,7 @@ mod tests {
                 let kids: Vec<String> = children.iter().map(|c| shape_of(c, svg)).collect();
                 format!("{}{}[{}]({})", if svg { "svg:" } else { "" }, tag.to_ascii_lowercase(), a.join(","), kids.join(" "))
             }
+            CrowVNode::Shared(s) => shape_of(s.node(), in_svg),
         }
     }
 
@@ -5314,8 +6456,9 @@ mod tests {
     /// DevTools protocol takes each render as changes and shows exactly what
     /// the server rendered — a text, a moved mark, a drawing's shape made in
     /// the drawing, rows through a table, an element that changed kind, text
-    /// with an entity; a field being typed in keeps its draft; and a page
-    /// knocked out of shape asks for the whole page and recovers.
+    /// with an entity, keyed children reordered; a field being typed in
+    /// keeps its draft; and a page knocked out of shape asks for the whole
+    /// page and recovers.
     /// `cargo test -p crow_web --features live,http the_browser_applies_changes
     /// -- --ignored` (CHROME names another binary)
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -5391,6 +6534,471 @@ mod tests {
             assert_eq!(got, want, "after the whole page came back");
             let seen = kinds(&mut b);
             assert!(seen.ends_with(",html") || seen.contains(",html,"), "the whole page came back: {}", seen);
+        })
+        .await
+        .unwrap();
+    }
+
+    // ── values turns (one-view-design.md 3.5) ──────────────────────
+
+    static V_PAGE: ViewSpec = ViewSpec { name: "v_page", facts: &["n", "m", "name"], always: None, bound: &["n", "name"] };
+    static V_ROWS: ViewSpec = ViewSpec { name: "v_rows", facts: &["m"], always: None, bound: &[] };
+
+    /// A page whose `n` and `name` are read only in bindings — a text (0),
+    /// a row's gap (1), a bound field (2) — and whose `m` is read by its
+    /// structure (the rows), as a program's views make it.
+    fn values_page(s: &CrowLiveState) -> tree::Node {
+        use tree::{BindAt, Given};
+        fn kept(s: &CrowLiveState, spec: &'static ViewSpec, body: impl FnOnce() -> tree::Node) -> tree::Node {
+            match s.view_kept(spec.name, spec.facts, spec.always, spec.bound, Some(String::new()), None, &|_| {}, &|_| None) {
+                Ok(run) => s.view_end(run, body(), s.tables_drawn()),
+                Err(n) => *n,
+            }
+        }
+        let el = |kind: &str, opts: Vec<(&str, Given)>, kids: Vec<Given>, binds: &[(BindAt<'_>, u32)]| {
+            tree::element_bound(kind, opts.into_iter().map(|(k, v)| (k.to_string(), v)).collect(), kids, tree::TableState::default(), if s.binding() { binds } else { &[] }).unwrap()
+        };
+        kept(s, &V_PAGE, || {
+            let n = s.get_i64("n", 0);
+            let rows = kept(s, &V_ROWS, || el("stack", vec![], (0..s.get_i64("m", 0)).map(|i| Given::from(el("p", vec![], vec![Given::Text(format!("row {}", i))], &[]))).collect(), &[]));
+            el(
+                "stack",
+                vec![],
+                vec![
+                    Given::from(el("row", vec![("gap", Given::Text(values_gap(n).into()))], vec![Given::Text(format!("tick {}", n))], &[(BindAt::Child(0), 0), (BindAt::Option("gap"), 1)])),
+                    Given::from(el("stack", vec![], vec![Given::from(values_field(s))], &[(BindAt::Child(0), 2)])),
+                    Given::from(rows),
+                    Given::from(el("button", vec![("click", Given::Handler("inc".into()))], vec![Given::Text("+".into())], &[])),
+                    Given::from(el("button", vec![("click", Given::Handler("more".into()))], vec![Given::Text("more".into())], &[])),
+                ],
+                &[],
+            )
+        })
+    }
+
+    fn values_gap(n: i64) -> &'static str {
+        if n % 2 == 0 { "s" } else { "l" }
+    }
+
+    fn values_field(s: &CrowLiveState) -> tree::Node {
+        let name = s.get("name").and_then(|v| v.as_str().map(|x| x.to_string())).unwrap_or_default();
+        tree::field("Name", "name", serde_json::json!(name), &name, "text", 0)
+    }
+
+    struct PageValues;
+
+    impl Values for PageValues {
+        fn inputs(&self, id: u32) -> &'static [&'static str] {
+            match id {
+                2 => &["name"],
+                _ => &["n"],
+            }
+        }
+        fn refresh(&self, _: &CrowLiveState, _: &str) {}
+        fn eval(&self, s: &CrowLiveState, ids: &[u32]) -> Option<Vec<tree::Bound>> {
+            let n = s.get_i64("n", 0);
+            Some(
+                ids.iter()
+                    .map(|id| match id {
+                        0 => tree::Bound::Text(format!("tick {}", n)),
+                        1 => tree::Bound::Opt(Some(tree::Opt::Text(values_gap(n).into()))),
+                        _ => tree::Bound::Node(values_field(s)),
+                    })
+                    .collect(),
+            )
+        }
+    }
+
+    fn values_handle(s: &mut CrowLiveState, event: &str, _: Option<&str>) {
+        match event {
+            "inc" => {
+                let n = s.get_i64("n", 0) + 1;
+                s.set("n", serde_json::json!(n));
+                s.set("name", serde_json::json!(format!("v{}", n)));
+            }
+            "more" => {
+                let m = s.get_i64("m", 0) + 1;
+                s.set("m", serde_json::json!(m));
+            }
+            _ => {}
+        }
+    }
+
+    fn values_initial() -> CrowLiveState {
+        let mut s = CrowLiveState::new();
+        s.set("n", serde_json::json!(0));
+        s.set("m", serde_json::json!(2));
+        s.set("name", serde_json::json!("v0"));
+        s
+    }
+
+    #[test]
+    fn a_text_the_page_holds_no_node_for_is_not_set_as_a_value() {
+        let p = |kids: Vec<CrowVNode>| CrowVNode::Element { tag: "div".into(), attrs: HashMap::new(), children: vec![CrowVNode::Element { tag: "p".into(), attrs: HashMap::new(), children: kids }] };
+        let set = |path: serde_json::Value| vec![serde_json::json!({"op": "text", "path": path, "text": "x", "in": "p"})];
+        let new = p(vec![CrowVNode::text("x")]);
+        // a text the page holds: set
+        assert!(values_message(&set(serde_json::json!([0, 0, 0])), &p(vec![CrowVNode::text("a")]), &new).is_some());
+        // an empty text is no node in the browser's page
+        assert!(values_message(&set(serde_json::json!([0, 0, 0])), &p(vec![CrowVNode::text("")]), &new).is_none());
+        // two texts side by side are one node there
+        assert!(values_message(&set(serde_json::json!([0, 0, 1])), &p(vec![CrowVNode::text("a"), CrowVNode::text("b")]), &p(vec![CrowVNode::text("a"), CrowVNode::text("x")])).is_none());
+        // an element's attributes are set wherever it stands
+        let attrs = vec![serde_json::json!({"op": "attrs", "path": [0, 0], "tag": "p", "set": {"title": "t"}, "remove": []})];
+        assert!(values_message(&attrs, &p(vec![]), &p(vec![])).is_some());
+    }
+
+    /// A tick that moves only what the page reads in its bindings is sent as
+    /// the values it set (`values`), no view run, and the page it makes is
+    /// the page a render makes; a move its structure reads renders. A tab
+    /// that comes back to its session after its socket closed, and a
+    /// second session, each take their values the same way from the page
+    /// they hold.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_tick_of_bound_values_is_sent_as_values() {
+        let router = CrowLiveView::new("/_ws/", values_initial(), values_page, values_handle).with_values(std::sync::Arc::new(PageValues)).into_router("/");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            use tungstenite::client::IntoClientRequest;
+            use tungstenite::Message as M;
+            type Ws = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
+            let get = || -> String {
+                let mut c = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+                c.write_all(format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", port).as_bytes()).unwrap();
+                let mut out = String::new();
+                c.read_to_string(&mut out).unwrap();
+                out
+            };
+            let open = |query: String| -> Ws {
+                let req = format!("ws://127.0.0.1:{}/_ws/?{}", port, query).into_client_request().unwrap();
+                let (mut ws, _) = tungstenite::connect(req).unwrap();
+                if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_mut() {
+                    s.set_read_timeout(Some(std::time::Duration::from_millis(3000))).unwrap();
+                }
+                ws
+            };
+            let page_of = |html: &str| -> CrowVNode {
+                CrowVNode::raw(&html.split("<div id=\"crow-root\">").nth(1).and_then(|r| r.rsplit_once("</div>\n<script>").map(|(a, _)| a.to_string())).unwrap_or_default()).as_built()
+            };
+            // the next message that answers event `seq` (or the session's token)
+            let answer = |ws: &mut Ws, seq: u64, page: &mut CrowVNode| -> String {
+                loop {
+                    let Ok(M::Text(t)) = ws.read() else { panic!("no answer to {}", seq) };
+                    let m: serde_json::Value = serde_json::from_str(&t).unwrap();
+                    match m["type"].as_str().unwrap_or("") {
+                        "values" => page.apply(&values_changes(&m["set"]).unwrap()).unwrap(),
+                        "patches" => page.apply(m["patches"].as_array().unwrap()).unwrap(),
+                        "html" => *page = CrowVNode::raw(m["html"].as_str().unwrap()).as_built(),
+                        _ => continue,
+                    }
+                    if m["ack"].as_u64() == Some(seq) {
+                        return t.to_string();
+                    }
+                }
+            };
+            let full = |n: i64, m: i64| -> String {
+                let mut s = values_initial();
+                s.set("n", serde_json::json!(n));
+                s.set("m", serde_json::json!(m));
+                s.set("name", serde_json::json!(format!("v{}", n)));
+                served_render(&s, &values_page).0.to_html()
+            };
+            let first = get();
+            let token: String = first.split("pageToken = '").nth(1).unwrap().chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+            let mut page = page_of(&first);
+            let mut ws = open(format!("p={}", token));
+            let tab = loop {
+                let Ok(M::Text(t)) = ws.read() else { panic!("no session token") };
+                let m: serde_json::Value = serde_json::from_str(&t).unwrap();
+                if m["type"] == "session" {
+                    break m["token"].as_str().unwrap().to_string();
+                }
+            };
+            let mut seq = 0;
+            let mut send = |ws: &mut Ws, event: &str| -> u64 {
+                seq += 1;
+                ws.send(M::Text(format!(r#"{{"event":"{}","seq":{}}}"#, event, seq).into())).unwrap();
+                seq
+            };
+            for n in 1..=3 {
+                let q = send(&mut ws, "inc");
+                let sent = answer(&mut ws, q, &mut page);
+                assert!(sent.contains("\"type\":\"values\""), "a tick of bound values: {}", sent);
+                assert!(sent.len() < 400, "{} bytes: {}", sent.len(), sent);
+                assert_eq!(page.to_html(), full(n, 2), "the page after tick {}", n);
+            }
+            // a move the structure reads renders
+            let q = send(&mut ws, "more");
+            let sent = answer(&mut ws, q, &mut page);
+            assert!(sent.contains("\"type\":\"patches\""), "{}", sent);
+            assert_eq!(page.to_html(), full(3, 3));
+            let q = send(&mut ws, "inc");
+            assert!(answer(&mut ws, q, &mut page).contains("\"type\":\"values\""));
+            assert_eq!(page.to_html(), full(4, 3));
+            // the tab comes back to its session: its values go on from the
+            // page it held
+            drop(ws);
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let mut ws = open(format!("t={}", tab));
+            let q = send(&mut ws, "inc");
+            let sent = answer(&mut ws, q, &mut page);
+            assert!(sent.contains("\"type\":\"values\""), "after the tab came back: {}", sent);
+            assert_eq!(page.to_html(), full(5, 3));
+            // a second session holds its own page and views
+            let second = get();
+            let token2: String = second.split("pageToken = '").nth(1).unwrap().chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+            let mut page2 = page_of(&second);
+            let mut ws2 = open(format!("p={}", token2));
+            let q = send(&mut ws2, "inc");
+            assert!(answer(&mut ws2, q, &mut page2).contains("\"type\":\"values\""));
+            assert_eq!(page2.to_html(), full(1, 2));
+            let q = send(&mut ws, "inc");
+            assert!(answer(&mut ws, q, &mut page).contains("\"type\":\"values\""));
+            assert_eq!(page.to_html(), full(6, 3));
+        })
+        .await
+        .unwrap();
+    }
+
+    /// A drawn renderer (`drawn=1` on the socket) is sent the page as data:
+    /// the tree with its bindings first, then each tick of bound values as
+    /// a `values` message by binding id, which set into the tree it holds
+    /// make the tree a render makes; a move the structure reads sends the
+    /// tree again. A page's own socket, beside it, is sent what it was.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_drawn_renderer_takes_the_tree_and_values_by_id() {
+        let router = CrowLiveView::new("/_ws/", values_initial(), values_page, values_handle).with_values(std::sync::Arc::new(PageValues)).into_router("/");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        tokio::task::spawn_blocking(move || {
+            use tungstenite::client::IntoClientRequest;
+            use tungstenite::Message as M;
+            type Ws = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>;
+            let open = |query: &str| -> Ws {
+                let req = format!("ws://127.0.0.1:{}/_ws/?{}", port, query).into_client_request().unwrap();
+                let (mut ws, _) = tungstenite::connect(req).unwrap();
+                if let tungstenite::stream::MaybeTlsStream::Plain(s) = ws.get_mut() {
+                    s.set_read_timeout(Some(std::time::Duration::from_millis(3000))).unwrap();
+                }
+                ws
+            };
+            // a `values` message's ids set into the tree held, as a drawn
+            // renderer sets them
+            fn set_ids(node: &mut serde_json::Value, ids: &serde_json::Map<String, serde_json::Value>) {
+                if let Some(binds) = node.get("binds").and_then(|b| b.as_array()).cloned() {
+                    for b in binds {
+                        let Some(v) = ids.get(&b["id"].to_string()) else { continue };
+                        if let Some(at) = b["child"].as_u64() {
+                            node["children"][at as usize] = v.clone();
+                        } else if let Some(name) = b["option"].as_str() {
+                            let opts = node["options"].as_object_mut().unwrap();
+                            if v.is_null() {
+                                opts.remove(name);
+                            } else {
+                                opts.insert(name.to_string(), v.clone());
+                            }
+                        }
+                    }
+                }
+                if let Some(kids) = node.get_mut("children").and_then(|c| c.as_array_mut()) {
+                    for k in kids {
+                        set_ids(k, ids);
+                    }
+                }
+            }
+            // the next message that answers event `seq`, the tree it holds
+            // brought up to date; and the message's type
+            let answer = |ws: &mut Ws, seq: u64, tree: &mut serde_json::Value| -> String {
+                loop {
+                    let Ok(M::Text(t)) = ws.read() else { panic!("no answer to {}", seq) };
+                    let m: serde_json::Value = serde_json::from_str(&t).unwrap();
+                    match m["type"].as_str().unwrap_or("") {
+                        "values" => {
+                            assert!(m.get("set").is_none(), "a drawn renderer is sent no paths: {}", t);
+                            set_ids(tree, m["ids"].as_object().expect("values by id"));
+                        }
+                        "tree" => *tree = m["tree"].clone(),
+                        "changes" => assert!(tree::apply_drawn_changes(tree, m["changes"].as_array().unwrap()), "changes that lead nowhere: {}", t),
+                        "html" | "patches" => panic!("a drawn renderer was sent the page's HTML: {}", t),
+                        _ => continue,
+                    }
+                    if m["ack"].as_u64() == Some(seq) {
+                        return m["type"].as_str().unwrap().to_string();
+                    }
+                }
+            };
+            let full = |n: i64, m: i64| -> serde_json::Value {
+                let mut s = values_initial();
+                s.set("n", serde_json::json!(n));
+                s.set("m", serde_json::json!(m));
+                s.set("name", serde_json::json!(format!("v{}", n)));
+                tree::drawn_json(&tree::split_head(s.render_with(&values_page)).0)
+            };
+            let mut ws = open("drawn=1");
+            let mut tree = loop {
+                let Ok(M::Text(t)) = ws.read() else { panic!("no tree") };
+                let m: serde_json::Value = serde_json::from_str(&t).unwrap();
+                assert_ne!(m["type"], "html", "{}", t);
+                if m["type"] == "tree" {
+                    break m["tree"].clone();
+                }
+            };
+            assert_eq!(tree, full(0, 2), "the first tree");
+            assert!(tree.to_string().contains("\"binds\""), "the tree says which places are bound: {}", tree);
+            let mut seq = 0;
+            let mut send = |ws: &mut Ws, event: &str| -> u64 {
+                seq += 1;
+                ws.send(M::Text(format!(r#"{{"event":"{}","seq":{}}}"#, event, seq).into())).unwrap();
+                seq
+            };
+            for n in 1..=3 {
+                let q = send(&mut ws, "inc");
+                assert_eq!(answer(&mut ws, q, &mut tree), "values", "a tick of bound values");
+                assert_eq!(tree, full(n, 2), "the tree after tick {}", n);
+            }
+            // a move the structure reads: the tree again
+            let q = send(&mut ws, "more");
+            assert_eq!(answer(&mut ws, q, &mut tree), "tree");
+            assert_eq!(tree, full(3, 3));
+            let q = send(&mut ws, "inc");
+            assert_eq!(answer(&mut ws, q, &mut tree), "values");
+            assert_eq!(tree, full(4, 3));
+            // a page that could not place a change asks again: the tree
+            ws.send(M::Text(r#"{"event":"__resync","seq":99}"#.into())).unwrap();
+            let q = send(&mut ws, "inc");
+            let _ = answer(&mut ws, q, &mut tree);
+            assert_eq!(tree, full(5, 3));
+            // a renderer that takes changes (`changes=1`): the tree first,
+            // then a move the structure reads as the changes to the tree it
+            // holds — the row added and nothing else — and a tick still as
+            // values; asked anew, the tree whole
+            let mut ws = open("drawn=1&changes=1");
+            let mut tree = loop {
+                let Ok(M::Text(t)) = ws.read() else { panic!("no tree") };
+                let m: serde_json::Value = serde_json::from_str(&t).unwrap();
+                if m["type"] == "tree" {
+                    break m["tree"].clone();
+                }
+            };
+            assert_eq!(tree, full(0, 2));
+            let changed = |ws: &mut Ws, seq: u64, tree: &mut serde_json::Value| -> (String, usize) {
+                loop {
+                    let Ok(M::Text(t)) = ws.read() else { panic!("no answer to {}", seq) };
+                    let m: serde_json::Value = serde_json::from_str(&t).unwrap();
+                    let kind = m["type"].as_str().unwrap_or("").to_string();
+                    match kind.as_str() {
+                        "values" => set_ids(tree, m["ids"].as_object().unwrap()),
+                        "tree" => *tree = m["tree"].clone(),
+                        "changes" => assert!(tree::apply_drawn_changes(tree, m["changes"].as_array().unwrap()), "{}", t),
+                        _ => continue,
+                    }
+                    if m["ack"].as_u64() == Some(seq) {
+                        return (kind, t.len());
+                    }
+                }
+            };
+            let whole = full(0, 2).to_string().len();
+            let q = send(&mut ws, "more");
+            let (kind, bytes) = changed(&mut ws, q, &mut tree);
+            assert_eq!(kind, "changes", "a structural move is sent as changes");
+            assert!(bytes < whole / 2, "the changes ({} bytes) are smaller than the tree ({} bytes)", bytes, whole);
+            assert_eq!(tree, full(0, 3));
+            for n in 1..=2 {
+                let q = send(&mut ws, "inc");
+                assert_eq!(changed(&mut ws, q, &mut tree).0, "values");
+                assert_eq!(tree, full(n, 3));
+            }
+            // (after values, a move is sent as changes to the tree they made)
+            let q = send(&mut ws, "more");
+            assert_eq!(changed(&mut ws, q, &mut tree).0, "changes");
+            assert_eq!(tree, full(2, 4));
+            ws.send(M::Text(r#"{"event":"__resync","seq":98}"#.into())).unwrap();
+            let asked = loop {
+                let Ok(M::Text(t)) = ws.read() else { panic!("no tree after a resync") };
+                let m: serde_json::Value = serde_json::from_str(&t).unwrap();
+                match m["type"].as_str().unwrap_or("") {
+                    "tree" => break m["tree"].clone(),
+                    "values" | "changes" => panic!("asked anew, the tree whole came first: {}", t),
+                    _ => continue,
+                }
+            };
+            assert_eq!(asked, full(2, 4), "asked anew: the tree whole");
+        })
+        .await
+        .unwrap();
+    }
+
+    /// Values in a real browser: each tick's `values` message sets the text,
+    /// the attributes and the bound field the server set, and the page
+    /// shows what a render makes; a field being typed in keeps its draft.
+    /// `cargo test -p crow_web --features live,http the_browser_applies_values
+    /// -- --ignored`
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn the_browser_applies_values() {
+        let router = CrowLiveView::new("/_ws/", values_initial(), values_page, values_handle).with_values(std::sync::Arc::new(PageValues)).into_router("/");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        tokio::task::spawn_blocking(move || {
+            let Some(mut b) = Browser::open("values") else { return };
+            let want = |n: i64, m: i64| -> String {
+                let mut s = values_initial();
+                s.set("n", serde_json::json!(n));
+                s.set("m", serde_json::json!(m));
+                s.set("name", serde_json::json!(format!("v{}", n)));
+                shape_of(&served_render(&s, &values_page).0, false)
+            };
+            fn settle(b: &mut Browser, want: &str) -> String {
+                const SHAPE: &str = "(function(){function shape(n){if(n.nodeType===3)return JSON.stringify(n.nodeValue);if(n.nodeType===8)return '#';\
+                    var svg=n.namespaceURI==='http://www.w3.org/2000/svg',a=[];for(var i=0;i<n.attributes.length;i++){var at=n.attributes[i];\
+                    if(at.name.indexOf('data-crow-busy')!==0)a.push(at.name+'='+at.value);}a.sort();\
+                    return (svg?'svg:':'')+n.nodeName.toLowerCase()+'['+a.join(',')+']('+Array.prototype.map.call(n.childNodes,shape).join(' ')+')';}\
+                    var r=document.getElementById('crow-root');return r&&r.firstChild?shape(r.firstChild):'';})()";
+                let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                loop {
+                    let got = b.eval(SHAPE).as_str().unwrap_or("").to_string();
+                    if got == want || std::time::Instant::now() > until {
+                        return got;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+            let hook = "(function(){var W=window.WebSocket;window.__kinds=[];window.WebSocket=function(u,p){var w=new W(u,p);\
+                w.addEventListener('message',function(e){try{window.__kinds.push(JSON.parse(e.data).type);}catch(x){}});return w;};\
+                window.WebSocket.prototype=W.prototype;})();";
+            b.call("Page.enable", serde_json::json!({}));
+            b.call("Page.addScriptToEvaluateOnNewDocument", serde_json::json!({ "source": hook }));
+            b.call("Page.navigate", serde_json::json!({ "url": format!("http://127.0.0.1:{}/", port) }));
+            assert_eq!(settle(&mut b, &want(0, 2)), want(0, 2), "the first page");
+            b.until("window.__kinds && window.__kinds.indexOf('session') >= 0", "the socket");
+            const INC: &str = "document.querySelector('[data-crow-click=inc]').click();";
+            for n in 1..=4 {
+                b.eval(&format!("{}1", INC));
+                assert_eq!(settle(&mut b, &want(n, 2)), want(n, 2), "after tick {}", n);
+                assert_eq!(b.eval("document.querySelector('input').value"), serde_json::json!(format!("v{}", n)), "the field follows");
+            }
+            let seen = b.eval("window.__kinds.join(',')").as_str().unwrap_or("").to_string();
+            assert_eq!(seen.matches("values").count(), 4, "every tick came as values: {}", seen);
+            // a field being typed in keeps its draft while its value moves
+            b.eval(&format!("var f=document.querySelector('input');f.focus();f.value='draft';{}1", INC));
+            assert_eq!(settle(&mut b, &want(5, 2)), want(5, 2), "with a draft");
+            assert_eq!(b.eval("document.activeElement===document.querySelector('input') && document.querySelector('input').value"), serde_json::json!("draft"));
+            b.eval(&format!("document.querySelector('input').blur();{}1", INC));
+            assert_eq!(settle(&mut b, &want(6, 2)), want(6, 2), "after the draft");
+            assert_eq!(b.eval("document.querySelector('input').value"), serde_json::json!("v6"));
+            // a structural move renders, and values go on after it
+            b.eval("document.querySelector('[data-crow-click=more]').click();1");
+            assert_eq!(settle(&mut b, &want(6, 3)), want(6, 3), "after more");
+            b.eval(&format!("{}1", INC));
+            assert_eq!(settle(&mut b, &want(7, 3)), want(7, 3), "a tick after more");
+            // a page knocked out of shape asks for the whole page, and recovers
+            b.eval(&format!("var r=document.getElementById('crow-root').firstChild;r.firstChild.removeChild(r.firstChild.firstChild);{}1", INC));
+            assert_eq!(settle(&mut b, &want(8, 3)), want(8, 3), "after the whole page came back");
         })
         .await
         .unwrap();
@@ -6175,7 +7783,7 @@ mod tests {
         let inner = s.view_enter();
         read(&s);
         let inner_node = s.view_exit(inner, CrowVNode::tag("p", vec![]));
-        let outer_node = s.view_exit(outer, CrowVNode::tag("div", vec![inner_node]));
+        let outer_node = s.view_exit(outer, CrowVNode::tag("div", vec![tree::vnode(&inner_node)]));
         s.end_render();
         let html = outer_node.to_html();
         assert!(html.contains("<p data-crow-stale"), "the view that read it is marked: {}", html);
@@ -6486,6 +8094,11 @@ mod tests {
         assert!(shell.contains("<h1>Hello</h1>"));
         assert!(shell.contains("<script>alert(1)</script>"));
         assert!(shell.contains("<title>Crow App</title>"), "a page with no title of its own");
+        // the mobile theme comes after the runtime's own rules, which it
+        // sizes for a phone, and before the app's stylesheet
+        let (live, mobile) = (shell.find(".crow-notice{").unwrap_or(usize::MAX), shell.find(crow_runtime::layout::mobile_css()).unwrap_or(0));
+        assert!(live < mobile, "the mobile theme after the runtime's rules");
+        assert!(shell.contains("viewport-fit=cover"), "the page reaches the screen's edges and pads itself by the safe area");
     }
 
     /// A page's shell carries the head its first render placed: its title

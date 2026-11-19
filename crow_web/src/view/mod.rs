@@ -22,6 +22,10 @@
 
 use std::collections::HashMap;
 
+/// A view as what it says: the one builder, the HTML renderer and the
+/// tree as data (one-view-design.md 3.1).
+pub mod tree;
+
 /// A view component definition.
 #[derive(Debug, Clone)]
 pub struct CrowComponent {
@@ -70,6 +74,98 @@ pub enum CrowVNode {
         attrs: HashMap<String, String>,
         children: Vec<CrowVNode>,
     },
+    /// A node that is the same as last render's: the nodes a kept view's
+    /// subtree made (live/views.rs), shared rather than made again. It is
+    /// the node it holds in every way the page sees; a diff that finds the
+    /// same one on both sides has nothing to look at inside.
+    #[serde(untagged)]
+    Shared(Shared),
+}
+
+/// A shared node, with its markup written once.
+#[derive(Debug, Clone)]
+pub struct Shared(pub std::sync::Arc<SharedNode>);
+
+#[derive(Debug)]
+pub struct SharedNode {
+    pub node: CrowVNode,
+    html: std::sync::OnceLock<String>,
+    /// it as the page's nodes read back (`whole`'s texts as written), made
+    /// once, so the page's tree shares it render after render
+    written: std::sync::OnceLock<Shared>,
+    /// whether it reads back as written where it stands, by the place
+    fits: std::sync::Mutex<Vec<(String, bool)>>,
+}
+
+impl Shared {
+    pub fn new(node: CrowVNode) -> Shared {
+        // (a shared node holds no shared node of its own at its top)
+        let node = match node {
+            CrowVNode::Shared(s) => return s,
+            n => n,
+        };
+        Shared(std::sync::Arc::new(SharedNode { node, html: std::sync::OnceLock::new(), written: std::sync::OnceLock::new(), fits: std::sync::Mutex::new(Vec::new()) }))
+    }
+
+    /// Its form as written (`whole`), made the first time.
+    fn written(&self, make: impl FnOnce(CrowVNode) -> CrowVNode) -> Shared {
+        self.0.written.get_or_init(|| Shared::new(make(self.0.node.clone()))).clone()
+    }
+
+    /// Whether it reads back as written in a place (`place` names what of
+    /// the place decides it), asked once per place.
+    fn fits_in(&self, place: &str, check: impl FnOnce() -> bool) -> bool {
+        if let Some(&(_, ok)) = self.0.fits.lock().unwrap_or_else(|p| p.into_inner()).iter().find(|(k, _)| k == place) {
+            return ok;
+        }
+        let ok = check();
+        self.0.fits.lock().unwrap_or_else(|p| p.into_inner()).push((place.to_string(), ok));
+        ok
+    }
+
+    pub fn node(&self) -> &CrowVNode {
+        &self.0.node
+    }
+
+    /// Its markup, written the first time it is asked for.
+    pub fn html(&self) -> &str {
+        self.0.html.get_or_init(|| self.0.node.to_html())
+    }
+
+    pub fn same(&self, other: &Shared) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl CrowVNode {
+    /// The node itself: a shared node's own.
+    pub fn plain(&self) -> &CrowVNode {
+        match self {
+            CrowVNode::Shared(s) => s.node(),
+            other => other,
+        }
+    }
+
+    /// The node a change's path names, counted from the page's root
+    /// element (`[0]`), as `changes` counts it.
+    pub fn node_at(&self, path: &[usize]) -> Option<&CrowVNode> {
+        let (first, rest) = path.split_first()?;
+        if *first != 0 {
+            return None;
+        }
+        let mut node = self.plain();
+        for i in rest {
+            let CrowVNode::Element { children, .. } = node else { return None };
+            node = children.get(*i)?.plain();
+        }
+        Some(node)
+    }
+}
+
+impl serde::Serialize for Shared {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.0.node.serialize(s)
+    }
 }
 
 impl CrowVNode {
@@ -105,57 +201,6 @@ impl CrowVNode {
             attrs.insert(key.to_string(), value.to_string());
         }
         self
-    }
-
-    /// The element's children, given after its attributes: where a child
-    /// moves a value an attribute reads, the attributes are computed first,
-    /// in the order the program wrote them (the emitter's `tree`).
-    pub fn with_children(mut self, given: Vec<CrowVNode>) -> Self {
-        if let CrowVNode::Element { ref mut children, .. } = self {
-            *children = given;
-        }
-        self
-    }
-
-    /// A class computed as the page renders, joined to the element's own
-    /// as the layout table joins them (crow_runtime::layout::render): each
-    /// class once, single spaces, an empty one adding nothing.
-    pub fn with_class(mut self, value: &str) -> Self {
-        if let CrowVNode::Element { ref mut attrs, .. } = self {
-            let mut classes: Vec<String> = attrs.get("class").map(|c| c.split_whitespace().map(str::to_string).collect()).unwrap_or_default();
-            classes.extend(value.split_whitespace().map(str::to_string));
-            if classes.is_empty() {
-                attrs.remove("class");
-            } else {
-                attrs.insert("class".to_string(), classes.join(" "));
-            }
-        }
-        self
-    }
-
-    /// The element's layout attributes where one of them is computed as the
-    /// page renders (`width = '`px`px'`): every one of them through the
-    /// layout table at once, as the interpreter renders them (the compiled
-    /// page had written a computed width as an attribute the browser
-    /// ignores). A value the table refuses is the render's stop, in the
-    /// interpreter's words.
-    pub fn with_layout(mut self, element: &str, layout: &[(String, String)]) -> Result<Self, String> {
-        let r = crow_runtime::layout::render(element, layout);
-        if let Some(e) = r.errors.first() {
-            return Err(format!("{}: {}", element, e));
-        }
-        if let CrowVNode::Element { ref mut attrs, .. } = self {
-            if !r.class.is_empty() {
-                attrs.insert("class".to_string(), r.class);
-            }
-            if !r.style.is_empty() {
-                attrs.insert("style".to_string(), r.style);
-            }
-            for (k, v) in r.data.into_iter().chain(r.passthrough) {
-                attrs.insert(k, v);
-            }
-        }
-        Ok(self)
     }
 
     /// `confirm = 'text'`: the click asks first. The element offers the
@@ -217,24 +262,15 @@ impl CrowVNode {
     pub fn span(children: Vec<CrowVNode>) -> Self { Self::tag("span", children) }
     pub fn p(children: Vec<CrowVNode>) -> Self { Self::tag("p", children) }
     pub fn h1(children: Vec<CrowVNode>) -> Self { Self::tag("h1", children) }
-    pub fn h2(children: Vec<CrowVNode>) -> Self { Self::tag("h2", children) }
-    pub fn h3(children: Vec<CrowVNode>) -> Self { Self::tag("h3", children) }
     pub fn h4(children: Vec<CrowVNode>) -> Self { Self::tag("h4", children) }
     pub fn h5(children: Vec<CrowVNode>) -> Self { Self::tag("h5", children) }
     pub fn h6(children: Vec<CrowVNode>) -> Self { Self::tag("h6", children) }
     pub fn button(children: Vec<CrowVNode>) -> Self { Self::tag("button", children) }
-    pub fn ul(children: Vec<CrowVNode>) -> Self { Self::tag("ul", children) }
     pub fn ol(children: Vec<CrowVNode>) -> Self { Self::tag("ol", children) }
     pub fn li(children: Vec<CrowVNode>) -> Self { Self::tag("li", children) }
     pub fn form(children: Vec<CrowVNode>) -> Self { Self::tag("form", children) }
     pub fn input() -> Self { Self::el("input", HashMap::new(), vec![]) }
-    pub fn img() -> Self { Self::el("img", HashMap::new(), vec![]) }
     pub fn a(children: Vec<CrowVNode>) -> Self { Self::tag("a", children) }
-    pub fn nav(children: Vec<CrowVNode>) -> Self { Self::tag("nav", children) }
-    pub fn header(children: Vec<CrowVNode>) -> Self { Self::tag("header", children) }
-    pub fn footer(children: Vec<CrowVNode>) -> Self { Self::tag("footer", children) }
-    pub fn main_el(children: Vec<CrowVNode>) -> Self { Self::tag("main", children) }
-    pub fn section(children: Vec<CrowVNode>) -> Self { Self::tag("section", children) }
     pub fn table(children: Vec<CrowVNode>) -> Self { Self::tag("table", children) }
     pub fn tr(children: Vec<CrowVNode>) -> Self { Self::tag("tr", children) }
     pub fn td(children: Vec<CrowVNode>) -> Self { Self::tag("td", children) }
@@ -247,49 +283,9 @@ impl CrowVNode {
     pub fn label(children: Vec<CrowVNode>) -> Self { Self::tag("label", children) }
     pub fn pre(children: Vec<CrowVNode>) -> Self { Self::tag("pre", children) }
     pub fn code(children: Vec<CrowVNode>) -> Self { Self::tag("code", children) }
-    pub fn details(children: Vec<CrowVNode>) -> Self { Self::tag("details", children) }
-    pub fn summary(children: Vec<CrowVNode>) -> Self { Self::tag("summary", children) }
-    pub fn hr() -> Self { Self::el("hr", HashMap::new(), vec![]) }
     /// A page's title and its metas: a served page carries them in its head
     /// (`split_head`).
     pub fn title(children: Vec<CrowVNode>) -> Self { Self::tag("title", children) }
-    pub fn meta() -> Self { Self::el("meta", HashMap::new(), vec![]) }
-
-    /// `open = expr` at render time: a real `open` attribute on details, a
-    /// data attribute on the layers — the same rule the kernel applies to
-    /// literals.
-    pub fn open_attr(self, open: bool) -> Self {
-        let is_details = matches!(&self, CrowVNode::Element { tag, .. } if tag == "details");
-        if is_details {
-            if open { self.attr("open", "") } else { self }
-        } else {
-            self.attr("data-open", if open { "true" } else { "false" })
-        }
-    }
-
-    /// `nav[..., active = path]`: the link whose href is the active path
-    /// gets aria-current="page".
-    pub fn mark_active(mut self, active: &str) -> Self {
-        if active.is_empty() { return self; }
-        fn walk(node: &mut CrowVNode, active: &str) {
-            if let CrowVNode::Element { tag, attrs, children } = node {
-                if tag == "a" && attrs.get("href").map(|h| h == active).unwrap_or(false) {
-                    attrs.insert("aria-current".to_string(), "page".to_string());
-                }
-                for c in children.iter_mut() { walk(c, active); }
-            }
-        }
-        walk(&mut self, active);
-        self
-    }
-
-    /// `icon[name, size, color]`, from the kernel's closed set.
-    pub fn icon(name: &str, size: &str, color: &str) -> Self {
-        match crow_runtime::layout::icon_html(name, size, color) {
-            Ok(svg) => CrowVNode::Raw(svg),
-            Err(e) => CrowVNode::text(&format!("error: {}", e)),
-        }
-    }
 
     /// `progress[value, max]`.
     pub fn progress(value: f64, max: f64) -> Self {
@@ -381,6 +377,7 @@ impl CrowVNode {
         match self {
             CrowVNode::Text(s) => escape_text(s),
             CrowVNode::Raw(s) => s.clone(),
+            CrowVNode::Shared(s) => s.html().to_string(),
             CrowVNode::Element {
                 tag,
                 attrs,
@@ -590,7 +587,7 @@ const VOID: &[&str] = crow_runtime::layout::VOID;
 const RAW_TEXT: &[&str] = &["script", "style", "xmp", "iframe", "noembed", "noframes", "noscript", "textarea", "title"];
 
 /// Elements whose first newline the browser drops (and so a writer doubles).
-const DROPS_NEWLINE: &[&str] = &["pre", "listing", "textarea"];
+pub(crate) const DROPS_NEWLINE: &[&str] = &["pre", "listing", "textarea"];
 
 /// Starting one of these closes an open `<p>`.
 const CLOSES_P: &[&str] = &[
@@ -1183,6 +1180,302 @@ fn unread_reference(value: &str) -> Option<String> {
     None
 }
 
+/// Elements a tree may hold as they are and still be the page the browser
+/// builds from its markup, read with no repair; any other (a raw-text
+/// element but `textarea`, a list the browser reads its own way) is read
+/// back. A table's parts are taken where each stands in its own place, and
+/// a drawing (`svg`) of elements and text that stay in it.
+const AS_WRITTEN: &[&str] = &[
+    "a", "abbr", "article", "aside", "b", "button", "code", "details", "div", "em", "footer", "form", "h1", "h2", "h3", "h4",
+    "h5", "h6", "header", "hr", "i", "img", "input", "label", "li", "main", "nav", "ol", "option", "p", "pre", "progress",
+    "section", "select", "small", "span", "strong", "summary", "textarea", "ul", "table", "thead", "tbody", "tfoot", "tr", "th",
+    "td", "svg",
+];
+
+/// Inside a drawing, the elements that end it (`BREAKS_OUT`) or that hold
+/// the page's own markup again, and the page's void elements, are read
+/// otherwise; every other element stays the drawing's, as written.
+fn stays_drawn(tag: &str) -> bool {
+    let lower = tag.to_ascii_lowercase();
+    !tag.is_empty()
+        && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && !BREAKS_OUT.contains(&lower.as_str())
+        && !VOID.contains(&lower.as_str())
+        // (the writer reads these by name wherever they stand: their text as
+        // it stands, a first newline doubled)
+        && !RAW_TEXT.contains(&lower.as_str())
+        && !DROPS_NEWLINE.contains(&lower.as_str())
+        && !matches!(lower.as_str(), "foreignobject" | "desc" | "title" | "font" | "svg" | "math" | "script" | "style")
+}
+
+/// The tree as the browser builds it from its markup, when that is the
+/// tree itself (`as_built` reads the markup back otherwise): one element
+/// at the top; every element one the reading takes as written, under a
+/// parent it closes nothing of (no block inside a `p`, no heading in a
+/// heading, an `li` in a list, no `a`, `button` or `form` inside another,
+/// a `select` of options, an `option` of text, a void element and a
+/// `textarea` of no element; a table of heads, bodies and feet, each of
+/// rows, each row of cells, none with text between); attribute names in
+/// lower case (as written in a drawing); no text empty or beside another.
+/// Text holding `&`, `<` or `>` is the markup it is written as, as the
+/// reading keeps it (a `Raw` the browser reads); markup that is text as
+/// written (an entity, no tag) is taken as that text.
+fn whole(node: CrowVNode) -> Result<CrowVNode, CrowVNode> {
+    fn name_ok(k: &str, drawn: bool) -> bool {
+        !k.is_empty() && k.chars().all(|c| (c.is_ascii_lowercase() || (drawn && c.is_ascii_uppercase())) || c.is_ascii_digit() || c == '-' || c == '_' || c == ':')
+    }
+    /// The children of an element as written, one after another: text
+    /// never beside text, and each element in its place.
+    fn kids_fit(t: &str, children: &[CrowVNode], open: &mut Vec<String>, drawn: bool) -> bool {
+        // a table's parts hold elements only (text there is moved out)
+        let table_part = !drawn && matches!(t, "table" | "thead" | "tbody" | "tfoot" | "tr");
+        let leaf = !drawn && (VOID.contains(&t) || matches!(t, "textarea" | "option"));
+        let mut last_text = false;
+        for c in children {
+            match c {
+                CrowVNode::Text(s) => {
+                    if s.is_empty() || last_text || (!drawn && VOID.contains(&t)) || table_part {
+                        return false;
+                    }
+                    last_text = true;
+                }
+                // text written with an entity in it, read back as written
+                CrowVNode::Raw(s) if s.contains('&') && !s.contains('<') => {
+                    if last_text || (!drawn && VOID.contains(&t)) || table_part {
+                        return false;
+                    }
+                    last_text = true;
+                }
+                CrowVNode::Element { .. } if !leaf => {
+                    last_text = false;
+                    open.push(t.to_string());
+                    let ok = fits(c, open, drawn);
+                    open.pop();
+                    if !ok {
+                        return false;
+                    }
+                }
+                // a shared element (always an element): asked once for
+                // each kind of place — what of its ancestors the rules read
+                CrowVNode::Shared(sh) if !leaf => {
+                    last_text = false;
+                    let has = |x: &str| open.iter().any(|o| o == x) || t == x;
+                    let place = format!("{}|{}|{}{}{}{}", t, drawn, has("p"), has("a"), has("button"), has("form"));
+                    let ok = sh.fits_in(&place, || {
+                        open.push(t.to_string());
+                        let ok = fits(sh.node(), open, drawn);
+                        open.pop();
+                        ok
+                    });
+                    if !ok {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+    fn fits(node: &CrowVNode, open: &mut Vec<String>, drawn: bool) -> bool {
+        let CrowVNode::Element { tag, attrs, children } = node else { return false };
+        let t = tag.as_str();
+        if drawn {
+            // inside a drawing: an element that stays in it, as written
+            return stays_drawn(t) && attrs.keys().all(|k| name_ok(k, true)) && kids_fit(t, children, open, true);
+        }
+        let parent = open.last().map(String::as_str);
+        if t == "svg" {
+            // a drawing opens where a phrase may stand, not in a table's parts
+            return !matches!(parent, Some("table" | "thead" | "tbody" | "tfoot" | "tr" | "select" | "option"))
+                && attrs.keys().all(|k| name_ok(k, true))
+                && kids_fit(t, children, open, true);
+        }
+        if !AS_WRITTEN.contains(&t) || !attrs.keys().all(|k| name_ok(k, false)) {
+            return false;
+        }
+        if open.iter().any(|o| o == "p") && CLOSES_P.contains(&t) {
+            return false;
+        }
+        if matches!(t, "a" | "button" | "form") && open.iter().any(|o| o == t) {
+            return false;
+        }
+        if t.len() == 2 && t.starts_with('h') && matches!(parent, Some(p) if p.len() == 2 && p.starts_with('h') && p != "hr") {
+            return false;
+        }
+        if t == "li" && !matches!(parent, Some("ul" | "ol")) {
+            return false;
+        }
+        if parent == Some("select") && t != "option" {
+            return false;
+        }
+        if t == "option" && parent != Some("select") {
+            return false;
+        }
+        // each part of a table in its own place, and nothing else there
+        let in_place = match t {
+            "thead" | "tbody" | "tfoot" => parent == Some("table"),
+            "tr" => matches!(parent, Some("thead" | "tbody" | "tfoot")),
+            "th" | "td" => parent == Some("tr"),
+            _ => !matches!(parent, Some("table" | "thead" | "tbody" | "tfoot" | "tr")),
+        };
+        in_place && kids_fit(t, children, open, false)
+    }
+    fn texts_as_written(node: CrowVNode) -> CrowVNode {
+        match node {
+            CrowVNode::Element { tag, attrs, children } => CrowVNode::Element {
+                tag,
+                attrs,
+                children: children
+                    .into_iter()
+                    .map(|c| match c {
+                        CrowVNode::Text(s) if s.contains(['&', '<', '>']) => CrowVNode::Raw(escape_text(&s)),
+                        CrowVNode::Shared(sh) => CrowVNode::Shared(sh.written(texts_as_written)),
+                        other => texts_as_written(other),
+                    })
+                    .collect(),
+            },
+            other => other,
+        }
+    }
+    if fits(&node, &mut Vec::new(), false) { Ok(texts_as_written(node)) } else { Err(node) }
+}
+
+#[cfg(test)]
+mod whole_tests {
+    use super::*;
+
+    /// Two trees alike node for node: a text as a text, markup as markup.
+    fn same(a: &CrowVNode, b: &CrowVNode) -> bool {
+        match (a, b) {
+            (CrowVNode::Text(x), CrowVNode::Text(y)) | (CrowVNode::Raw(x), CrowVNode::Raw(y)) => x == y,
+            (CrowVNode::Element { tag: t, attrs: a, children: c }, CrowVNode::Element { tag: u, attrs: b, children: d }) => {
+                t == u && a == b && c.len() == d.len() && c.iter().zip(d).all(|(x, y)| same(x, y))
+            }
+            _ => false,
+        }
+    }
+
+    /// A tree taken as built where it is whole is the tree its markup
+    /// reads back as, for every tree of thousands made at random from the
+    /// tags the reading takes as written, those it does not, tables of
+    /// heads, bodies, rows and cells, drawings, and texts with entities,
+    /// newlines and markup's characters in them — as text, and as markup
+    /// that is text as written.
+    #[test]
+    fn a_whole_tree_is_the_tree_its_markup_reads_back_as() {
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = move |n: usize| -> usize {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        const TAGS: &[&str] = &[
+            "div", "span", "p", "button", "a", "form", "ul", "li", "h2", "h3", "label", "input", "img", "hr", "pre", "textarea",
+            "select", "option", "details", "summary", "nav", "section", "table", "tr", "td", "br", "svg", "b", "progress", "Div",
+            "thead", "tbody", "th", "path", "g",
+        ];
+        const DRAWN: &[&str] = &["g", "path", "rect", "text", "line", "linearGradient", "div", "title", "textarea", "br", "circle"];
+        const TEXTS: &[&str] = &["x", "a < b", "P&L", "\nlead", " ", "&amp;", "q\"t", "1 > 0", "\n"];
+        const MARKUP: &[&str] = &["a &amp; b", "&quot;q&quot;", "x<b>y</b>", "plain", "&lt;t&gt;", "\n&amp;"];
+        fn leaf(next: &mut dyn FnMut(usize) -> usize) -> CrowVNode {
+            match next(4) {
+                0 => CrowVNode::Raw(MARKUP[next(MARKUP.len())].to_string()),
+                _ => CrowVNode::Text(TEXTS[next(TEXTS.len())].to_string()),
+            }
+        }
+        fn attrs(next: &mut dyn FnMut(usize) -> usize, drawn: bool) -> HashMap<String, String> {
+            let mut attrs = HashMap::new();
+            for _ in 0..next(3) {
+                let k = if drawn { ["class", "viewBox", "stroke-width", "d", "Title", "data-crow-click"][next(6)] } else { ["class", "data-crow-click", "href", "aria-label", "Title", "value"][next(6)] };
+                let v = ["a b", "x&y", "\"q\"", "", "<t>", "&#39;"][next(6)];
+                attrs.insert(k.to_string(), v.to_string());
+            }
+            attrs
+        }
+        fn drawing(depth: usize, next: &mut dyn FnMut(usize) -> usize) -> CrowVNode {
+            let mut children = Vec::new();
+            if depth > 0 {
+                for _ in 0..next(4) {
+                    children.push(if next(3) == 0 { leaf(next) } else { drawing(depth - 1, next) });
+                }
+            }
+            CrowVNode::Element { tag: DRAWN[next(DRAWN.len())].to_string(), attrs: attrs(next, true), children }
+        }
+        fn table(depth: usize, next: &mut dyn FnMut(usize) -> usize) -> CrowVNode {
+            let el = |tag: &str, attrs: HashMap<String, String>, children: Vec<CrowVNode>| CrowVNode::Element { tag: tag.to_string(), attrs, children };
+            let mut parts = Vec::new();
+            for _ in 0..next(3) + 1 {
+                let mut rows = Vec::new();
+                for _ in 0..next(3) {
+                    let mut cells = Vec::new();
+                    for _ in 0..next(3) {
+                        let mut kids = Vec::new();
+                        for _ in 0..next(3) {
+                            kids.push(if next(2) == 0 { leaf(next) } else { tree(depth.saturating_sub(1), next) });
+                        }
+                        cells.push(el(["td", "th"][next(2)], attrs(next, false), kids));
+                    }
+                    // (now and then something out of its place)
+                    if next(12) == 0 {
+                        cells.push(leaf(next));
+                    }
+                    rows.push(el("tr", attrs(next, false), cells));
+                }
+                if next(12) == 0 {
+                    rows.push(tree(0, next));
+                }
+                parts.push(el(["thead", "tbody", "tfoot", "tr"][next(4)], HashMap::new(), rows));
+            }
+            el("table", attrs(next, false), parts)
+        }
+        fn tree(depth: usize, next: &mut dyn FnMut(usize) -> usize) -> CrowVNode {
+            if depth > 0 && next(8) == 0 {
+                return table(depth - 1, next);
+            }
+            if depth > 0 && next(8) == 0 {
+                let mut children = Vec::new();
+                for _ in 0..next(4) {
+                    children.push(if next(4) == 0 { leaf(next) } else { drawing(depth - 1, next) });
+                }
+                return CrowVNode::Element { tag: "svg".to_string(), attrs: attrs(next, true), children };
+            }
+            let tag = TAGS[next(TAGS.len())];
+            let mut children = Vec::new();
+            if depth > 0 {
+                for _ in 0..next(4) {
+                    children.push(if next(3) == 0 { leaf(next) } else { tree(depth - 1, next) });
+                }
+            }
+            CrowVNode::Element { tag: tag.to_string(), attrs: attrs(next, false), children }
+        }
+        fn holds(n: &CrowVNode, tag: &str) -> bool {
+            match n {
+                CrowVNode::Element { tag: t, children, .. } => t == tag || children.iter().any(|c| holds(c, tag)),
+                _ => false,
+            }
+        }
+        let (mut taken, mut tables, mut drawings) = (0, 0, 0);
+        for _ in 0..40_000 {
+            let t = tree(4, &mut next);
+            let html = t.to_html();
+            let (has_table, has_svg) = (holds(&t, "tbody") || holds(&t, "thead"), holds(&t, "svg"));
+            if let Ok(built) = whole(t) {
+                taken += 1;
+                tables += usize::from(has_table);
+                drawings += usize::from(has_svg);
+                let (mut read, repaired) = read_markup(&html);
+                assert!(repaired.is_none() && read.len() == 1, "{} was taken whole, and the reading repairs it", html);
+                let read = read.pop().unwrap();
+                assert!(same(&built, &read), "{}: taken as {:?}, read as {:?}", html, built, read);
+            }
+        }
+        // (the test means something only if many trees are whole, tables
+        // and drawings among them)
+        assert!(taken > 2_000 && tables > 200 && drawings > 200, "only {} trees were whole ({} with a table, {} with a drawing)", taken, tables, drawings);
+    }
+}
+
 impl CrowVNode {
     /// The page as a browser builds it from this node's markup: pre-built
     /// markup read into nodes, and every quirk of the reading applied — the
@@ -1190,7 +1483,12 @@ impl CrowVNode {
     /// repair, or more than one node at the top, stays markup: that page is
     /// sent whole.
     pub fn as_built(self) -> CrowVNode {
-        let html = self.to_html();
+        // a tree its markup reads back as is that tree: nothing to read
+        let node = match whole(self) {
+            Ok(built) => return built,
+            Err(node) => node,
+        };
+        let html = node.to_html();
         let (mut nodes, repaired) = read_markup(&html);
         if let Some(why) = repaired {
             note_repaired(&why);
@@ -1211,6 +1509,13 @@ impl CrowVNode {
     /// so a page whose shape has drifted knows it.
     pub fn changes(old: &CrowVNode, new: &CrowVNode) -> Vec<serde_json::Value> {
         fn walk(old: &CrowVNode, new: &CrowVNode, path: &mut Vec<usize>, within: &str, out: &mut Vec<serde_json::Value>) {
+            // the same shared node on both sides: nothing inside it moved
+            if let (CrowVNode::Shared(a), CrowVNode::Shared(b)) = (old, new)
+                && a.same(b)
+            {
+                return;
+            }
+            let (old, new) = (old.plain(), new.plain());
             let place = |mut op: serde_json::Value| {
                 if !within.is_empty() {
                     op["in"] = serde_json::json!(within);
@@ -1235,10 +1540,20 @@ impl CrowVNode {
                     // children matched by id, the rest by position, as the
                     // page's morph matches them; each change's index is where
                     // the child is when the page applies it, in order
-                    let key = |c: &CrowVNode| match c {
+                    let key = |c: &CrowVNode| match c.plain() {
                         CrowVNode::Element { attrs, .. } => attrs.get("id").cloned(),
                         _ => None,
                     };
+                    // children keyed by `key` (an element's `key = …`) move
+                    // where they are wanted, each its own node still
+                    let keyed = |c: &CrowVNode| match c.plain() {
+                        CrowVNode::Element { attrs, .. } => attrs.contains_key("key"),
+                        _ => false,
+                    };
+                    if c1.iter().any(keyed) || c2.iter().any(keyed) {
+                        keyed_children(c1, c2, t2, path, out, walk);
+                        return;
+                    }
                     let old_at: HashMap<String, usize> = c1.iter().enumerate().filter_map(|(i, c)| key(c).map(|k| (k, i))).collect();
                     let new_at: HashMap<String, usize> = c2.iter().enumerate().filter_map(|(j, c)| key(c).map(|k| (k, j))).collect();
                     let (mut i, mut j, mut at) = (0, 0, 0);
@@ -1291,6 +1606,77 @@ impl CrowVNode {
                 _ => out.push(place(serde_json::json!({ "op": "replace", "path": path, "html": new.to_html() }))),
             }
         }
+        /// Children some of which are keyed (`key`, or `id`): each keyed
+        /// child the new render holds is the old one of its key, moved to
+        /// where it is wanted when it is elsewhere; an unkeyed child matches
+        /// the unkeyed one in its place; the rest come and go. The moves are
+        /// as few as walking the new order makes them: a child already next
+        /// stays.
+        fn keyed_children(
+            c1: &[CrowVNode],
+            c2: &[CrowVNode],
+            tag: &str,
+            path: &mut Vec<usize>,
+            out: &mut Vec<serde_json::Value>,
+            walk: fn(&CrowVNode, &CrowVNode, &mut Vec<usize>, &str, &mut Vec<serde_json::Value>),
+        ) {
+            let key = |c: &CrowVNode| match c.plain() {
+                CrowVNode::Element { attrs, .. } => attrs.get("key").map(|k| format!("k:{}", k)).or_else(|| attrs.get("id").map(|k| format!("#{}", k))),
+                _ => None,
+            };
+            let mut old_at: HashMap<String, usize> = HashMap::new();
+            for (i, c) in c1.iter().enumerate() {
+                if let Some(k) = key(c) {
+                    old_at.entry(k).or_insert(i);
+                }
+            }
+            let wanted: std::collections::HashSet<String> = c2.iter().filter_map(&key).collect();
+            // the old children still in the page after the place reached, in
+            // the page's order
+            let mut dom: Vec<usize> = (0..c1.len()).collect();
+            let mut taken = vec![false; c1.len()];
+            let mut at = 0usize;
+            for c in c2 {
+                // a keyed child the new render dropped goes now
+                while let Some(&o) = dom.first() {
+                    match key(&c1[o]) {
+                        Some(k) if !wanted.contains(&k) || old_at.get(&k) != Some(&o) => {
+                            out.push(serde_json::json!({ "op": "remove", "path": path, "tag": tag, "index": at }));
+                            dom.remove(0);
+                        }
+                        _ => break,
+                    }
+                }
+                let found = key(c).and_then(|k| old_at.get(&k).copied()).filter(|&o| !taken[o]);
+                match (key(c), found) {
+                    (Some(_), Some(o)) => {
+                        let p = dom.iter().position(|&x| x == o).unwrap_or(0);
+                        if p != 0 {
+                            out.push(serde_json::json!({ "op": "move", "path": path, "tag": tag, "from": at + p, "index": at }));
+                        }
+                        dom.remove(p);
+                        taken[o] = true;
+                        path.push(at);
+                        walk(&c1[o], c, path, tag, out);
+                        path.pop();
+                    }
+                    (None, _) if dom.first().is_some_and(|&o| key(&c1[o]).is_none()) => {
+                        let o = dom.remove(0);
+                        taken[o] = true;
+                        path.push(at);
+                        walk(&c1[o], c, path, tag, out);
+                        path.pop();
+                    }
+                    _ => {
+                        out.push(serde_json::json!({ "op": "insert", "path": path, "tag": tag, "index": at, "html": c.to_html() }));
+                    }
+                }
+                at += 1;
+            }
+            for _ in dom {
+                out.push(serde_json::json!({ "op": "remove", "path": path, "tag": tag, "index": at }));
+            }
+        }
         let mut out = Vec::new();
         walk(old, new, &mut vec![0], "", &mut out);
         out
@@ -1304,6 +1690,16 @@ impl CrowVNode {
         fn first(html: &str) -> Result<CrowVNode, String> {
             parse_markup(html).into_iter().next().ok_or_else(|| format!("no node in '{}'", html))
         }
+        // (a page this changes holds no shared node: each is its own)
+        fn own(n: &mut CrowVNode) {
+            if let CrowVNode::Shared(sh) = n {
+                *n = sh.node().clone();
+            }
+            if let CrowVNode::Element { children, .. } = n {
+                children.iter_mut().for_each(own);
+            }
+        }
+        own(self);
         for c in changes {
             let path: Vec<usize> = c["path"].as_array().map(|p| p.iter().filter_map(|i| i.as_u64().map(|i| i as usize)).collect()).unwrap_or_default();
             if path.first() != Some(&0) {
@@ -1332,6 +1728,8 @@ impl CrowVNode {
             }
             match (c["op"].as_str().unwrap_or(""), node) {
                 ("text", CrowVNode::Text(t)) => *t = c["text"].as_str().unwrap_or("").to_string(),
+                // a text written with an escape is a text node in the page
+                ("text", node @ CrowVNode::Raw(_)) if matches!(&*node, CrowVNode::Raw(w) if unescape_text(w).is_some()) => *node = CrowVNode::Text(c["text"].as_str().unwrap_or("").to_string()),
                 ("attrs", CrowVNode::Element { attrs, .. }) => {
                     for (k, v) in c["set"].as_object().into_iter().flatten() {
                         attrs.insert(k.clone(), v.as_str().unwrap_or("").to_string());
@@ -1352,6 +1750,16 @@ impl CrowVNode {
                     }
                     children.remove(at);
                 }
+                // a keyed child moved to where the new render wants it
+                ("move", CrowVNode::Element { children, .. }) => {
+                    let from = c["from"].as_u64().unwrap_or(0) as usize;
+                    let to = c["index"].as_u64().unwrap_or(0) as usize;
+                    if from >= children.len() || to > from {
+                        return Err(format!("no child {} to move to {}: {}", from, to, c));
+                    }
+                    let moved = children.remove(from);
+                    children.insert(to, moved);
+                }
                 (op, _) => return Err(format!("'{}' does not fit the node at {:?}", op, path)),
             }
         }
@@ -1359,73 +1767,6 @@ impl CrowVNode {
     }
 }
 
-/// A child that is a list contributes each item: rendered markup passes
-/// through, anything else is text. The one rule for every list a view can
-/// hold — strings, numbers, or the nodes a `for` over a view produced.
-pub trait ChildList {
-    fn into_nodes(&self) -> Vec<CrowVNode>;
-}
-impl ChildList for Vec<CrowVNode> {
-    fn into_nodes(&self) -> Vec<CrowVNode> { self.clone() }
-}
-impl ChildList for Vec<String> {
-    /// a list of strings is text, whatever the strings hold
-    fn into_nodes(&self) -> Vec<CrowVNode> { self.iter().map(|s| CrowVNode::text(s)).collect() }
-}
-impl ChildList for Vec<i64> {
-    fn into_nodes(&self) -> Vec<CrowVNode> { self.iter().map(|n| CrowVNode::text(&n.to_string())).collect() }
-}
-impl ChildList for Vec<f64> {
-    fn into_nodes(&self) -> Vec<CrowVNode> { self.iter().map(|n| CrowVNode::text(&n.to_string())).collect() }
-}
-impl ChildList for Vec<bool> {
-    fn into_nodes(&self) -> Vec<CrowVNode> { self.iter().map(|b| CrowVNode::text(&b.to_string())).collect() }
-}
-impl<T: ChildList + ?Sized> ChildList for &T {
-    fn into_nodes(&self) -> Vec<CrowVNode> { (**self).into_nodes() }
-}
-
-/// The nodes a frame's column contributes as a child: each cell, as a
-/// list's items do — its text as `log` writes it, a missing cell as a
-/// failed value shows in a view (the interpreter had drawn it as 0, and
-/// the compiled page the whole column as one text).
-pub fn column_children(c: &crow_runtime::frame::CrowColumn) -> Vec<CrowVNode> {
-    use crow_runtime::display::CrowDisplay;
-    use crow_runtime::frame::Column;
-    (0..c.len())
-        .map(|i| {
-            if !c.valid[i] {
-                return CrowVNode::failed("missing");
-            }
-            CrowVNode::text(&match c.data.as_ref() {
-                Column::Int(v) => v[i].crow_fmt(),
-                Column::Float(v) => v[i].crow_fmt(),
-                Column::Str(v) => v[i].to_string(),
-                Column::Bool(v) => v[i].crow_fmt(),
-                Column::DateTime(..) | Column::Vectors(..) => c.data.fmt_cell(i, true),
-            })
-        })
-        .collect()
-}
-
-/// The nodes a list child contributes.
-pub fn children_of<T: ChildList + ?Sized>(list: &T) -> Vec<CrowVNode> {
-    list.into_nodes()
-}
-
-/// A list of markup (views, elements, `doc`'s markup rendered to strings)
-/// placed as markup — the one list whose strings are not text.
-pub fn markup_children(list: &[String]) -> Vec<CrowVNode> {
-    list.iter().map(|s| CrowVNode::Raw(s.clone())).collect()
-}
-
-impl CrowVNode {
-    /// A boolean attribute (`disabled = starting`): present when true,
-    /// absent when false — the browser reads presence, not the word.
-    pub fn bool_attr(self, name: &str, on: bool) -> Self {
-        if on { self.attr(name, "") } else { self }
-    }
-}
 
 /// A number as an attribute value: whole numbers without a trailing `.0`.
 fn fmt_num(v: f64) -> String {
@@ -1474,6 +1815,12 @@ impl CrowVNode {
         let body = strip_head(self, &mut head).unwrap_or_else(|| CrowVNode::text(""));
         (body, head)
     }
+
+    /// `split_head` into a head already begun: `None` for a node that is
+    /// itself a head element.
+    pub(crate) fn split_into(self, head: &mut Head) -> Option<CrowVNode> {
+        strip_head(self, head)
+    }
 }
 
 /// A node without the head elements under it, which land in `head`: `None`
@@ -1515,7 +1862,7 @@ fn strip_tree(node: CrowVNode, head: &mut Head) -> Option<CrowVNode> {
 }
 
 /// The text a node's children hold, their tags left out.
-fn text_of(children: &[CrowVNode]) -> String {
+pub(crate) fn text_of(children: &[CrowVNode]) -> String {
     children
         .iter()
         .map(|c| match c {
@@ -1524,6 +1871,7 @@ fn text_of(children: &[CrowVNode]) -> String {
             // a title's text is read as it stands, as a browser reads it:
             // its entities decoded, no tags in it
             CrowVNode::Raw(html) => unescape_markup(html),
+            CrowVNode::Shared(s) => text_of(std::slice::from_ref(s.node())),
         })
         .collect()
 }
@@ -1543,6 +1891,16 @@ impl crow_runtime::display::CrowDisplay for CrowVNode {
 /// not: crow check --self's views family).
 pub fn escape_text(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// The text `escape_text` wrote as `written`, when it is that: none for
+/// markup that holds a tag or an escape of another kind.
+pub(crate) fn unescape_text(written: &str) -> Option<String> {
+    if written.contains('<') || written.contains('>') {
+        return None;
+    }
+    let text = written.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+    (escape_text(&text) == written).then_some(text)
 }
 
 /// An attribute's value placed in a page: text's escapes and its quotes.
@@ -1724,6 +2082,7 @@ mod change_tests {
             CrowVNode::Text(t) => format!("'{}'", t),
             CrowVNode::Raw(r) => format!("raw'{}'", r),
             CrowVNode::Element { tag, children, .. } => format!("{}({})", tag, shape(children)),
+            CrowVNode::Shared(s) => shape(std::slice::from_ref(s.node())),
         }).collect::<Vec<_>>().join(" ")
     }
 
@@ -1881,6 +2240,7 @@ mod change_tests {
                 CrowVNode::Raw(r) if r.starts_with("<!--") => format!("#{}", &r[4..r.len() - 3]),
                 CrowVNode::Raw(r) => format!("'{}'", unescape_markup(r)),
                 CrowVNode::Element { tag, children, .. } => format!("{}({})", tag.to_ascii_lowercase(), browser_shape(children)),
+                CrowVNode::Shared(s) => browser_shape(std::slice::from_ref(s.node())),
             }).collect::<Vec<_>>().join(" ")
         }
         let mut r = Rng(11);
@@ -2198,3 +2558,80 @@ mod tests {
     }
 }
 
+
+#[cfg(test)]
+mod keyed_tests {
+    use super::*;
+
+    fn row(key: &str, text: &str) -> CrowVNode {
+        let mut attrs = HashMap::new();
+        attrs.insert("key".to_string(), key.to_string());
+        CrowVNode::Element { tag: "li".to_string(), attrs, children: vec![CrowVNode::Text(text.to_string())] }
+    }
+
+    fn list(children: Vec<CrowVNode>) -> CrowVNode {
+        CrowVNode::Element { tag: "ul".to_string(), attrs: HashMap::new(), children }
+    }
+
+    /// A reorder of keyed children moves them: the same rows, one move.
+    #[test]
+    fn a_reorder_moves_keyed_children() {
+        let old = list(vec![row("a", "A"), row("b", "B"), row("c", "C")]);
+        let new = list(vec![row("c", "C"), row("a", "A"), row("b", "B")]);
+        let changes = CrowVNode::changes(&old, &new);
+        assert_eq!(changes.len(), 1, "{:?}", changes);
+        assert_eq!(changes[0]["op"], "move");
+        let mut page = old.clone();
+        page.apply(&changes).unwrap();
+        assert_eq!(page.to_html(), new.to_html());
+    }
+
+    /// A shared node on both sides is passed over; against its own copy it
+    /// is the same as the copy.
+    #[test]
+    fn a_shared_node_is_the_node_it_holds() {
+        let inner = list(vec![row("a", "A")]);
+        let shared = CrowVNode::Shared(Shared::new(inner.clone()));
+        let page = |c: CrowVNode| CrowVNode::Element { tag: "div".to_string(), attrs: HashMap::new(), children: vec![c] };
+        assert!(CrowVNode::changes(&page(shared.clone()), &page(shared.clone())).is_empty());
+        assert_eq!(page(shared.clone()).to_html(), page(inner.clone()).to_html());
+        let other = list(vec![row("a", "Z")]);
+        assert_eq!(CrowVNode::changes(&page(shared.clone()), &page(other.clone())), CrowVNode::changes(&page(inner.clone()), &page(other)));
+        assert_eq!(page(shared).as_built().to_html(), page(inner).as_built().to_html());
+    }
+
+    /// Keyed children reordered, dropped, added, changed and mixed with
+    /// unkeyed ones at random: the changes make the new list from the old.
+    #[test]
+    fn keyed_changes_make_the_new_children() {
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let mut make = |next: &mut dyn FnMut(u64) -> u64| {
+            let mut kids: Vec<CrowVNode> = Vec::new();
+            for k in ["a", "b", "c", "d", "e", "f"] {
+                match next(4) {
+                    0 => {}
+                    1 => kids.push(CrowVNode::Element { tag: "li".to_string(), attrs: HashMap::new(), children: vec![CrowVNode::Text(format!("plain {}", next(3)))] }),
+                    _ => kids.push(row(k, &format!("{} {}", k, next(3)))),
+                }
+            }
+            for i in (1..kids.len()).rev() {
+                let j = next(i as u64 + 1) as usize;
+                kids.swap(i, j);
+            }
+            list(kids)
+        };
+        for _ in 0..2000 {
+            let old = make(&mut next);
+            let new = make(&mut next);
+            let mut page = old.clone();
+            page.apply(&CrowVNode::changes(&old, &new)).unwrap();
+            assert_eq!(page.to_html(), new.to_html(), "from {}", old.to_html());
+        }
+    }
+}

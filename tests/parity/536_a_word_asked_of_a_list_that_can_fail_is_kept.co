@@ -1,0 +1,20 @@
+--- A word asked whether a list holds it (`x in xs`), where the list's
+--- items can fail, is still the word after: compiled, the word was moved
+--- into the result it was met as and the program did not build (E0382;
+--- Lory's drawn page, a widget's key kept after `key in w.list`)
+fn named[s]
+  if s eq ''
+    return error['empty', 'x']
+  s
+xs = [named['a'], named['b']]
+x = 'a'
+log[x in xs]
+log[x]
+log['z' in xs]
+log[x not in xs]
+fn listed[list, word]
+  if word in list
+    return 'held `word`'
+  'not `word`'
+log[listed[xs, x]]
+log[listed[xs, 'q']]

@@ -1,7 +1,6 @@
 //! Builtins and module functions: each prints as the runtime call (or the
 //! Rust) the generated programs have always used.
 
-use super::exprs::rust_str_lit;
 use super::program::fn_named;
 use super::*;
 
@@ -265,24 +264,11 @@ impl Emitter {
         // ui.input[type = 'text', input = handler]: the element, written
         // through its module
         if m == "ui" && f == "input" && self.needs_ui {
-            let mut result = "CrowVNode::input()".to_string();
-            if let Some(Expr::MapLit(pairs, _)) = args.first().map(Emitter::raw) {
-                for (k, v) in pairs.clone() {
-                    let is_fn_ref = matches!(Emitter::raw(&v), Expr::FnRef(h, _) if self.reactive_event_handlers.contains(h));
-                    let x = if is_fn_ref { format!("\"{}\"", fn_named(&v).unwrap_or_default()) } else { self.expr(&v) };
-                    result = match k.as_str() {
-                        "click" | "input" | "submit" => {
-                            if is_fn_ref {
-                                format!("{}.on_{}({})", result, k, x)
-                            } else {
-                                format!("{}.on_{}(&{})", result, k, x)
-                            }
-                        }
-                        _ => format!("{}.attr(&{}, &{})", result, rust_str_lit(&k), x),
-                    };
-                }
-            }
-            return result;
+            let pairs: Vec<(String, Expr)> = match args.first().map(Emitter::raw) {
+                Some(Expr::MapLit(pairs, _)) => pairs.clone(),
+                _ => Vec::new(),
+            };
+            return self.tree(f, &pairs, &[], &[]);
         }
         if self.registry.is_loaded(m) && self.registry.has_function(f) {
             let saved = self.pinned_module.replace(m.to_string());
@@ -757,18 +743,32 @@ impl Emitter {
         let web = self.needs_crow_web;
         let db = self.needs_crow_db;
         Some(match name {
+            // (a function's route is queued for main's app: registers_later)
+            "route" if web && (2..=4).contains(&n) && !self.cur_fn.is_empty() => {
+                let held = Self::held_for_later(args, a);
+                let cur = std::mem::take(&mut self.cur_fn);
+                let route = self.web_builtin(name, args, &held);
+                self.cur_fn = cur;
+                // (its value, as a route's is: an app, here one of its own)
+                let queued = self.later(args, a, &route?);
+                format!("{{ {} CrowApp::new() }}", queued)
+            }
             "route" if web && n == 2 => format!("__crow_app = __crow_app.route(&{}, {})", a[0], self.route_handler(&args[1], &a[1])),
             "route" if web && n == 3 => format!("__crow_app = __crow_app.route_method(&{}, &{}, {})", a[0], a[1], self.route_handler(&args[2], &a[2])),
             // route[path, method, handler, limit]: a limit a minute per client
             "route" if web && n == 4 => format!("__crow_app = __crow_app.route_limited(&{}, &{}, {}, ({}).max(0) as u64)", a[0], a[1], self.route_handler(&args[2], &a[2]), a[3]),
-            "serve" if web && n == 1 => format!("__crow_app.serve({} as u16).await.unwrap()", a[0]),
+            "serve" if web && n == 1 => format!("{{ {} __crow_app.serve({} as u16).await.unwrap() }}", self.landed(), a[0]),
             // the server's options are both modes' (crow_web): the uploads'
             // megabytes bound every route's body, the CORS origins and the
             // files directory are the app's
             "serve" if web && n == 11 => {
                 let server = format!(
-                    "crow_web::server::configure_uploads({} as i64); __crow_app.cors_origins(&({})[..]).files_from(&{}).serve({} as u16).await.unwrap()",
-                    a[8], a[9], a[10], a[0]
+                    "crow_web::server::configure_uploads({} as i64); {} __crow_app.cors_origins(&({})[..]).files_from(&{}).serve({} as u16).await.unwrap()",
+                    a[8],
+                    self.landed(),
+                    a[9],
+                    a[10],
+                    a[0]
                 );
                 if self.has_page_routes {
                     format!(
@@ -823,11 +823,60 @@ impl Emitter {
             "describe" if db && n == 2 => self.db_describe(&a[0], &a[1]),
             "insert" if db && n == 3 => self.db_insert(&a[0], &a[1], &a[2]),
             "transact" if db && n == 2 => self.db_transact(&a[0], &a[1]),
-            "page" if web && (n == 2 || n == 3) => self.page_route(args, a),
+            "page" if web && (2..=4).contains(&n) && !self.cur_fn.is_empty() => {
+                let held = Self::held_for_later(args, a);
+                let page = self.page_route(args, &held);
+                // (its value, as a page's is: a text, here an empty one)
+                let queued = self.later(args, a, &page);
+                format!("{{ {} String::new() }}", queued)
+            }
+            "page" if web && (2..=4).contains(&n) => self.page_route(args, a),
             "fetch" if n == 1 => format!("{{ __crow_state.register_fetch(\"_anon\", &{}, Vec::new()); serde_json::Value::Null }}", a[0]),
             "poll" if n == 2 => format!("{{ __crow_state.register_poll(\"_anon\", &{}, {} as u64, Vec::new()); serde_json::Value::Null }}", a[0], a[1]),
             _ => return None,
         })
+    }
+
+    /// A registration's arguments as the queued closure holds them: each
+    /// evaluated where the function calls it (`_l0·`, …), the closure
+    /// taking a copy when it runs; a function named is named as it is.
+    fn held_for_later(args: &[Expr], a: &[String]) -> Vec<String> {
+        a.iter().enumerate().map(|(i, x)| if Self::named_as_is(args.get(i)) { x.clone() } else { format!("_l{}·.clone()", i) }).collect()
+    }
+
+    /// An argument a queued registration names as it is, unevaluated: a
+    /// function, or a page's `url = […]`, which the registration reads
+    /// as it is compiled (bound, an empty one had no type: E0282).
+    fn named_as_is(arg: Option<&Expr>) -> bool {
+        arg.is_some_and(|e| fn_named(e).is_some() || matches!(Emitter::raw(e), Expr::ListLit(..)))
+    }
+
+    /// A page or a route a function registers (`fn pages[]` calling
+    /// `page[…]`): main holds the app and the state, so the registration
+    /// is queued with its arguments as they are now, and main lands the
+    /// queue on its app before it serves (`landed`). It had named main's
+    /// own `__crow_state` and `__crow_app` inside the function, and the
+    /// program did not build (E0425, Myna's pages).
+    fn later(&self, args: &[Expr], a: &[String], registered: &str) -> String {
+        let bound: Vec<String> = a.iter().enumerate().filter(|(i, _)| !Self::named_as_is(args.get(*i))).map(|(i, x)| format!("let _l{}· = {};", i, x)).collect();
+        let state = if self.has_page_routes || self.app_state { "__crow_state: &CrowLiveState, " } else { "_: &(), " };
+        format!(
+            "{{ {} __crow_later(Box::new(move |{}mut __crow_app: CrowApp| -> CrowApp {{ {}; __crow_app }})); }}",
+            bound.join(" "),
+            state,
+            registered
+        )
+    }
+
+    /// Main's app with what the program's functions queued for it landed
+    /// on it, as a statement before it serves; nothing where no function
+    /// registers one.
+    pub(crate) fn landed(&self) -> String {
+        if !self.registers_later {
+            return String::new();
+        }
+        let state = if self.has_page_routes || self.app_state { "&__crow_state" } else { "&()" };
+        format!("__crow_app = __crow_landed(__crow_app, {});", state)
     }
 
     /// `page[path, view]`, with its handlers and the facts in its address:
@@ -861,9 +910,17 @@ impl Emitter {
         }
         let handle = if a.len() == 3 && !listed { a[2].clone() } else { handle_all };
         let with_url = if pairs.is_empty() { String::new() } else { format!(".with_url(vec![{}])", pairs.join(", ")) };
+        // init = f: the session opening the page runs f first, dispatched
+        // by its name as an event is
+        let with_init = match args.get(3).and_then(fn_named) {
+            Some(f) => format!(".with_init(\"{}\")", f),
+            None => String::new(),
+        };
+        // the program's bindings, which a values turn sets (ui.rs, emit_values)
+        let with_values = if !self.part.bindings.is_empty() && self.needs_ui { ".with_values(std::sync::Arc::new(__CrowValues))" } else { "" };
         format!(
-            "{{ let _ws_path· = format!(\"/_ws{{}}\", {}); let _lv· = CrowLiveView::new(&_ws_path·, __crow_state.clone(), {}, {}){}; let _lr· = _lv·.into_router(&{}); __crow_app = __crow_app.merge(_lr·); }}",
-            a[0], a[1], handle, with_url, a[0]
+            "{{ let _ws_path· = format!(\"/_ws{{}}\", {}); let _lv· = CrowLiveView::new(&_ws_path·, __crow_state.clone(), {}, {}){}{}{}; let _lr· = _lv·.into_router(&{}); __crow_app = __crow_app.merge(_lr·); }}",
+            a[0], a[1], handle, with_url, with_init, with_values, a[0]
         )
     }
 

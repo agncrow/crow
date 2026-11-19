@@ -184,7 +184,7 @@ fn a_control_renders_a_failed_argument_as_an_id_the_log_has() {
     let start = rust.find("fn render(state").expect("render");
     let rest = &rust[start..];
     let render = &rest[..rest.find("\n}\n").unwrap()];
-    assert!(render.contains("CrowVNode::failed(&_va0·.reason)"), "the failed argument renders as the id the log has its reason under\n{}", render);
+    assert!(render.contains("tree::failed(&_va0·.reason)"), "the failed argument renders as the id the log has its reason under\n{}", render);
     assert!(!render.contains("error: {}"), "no reason reaches the page\n{}", render);
 }
 
@@ -2010,29 +2010,29 @@ fn a_test_build_answers_the_harness() {
 #[test]
 fn test_ui_imports() {
     let rust = transpile("use web\nuse ui\nview v[]\n    return p['x']\npage['/', v]\n");
-    assert!(rust.contains("use crow_web::view::CrowVNode;"), "should import CrowVNode\n{}", rust);
+    assert!(rust.contains("use crow_web::view::tree;"), "should import the view builder\n{}", rust);
     assert!(rust.contains("use crow_web::live::{CrowLiveView, CrowLiveState};"), "should import CrowLiveView/CrowLiveState\n{}", rust);
 }
 
 #[test]
 fn test_ui_div_text() {
     let rust = transpile("use web\nuse ui\nview v[]\n    return div[h1['hello']]\n");
-    assert!(rust.contains("CrowVNode::div(vec![CrowVNode::h1(vec![CrowVNode::text("), "should emit CrowVNode::div with h1 child\n{}", rust);
+    assert!(rust.contains("tree::element(\"div\"") && rust.contains("tree::element(\"h1\"") && rust.contains("tree::Given::Text("), "should build a div with an h1 child\n{}", rust);
 }
 
 #[test]
 fn test_ui_button_click() {
     let rust = transpile("use web\nuse ui\nview v[]\n    return button['+', click = 'inc']\n");
-    assert!(rust.contains("CrowVNode::button(vec![CrowVNode::text("), "should emit CrowVNode::button\n{}", rust);
-    assert!(rust.contains(".on_click("), "should emit .on_click()\n{}", rust);
+    assert!(rust.contains("tree::element(\"button\""), "should build a button\n{}", rust);
+    assert!(rust.contains("(\"click\".to_string(), _o0·)"), "should hand its click to the builder\n{}", rust);
 }
 
 #[test]
 fn test_ui_input_via_module() {
     let rust = transpile("use web\nuse ui\nview v[]\n    return ui.input[type = 'text', input = 'change']\n");
-    assert!(rust.contains("CrowVNode::input()"), "should emit CrowVNode::input()\n{}", rust);
-    assert!(rust.contains(".attr("), "should emit .attr() for type\n{}", rust);
-    assert!(rust.contains(".on_input("), "should emit .on_input()\n{}", rust);
+    assert!(rust.contains("tree::element(\"input\""), "should build an input\n{}", rust);
+    assert!(rust.contains("(\"type\".to_string(), "), "should hand over its type\n{}", rust);
+    assert!(rust.contains("(\"input\".to_string(), "), "should hand over its input event\n{}", rust);
 }
 
 #[test]
@@ -2056,22 +2056,22 @@ fn test_ui_page_2arg_noop_handler() {
 #[test]
 fn test_ui_nested_elements() {
     let rust = transpile("use web\nuse ui\nview v[]\n    return div[span['a'], p['b']]\n");
-    assert!(rust.contains("CrowVNode::div(vec![CrowVNode::span("), "should emit nested elements\n{}", rust);
-    assert!(rust.contains("CrowVNode::p(vec![CrowVNode::text("), "should emit p element\n{}", rust);
+    assert!(rust.contains("tree::element(\"div\"") && rust.contains("tree::element(\"span\""), "should build nested elements\n{}", rust);
+    assert!(rust.contains("tree::element(\"p\""), "should build a p element\n{}", rust);
 }
 
 #[test]
 fn test_ui_attr_class() {
     let rust = transpile("use web\nuse ui\nview v[]\n    return div[h1['title'], class = 'container']\n");
-    assert!(rust.contains(".attr("), "should emit .attr() for class\n{}", rust);
+    assert!(rust.contains("(\"class\".to_string(), "), "should hand over the class\n{}", rust);
     assert!(rust.contains("container"), "should contain class value\n{}", rust);
 }
 
 #[test]
 fn f11_click_call_shape_emits_frozen_args() {
     let rust = transpile("use web, ui\nspeed = 1.0\nfn set_speed[s]\n    speed = s\nview render[]\n    return div[button['10x', click = set_speed[10.0]]]\nserve[3000]\npage['/', render]\n");
-    assert!(rust.contains("on_click_args(\"set_speed\""), "call-shape should emit on_click_args\n{}", rust);
-    assert!(rust.contains("json!([(10.0"), "frozen arg should serialize at render, parenthesised so a block argument is not read as a map\n{}", rust);
+    assert!(rust.contains("tree::Given::Call(\"set_speed\".to_string()"), "call-shape should hand over a held call\n{}", rust);
+    assert!(rust.contains("json!((10.0"), "frozen arg should serialize at render, parenthesised so a block argument is not read as a map\n{}", rust);
     assert!(rust.contains("fn set_speed(state: &mut CrowLiveState, s: f64)"), "handler keeps its declared param\n{}", rust);
     assert!(rust.contains("_a·[0].as_f64()"), "dispatch should parse the frozen arg\n{}", rust);
 }
@@ -2117,7 +2117,7 @@ fn test_ui_poll_assignment() {
 #[test]
 fn test_ui_field_codegen() {
     let rust = transpile("use web\nuse ui\nview render[s]\n    vol = s.get['vol', 0]\n    return div[field['Min Vol', vol]]\nserve[3000]\npage['/', render]\n");
-    assert!(rust.contains("CrowVNode::field_typed("), "field should emit CrowVNode::field_typed\n{}", rust);
+    assert!(rust.contains("tree::field("), "field should build through tree::field\n{}", rust);
     assert!(rust.contains("\"vol\""), "field should extract key name\n{}", rust);
 }
 
@@ -2129,13 +2129,13 @@ fn a_select_of_a_frame_is_frames_in_a_page() {
     // file does not import ui: main.rs's
     // a_parts_names_are_its_own_in_an_app_that_imports_ui)
     let own = transpile("use web, ui, frame\nfn cols[n]\n    f = frame.new[a = [n], b = [n]]\n    return select[f, ['a']]\nview render[s]\n    return div[str[len[cols[1].columns]]]\nserve[3000]\npage['/', render]\n");
-    assert!(!own.contains("select_input"), "{}", own);
+    assert!(!own.contains("tree::select("), "{}", own);
 }
 
 #[test]
 fn test_ui_select_codegen() {
     let rust = transpile("use web\nuse ui\nview render[s]\n    opts = ['a', 'b']\n    val = s.get['choice', 'a']\n    return div[select[opts, val]]\nserve[3000]\npage['/', render]\n");
-    assert!(rust.contains("CrowVNode::select_input("), "select should emit CrowVNode::select_input\n{}", rust);
+    assert!(rust.contains("tree::select("), "select should build through tree::select\n{}", rust);
     assert!(rust.contains("\"val\""), "select should extract key name\n{}", rust);
 }
 
@@ -2143,7 +2143,7 @@ fn test_ui_select_codegen() {
 fn test_reactive_counter() {
     let rust = transpile("use web, ui\n\ncount = 0\n\nfn inc[]\n    count = count + 1\n\nfn dec[]\n    count = count - 1\n\nview render[]\n    return div[\n        h1['Count: {count}'],\n        button['+', click = inc],\n        button['-', click = dec]\n    ]\n\nserve[3000]\npage['/', render]\n");
     // Reactive render function should get state param injected
-    assert!(rust.contains("fn render(state: &CrowLiveState) -> CrowVNode"), "render should have injected state param\n{}", rust);
+    assert!(rust.contains("fn render(state: &CrowLiveState) -> tree::Node"), "render should have injected state param\n{}", rust);
     // Reactive handler functions should get mut state param injected
     assert!(rust.contains("fn inc(state: &mut CrowLiveState)"), "inc should have injected mut state param\n{}", rust);
     assert!(rust.contains("fn dec(state: &mut CrowLiveState)"), "dec should have injected mut state param\n{}", rust);
@@ -2157,8 +2157,8 @@ fn test_reactive_counter() {
     assert!(rust.contains("\"inc\" => inc(state)"), "dispatch should route inc\n{}", rust);
     assert!(rust.contains("\"dec\" => dec(state)"), "dispatch should route dec\n{}", rust);
     // Event attributes should use string, not reference
-    assert!(rust.contains(".on_click(\"inc\")"), "click = inc should emit .on_click(\"inc\")\n{}", rust);
-    assert!(rust.contains(".on_click(\"dec\")"), "click = dec should emit .on_click(\"dec\")\n{}", rust);
+    assert!(rust.contains("tree::Given::Handler(\"inc\".to_string())"), "click = inc should hand over the handler inc\n{}", rust);
+    assert!(rust.contains("tree::Given::Handler(\"dec\".to_string())"), "click = dec should hand over the handler dec\n{}", rust);
     // Main should register defaults
     // (in parentheses: a value written as a block is an expression to json!)
     assert!(rust.contains("__crow_state.set(\"count\", serde_json::json!((0"), "should register count default in main\n{}", rust);

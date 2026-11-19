@@ -2268,7 +2268,7 @@ pub fn widen(program: &mut Program) {
         let call = Expr::Call { target: Target::User(name.clone()), args, ty: new_ret.clone(), propagates: false };
         let mut answer = to_type(call, &old_ret);
         name_refusal(&mut answer, crate::ir::Who::Handed);
-        let f = crate::ir::Fn { name: wrapper.clone(), params: old_params.clone(), ret: old_ret.clone(), body: vec![Stmt::Line(line), Stmt::Return(Some(answer))], kind, effects, tables_written, recursive: false };
+        let f = crate::ir::Fn { name: wrapper.clone(), params: old_params.clone(), ret: old_ret.clone(), body: vec![Stmt::Line(line), Stmt::Return(Some(answer))], kind, effects, tables_written, recursive: false, args: Vec::new() };
         rets.insert(wrapper.clone(), old_ret);
         params.insert(wrapper.clone(), old_params.iter().map(|(_, t)| t.clone()).collect());
         if let Some(part) = program.parts.iter_mut().find(|p| p.fns.iter().any(|g| g.name == name)) {

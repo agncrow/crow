@@ -1,0 +1,27 @@
+--- In a ui program, a function no handler, view, derivation or test
+--- reaches — only the top level calls it — keeps its own names, as a
+--- script's does: its `n` beside a top-level `n` is its local. And a view
+--- moves no fact: a top-level name it assigns is its own local too (spec,
+--- Handlers and their helpers). Lory's site counted its examples in a local
+--- `n` beside the top level's `n`, and its harness's page held its
+--- chapters in a `toc` beside the top level's: interpreted, each had
+--- written the top level's, and compiled each assigned a name the function
+--- never bound, and the program did not build (E0425).
+use web, ui
+
+fn counted[xs]
+    n = 0
+    for x in xs
+        n = n + x
+    return n
+
+view sample[]
+    toc = ['a', 'b']
+    return p['`len[toc]` chapters']
+
+n = 4
+toc = ['x']
+c = counted[[1, 2, 3]]
+log['`n` and `c`']
+log[sample[]]
+log['`len[toc]` chapter']

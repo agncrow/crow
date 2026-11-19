@@ -31,10 +31,13 @@ impl Emitter {
         // `if by gt 5` / `by = 5`, had not built)
         let changed = Self::mutated_in(&f.body);
         let own = |p: &str| if changed.contains(p) { "mut " } else { "" };
+        // (a view's parameter held as the node it is handed: `node_params`)
+        let node_ps: BTreeSet<usize> = if is_component_view { self.node_params.get(&name).cloned().unwrap_or_default() } else { BTreeSet::new() };
         let params: Vec<String> = if is_reactive_render {
             let mut ps = vec!["state: &CrowLiveState".to_string()];
-            for (p, t) in &f.params {
+            for (i, (p, t)) in f.params.iter().enumerate() {
                 let rt = match param_ty(t) {
+                    _ if node_ps.contains(&i) => "tree::Node".to_string(),
                     Ty::Str | Ty::Markup | Ty::Unknown => "String".to_string(),
                     other => other.to_rust_type(),
                 };
@@ -70,8 +73,9 @@ impl Emitter {
         } else {
             f.params
                 .iter()
-                .map(|(p, t)| {
-                    let rt = param_ty(t).to_rust_type();
+                .enumerate()
+                .map(|(i, (p, t))| {
+                    let rt = if node_ps.contains(&i) { "tree::Node".to_string() } else { param_ty(t).to_rust_type() };
                     if refs.contains(p) {
                         format!("{}: &{}", p, rt)
                     } else if changed.contains(p) {
@@ -87,7 +91,7 @@ impl Emitter {
         };
         let ret_ty = as_inferred(&f.ret);
         let ret_str = if is_live_render || is_component_view {
-            " -> CrowVNode".to_string()
+            " -> tree::Node".to_string()
         } else if is_live_handle {
             String::new()
         } else {
@@ -122,10 +126,13 @@ impl Emitter {
         self.returns_unit = ret_str.is_empty();
         self.cur_fn = name.clone();
         self.mutated = Self::mutated_in(&f.body);
-        for (p, t) in &f.params {
+        for (i, (p, t)) in f.params.iter().enumerate() {
             let mut ty = as_inferred(t);
             if (is_reactive_handler || is_reactive_render) && matches!(ty, Ty::Unknown) {
                 ty = Ty::Str;
+            }
+            if node_ps.contains(&i) {
+                ty = Ty::Node;
             }
             self.declare(p, ty);
         }
@@ -171,8 +178,67 @@ impl Emitter {
         }
 
         self.view_mark = is_reactive_render && is_component_view && !self.derive_fns.contains(&name);
+        let saved_nodes = std::mem::take(&mut self.node_locals);
+        if self.view_mark || !node_ps.is_empty() {
+            let named: BTreeSet<String> = node_ps.iter().map(|i| f.params[*i].0.clone()).collect();
+            self.node_locals = self.node_locals(&f.body, &named);
+        }
         if self.view_mark {
-            self.line("let __view = state.view_enter();");
+            // the view's last node, kept with what it read
+            // (crow_web/src/live/views.rs): handed back when nothing it
+            // read moved, else the view runs and its node is kept
+            self.views_kept = true;
+            let reads_owned = self.view_reads.get(&name).cloned();
+            let reads = reads_owned.as_ref();
+            let facts = reads.map(|r| r.facts.iter().map(|x| format!("{:?}", x)).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+            let always = match reads {
+                None => "Some(\"its reads are not known\")".to_string(),
+                Some(r) => match &r.always {
+                    Some(why) => format!("Some({:?})", why),
+                    None => "None".to_string(),
+                },
+            };
+            // (its arguments' text is its key: each compares as it shows; past
+            // views::KEY_MAX bytes there is none, and the view runs)
+            // (a parameter its copy binds is left out, and its text kept
+            // beside the key; one handed from a source is keyed by the
+            // source's version: derive::specialize)
+            let uses: Vec<crate::derive::ArgUse> = reads.map(|r| r.args.clone()).unwrap_or_default();
+            let use_of = |i: usize| uses.get(i).cloned().unwrap_or(crate::derive::ArgUse::Value);
+            // (one handed a node is not keyed, as the interpreter keys none
+            // whose argument is a node)
+            let args = if reads.is_some_and(|r| r.keyed) && node_ps.is_empty() {
+                let ps: Vec<String> = f
+                    .params
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, (p, _))| match use_of(i) {
+                        crate::derive::ArgUse::Value => Some(format!("&{}", p)),
+                        crate::derive::ArgUse::Bound => None,
+                        crate::derive::ArgUse::Source { root, derive } => Some(format!("(\"@{}\", state.source_version({:?}, {}))", root, root, derive)),
+                    })
+                    .collect();
+                format!("state.view_args(&{})", debug_tuple(&ps))
+            } else {
+                "None".to_string()
+            };
+            let bound_ps: Vec<String> = f.params.iter().enumerate().filter(|(i, _)| use_of(*i) == crate::derive::ArgUse::Bound).map(|(_, (p, _))| format!("&{}", p)).collect();
+            let bound_args = if bound_ps.is_empty() {
+                "None".to_string()
+            } else {
+                // (what it binds past the longest key: no key at all)
+                self.line(&format!("let __bound: Option<String> = state.view_args(&{});", debug_tuple(&bound_ps)));
+                "__bound".to_string()
+            };
+            // (its bindings computed again where what they read moved alone)
+            let eval = if self.values_emitted() { "&|ids: &[u32]| __crow_values_eval(state, ids)" } else { "&|_: &[u32]| None" };
+            let args = if bound_ps.is_empty() { args } else { format!("if __bound.is_some() {{ {} }} else {{ None }}", args) };
+            // (and those it reads only in its bindings: derive::bind_sites)
+            let bound = reads.map(|r| r.bound.iter().map(|x| format!("{:?}", x)).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+            self.line(&format!(
+                "let __view = match state.view_kept({:?}, &[{}], {}, &[{}], {}, {}, &|n: &str| __refresh_derive(state, n), {}) {{ Ok(r) => r, Err(n) => return *n }};",
+                name, facts, always, bound, args, bound_args, eval
+            ));
         }
         // the session's facts are read and written in place, where the body
         // does; a handler, which writes them, reads a derivation where it
@@ -258,6 +324,7 @@ impl Emitter {
                 self.line(l);
             }
         }
+        self.node_locals = saved_nodes;
         let (scopes, refs, mutated, ret, unit, cur, mark) = saved;
         self.scopes = scopes;
         self.ref_params = refs;
@@ -323,7 +390,11 @@ impl Emitter {
         self.line("");
 
         let rs = &d.spec;
-        let eq = if matches!(rt, Ty::Int | Ty::Float | Ty::Str | Ty::Bool) { "|a, b| a == b" } else { "|_a·, _b·| false" };
+        // early cutoff: a value recomputed equal to the last keeps its
+        // version, so what reads it (a derivation, a kept view) stays as it
+        // is — a list, a record or a frame by its contents, as `eq`
+        // compares them (one-view-design.md, phase 2)
+        let eq = if matches!(rt, Ty::Int | Ty::Float | Ty::Str | Ty::Bool) || self.cuts_off(&rt) { "|a, b| a == b" } else { "|_a·, _b·| false" };
         let list = |xs: &BTreeSet<String>| xs.iter().map(|x| format!("\"{}\"", x)).collect::<Vec<_>>().join(", ");
         self.line(&format!(
             "static __DERIVE_SPEC_{n}: crow_web::live::DeriveSpec = crow_web::live::DeriveSpec {{ name: \"{n}\", facts: &[{f}], derives: &[{dd}], tables: &[{t}], now: {now}, external: {ext}, fresh: {fresh:?}, shared: {sh}, keys: &[{k}] }};",
@@ -339,10 +410,17 @@ impl Emitter {
         ));
         self.line(&format!("fn __derive_{}(state: &CrowLiveState) -> {} {{", name, ty));
         self.indent += 1;
-        for other in &rs.derives {
-            if other != &name {
+        // its inputs brought up to date as its own reading: a view reading
+        // it reads it alone, not what it reads (`CrowLiveState::deriving`)
+        let inputs: Vec<&String> = rs.derives.iter().filter(|o| *o != &name).collect();
+        if !inputs.is_empty() {
+            self.line("state.deriving(|| {");
+            self.indent += 1;
+            for other in inputs {
                 self.line(&format!("let _ = __derive_{}(state);", other));
             }
+            self.indent -= 1;
+            self.line("});");
         }
         if rs.tables.is_empty() {
             self.line(&format!("state.derive(&__DERIVE_SPEC_{n}, __derive_body_{n}, {eq})", n = name, eq = eq));
@@ -520,10 +598,10 @@ impl Emitter {
             if self.view_mark {
                 // (through view_exit: the view's level closes, and a value
                 // still being caught up with marks it stale)
-                return format!("return state.view_exit(__view, CrowVNode::failed(&{v}.reason));", v = v);
+                return format!("return state.view_end(__view, tree::failed(&{v}.reason), state.tables_drawn());", v = v);
             }
             if self.in_view() {
-                return format!("return CrowVNode::failed(&{v}.reason);", v = v);
+                return format!("return tree::failed(&{v}.reason);", v = v);
             }
             // (a traced copy's answer that can fail holds a traced number or
             // tensor: emit_rs/traced.rs)
@@ -764,6 +842,172 @@ impl Emitter {
         }
     }
 
+    /// The locals of a view that hold a node and are read only where a
+    /// node is placed — an element's child, the view's answer: held as the
+    /// node (`tree::Node`), not its markup, so the page's nodes are the
+    /// view's own (a kept view's subtree is shared, live/views.rs). Every
+    /// other local holding a node holds its markup, as before.
+    pub(crate) fn node_locals(&self, body: &[Stmt], params: &BTreeSet<String>) -> BTreeSet<String> {
+        let views = &self.node_params;
+        Self::node_holders(body, &|e| self.makes_node(e), &|v| views.get(v).cloned(), params).0
+    }
+
+    /// The names of a view's body that hold a node and are read only where
+    /// a node is placed (`node_locals`, `node_params`): of `params` (the
+    /// view's parameters taken as nodes, none set by the body), those that
+    /// stay so, and the locals given only a node (`makes`) or such a name
+    /// and never set otherwise. A read is a placing when it is an
+    /// element's child, the view's answer, an argument of a view's node
+    /// parameter (`node_args`), or the whole value given to such a local
+    /// (`shown = body`, then `shown = access.no_access[]`, Myna's screen).
+    pub(crate) fn node_holders(body: &[Stmt], makes: &dyn std::ops::Fn(&Expr) -> bool, node_args: &dyn std::ops::Fn(&str) -> Option<BTreeSet<usize>>, params: &BTreeSet<String>) -> (BTreeSet<String>, BTreeSet<String>) {
+        let local = |e: &Expr| match Emitter::raw(e) {
+            Expr::Local(n, _) | Expr::Move(n, _) => Some(n.clone()),
+            _ => None,
+        };
+        let mut given: BTreeMap<String, Vec<Expr>> = BTreeMap::new();
+        let mut other: BTreeSet<String> = BTreeSet::new();
+        crate::ir::visit_stmts(body, &mut |s| match s {
+            Stmt::Let { var, expr, .. } | Stmt::Set { var, expr } => given.entry(var.clone()).or_default().push(expr.clone()),
+            Stmt::SetPath { var, .. } | Stmt::For { var, .. } => {
+                other.insert(var.clone());
+            }
+            Stmt::Propagate { values, .. } => other.extend(values.iter().cloned()),
+            _ => {}
+        });
+        let mut ps: BTreeSet<String> = params.iter().filter(|p| !given.contains_key(*p) && !other.contains(*p)).cloned().collect();
+        let mut ls: BTreeSet<String> = given.keys().filter(|v| !other.contains(*v) && !params.contains(*v)).cloned().collect();
+        let last = body.iter().rposition(|s| !matches!(s, Stmt::Line(_)));
+        loop {
+            let before = (ps.len(), ls.len());
+            let holds = |n: &str, ps: &BTreeSet<String>, ls: &BTreeSet<String>| ps.contains(n) || ls.contains(n);
+            let keep: BTreeSet<String> = ls.iter().filter(|v| given[*v].iter().all(|e| makes(e) || local(e).is_some_and(|n| holds(&n, &ps, &ls)))).cloned().collect();
+            ls = keep;
+            let mut reads: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+            crate::ir::visit_block(body, &mut |e| {
+                if let Expr::Local(n, _) | Expr::Move(n, _) = e {
+                    reads.entry(n.clone()).or_default().0 += 1;
+                }
+                if let Expr::Tree { children, .. } = e {
+                    for c in children {
+                        if let Some(n) = local(c) {
+                            reads.entry(n).or_default().1 += 1;
+                        }
+                    }
+                }
+                if let Expr::Call { target: Target::User(v), args, .. } = e
+                    && let Some(theirs) = node_args(v)
+                {
+                    for (j, a) in args.iter().enumerate() {
+                        if theirs.contains(&j)
+                            && let Some(n) = local(a)
+                        {
+                            reads.entry(n).or_default().1 += 1;
+                        }
+                    }
+                }
+            });
+            crate::ir::visit_stmts(body, &mut |s| match s {
+                Stmt::Return(Some(e)) => {
+                    if let Some(n) = local(e) {
+                        reads.entry(n).or_default().1 += 1;
+                    }
+                }
+                Stmt::Let { var, expr, .. } | Stmt::Set { var, expr } if ls.contains(var) => {
+                    if let Some(n) = local(expr) {
+                        reads.entry(n).or_default().1 += 1;
+                    }
+                }
+                _ => {}
+            });
+            if let Some(Stmt::Do(e)) = last.map(|i| &body[i])
+                && let Some(n) = local(e)
+            {
+                reads.entry(n).or_default().1 += 1;
+            }
+            ps.retain(|p| reads.get(p).is_none_or(|(all, placed)| all == placed));
+            ls.retain(|v| reads.get(v).is_some_and(|(all, placed)| all == placed && *all > 0));
+            if (ps.len(), ls.len()) == before {
+                break;
+            }
+        }
+        (ls, ps)
+    }
+
+    /// The parameters of each view that take a node and are read only where
+    /// a node is placed — an element's child, the view's answer, or a node
+    /// parameter of a view it hands it to (a greatest fixpoint): held as the
+    /// node (`tree::Node`), not its markup, as `node_locals` holds a local.
+    /// A view handed its page's body (finchdash's pages hand theirs to
+    /// Myna's `workbench.screen`) had placed the body's markup, so the
+    /// bindings and kept views inside it were lost to the page: a values
+    /// turn set nothing there and its clock stood still, and a kept node's
+    /// field differed from a render's (one-view-design.md §7, three faults
+    /// a real app found, 2026-11-16). A view held as a function value keeps
+    /// its markup parameters, as before.
+    pub(crate) fn node_params(fns: &BTreeMap<String, Fn>) -> BTreeMap<String, BTreeSet<usize>> {
+        use crate::ir::FnKind;
+        let mut held: BTreeSet<String> = BTreeSet::new();
+        for f in fns.values() {
+            crate::ir::visit_block(&f.body, &mut |e| {
+                if let Expr::FnRef(n, _) = e {
+                    held.insert(n.clone());
+                }
+            });
+        }
+        let mut cand: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+        for f in fns.values().filter(|f| f.kind == FnKind::View && !held.contains(&f.name)) {
+            let mut set: BTreeSet<String> = BTreeSet::new();
+            crate::ir::visit_stmts(&f.body, &mut |s| match s {
+                Stmt::Let { var, .. } | Stmt::Set { var, .. } | Stmt::SetPath { var, .. } | Stmt::For { var, .. } => {
+                    set.insert(var.clone());
+                }
+                Stmt::Propagate { values, .. } => set.extend(values.iter().cloned()),
+                _ => {}
+            });
+            let ps: BTreeSet<usize> = f
+                .params
+                .iter()
+                .enumerate()
+                .filter(|(_, (p, t))| matches!(as_inferred(t), Ty::Markup | Ty::Node) && !set.contains(p))
+                .map(|(i, _)| i)
+                .collect();
+            if !ps.is_empty() {
+                cand.insert(f.name.clone(), ps);
+            }
+        }
+        let static_makes = |e: &Expr| match Emitter::raw(e) {
+            Expr::Tree { .. } => true,
+            Expr::Call { target: Target::User(n), .. } => fns.get(n).is_some_and(|g| g.kind == FnKind::View),
+            Expr::Call { target: Target::Runtime(n), args, .. } => matches!(n.as_str(), "chart" | "field" | "slider" | "checkbox" | "toggle" | "radio" | "tabs" | "progress" | "icon") || (n == "select" && args.len() == 2),
+            _ => false,
+        };
+        loop {
+            let mut changed = false;
+            let names: Vec<String> = cand.keys().cloned().collect();
+            for name in names {
+                let f = &fns[&name];
+                let ps = cand[&name].clone();
+                let named: BTreeSet<String> = ps.iter().map(|i| f.params[*i].0.clone()).collect();
+                let snapshot = cand.clone();
+                let (_, kept) = Self::node_holders(&f.body, &static_makes, &|v| snapshot.get(v).cloned(), &named);
+                let left: BTreeSet<usize> = ps.iter().copied().filter(|i| kept.contains(&f.params[*i].0)).collect();
+                if left != ps {
+                    changed = true;
+                    if left.is_empty() {
+                        cand.remove(&name);
+                    } else {
+                        cand.insert(name, left);
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        cand
+    }
+
     fn emit_let(&mut self, var: &str, ty: &Ty, expr: &Expr) {
         self.emit_let_value(var, ty, expr);
         // a text read by position: what is known of its start, none yet
@@ -784,6 +1028,14 @@ impl Emitter {
             let (vty, made) = self.vector_of(var, &text);
             self.line(&format!("let mut {}: {} = {};", var, vty, made));
             self.declare(var, as_inferred(ty));
+            return;
+        }
+        let node_held = matches!(Emitter::raw(expr), Expr::Local(n, _) | Expr::Move(n, _) if self.local_ty(n) == Some(Ty::Node));
+        if self.node_locals.contains(var) && (self.makes_node(expr) || node_held) {
+            let text = self.owned_expr(expr);
+            let m = if self.mutated.contains(var) { "mut " } else { "" };
+            self.line(&format!("let {}{}: tree::Node = tree::Node::from({});", m, var, text));
+            self.declare(var, Ty::Node);
             return;
         }
         let mut text = self.owned_expr(expr);
@@ -878,6 +1130,10 @@ impl Emitter {
         };
         let mut text = self.owned_expr(expr);
         self.move_target = None;
+        if self.node_locals.contains(var) && self.local_ty(var) == Some(Ty::Node) {
+            self.line(&format!("{} = tree::Node::from({});", var, text));
+            return;
+        }
         if self.makes_node(expr) && (self.in_view() || self.local_ty(var).is_some_and(|t| matches!(t, Ty::Markup | Ty::Str))) {
             text = format!("({}).to_html()", text);
         }
@@ -1052,6 +1308,30 @@ impl Emitter {
             format!("serde_json::to_value(&__facts(&*state).{}).ok() != serde_json::to_value(&_v·).ok()", field)
         };
         self.line(&format!("{{ let _v· = {}; let _moved· = {}; __facts_mut(state).{} = _v·; if _moved· {{ state.touch(\"{}\"); }} }}", value, moved, field, fact));
+    }
+
+    /// Whether a derivation of the type keeps its version when recomputed
+    /// equal (early cutoff), as the interpreter's `same_value` decides: a
+    /// number, a text, a truth, and a list, a map, a record or a value that
+    /// can fail of them — a frame, a tensor, a decimal or a parsed value
+    /// always moves on.
+    pub(crate) fn cuts_off(&self, t: &Ty) -> bool {
+        fn cuts(e: &Emitter, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
+            match t {
+                // (a decimal compares equal at another scale, which shows
+                // otherwise: it moves on)
+                Ty::Int | Ty::Big | Ty::Fraction | Ty::Float | Ty::Bool | Ty::Str | Ty::Markup => true,
+                Ty::List(i) | Ty::Map(_, i) | Ty::Result(i) => cuts(e, i, seen),
+                Ty::Record(n) => {
+                    if !seen.insert(n.clone()) {
+                        return true;
+                    }
+                    e.record_compares(n, &mut BTreeSet::new()) && e.part.structs.iter().find(|s| &s.name == n).is_some_and(|s| s.fields.iter().all(|(_, f)| cuts(e, f, seen)))
+                }
+                _ => false,
+            }
+        }
+        cuts(self, t, &mut BTreeSet::new())
     }
 
     /// Whether values of a type compare in Rust as `eq` compares them.
@@ -1305,8 +1585,16 @@ impl Emitter {
     fn emit_field_through_call(&mut self, var: &str, path: &[PathStep], expr: &Expr) -> bool {
         let [PathStep::Field(f)] = path else { return false };
         let Expr::Call { target: Target::User(g), args, ty: call_ty, propagates } = expr else { return false };
-        // (a call whose arguments cannot fail: one that can is the call's
-        // value where it fails, which this path does not print)
+        let of_var = |b: &Expr| matches!(b, Expr::Local(n, _) | Expr::Move(n, _) if n == var);
+        let field_of = |a: &Expr| matches!(a, Expr::Field { base, name, .. } if name == f && of_var(base));
+        // (the field itself, or its value where it may hold a failure: the
+        // call is then the failure where the field holds one)
+        let unwrapped = |a: &Expr| matches!(a, Expr::Convert { how: crate::ir::Convert::Unwrap, expr, .. } if field_of(expr));
+        let is_place = |a: &Expr| field_of(a) || unwrapped(a);
+        // (a call whose arguments cannot fail, but for the field itself
+        // where it is a record that may hold a failure — `p.c` of Lory's
+        // pass, the canvas: one that can is the call's value where it
+        // fails, which this path does not print otherwise)
         if args.iter().any(|a| a.ty().is_result()) {
             return false;
         }
@@ -1322,14 +1610,35 @@ impl Emitter {
         if !matches!(self.local_ty(var).unwrap_or(Ty::Unknown).text(), Ty::Record(_)) {
             return false;
         }
-        let of_var = |b: &Expr| matches!(b, Expr::Local(n, _) | Expr::Move(n, _) if n == var);
-        let places: Vec<usize> = args.iter().enumerate().filter(|(_, a)| matches!(a, Expr::Field { base, name, .. } if name == f && of_var(base))).map(|(i, _)| i).collect();
+        let places: Vec<usize> = args.iter().enumerate().filter(|(_, a)| is_place(a)).map(|(i, _)| i).collect();
         let [k] = places[..] else { return false };
         // (a place whose value has an empty one to leave behind, of the
-        // very type the call answers: written back as it is)
-        let field_ty = self.tt(&args[k]);
+        // very type the call answers: written back as it is — a list, a
+        // map, a text, bytes, a tensor; or a record, or a record that may
+        // hold a failure, whose every field has a value to leave: Lory's
+        // pass had copied its whole canvas, every vertex of the frame so
+        // far, for each rectangle, word and outline a control drew, and a
+        // headset's page with its keyboard up took 64 ms a frame on a
+        // desk, 2026-11-16)
+        // (the field as its record declares it: a field that may hold a
+        // failure is read as its value, and written as what may fail)
+        let declared = match self.local_ty(var).unwrap_or(Ty::Unknown).text() {
+            Ty::Record(r) => self.part.structs.iter().find(|s| s.name == r).and_then(|s| s.fields.iter().find(|(n, _)| n == f)).map(|(_, t)| as_inferred(t)),
+            _ => None,
+        };
+        let field_ty = match (&args[k], declared) {
+            (Expr::Convert { expr, .. }, _) => self.tt(expr),
+            (_, Some(t @ Ty::Result(_))) => t,
+            _ => self.tt(&args[k]),
+        };
         let answer_ty = self.tt(expr);
-        if !matches!(field_ty, Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes | Ty::Tensor(..)) || answer_ty != field_ty {
+        let left = match &field_ty {
+            Ty::List(_) | Ty::Map(..) | Ty::Str | Ty::Bytes | Ty::Tensor(..) => None,
+            Ty::Record(r) if self.record_leaves_default(r, &mut BTreeSet::new()) => Some(field_ty.default_rust_value()),
+            Ty::Result(inner) if matches!(inner.as_ref(), Ty::Record(r) if self.record_leaves_default(r, &mut BTreeSet::new())) => Some(field_ty.default_rust_value()),
+            _ => return false,
+        };
+        if answer_ty != field_ty {
             return false;
         }
         // (the function keeps what it is given: one that only reads it
@@ -1354,7 +1663,11 @@ impl Emitter {
         self.scopes.push(Default::default());
         for (i, a) in args.iter().enumerate() {
             if i == k {
-                given.push(Expr::Move("_tk·".to_string(), a.ty()));
+                let taken = Expr::Move("_tk·".to_string(), field_ty.clone());
+                given.push(match a {
+                    Expr::Convert { how, ty, .. } => Expr::Convert { how: how.clone(), expr: Box::new(taken), ty: ty.clone() },
+                    _ => Expr::Move("_tk·".to_string(), a.ty()),
+                });
             } else if crate::ir::quiet(a) && !reads_var(a) {
                 given.push(a.clone());
             } else {
@@ -1371,8 +1684,33 @@ impl Emitter {
         let val = self.owned_expr(&call);
         self.scopes.pop();
         let field = Self::rust_field(f);
-        self.line(&format!("{{ {}let _tk· = std::mem::take(&mut {}.{}); {}.{} = {}; }}", head, var, field, var, field, val));
+        let take = match left {
+            Some(empty) => format!("std::mem::replace(&mut {}.{}, {})", var, field, empty),
+            None => format!("std::mem::take(&mut {}.{})", var, field),
+        };
+        self.line(&format!("{{ {}let _tk· = {}; {}.{} = {}; }}", head, take, var, field, val));
         true
+    }
+
+    /// Whether a record's every field has a value to leave behind where the
+    /// record is taken out of its place for a moment (`crow_default`): none
+    /// is a function, nor a record with one.
+    fn record_leaves_default(&self, name: &str, seen: &mut BTreeSet<String>) -> bool {
+        if !seen.insert(name.to_string()) {
+            return true;
+        }
+        let Some(s) = self.part.structs.iter().find(|s| s.name == name) else { return false };
+        let fields: Vec<Ty> = s.fields.iter().map(|(_, t)| t.clone()).collect();
+        fields.iter().all(|t| self.leaves_default(t, seen))
+    }
+
+    fn leaves_default(&self, t: &Ty, seen: &mut BTreeSet<String>) -> bool {
+        match t {
+            Ty::Record(r) => self.record_leaves_default(r, seen),
+            Ty::Result(inner) | Ty::List(inner) => self.leaves_default(inner, seen),
+            Ty::Map(_, v) => self.leaves_default(v, seen),
+            other => !other.default_rust_value().contains("panic!"),
+        }
     }
 
     fn emit_return(&mut self, e: &Expr) {
@@ -1471,7 +1809,7 @@ impl Emitter {
                 }
             }
         } else if self.view_mark {
-            self.line(&format!("return state.view_exit(__view, {});", text));
+            self.line(&format!("return state.view_end(__view, {}, state.tables_drawn());", text));
         } else {
             self.line(&format!("return {};", text));
         }
@@ -1646,4 +1984,16 @@ impl Emitter {
 /// whose values can fail holds of it.
 fn ok_of(val: &str) -> String {
     format!("CrowResult {{ ok: true, value: ({}), reason: String::new(), kind: String::new(), trace: vec![], captured: 0.0 }}", val)
+}
+
+/// A tuple of `items` that prints with `Debug`, for a view's key: Rust
+/// prints a tuple of at most twelve, so a longer one is nested in tuples of
+/// twelve (`((a, …, l), (m, …))`). One of twelve or fewer is written as it
+/// always was (`(a, b,)`).
+fn debug_tuple(items: &[String]) -> String {
+    if items.len() <= 12 {
+        return format!("({})", items.iter().map(|i| format!("{},", i)).collect::<Vec<_>>().join(" "));
+    }
+    let groups: Vec<String> = items.chunks(12).map(debug_tuple).collect();
+    debug_tuple(&groups)
 }

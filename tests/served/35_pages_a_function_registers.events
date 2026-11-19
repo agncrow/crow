@@ -1,0 +1,1 @@
+[{"open": "/"}, {"expect": "home, count 0"}, {"event": "bump"}, {"expect": "home, count 1"}, {"open": "/about"}, {"expect": "about, count 0"}]

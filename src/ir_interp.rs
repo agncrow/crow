@@ -14,6 +14,8 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+// (a served render's session, and the views it keeps: crow_web/src/live/views.rs)
+pub(crate) use crow_web::live::{view_cache_mode, CrowLiveState as LiveState, ViewCacheMode, ViewCall, ViewRunning, ViewSpec, VIEW_KEY_MAX};
 
 /// Scalar and tensor names both core and math answer: scalars go to the
 /// core builtin, as the AST walker routes them.
@@ -201,7 +203,9 @@ pub struct IrInterp {
     pub(crate) harness_toast: bool,
     /// What each `page[…]` asked for, in order: the path, the view, the url
     /// facts. `crow run -i` serves every one.
-    pub(crate) pages: Vec<(String, String, Vec<String>)>,
+    /// Each page the program registers: its path, its view, its `url`
+    /// facts and its `init`.
+    pub(crate) pages: Vec<(String, String, Vec<String>, Option<String>)>,
     /// What each `route[…]` asked for, in order: the method, the path, the
     /// handler. `crow run -i` answers every one.
     /// method, path, handler and the requests a minute each client may
@@ -230,6 +234,30 @@ pub struct IrInterp {
     /// the app's values — two programs a process serves share none.
     pub(crate) app_state: Option<Arc<crow_web::live::CrowLiveState>>,
     pub(crate) app_tag: u64,
+    /// The served session a page's render reads, while it renders
+    /// (served.rs): its derivations are read through the session's cache,
+    /// and its views kept with what they read (crow_web/src/live/views.rs)
+    pub(crate) served: Option<Served>,
+    /// What each view reads (derive::view_reads), as the cache keeps it
+    pub(crate) view_specs: Arc<HashMap<String, &'static ViewSpec>>,
+    /// How each view's parameters key its calls (derive::ViewReads.args):
+    /// a view none of whose parameters is keyed otherwise is absent
+    pub(crate) view_uses: Arc<HashMap<String, Vec<crate::derive::ArgUse>>>,
+    /// The program's bindings (derive::bind_sites), by id, and what each
+    /// reads, as a values turn asks for them (served.rs)
+    pub(crate) bindings: Arc<Vec<crate::ir::Binding>>,
+    /// The facts written while a served handler or a harness session
+    /// reads its derivations through the session's cache: each is landed
+    /// in the session's state (its version moved) before the next read, so
+    /// a read after a write sees what the write changed (`sync_served`).
+    pub(crate) fact_writes: Option<FactWrites>,
+    /// Inside a derivation read through the session's cache: its body
+    /// writes nothing, so nothing is landed until the outer read is done.
+    served_depth: usize,
+    /// The harness's sessions as the runtime keeps them: each one's state
+    /// (fact versions, derivation and view caches) and the fact values its
+    /// versions stand for. A copy of the walker starts with none.
+    harness_live: HarnessLives,
     /// Whether the effect being run has its answer used (`Effect.answered`):
     /// `sent = mail[…]` sends at once, `mail[…]` waits for the commit.
     answering: bool,
@@ -582,6 +610,13 @@ impl IrInterp {
             route_reads: None,
             app_state: None,
             app_tag: 0,
+            served: None,
+            view_specs: Arc::new(HashMap::new()),
+            view_uses: Arc::new(HashMap::new()),
+            bindings: Arc::new(Vec::new()),
+            fact_writes: None,
+            served_depth: 0,
+            harness_live: HarnessLives::default(),
             answering: true,
             testing: false,
             session_mails: HashMap::new(),
@@ -655,6 +690,9 @@ impl IrInterp {
             for d in &part.derives {
                 self.derives.insert(d.name.clone(), Arc::new(d.clone()));
             }
+            if !part.bindings.is_empty() {
+                self.bindings = Arc::new(part.bindings.clone());
+            }
             for s in &part.structs {
                 self.structs.insert(s.name.clone(), Arc::new(s.clone()));
                 self.layouts.insert(s.name.clone(), layout_of(s));
@@ -720,6 +758,14 @@ impl IrInterp {
     }
 
     pub(crate) fn set_fact(&mut self, name: &str, v: CrowValue) {
+        if let Some(w) = self.fact_writes.as_mut() {
+            if !w.dirty.contains(name) {
+                w.dirty.insert(name.to_string());
+            }
+            if !w.all.contains(name) {
+                w.all.insert(name.to_string());
+            }
+        }
         Arc::make_mut(&mut self.frames[0].scopes[0]).insert(name.to_string(), v);
     }
 
@@ -1251,34 +1297,50 @@ impl IrInterp {
                 items.extend(self.eval_args(args)?);
                 CrowValue::ok(Value::Array(std::sync::Arc::new(items)))
             }
-            Expr::Tree { element, attrs, children } => {
+            Expr::Tree { element, attrs, children, binds } => {
+                // (its bindings are a served render's: a node built
+                // elsewhere — a handler's, a test's — holds none)
+                let bound: Vec<(crate::ops::tree::BindAt<'_>, u32)> = if binds.is_empty() || !self.served.as_ref().is_some_and(|s| s.render) {
+                    Vec::new()
+                } else {
+                    binds
+                        .iter()
+                        .map(|(at, id)| {
+                            let at = match at {
+                                crate::ir::BindAt::Child(i) => crate::ops::tree::BindAt::Child(*i),
+                                crate::ir::BindAt::Option(n) => crate::ops::tree::BindAt::Option(n.as_str()),
+                            };
+                            (at, *id)
+                        })
+                        .collect()
+                };
                 let mut map = std::collections::BTreeMap::new();
                 for (k, v) in attrs {
                     map.insert(k.clone(), self.eval(v)?);
                 }
-                // a paged table: which one it is in this render, and its page
+                // a paged table: which one it is in this render, and its
+                // page; a sorted one: which one, and its order
+                let mut tables = crate::ops::tree::TableState::default();
                 if element == "table" && map.contains_key("page") {
                     let index = self.paged_tables;
                     self.paged_tables += 1;
-                    let at = self.session_pages.get(&index).copied().unwrap_or(0);
-                    map.insert("__page_index".to_string(), CrowValue::ok(Value::Int(index as i64)));
-                    map.insert("__page_at".to_string(), CrowValue::ok(Value::Int(at as i64)));
+                    tables.page = Some((index, self.session_pages.get(&index).copied().unwrap_or(0)));
                 }
-                // a sorted table: which one it is in this render, and its order
                 if element == "table" && matches!(map.get("sort").map(|v| &v.value), Some(Value::Bool(true))) {
                     let index = self.sorted_tables;
                     self.sorted_tables += 1;
-                    map.insert("__sort_index".to_string(), CrowValue::ok(Value::Int(index as i64)));
-                    if let Some((column, desc)) = self.session_sorts.get(&index) {
-                        map.insert("__sort_by".to_string(), CrowValue::ok(Value::Str(column.clone())));
-                        map.insert("__sort_desc".to_string(), CrowValue::ok(Value::Bool(*desc)));
-                    }
+                    tables.sort = Some((index, self.session_sorts.get(&index).cloned()));
                 }
-                let mut vals = vec![CrowValue::ok(Value::map(map))];
+                let mut kids = Vec::with_capacity(children.len());
                 for c in children {
-                    vals.push(self.eval(c)?);
+                    let v = self.eval(c)?;
+                    // a child the program holds as text is placed as text,
+                    // a node or markup among it too (a list of text a node
+                    // was pushed onto: markup mixed with text is text), as
+                    // the compiled program places it
+                    kids.push(if held_as_text(&c.ty()) { as_text(v) } else { v });
                 }
-                CrowValue::markup(crate::ops::render_element(element, &vals)?)
+                CrowValue::node(crate::ops::view_element_bound(element, &map, &kids, tables, &bound)?)
             }
             // assert[a op b]: a failed comparison reports both operands
             Expr::Call { target: Target::Runtime(name), args, .. }
@@ -1322,9 +1384,9 @@ impl IrInterp {
                 // a control renders what it is given: a failed argument is
                 // its reason in place of the control, as for a view
                 if let Some(bad) = vals.iter().find(|v| v.is_error()) {
-                    return Ok(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&bad.reason()))));
+                    return Ok(CrowValue::node(crate::ops::tree::failed(bad.reason())));
                 }
-                CrowValue::markup(crate::ops::render_input(name, &key, &vals)?)
+                CrowValue::node(crate::ops::view_control(name, &key, &vals)?)
             }
             // the length of a local, read where it lies: a list is not
             // copied to be measured (a loop over a growing list was quadratic)
@@ -2543,6 +2605,8 @@ impl IrInterp {
     }
 
     fn bare_call(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
+        // a node handed to a builtin is its markup, as it had been
+        let vals: Vec<CrowValue> = if vals.iter().any(|v| matches!(v.value, Value::Node(_))) { vals.into_iter().map(CrowValue::into_markup).collect() } else { vals };
         if let Some(stop) = self.effect_refused(name, &vals) {
             return stop;
         }
@@ -2861,13 +2925,7 @@ impl IrInterp {
                     Value::Float(f) => *f,
                     _ => 0.0,
                 };
-                let fmt_num = |x: f64| if (x - x.round()).abs() < 1e-9 { format!("{}", x.round() as i64) } else { format!("{}", x) };
-                let max = num(&vals[1]);
-                Ok(CrowValue::markup(format!(
-                    "<progress class=\"crow-progress\" max=\"{}\" value=\"{}\"></progress>",
-                    fmt_num(if max > 0.0 { max } else { 1.0 }),
-                    fmt_num(num(&vals[0]))
-                )))
+                Ok(CrowValue::node(crate::ops::tree::progress(num(&vals[0]), num(&vals[1]))))
             }
             // chart[frame, x, candles, lines, bars_y, marker, tz, height,
             // panes, levels, points, seek] (lowered): the chart's markup
@@ -2876,7 +2934,7 @@ impl IrInterp {
                 let Value::Frame(f) = &vals[0].value else {
                     if vals[0].is_error() {
                         // the reason is text, as the compiled chart writes it
-                        return Ok(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&vals[0].reason()))));
+                        return Ok(CrowValue::node(crate::ops::tree::failed(vals[0].reason())));
                     }
                     return Err("chart[] takes a frame first".into());
                 };
@@ -2922,7 +2980,8 @@ impl IrInterp {
                     Value::Fn(func) => Some(func.name.clone()),
                     _ => None,
                 };
-                let node = crow_web::view::CrowVNode::chart_from_frame(
+                // (the one builder, as the compiled chart calls it)
+                Ok(CrowValue::node(crate::ops::tree::chart(
                     f,
                     &as_str(&vals[1]),
                     &str_list(&vals[2]),
@@ -2933,10 +2992,9 @@ impl IrInterp {
                     as_f64(&vals[7]),
                     &panes,
                     &levels,
-                    points.map(|v| &**v),
+                    points.map(|p| &**p),
                     seek.as_deref(),
-                );
-                Ok(CrowValue::markup(node.to_html()))
+                )))
             }
             // icon[name, size, color] (lowered): inline SVG from the kernel's set
             "icon" if vals.len() == 3 => {
@@ -2944,9 +3002,7 @@ impl IrInterp {
                     return Ok(CrowValue::done());
                 }
                 let s = |v: &CrowValue| format!("{}", v.value);
-                crow_runtime::layout::icon_html(&s(&vals[0]), &s(&vals[1]), &s(&vals[2]))
-                    .map(CrowValue::markup)
-                    .map_err(|e| format!("icon: {}", e))
+                crate::ops::tree::icon(&s(&vals[0]), &s(&vals[1]), &s(&vals[2])).map(CrowValue::node)
             }
             _ => Err(format!("the IR interpreter does not run '{}' yet", name)),
         }
@@ -3289,7 +3345,7 @@ impl IrInterp {
             return Err(format!("{}[] expects {} arguments, got {}", name, floats.len(), vals.len()));
         }
         if view && let Some(bad) = vals.iter().find(|v| v.is_error()) {
-            return Ok(Some(CrowValue::markup(crate::harness::html_escape_text(&crow_web::core::response::failed_in_view(&bad.reason())))));
+            return Ok(Some(CrowValue::node(crate::ops::tree::failed(bad.reason()))));
         }
         for (float, v) in floats.zip(vals.iter_mut()) {
             if float && let Some(n) = v.plain_int() {
@@ -3389,7 +3445,382 @@ impl IrInterp {
             }
             return Ok(v);
         }
+        if self.served_state().is_some() {
+            // (what was written lands before the state is read)
+            self.sync_served();
+            if let Some(state) = self.served_state() {
+                return self.served_read(state, name);
+            }
+        }
+        // a test's own line reads its session's cache, as the session's
+        // page and handlers do (and as the compiled harness reads it)
+        if let Some(id) = self.active_session
+            && self.served.is_none()
+            && !self.remote_sessions.contains_key(&id)
+        {
+            return self.harness_read(id, name);
+        }
         self.compute_derived(name)
+    }
+
+    /// A derivation a test's own line reads, through the harness session's
+    /// cache: the facts the test wrote land first (`harness_sync`), so it
+    /// is computed again only when what it read moved.
+    fn harness_read(&mut self, id: u64, name: &str) -> Result<CrowValue, String> {
+        self.harness_sync(id);
+        self.harness_moment(id);
+        let state = self.harness_state(id);
+        // (the state stays boxed where it is while the read runs)
+        let st: &'static LiveState = unsafe { &*state };
+        self.served = Some(Served { state, owner: std::thread::current().id(), render: false, lands: Lands::Nothing });
+        let r = self.served_read(st, name);
+        self.served = None;
+        r
+    }
+
+    /// The facts written since the last read land in the session's state
+    /// before a derivation is read through its cache: their versions move,
+    /// so what reads them is computed again, and nothing else is (a
+    /// handler's later read sees its own write, as the compiled program's
+    /// does). The tables written land too. Nothing lands inside a
+    /// derivation's own read: its body writes nothing.
+    fn sync_served(&mut self) {
+        if self.served_depth > 0 {
+            return;
+        }
+        let Some(served) = self.served.clone() else { return };
+        if served.lands == Lands::Nothing || served.owner != std::thread::current().id() {
+            return;
+        }
+        let dirty = match self.fact_writes.as_mut() {
+            Some(w) if !w.dirty.is_empty() => std::mem::take(&mut w.dirty),
+            _ => HashSet::new(),
+        };
+        let writes = if crate::compiled_harness::active() { Vec::new() } else { crate::served::take_writes() };
+        // (the harness's reader is the interpreter's, not a fact: a sign-in
+        // or a sign-out moves what reads it, as it moves a served session's
+        // `reader`)
+        if let Lands::Harness(id) = served.lands {
+            let reader = CrowValue::ok(Value::map(self.session_reader.get(&id).cloned().unwrap_or_default()));
+            if let Some(live) = self.harness_live.0.get_mut(&id)
+                && !live.seen.get("reader").is_some_and(|s| same_fact(s, &reader))
+            {
+                live.seen.insert("reader".to_string(), reader);
+                live.state.touch("reader");
+            }
+        }
+        if dirty.is_empty() && writes.is_empty() {
+            return;
+        }
+        match served.lands {
+            Lands::Json => {
+                // (no read of the state is under way here: see `served_depth`)
+                let state = unsafe { &mut *served.state };
+                for name in &dirty {
+                    match self.var(name) {
+                        Some(v) if crate::served::is_data(v) => state.set(name, crate::served::fact_to_json(v)),
+                        _ => state.touch(name),
+                    }
+                }
+                state.note_writes(writes);
+            }
+            Lands::Harness(id) => {
+                let facts = &self.frames[0].scopes[0];
+                if let Some(live) = self.harness_live.0.get_mut(&id) {
+                    for name in &dirty {
+                        if let Some(v) = facts.get(name)
+                            && !live.seen.get(name).is_some_and(|s| same_fact(s, v))
+                        {
+                            live.seen.insert(name.clone(), v.clone());
+                            live.state.touch(name);
+                        }
+                    }
+                    live.state.note_writes(writes);
+                }
+            }
+            Lands::Nothing => {}
+        }
+    }
+
+    /// A served handler begins on its working copy: its derivations are
+    /// read through the session's cache, and the facts it writes are
+    /// recorded so each read sees them.
+    pub(crate) fn begin_handling(&mut self, state: &mut LiveState) {
+        self.served = Some(Served::handler(state));
+        self.fact_writes = Some(FactWrites::default());
+    }
+
+    /// The handler ended: the facts it wrote, in all.
+    pub(crate) fn end_handling(&mut self) -> HashSet<String> {
+        self.served = None;
+        self.fact_writes.take().map(|w| w.all).unwrap_or_default()
+    }
+
+    /// The harness session `id` as the runtime keeps it, made as the
+    /// session first renders or handles an event: every fact's version its
+    /// own, so no two sessions (nor two runs of a test) share a value they
+    /// did not compute from the same facts.
+    fn harness_state(&mut self, id: u64) -> *mut LiveState {
+        if self.view_specs.is_empty() {
+            self.hold_view_specs();
+        }
+        if self.app_tag == 0 {
+            self.app_tag = next_app_tag();
+        }
+        if !self.harness_live.0.contains_key(&id) {
+            let mut state = LiveState::new();
+            let mut seen = HashMap::new();
+            for name in &self.fact_names {
+                state.touch(name);
+                if let Some(v) = self.frames[0].scopes[0].get(name) {
+                    seen.insert(name.clone(), v.clone());
+                }
+            }
+            state.next_tick();
+            self.harness_live.0.insert(id, Box::new(HarnessLive { state, at: Some(crow_runtime::moments::now()), seen }));
+        }
+        let live = self.harness_live.0.get_mut(&id).expect("made above");
+        &mut live.state as *mut LiveState
+    }
+
+    /// Before a harness session renders or handles an event: every fact
+    /// whose value is not the one its version stands for moves its
+    /// version (the test's own lines and the session's swap write facts
+    /// too), and so do the tables written since.
+    fn harness_sync(&mut self, id: u64) {
+        let names = self.fact_names.clone();
+        let all = FactWrites { dirty: names.into_iter().collect(), all: HashSet::new() };
+        let state = self.harness_state(id);
+        let outer = self.fact_writes.replace(all);
+        let outer_served = self.served.replace(Served { state, owner: std::thread::current().id(), render: false, lands: Lands::Harness(id) });
+        let depth = std::mem::replace(&mut self.served_depth, 0);
+        self.sync_served();
+        self.served_depth = depth;
+        self.served = outer_served;
+        self.fact_writes = outer;
+    }
+
+    /// The test moved the session's clock since its tick: the tick moves,
+    /// so a derivation that answers by the moment is computed again, as a
+    /// served page's next render is.
+    fn harness_moment(&mut self, id: u64) {
+        let now = crow_runtime::moments::now();
+        if let Some(live) = self.harness_live.0.get_mut(&id)
+            && live.at != Some(now)
+        {
+            live.state.next_tick();
+            live.at = Some(now);
+        }
+    }
+
+    /// A harness session's page rendered as a served session renders it:
+    /// through the session's view cache and its derivations' (the test
+    /// exercises the path the runtime takes; `CROW_VIEW_CACHE` switches
+    /// it as it switches a served page's). A session the compiled program
+    /// holds, or a render inside a served one, renders as it did.
+    fn harness_render(&mut self, view: &str) -> Result<CrowValue, String> {
+        let id = match self.active_session {
+            Some(id) if self.served.is_none() && !self.remote_sessions.contains_key(&id) => id,
+            _ => return self.render_page(view),
+        };
+        self.harness_sync(id);
+        self.harness_moment(id);
+        let state = self.harness_state(id);
+        // (the state stays boxed where it is while the render reads it)
+        let st: &LiveState = unsafe { &*state };
+        st.begin_render();
+        self.served = Some(Served { state, owner: std::thread::current().id(), render: true, lands: Lands::Nothing });
+        let r = self.render_page(view);
+        self.served = None;
+        st.end_render();
+        r
+    }
+
+    /// A handler run on a harness session, as a served session runs it:
+    /// its derivations read through the session's cache, each write landing
+    /// in its versions before the next read. Elsewhere it is the plain
+    /// transaction.
+    fn harness_transaction(&mut self, name: &str, args: Vec<CrowValue>) -> Result<CrowValue, String> {
+        let id = match self.active_session {
+            Some(id) if self.served.is_none() && !self.remote_sessions.contains_key(&id) => id,
+            _ => return self.transaction(name, args),
+        };
+        self.harness_sync(id);
+        let state = self.harness_state(id);
+        unsafe { (*state).next_tick() };
+        self.served = Some(Served { state, owner: std::thread::current().id(), render: false, lands: Lands::Harness(id) });
+        self.fact_writes = Some(FactWrites::default());
+        let r = self.transaction(name, args);
+        self.served = None;
+        self.fact_writes = None;
+        // (its writes land at the next read or render)
+        r
+    }
+
+    /// The session a served render reads, on the thread that renders it.
+    fn served_state(&self) -> Option<&'static LiveState> {
+        let s = self.served.as_ref()?;
+        if s.owner != std::thread::current().id() {
+            return None;
+        }
+        // (the render that set it holds the session until it clears it)
+        Some(unsafe { &*s.state })
+    }
+
+    /// A derivation a served render reads, through the session's cache: its
+    /// inputs that are derivations first, so their versions are current,
+    /// then its own — kept while nothing it read moved, computed once per
+    /// change, and a value recomputed equal to the last keeps its version
+    /// (early cutoff), as the compiled program reads it.
+    fn served_read(&mut self, state: &'static LiveState, name: &str) -> Result<CrowValue, String> {
+        let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
+        // (its inputs brought up to date as its own reading: a view reading
+        // it reads it alone, `CrowLiveState::deriving`)
+        state.deriving(|| {
+            for other in &d.spec.derives {
+                if other != name {
+                    self.served_read(state, other)?;
+                }
+            }
+            Ok::<(), String>(())
+        })?;
+        let spec = app_spec(self.app_tag, &d);
+        self.served_depth += 1;
+        let r = state.derive_with(spec, |_| self.compute_derived(name), same_value);
+        self.served_depth -= 1;
+        r
+    }
+
+    /// Bring a derivation a kept view read up to date, by the name the
+    /// session's cache knows it by (`app_spec`'s).
+    pub(crate) fn served_refresh(&mut self, tagged: &str) {
+        let Some(state) = self.served_state() else { return };
+        let name = tagged.split_once('#').map_or(tagged, |(_, n)| n).to_string();
+        let _ = self.served_read(state, &name);
+    }
+
+    /// A view called in a served render: its kept node when nothing it read
+    /// moved (crow_web/src/live/views.rs), else it runs. None: run it as
+    /// any call runs.
+    pub(super) fn view_kept(&mut self, name: &str, args: &[&CrowValue]) -> Option<Result<ViewCall, ()>> {
+        if !self.served.as_ref()?.render {
+            return None;
+        }
+        let state = self.served_state()?;
+        let spec = *self.view_specs.get(name)?;
+        // (a parameter its copy binds is left out of the key, its text kept
+        // beside it; one handed from a source is keyed by the source's
+        // version: derive::specialize)
+        let (key, bound) = match self.view_uses.get(name) {
+            None => (view_key(args), None),
+            Some(uses) => {
+                let mut keyed: Vec<&CrowValue> = Vec::new();
+                let mut bound: Vec<&CrowValue> = Vec::new();
+                let mut sources = String::new();
+                for (a, u) in args.iter().zip(uses.iter()) {
+                    match u {
+                        crate::derive::ArgUse::Value => keyed.push(a),
+                        crate::derive::ArgUse::Bound => bound.push(a),
+                        crate::derive::ArgUse::Source { root, derive } => {
+                            let at = if *derive { state.source_version(&format!("{}#{}", self.app_tag, root), true) } else { state.source_version(root, false) };
+                            sources.push_str(&format!("@{}:{};", root, at));
+                        }
+                    }
+                }
+                let key = view_key(&keyed).map(|k| format!("{}{}", sources, k));
+                match (bound.is_empty(), view_key(&bound)) {
+                    (true, _) => (key, None),
+                    (false, Some(b)) => (key, Some(b)),
+                    // (what it binds past the longest key: no key at all)
+                    (false, None) => (None, None),
+                }
+            }
+        };
+        let drawn = (self.paged_tables, self.sorted_tables);
+        let this: *mut IrInterp = self;
+        // (the refresh runs on this interpreter while the cache asks: the
+        // cache holds no borrow of it)
+        let refresh = |n: &str| unsafe { (*this).served_refresh(n) };
+        let eval = |ids: &[u32]| unsafe { (*this).eval_bindings(ids) };
+        let call = state.view_begin_bound(spec, key, bound, drawn, &refresh, &eval);
+        if let ViewCall::Reuse(_, after) = &call {
+            self.paged_tables = after.0;
+            self.sorted_tables = after.1;
+        }
+        Some(Ok(call))
+    }
+
+    /// A kept view's run ended: its node is kept (a value that is no node,
+    /// or a stop, is kept nowhere).
+    pub(super) fn view_ran(&mut self, running: ViewRunning, r: Result<CrowValue, String>) -> Result<CrowValue, String> {
+        let Some(state) = self.served_state() else { return r };
+        let drawn = (self.paged_tables, self.sorted_tables);
+        match r {
+            Ok(v) if v.is_ok() && matches!(v.value, Value::Node(_)) => {
+                let Value::Node(n) = v.value else { unreachable!() };
+                let node = Arc::try_unwrap(n).unwrap_or_else(|n| (*n).clone());
+                Ok(CrowValue::node(state.view_end(running, node, drawn)))
+            }
+            other => {
+                state.view_abandon(running);
+                other
+            }
+        }
+    }
+
+    /// The values of the bindings `ids` names, computed for the session a
+    /// served render reads (`served`), each as a render places it: none
+    /// when one stops or fails (the page then renders, and says so).
+    pub(crate) fn eval_bindings(&mut self, ids: &[u32]) -> Option<Vec<crate::ops::tree::Bound>> {
+        let bindings = self.bindings.clone();
+        self.in_view += 1;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            let Some(b) = bindings.get(*id as usize) else {
+                self.in_view -= 1;
+                return None;
+            };
+            let v = match self.eval(&b.expr) {
+                Ok(v) if v.is_ok() => v,
+                _ => {
+                    self.in_view -= 1;
+                    return None;
+                }
+            };
+            let v = if !b.option && held_as_text(&b.expr.ty()) { as_text(v) } else { v };
+            match crate::ops::bound_value(&v, b.option) {
+                Some(x) => out.push(x),
+                None => {
+                    self.in_view -= 1;
+                    return None;
+                }
+            }
+        }
+        self.in_view -= 1;
+        Some(out)
+    }
+
+    /// The views' read sets, made once for a served program.
+    pub(crate) fn hold_view_specs(&mut self) {
+        let fns: Vec<&Fn> = self.fns.values().map(|f| &**f).collect();
+        let fields: std::collections::BTreeMap<String, Vec<Ty>> = self.structs.iter().map(|(n, s)| (n.clone(), s.fields.iter().map(|(_, t)| t.clone()).collect())).collect();
+        let reads = crate::derive::view_reads(&fns, &fields);
+        fn leak(s: String) -> &'static str {
+            Box::leak(s.into_boxed_str())
+        }
+        let mut specs = HashMap::new();
+        let mut uses = HashMap::new();
+        for (name, r) in reads {
+            if r.args.iter().any(|a| *a != crate::derive::ArgUse::Value) {
+                uses.insert(name.clone(), r.args.clone());
+            }
+            let facts: &'static [&'static str] = Box::leak(r.facts.iter().cloned().map(leak).collect::<Vec<_>>().into_boxed_slice());
+            let bound: &'static [&'static str] = Box::leak(r.bound.iter().cloned().map(leak).collect::<Vec<_>>().into_boxed_slice());
+            let spec: &'static ViewSpec = Box::leak(Box::new(ViewSpec { name: leak(name.clone()), facts, always: r.always.map(leak), bound }));
+            specs.insert(name, spec);
+        }
+        self.view_specs = Arc::new(specs);
+        self.view_uses = Arc::new(uses);
     }
 
     /// A route's request begins: the derivations its handler reads (bound
@@ -3427,6 +3858,8 @@ impl IrInterp {
 
     /// A derivation's body run now, stamped with its moment.
     fn compute_derived(&mut self, name: &str) -> Result<CrowValue, String> {
+        #[cfg(test)]
+        COMPUTED.with(|c| c.set(c.get() + 1));
         let d = self.derives.get(name).cloned().ok_or_else(|| format!("unknown derivation '{}'", name))?;
         // the reader's line is still the line reading it
         let saved_line = self.line;
@@ -3564,19 +3997,25 @@ impl IrInterp {
     }
 
     /// A harness session opened on the compiled program too: it starts from
-    /// the facts the test holds now, at the session's moment.
-    fn remote_open(&mut self, view: &str, id: u64) -> Result<(), String> {
+    /// the facts the test holds now — a later session from where the first
+    /// started, as the interpreter's does (it had started from the facts
+    /// the active session had moved to) — at the session's moment, and runs
+    /// the page's init there.
+    fn remote_open(&mut self, view: &str, id: u64, init: Option<&str>) -> Result<(), String> {
         if self.remote.is_none() {
             self.remote = Some(Arc::new(crate::compiled_harness::RemoteApp::start()?));
         }
-        let facts: serde_json::Map<String, serde_json::Value> = self
-            .fact_values()
+        let start = match self.sessions.get(&id) {
+            Some(held) => held.clone(),
+            None => self.fact_values(),
+        };
+        let facts: serde_json::Map<String, serde_json::Value> = start
             .into_iter()
             .filter(|(_, v)| crate::served::is_data(v))
             .map(|(k, v)| (k, crate::served::fact_to_json(&v)))
             .collect();
         let now = self.session_clock.get(&id).copied();
-        let answer = self.remote()?.post("open", serde_json::json!({ "view": view, "facts": facts, "now": now }))?;
+        let answer = self.remote()?.post("open", serde_json::json!({ "view": view, "facts": facts, "now": now, "init": init }))?;
         let rid = answer.get("session").and_then(|v| v.as_u64()).ok_or("the compiled program opened no session")?;
         self.remote_sessions.insert(id, rid);
         self.activate(id);
@@ -3699,32 +4138,46 @@ impl IrInterp {
 
     // ── the harness and the live layer's mocks ─────────────────────
 
-    /// A session's view rendered to markup.
-    pub(crate) fn render_view(&mut self, view: &str) -> Result<String, String> {
+    /// A page's view rendered: what it answers, a node as a rule.
+    pub(crate) fn render_page(&mut self, view: &str) -> Result<CrowValue, String> {
         self.tick += 1;
         self.notice_read = false;
         self.paged_tables = 0;
         self.sorted_tables = 0;
-        let r = self.call_user(view, Vec::new())?;
+        self.call_user(view, Vec::new())
+    }
+
+    /// A session's view rendered to markup.
+    pub(crate) fn render_view(&mut self, view: &str) -> Result<String, String> {
+        let r = self.harness_render(view)?;
         let html = match &r.value {
             Value::Str(s) => s.clone(),
             other => format!("{}", other),
         };
-        // a page that shows no notice of its own gets the runtime's toast,
-        // as the served page does, while the notice is fresh
-        if !self.notice_read && self.harness_toast {
-            let id = self.active_session.unwrap_or(0);
-            if let Some((text, at)) = self.session_notice.get(&id) {
-                if !text.is_empty() && crow_runtime::moments::now() - at < 4.0 {
-                    let toast = format!("<div class=\"crow-notice\" role=\"status\">{}</div>", crate::harness::html_escape_text(text));
-                    return Ok(match html.rfind("</") {
-                        Some(i) if html.ends_with('>') => format!("{}{}{}", &html[..i], toast, &html[i..]),
-                        _ => format!("<div>{}{}</div>", html, toast),
-                    });
-                }
-            }
+        Ok(match self.harness_notice() {
+            Some(text) => crate::ops::with_notice(html, &text),
+            None => html,
+        })
+    }
+
+    /// A session's view rendered to the page's nodes, by the one renderer,
+    /// as `html[a]` reads them.
+    fn render_nodes(&mut self, view: &str) -> Result<crate::ops::tree::CrowVNode, String> {
+        let r = self.harness_render(view)?;
+        let notice = self.harness_notice();
+        Ok(crate::ops::page_nodes(&r, notice.as_deref()))
+    }
+
+    /// The runtime's toast a test's page shows, as the served page does
+    /// while the notice is fresh: none for a page that shows the notice
+    /// itself.
+    fn harness_notice(&self) -> Option<String> {
+        if self.notice_read || !self.harness_toast {
+            return None;
         }
-        Ok(html)
+        let id = self.active_session.unwrap_or(0);
+        let (text, at) = self.session_notice.get(&id)?;
+        (!text.is_empty() && crow_runtime::moments::now() - at < 4.0).then(|| text.clone())
     }
 
     fn harness(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
@@ -3743,7 +4196,12 @@ impl IrInterp {
                     Some(Value::Array(items)) => items.iter().map(|i| format!("{}", i.value)).collect(),
                     _ => Vec::new(),
                 };
-                self.pages.push((path, view, url));
+                // page[…, init = f]: run as each session opens the page
+                let init = match vals.get(3).map(|v| &v.value) {
+                    Some(Value::Fn(f)) => Some(f.name.clone()),
+                    _ => None,
+                };
+                self.pages.push((path, view, url, init));
                 CrowValue::done()
             }
             "serve" => {
@@ -3789,12 +4247,28 @@ impl IrInterp {
                 };
                 let mut width = 1280.0;
                 let mut wide = false;
-                for a in &vals[1..] {
+                let mut init: Option<String> = None;
+                for (i, a) in vals.iter().enumerate().skip(1) {
                     match &a.value {
+                        // init = f, the page's: run as the session opens
+                        Value::Fn(f) => init = Some(f.name.clone()),
+                        // (no init: the row's default)
+                        Value::Int(0) if i == 3 => {}
                         Value::Int(n) => width = *n as f64,
                         Value::Float(x) => width = *x,
                         Value::Bool(b) => wide = *b,
-                        _ => return Err("app[] takes a view name, then width = 390 and wide = true".into()),
+                        _ => return Err("app[] takes a view name, then width = 390, wide = true and init = f".into()),
+                    }
+                }
+                // (init is handed nothing, as the page's is: a function of
+                // parameters fails the test, in the page's words)
+                if let Some(f) = &init {
+                    let takes = self.fns.get(f.as_str()).map_or(0, |d| d.params.len());
+                    if takes > 0 {
+                        return Err(format!(
+                            "app[…, init = {}]: {} takes {} parameter{}, and init is handed none — it runs as a session opens the page, after the page's url facts are read from the address; read those facts instead",
+                            f, f, takes, if takes == 1 { "" } else { "s" }
+                        ));
                     }
                 }
                 self.next_session += 1;
@@ -3818,7 +4292,13 @@ impl IrInterp {
                     self.session_clock.insert(id, start);
                 }
                 if opens_remote {
-                    self.remote_open(&f.name, id)?;
+                    self.remote_open(&f.name, id, init.as_deref())?;
+                } else if let Some(init) = &init {
+                    // the page's init, as a served session opening the page
+                    // runs it: one transaction, before anything renders; a
+                    // stop is the session's notice, as a click's is
+                    self.activate(id);
+                    self.harness_transaction(init, Vec::new())?;
                 }
                 CrowValue::ok(Value::App(Box::new(crate::value::AppSession { view: f, width, wide, id })))
             }
@@ -3864,8 +4344,14 @@ impl IrInterp {
                 let (f, _, _, id) = vals.first().and_then(app_view).ok_or("html[] takes an app session: html[a]")?;
                 // the page as the browser builds it, as the compiled harness
                 // hands it back: a table's rows read the same in both modes
-                let built = crow_web::view::CrowVNode::raw(&self.session_html(&f.name, id)?).as_built().to_html();
-                CrowValue::ok(Value::Str(built))
+                let built = match self.remote_sessions.contains_key(&id) {
+                    true => crate::ops::tree::CrowVNode::raw(&self.session_html(&f.name, id)?),
+                    false => {
+                        self.activate(id);
+                        self.render_nodes(&f.name)?
+                    }
+                };
+                CrowValue::ok(Value::Str(built.as_built().to_html()))
             }
             "elements" => {
                 let (f, _, _, id) = vals.first().and_then(app_view).ok_or("elements[] takes an app session and a selector: elements[a, 'button']")?;
@@ -3960,7 +4446,7 @@ impl IrInterp {
                 if self.remote_sessions.contains_key(&id) {
                     return self.remote_click(id, &name, &args);
                 }
-                self.transaction(&name, args)?
+                self.harness_transaction(&name, args)?
             }
             "box" | "fits" | "style" => {
                 if vals.len() != 2 {
@@ -4318,6 +4804,232 @@ fn app_spec(tag: u64, d: &Derive) -> &'static crow_web::live::DeriveSpec {
     spec
 }
 
+/// The served session a render reads (`IrInterp::served`), and the thread
+/// rendering it: a worker a parallel loop runs on reads derivations as any
+/// run does.
+#[derive(Clone)]
+pub(crate) struct Served {
+    state: *mut LiveState,
+    owner: std::thread::ThreadId,
+    /// a render (its views are kept), not a handler
+    render: bool,
+    /// how a write the program makes reaches the state's versions
+    lands: Lands,
+}
+
+/// How the facts a run writes reach the session's versions before its next
+/// read of a derivation.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Lands {
+    /// a render writes nothing
+    Nothing,
+    /// a served handler's working copy: each fact written is set in it as
+    /// its JSON, and its version moves when the value did, as the handler's
+    /// commit would set it
+    Json,
+    /// a harness session: a fact whose value is no longer the one its
+    /// version stands for moves its version
+    Harness(u64),
+}
+
+// (the pointer is read only on the thread that set it, while the render or
+// the handler that holds the session runs, and written only by
+// `sync_served`, outside any read of it: served.rs and the harness clear it
+// before the run ends)
+unsafe impl Send for Served {}
+unsafe impl Sync for Served {}
+
+impl Served {
+    pub(crate) fn new(state: &LiveState) -> Served {
+        Served { state: state as *const LiveState as *mut LiveState, owner: std::thread::current().id(), render: true, lands: Lands::Nothing }
+    }
+
+    /// A served handler on its working copy, which it writes.
+    pub(crate) fn handler(state: &mut LiveState) -> Served {
+        Served { state, owner: std::thread::current().id(), render: false, lands: Lands::Json }
+    }
+}
+
+/// The facts a run wrote: since they were last landed in the session's
+/// state, and in all.
+#[derive(Default, Clone, Debug)]
+pub(crate) struct FactWrites {
+    dirty: HashSet<String>,
+    pub(crate) all: HashSet<String>,
+}
+
+/// One harness session as the runtime keeps it (`IrInterp::harness_live`).
+struct HarnessLive {
+    state: LiveState,
+    /// the moment its tick stands for: a test that moves the clock moves
+    /// the tick at the next read or render, so what answers by the moment
+    /// is computed again (`harness_moment`)
+    at: Option<f64>,
+    /// each fact's value as its version stands for it
+    seen: HashMap<String, CrowValue>,
+}
+
+/// The harness's sessions, each boxed where its state stays put while a
+/// render reads it. A copy of the walker (a parallel loop's) starts with
+/// none: only the walker that opened a session renders it.
+#[derive(Default)]
+struct HarnessLives(HashMap<u64, Box<HarnessLive>>);
+
+impl Clone for HarnessLives {
+    fn clone(&self) -> Self {
+        HarnessLives::default()
+    }
+}
+
+/// Whether a fact still holds the value its version stands for: alike all
+/// through (`same_value`), a frame cell for cell; anything else moves on.
+fn same_fact(a: &CrowValue, b: &CrowValue) -> bool {
+    match (&a.value, &b.value) {
+        (Value::Frame(x), Value::Frame(y)) => a.is_ok() && b.is_ok() && x == y,
+        _ => same_value(a, b),
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many derivations' bodies this thread ran (a test counts them).
+    pub(crate) static COMPUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether a view's child is held as text: a text, or a list of them (at
+/// any depth), that can fail or not — never markup or a node.
+fn held_as_text(t: &Ty) -> bool {
+    match t.payload() {
+        Ty::Str => true,
+        Ty::List(item) => held_as_text(item),
+        _ => false,
+    }
+}
+
+/// A value held as text placed as text: a node or markup in it is the text
+/// of its markup (`held_as_text`).
+fn as_text(v: CrowValue) -> CrowValue {
+    if !v.is_ok() {
+        return v;
+    }
+    match &v.value {
+        Value::Node(n) => CrowValue::ok(Value::Str(crate::ops::tree::html(n))),
+        Value::Str(s) if v.is_markup() => CrowValue::ok(Value::Str(s.clone())),
+        Value::Array(items) if items.iter().any(|i| i.is_markup() || matches!(i.value, Value::Node(_) | Value::Array(_))) => {
+            CrowValue::ok(Value::Array(Arc::new(items.iter().cloned().map(as_text).collect())))
+        }
+        _ => v,
+    }
+}
+
+/// A served program's tag among the app's values, one per program a
+/// process serves or a harness runs: two share no derivation's value.
+pub(crate) fn next_app_tag() -> u64 {
+    static TAG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    TAG.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+}
+
+/// A view's arguments as the cache's key: the same text for the same
+/// values, none when one is a value the cache does not compare (a
+/// function, a frame, a node, a connection) or past the longest key.
+fn view_key(args: &[&CrowValue]) -> Option<String> {
+    fn put(v: &CrowValue, out: &mut String) -> Option<()> {
+        use std::fmt::Write;
+        // (past the cache's longest key the view runs: see views::KEY_MAX)
+        if out.len() > VIEW_KEY_MAX {
+            return None;
+        }
+        if !v.is_ok() {
+            write!(out, "!{:?}", v.reason()).ok()?;
+            return Some(());
+        }
+        if v.is_markup() {
+            out.push('m');
+        }
+        match &v.value {
+            Value::Int(n) => write!(out, "i{}", n).ok()?,
+            Value::Float(x) => write!(out, "f{:?}", x).ok()?,
+            Value::Bool(b) => write!(out, "b{}", b).ok()?,
+            Value::Str(t) => write!(out, "s{:?}", t).ok()?,
+            Value::Big(n) => write!(out, "B{:?}", n).ok()?,
+            Value::Decimal(n) => write!(out, "D{:?}", n).ok()?,
+            Value::Fraction(n) => write!(out, "F{:?}", n).ok()?,
+            Value::Moment(m) => write!(out, "t{:?}", m).ok()?,
+            Value::Done => out.push('_'),
+            Value::Array(xs) => {
+                out.push('[');
+                for x in xs.iter() {
+                    put(x, out)?;
+                    out.push(',');
+                }
+                out.push(']');
+            }
+            Value::Map(m) => {
+                out.push('{');
+                for (k, x) in m.iter() {
+                    write!(out, "{:?}:", k).ok()?;
+                    put(x, out)?;
+                    out.push(',');
+                }
+                out.push('}');
+            }
+            Value::IntMap(m) => {
+                out.push('<');
+                for (k, x) in m.iter() {
+                    write!(out, "{}:", k).ok()?;
+                    put(x, out)?;
+                    out.push(',');
+                }
+                out.push('>');
+            }
+            Value::StructInstance(r) => {
+                write!(out, "R{}(", r.layout.name).ok()?;
+                for x in &r.values {
+                    put(x, out)?;
+                    out.push(',');
+                }
+                out.push(')');
+            }
+            _ => return None,
+        }
+        Some(())
+    }
+    let mut out = String::new();
+    for a in args {
+        put(a, &mut out)?;
+        out.push(';');
+    }
+    (out.len() <= VIEW_KEY_MAX).then_some(out)
+}
+
+/// Whether a derivation's new value is its last (early cutoff): the same
+/// kind of value, alike all through — never an `eq` that takes 1 for 1.0,
+/// whose readers would show the old one — the moment it was captured
+/// aside.
+fn same_value(a: &CrowValue, b: &CrowValue) -> bool {
+    // (a failed value never equals another, as the compiled program's
+    // `CrowResult` compares; a frame, a tensor, a decimal or a moment always moves on,
+    // as the compiled program's cutoff decides: emit_rs `cuts_off`)
+    if !a.is_ok() || !b.is_ok() || a.is_markup() != b.is_markup() {
+        return false;
+    }
+    match (&a.value, &b.value) {
+        (Value::Int(x), Value::Int(y)) => x == y,
+        (Value::Float(x), Value::Float(y)) => x == y,
+        (Value::Str(x), Value::Str(y)) => x == y,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Big(x), Value::Big(y)) => format!("{:?}", x) == format!("{:?}", y),
+        (Value::Fraction(x), Value::Fraction(y)) => format!("{:?}", x) == format!("{:?}", y),
+        (Value::Array(x), Value::Array(y)) => Arc::ptr_eq(x, y) || (x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| same_value(p, q))),
+        (Value::Map(x), Value::Map(y)) => Arc::ptr_eq(x, y) || (x.len() == y.len() && x.iter().zip(y.iter()).all(|((k, p), (l, q))| k == l && same_value(p, q))),
+        (Value::IntMap(x), Value::IntMap(y)) => Arc::ptr_eq(x, y) || (x.len() == y.len() && x.iter().zip(y.iter()).all(|((k, p), (l, q))| k == l && same_value(p, q))),
+        (Value::StructInstance(x), Value::StructInstance(y)) => {
+            Arc::ptr_eq(x, y) || (x.layout.name == y.layout.name && x.values.len() == y.values.len() && x.values.iter().zip(y.values.iter()).all(|(p, q)| same_value(p, q)))
+        }
+        _ => false,
+    }
+}
+
 /// Whether two values of a derivation that holds a number, a text or a
 /// bool are the same: its readers keep their values (early cutoff), as the
 /// compiled program's `==` decides.
@@ -4471,5 +5183,164 @@ mod session_tests {
         assert_eq!(feed(&mut s, "norm[Point[3, 4]]"), Ok(Some("25".to_string())));
         assert_eq!(feed(&mut s, "fn double[n]\n    n * 3\ndouble[3]"), Ok(Some("9".to_string())));
         assert_eq!(feed(&mut s, "double[2]"), Ok(Some("6".to_string())));
+    }
+}
+
+#[cfg(test)]
+mod harness_cache_tests {
+    use super::*;
+
+    const PAGE: &str = "use ui\n\ncount = 0\nnames = ['ada', 'bo', 'cy']\n\nderive parity\n    if count % 2 eq 0\n        return 'even'\n    return 'odd'\n\nview counter[]\n    return p['count `count`']\n\nview parity_view[]\n    return p['parity `parity`']\n\nview people[]\n    out = for n in names\n        row[p['`n`'], key = n]\n    return stack[out]\n\nfn bump_twice[]\n    count = count + 2\n\nfn bump[]\n    first = parity\n    count = count + 1\n    second = parity\n    names = push[names, '`first`-`second`']\n\nfn reverse_names[]\n    names = reverse[names]\n\nview render[]\n    head = row[button['Bump', click = bump], button['Twice', click = bump_twice], button['Reverse', click = reverse_names]]\n    return stack[head, counter[], parity_view[], people[]]\n\n";
+
+    /// The test block `body` run as the harness runs one; the views the
+    /// last render ran and kept, the derivations' bodies it ran in all, and
+    /// the last page.
+    fn harness_run(body: &str) -> ((usize, usize), usize, String) {
+        let src = format!("{}test t[]\n    a = app[render]\n{}", PAGE, body.lines().map(|l| format!("    {}\n", l)).collect::<String>());
+        let (program, ctx) = prepare(&crate::build(&src).unwrap(), "test").unwrap();
+        let mut it = IrInterp::new(&ctx.registry, "test");
+        it.testing = true;
+        it.load(&program);
+        it.guard(|it| it.run_main(&program)).unwrap();
+        let test = program.parts.iter().flat_map(|p| p.tests.iter()).last().unwrap();
+        it.frames[0].scopes.push(Arc::new(HashMap::default()));
+        let computed = COMPUTED.with(|c| c.get());
+        it.guard(|it| it.exec_stmts(&test.body).map(|_| ())).unwrap();
+        crow_runtime::moments::hold(None);
+        let id = it.active_session.unwrap();
+        let counts = it.harness_live.0.get(&id).map(|l| l.state.views_counted()).unwrap_or_default();
+        let page = match it.frames[0].scopes.last().and_then(|s| s.get("h")) {
+            Some(v) => format!("{}", v.value),
+            None => String::new(),
+        };
+        (counts, COMPUTED.with(|c| c.get()) - computed, page)
+    }
+
+    /// A test's `html[a]` renders through the session's view cache, as a
+    /// served page does: a view nothing it read moved is kept, a
+    /// derivation recomputed to an equal value keeps its readers, and the
+    /// page is what every view run again makes.
+    #[test]
+    fn the_harness_keeps_views_as_a_served_session_does() {
+        let (counts, computed, page) = harness_run("h = html[a]");
+        assert_eq!(counts, (4, 0), "the first render runs every view");
+        assert_eq!(computed, 1);
+        assert!(page.contains("parity even"), "{}", page);
+        let (counts, computed, _) = harness_run("h = html[a]\nh = html[a]");
+        assert_eq!(counts, (0, 1), "nothing moved: the page is kept whole");
+        assert_eq!(computed, 1, "parity is computed once");
+        let (counts, _, page) = harness_run("h = html[a]\nclick[a, bump_twice]\nh = html[a]");
+        assert_eq!(counts, (0, 1), "count is read only in counter's bound text: the page is kept, that text set; parity's value is the same, people read nothing that moved");
+        assert!(page.contains("count 2") && page.contains("parity even"), "{}", page);
+        let (counts, _, page) = harness_run("h = html[a]\nclick[a, reverse_names]\nh = html[a]");
+        assert_eq!(counts, (2, 2), "render and people run");
+        assert!(page.find("cy").unwrap() < page.find("ada").unwrap(), "{}", page);
+    }
+
+    /// A handler run by the harness reads a derivation through the cache:
+    /// its own write is seen by its next read (`bump`: even, then odd), and
+    /// the render after it reads the value the handler computed.
+    #[test]
+    fn a_harness_handler_reads_what_it_wrote() {
+        let (counts, computed, page) = harness_run("h = html[a]\nclick[a, bump]\nh = html[a]");
+        assert!(page.contains("even-odd") && page.contains("parity odd"), "{}", page);
+        // parity: the first render, then once after the handler's write
+        assert_eq!(computed, 2);
+        assert_eq!(counts, (2, 2), "names moved: render and people run; count and parity are read only in bound texts, so counter and parity_view are kept, their texts set");
+    }
+
+    const SOURCES: &str = "use ui\n\nrows = ['a', 'b', 'c']\ntags = ['x', 'y']\nk = 0\n\nderive doubled\n    out = for r in rows\n        '`r`!'\n    return out\n\nview list_of[xs]\n    out = for x in xs\n        p['`x`']\n    return stack[out]\n\nview names_of[ts, n]\n    out = for t in ts\n        p['`t` of `n`']\n    return stack[out]\n\nview render[]\n    d = doubled\n    return stack[list_of[rows], list_of[d], list_of[doubled], names_of[tags, k], names_of[tags, 2], p['k `k`']]\n\n";
+
+    /// A view handed a list read from a fact or a derivation is keyed by
+    /// that source's version, not by the list's text (derive::specialize):
+    /// 300 random writes, each followed by a render through the cache and
+    /// a render of every view run anew, which must be the same page; and
+    /// the lists' views are kept when their sources did not move.
+    #[test]
+    fn a_view_keyed_by_its_sources_version_is_never_stale() {
+        let mut seed: u64 = 0x2545F4914F6CDD1D;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let mut lines = Vec::new();
+        for _ in 0..300 {
+            lines.push(match next(7) {
+                0 => format!("rows = push[rows, 'w{}']", next(9)),
+                1 => "rows = reverse[rows]".to_string(),
+                2 => format!("rows = ['q{}']", next(5)),
+                3 => "k = k + 1".to_string(),
+                4 => format!("tags = push[tags, 'z{}']", next(4)),
+                5 => "rows = for r in rows\n    r".to_string(),
+                _ => "tags = tags".to_string(),
+            });
+        }
+        let body: String = lines.iter().flat_map(|l| l.lines()).map(|l| format!("    {}\n", l)).collect();
+        let src = format!("{}test t[]\n    a = app[render]\n{}", SOURCES, body);
+        let (program, ctx) = prepare(&crate::build(&src).unwrap(), "test").unwrap();
+        let mut it = IrInterp::new(&ctx.registry, "test");
+        it.testing = true;
+        it.load(&program);
+        it.guard(|it| it.run_main(&program)).unwrap();
+        let test = program.parts.iter().flat_map(|p| p.tests.iter()).last().unwrap();
+        it.frames[0].scopes.push(Arc::new(HashMap::default()));
+        let mut kept = 0;
+        let mut renders = 0;
+        for (i, st) in test.body.iter().enumerate() {
+            it.guard(|it| it.exec_stmts(std::slice::from_ref(st)).map(|_| ())).unwrap();
+            if it.active_session.is_none() {
+                continue;
+            }
+            let cached = format!("{}", it.harness_render("render").unwrap().value);
+            let id = it.active_session.unwrap();
+            let (_, k) = it.harness_live.0.get(&id).map(|l| l.state.views_counted()).unwrap_or_default();
+            kept += k;
+            renders += 1;
+            // every view run anew, every derivation computed anew
+            let held = it.active_session.take();
+            let full = format!("{}", it.render_page("render").unwrap().value);
+            it.active_session = held;
+            assert_eq!(cached, full, "after statement {}", i);
+        }
+        assert!(it.view_uses.values().any(|u| u.iter().any(|a| matches!(a, crate::derive::ArgUse::Source { .. }))), "a list handed from its source: {:?}", it.view_uses);
+        assert!(renders >= 300, "{} renders", renders);
+        assert!(kept > renders, "the lists' views were kept only {} times in {} renders", kept, renders);
+    }
+
+    /// A derivation that answers by the moment, read by a test's own line
+    /// through the cache, is computed again once the test moves the
+    /// session's clock (finchdash's Simulation test had read its play-head
+    /// as it stood before `change[a, 'now', …]`).
+    #[test]
+    fn a_test_that_moves_the_clock_reads_what_answers_by_it_anew() {
+        let src = "use ui\n\nderive secs_now\n    return floor[float[now[]]]\n\nview render[]\n    return p['at `secs_now`']\n\ntest t[]\n    a = app[render]\n    change[a, 'now', 1800000000.0]\n    x = secs_now\n    change[a, 'now', 1800000030.0]\n    y = secs_now\n    assert[y - x eq 30, '`x` then `y`']\n    assert['at 1800000030' in html[a]]\n";
+        let (program, ctx) = prepare(&crate::build(src).unwrap(), "test").unwrap();
+        let mut it = IrInterp::new(&ctx.registry, "test");
+        it.testing = true;
+        it.load(&program);
+        it.guard(|it| it.run_main(&program)).unwrap();
+        let test = program.parts.iter().flat_map(|p| p.tests.iter()).last().unwrap();
+        it.frames[0].scopes.push(Arc::new(HashMap::default()));
+        let r = it.guard(|it| it.exec_stmts(&test.body).map(|_| ()));
+        crow_runtime::moments::hold(None);
+        r.unwrap();
+    }
+
+    /// A test's own reads of a derivation go through its session's cache:
+    /// read twice with nothing moved it is computed once, a fact the test
+    /// writes moves it, and the render after reads the value the test's
+    /// line computed.
+    #[test]
+    fn a_test_bodys_own_reads_go_through_the_cache() {
+        let (_, computed, _) = harness_run("x = parity\ny = parity\nz = parity");
+        assert_eq!(computed, 1, "three reads, nothing moved: computed once");
+        let (_, computed, _) = harness_run("x = parity\ncount = 1\ny = parity\nassert[y eq 'odd']");
+        assert_eq!(computed, 2, "the test's write moves it");
+        let (counts, computed, page) = harness_run("count = 3\nx = parity\nh = html[a]");
+        assert_eq!(computed, 1, "the render reads what the test's line computed");
+        assert!(page.contains("parity odd"), "{}", page);
+        assert_eq!(counts, (4, 0));
     }
 }

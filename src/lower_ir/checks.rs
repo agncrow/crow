@@ -449,6 +449,10 @@ impl<'a> Lowerer<'a> {
     /// reservation is file-scoped, so a variable assigned above the `use`
     /// line is still checked against it.
     pub(super) fn prescan(&mut self, stmts: &[S], known: &HashSet<String>) {
+        // (a console cell's functions are reached from cells it cannot see)
+        if self.in_ui && !self.fragment {
+            self.top_only = super::top_only_fns(stmts, self.ctx.functions.keys().cloned());
+        }
         // (a ui program imports `ui` or `web.ui`: the lowering reads both,
         // and this check had read `ui` alone)
         self.v.ui_mode = self.ctx.bare_modules.contains("ui") || self.ctx.bare_modules.contains("web.ui");
@@ -1662,6 +1666,35 @@ impl<'a> Lowerer<'a> {
         crate::derive::address_fact(written, self.ctx.facts.iter())
     }
 
+
+    /// A page's init runs as a session opens the page, handed nothing:
+    /// what the address holds is in the page's url facts, which init reads
+    /// (the test's `app[view, init = f]` is held to it as it opens).
+    fn check_init(&mut self, name: &str, args: &[A]) {
+        let argc = args.len();
+        let opens = name == "page" && argc == 4;
+        if opens {
+            let shown = |f: &str| format!("{}[…, init = {}]", name, f);
+            match args.get(3) {
+                Some(A::Ident(f)) if self.ctx.functions.contains_key(f) => {
+                    let takes = self.ctx.functions.get(f).map_or(0, |sig| sig.params.len());
+                    if takes > 0 {
+                        self.refuse(format!(
+                            "{}: {} takes {} parameter{}, and init is handed none — it runs as a session opens the page, after the page's url facts are read from the address; read those facts instead",
+                            shown(f),
+                            f,
+                            takes,
+                            if takes == 1 { "" } else { "s" }
+                        ));
+                    }
+                }
+                Some(A::Ident(f)) if !self.declared(f) => self.refuse(format!("{}: '{}' names no function of the program — init takes one, with no parameters", shown(f), f)),
+                Some(A::Ident(_) | A::FieldAccess { .. }) | None => {}
+                Some(_) => self.refuse(format!("{}[…, init = …] takes a function of the program, with no parameters: init = load", name)),
+            }
+        }
+    }
+
     pub(super) fn check_call(&mut self, name: &str, args: &[A], types: &[Ty]) {
         let arg_type = |_: &Self, i: usize| -> Ty { types.get(i).cloned().unwrap_or(Ty::Unknown) };
         // a scheme encode and decode do not know, written in the call, is
@@ -1835,6 +1868,9 @@ impl<'a> Lowerer<'a> {
                     }
                 }
             }
+        }
+        if !own {
+            self.check_init(name, args);
         }
 
         // a matrix's items are its rows (spec, Collections): `sort` orders

@@ -62,6 +62,21 @@
           "description": "Path to the crow binary (the server runs as `crow lsp`)."
         }
       }
-    }
+    },
+    "configurationDefaults": {
+      "[crow]": {
+        "editor.semanticHighlighting.enabled": true
+      }
+    },
+    "semanticTokenScopes": [
+      {
+        "language": "crow",
+        "scopes": {
+          "keyword": [
+            "keyword.declaration.crow"
+          ]
+        }
+      }
+    ]
   }
 }

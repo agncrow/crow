@@ -7,6 +7,7 @@
     { "include": "#string" },
     { "include": "#column-name" },
     { "include": "#number" },
+    { "include": "#test" },
     { "include": "#declaration" },
     { "include": "#control" },
     { "include": "#word-operator" },
@@ -55,13 +56,18 @@
       "name": "constant.numeric.crow",
       "match": "\\b\\d+(\\.\\d+)?\\b"
     },
+    "test": {
+      "comment": "`test` where a test starts, before its name, its parameters or its lines, as the parser reads it: elsewhere it is a name",
+      "match": "^[ \\t]*(test)(?=[ \\t]+[A-Za-z_]|[ \\t]*\\[|[ \\t]*$)",
+      "captures": { "1": { "name": "keyword.declaration.crow" } }
+    },
     "declaration": {
       "name": "keyword.declaration.crow",
-      "match": "\\b(fn|view|struct|use|as)\\b"
+      "match": "\\b(fn|view|struct|derive|use|as)\\b"
     },
     "control": {
       "name": "keyword.control.crow",
-      "match": "\\b(if|else|for|while|return|in)\\b"
+      "match": "\\b(if|else|for|while|return|in|break|continue|then)\\b"
     },
     "word-operator": {
       "name": "keyword.operator.word.crow",

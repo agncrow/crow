@@ -1,0 +1,57 @@
+--- A handler reads a derivation as a render does, through the session's
+--- cache (one-view-design.md, phase 2): computed once per change of what it
+--- reads, and a fact the handler writes moves what reads it at once, so a
+--- read after the write sees the new value — `step` reads `doubled`
+--- before and after it moves `a`; `other` writes `b` and reads `total`
+--- over it; `grow` reads a count over the list it grows; a handler that
+--- stops lands nothing, and the next read is the session's value.
+use web, ui
+
+a = 0
+b = 1
+seen = ['start']
+names = ['x']
+
+derive total
+    return a + b
+
+derive doubled
+    return total * 2
+
+derive many
+    return len[names]
+
+fn step[]
+    first = doubled
+    a = a + 1
+    second = doubled
+    seen = push[seen, 'step `first`/`second`']
+
+fn other[]
+    b = 2
+    x = total
+    b = b + x
+    seen = push[seen, 'other `total`']
+
+fn grow[]
+    before = many
+    names = push[names, 'y']
+    seen = push[seen, 'grow `before`-`many`']
+
+fn refuse[]
+    a = a + 5
+    x = doubled
+    px = float['no `x`']
+    if px gt 1.0
+        a = 99
+
+view counts[]
+    return p['counts `a` `b` `total` `doubled` `many`']
+
+view render[]
+    buttons = row[button['Step', click = step], button['Other', click = other], button['Grow', click = grow], button['Refuse', click = refuse]]
+    shown = join[seen, ', ']
+    return stack[buttons, counts[], p['seen `shown`']]
+
+page['/', render]
+serve[3589]

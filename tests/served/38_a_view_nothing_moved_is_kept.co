@@ -1,0 +1,49 @@
+--- A view is kept with what it read (one-view-design.md, phase 2): after
+--- an event, only the views whose facts or derivations moved run again,
+--- the rest hand back the node they made last time — the page is the page
+--- a full render makes. `count` moves only the counter's view; `other`
+--- only the other's; a derivation recomputed to an equal value (`parity`
+--- of a count that moved by two) leaves its view kept. A view called with
+--- an argument is kept by it: the two rows of `cell` are kept apart, and a
+--- view that reads the clock runs every time.
+use web, ui
+
+count = 0
+other = 0
+label = 'a'
+
+derive parity
+    if count % 2 eq 0
+        return 'even'
+    return 'odd'
+
+view counter_view[]
+    return p['count `count`']
+
+view other_view[]
+    return p['other `other`']
+
+view parity_view[]
+    return p['parity `parity`']
+
+view cell[name]
+    return p['cell `name` `label`']
+
+fn bump[]
+    count = count + 1
+
+fn bump_twice[]
+    count = count + 2
+
+fn bump_other[]
+    other = other + 1
+
+fn relabel[]
+    label = 'b'
+
+view render[]
+    buttons = row[button['Bump', click = bump], button['Twice', click = bump_twice], button['Other', click = bump_other], button['Relabel', click = relabel]]
+    return stack[buttons, counter_view[], other_view[], parity_view[], cell['x'], cell['y']]
+
+page['/', render]
+serve[3586]

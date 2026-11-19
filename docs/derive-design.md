@@ -95,8 +95,13 @@ modes:
 Static analysis over-approximates: a function that *might* read a fact
 counts as reading it. Both modes use the same sets, so recomputation
 behavior is identical by construction. Where over-approximation hurts in
-a real program is the one open unknown of this design, and finch is the
-test.
+a real program was the one open unknown of this design, and finch was
+the test. Answered (2026-11-15, one-view-design.md §7, phase 2): on
+finchdash's pages it does not show. A view's derivations are recorded as
+it reads them, not over-approximated, and its facts are its own; a page's
+root reads everything its children do and runs at every event, which
+costs well under a millisecond there, while the views below it that a
+click or a tick did not touch are kept.
 
 ### 3.3 When it recomputes
 

@@ -1,0 +1,23 @@
+--- `a and b and c` where `b` is read from a record that can fail (its
+--- refusal waits for `a`): the lowering holds the chain's steps in locals,
+--- and the last step, two plain truths, was written as a plain truth
+--- where a result was asked — compiled, it did not build (E0308; Lory's
+--- gui, an entry measured again in the room it is given)
+struct Size [w, h]
+fn sized[s]
+  if s eq ''
+    return error['nothing to size', 'x']
+  Size[float[s], 1.0]
+fn wider[room, s, kids]
+  m = sized[s]
+  if room gt 0.0 and m.w + 20.0 gt room and kids eq 1
+    m = sized['1']
+  m.w
+log[wider[10.0, '5', 1]]
+log[wider[100.0, '5', 1]]
+log[wider[10.0, '5', 2]]
+fn either[room, s]
+  m = sized[s]
+  room lt 0.0 or m.w gt room or room eq 3.0
+log[either[1.0, '5']]
+log[either[10.0, '5']]

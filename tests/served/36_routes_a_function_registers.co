@@ -1,0 +1,14 @@
+--- A route a function registers answers as one the top level registers
+--- (spec, Core (Server)): compiled, the function had named the app main
+--- holds, and the program did not build (E0425, `__crow_app`; Myna's
+--- `fn pages[]` registers its MLflow routes).
+use web
+
+fn hello[req]
+    return text['hello from a function']
+
+fn routes[base]
+    route['`base`/hello', 'GET', hello]
+
+routes['/api']
+serve[3583]

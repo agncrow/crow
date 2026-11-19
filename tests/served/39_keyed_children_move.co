@@ -1,0 +1,46 @@
+--- Children keyed by `key` are matched by it (one-view-design.md, phase
+--- 2): a reorder moves each row where it is wanted, a dropped one goes and
+--- a new one comes, and the page is the page a full render makes. A paged
+--- table and a sorted one beside kept views keep their numbers: a view
+--- kept does not move which table is which.
+use web, ui, frame
+
+names = ['ada', 'bo', 'cy']
+flipped = false
+
+view rows[]
+    out = for n in names
+        row[p['`n`'], key = n]
+    return stack[out]
+
+view many[]
+    f = frame.new[n = range[120]]
+    return table[f, page = 50]
+
+view sorted_table[]
+    g = frame.new[v = [3, 1, 2]]
+    return table[g, sort = true]
+
+fn reverse_names[]
+    names = reverse[names]
+
+fn drop_first[]
+    names = slice[names, 1, len[names]]
+
+fn add_dee[]
+    names = push[names, 'dee']
+
+fn flip[]
+    flipped = not flipped
+
+view render[]
+    return stack[
+        row[button['Reverse', click = reverse_names], button['Drop', click = drop_first], button['Add', click = add_dee], button['Flip', click = flip]],
+        p['flipped `flipped`'],
+        rows[],
+        many[],
+        sorted_table[]
+    ]
+
+page['/', render]
+serve[3587]

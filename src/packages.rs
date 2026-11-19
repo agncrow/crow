@@ -224,6 +224,25 @@ fn higher(have: &str, want: &str) -> Option<bool> {
     Some(v2 > v1)
 }
 
+/// The folder a local source names, as the install links it: the path
+/// read from the project's root (a package's own relative path is made
+/// absolute from the package's folder before it is queued), its links
+/// followed; none for a repository, or for a path where no folder is.
+fn folder_of(root: &Path, spec: &str) -> Option<PathBuf> {
+    match parse(spec).ok()? {
+        Source::Local(path) => std::fs::canonicalize(root.join(path)).ok(),
+        Source::Git { .. } => None,
+    }
+}
+
+/// Whether two sources of one package are one: the same text, or two
+/// local paths naming one folder — the project's `../../packages/lory`
+/// and its package game's own `../lory`, read from game's folder. Compared
+/// as text, one folder spelled two ways had been refused as two sources.
+fn one_source(root: &Path, have: &str, want: &str) -> bool {
+    have == want || folder_of(root, have).is_some_and(|f| folder_of(root, want).as_ref() == Some(&f))
+}
+
 /// A source's version, as a message names it: the reference after its `@`.
 fn version_of(spec: &str) -> String {
     spec.rsplit_once('@').map_or(spec.to_string(), |(_, r)| r.to_string())
@@ -335,7 +354,9 @@ pub fn install(
     while let Some((name, spec, by)) = queue.pop_front() {
         let (spec, hash) = split_attested(&spec);
         if let Some((have, first)) = wanted.get(&name).cloned() {
-            if have == spec {
+            // (one source however it is spelled: a local path by the
+            // folder it names)
+            if one_source(root, &have, &spec) {
                 attested(&name, &hash, &by, &lock, &modules)?;
                 continue;
             }
@@ -544,6 +565,45 @@ mod tests {
         let deps = vec![("market".to_string(), other.display().to_string()), ("models".to_string(), models.display().to_string())];
         let err = install(&project, &deps, &[], false, &crate::crowfile_deps).unwrap_err();
         assert!(err.contains("market is wanted at two sources") && err.contains("by the project") && err.contains("by the package models"), "{}", err);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// One folder spelled two ways is one source: the project's
+    /// `../../packages/lory` and its package game's own `../lory`, read
+    /// from game's folder, name one folder, linked once into the project's
+    /// crow_modules/ and nothing written into game's. Compared as text,
+    /// they had been refused as two sources (Lory's examples beside its
+    /// packages, Myna's drawn). Two folders are still two.
+    #[cfg(unix)]
+    #[test]
+    fn one_folder_spelled_two_ways_is_one_source() {
+        let base = std::env::temp_dir().join(format!("crow_pkg_one_folder_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (lory, game, project) = (base.join("packages/lory"), base.join("packages/game"), base.join("examples/drift"));
+        for d in [&lory, &game, &project] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(lory.join("main.co"), "fn one[]\n    return 1\n").unwrap();
+        std::fs::write(game.join("crowfile"), "name = 'game'\ndeps = map[lory = '../lory']\n").unwrap();
+        std::fs::write(game.join("main.co"), "use lory\nfn two[]\n    return lory.one[] + 1\n").unwrap();
+        let deps = vec![("lory".to_string(), "../../packages/lory".to_string()), ("game".to_string(), "../../packages/game".to_string())];
+        let said = install(&project, &deps, &[], false, &crate::crowfile_deps).unwrap();
+        assert_eq!(said.iter().filter(|l| l.starts_with("lory: linked to")).count(), 1, "{:?}", said);
+        assert_eq!(std::fs::canonicalize(project.join("crow_modules/lory")).unwrap(), std::fs::canonicalize(&lory).unwrap());
+        assert!(!game.join("crow_modules").exists(), "nothing is written into the package's own folder");
+        // two packages' spellings of it, from two folders, and none the
+        // project's: one source too
+        let kite = base.join("packages/kite");
+        std::fs::create_dir_all(&kite).unwrap();
+        std::fs::write(kite.join("crowfile"), "name = 'kite'\ndeps = map[lory = '../lory']\n").unwrap();
+        let packages_only = vec![("game".to_string(), "../../packages/game".to_string()), ("kite".to_string(), "../../packages/kite".to_string())];
+        let said = install(&project, &packages_only, &[], false, &crate::crowfile_deps).unwrap();
+        assert_eq!(said.iter().filter(|l| l.starts_with("lory: linked to")).count(), 1, "{:?}", said);
+        // two folders are two sources, refused naming who wanted each
+        std::fs::create_dir_all(base.join("packages/lory2")).unwrap();
+        std::fs::write(game.join("crowfile"), "name = 'game'\ndeps = map[lory = '../lory2']\n").unwrap();
+        let err = install(&project, &deps, &[], false, &crate::crowfile_deps).unwrap_err();
+        assert!(err.contains("lory is wanted at two sources") && err.contains("by the project") && err.contains("by the package game"), "{}", err);
         let _ = std::fs::remove_dir_all(&base);
     }
 

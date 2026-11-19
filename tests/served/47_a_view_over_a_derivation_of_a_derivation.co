@@ -1,0 +1,35 @@
+use web, ui
+
+clock = 0
+other = 0
+
+derive secs
+    return clock * 10
+
+derive words
+    return 'at `secs` s'
+
+derive band
+    if secs gt 25
+        return 'late'
+    return 'early'
+
+view shows_words[]
+    return p[words]
+
+view shows_band[]
+    if band eq 'late'
+        return p['band late']
+    return p['band early']
+
+fn tick[]
+    clock = clock + 1
+
+fn poke[]
+    other = other + 1
+
+view render[]
+    return stack[shows_words[], shows_band[], p['other `other`'], button['Tick', click = tick], button['Poke', click = poke]]
+
+page['/', render]
+serve[3594]

@@ -1,0 +1,52 @@
+--- A page handed whole to a view that frames it (as finchdash's pages
+--- hand their body to Myna's `workbench.screen`): the body stays the
+--- nodes its views made, in both modes, so a clock read only in bindings
+--- inside it is set on the page at each tick with no view run — the
+--- compiled page had placed the body's markup, and its clock stood still
+--- (one-view-design.md §7, three faults a real app found, 2026-11-16).
+--- The frame holds the body in a local it may give another node instead
+--- (as Myna's screen does), hands it on to a view of its own, and places
+--- its actions beside it.
+use web, ui
+
+playing = false
+base = 100
+clock = 0
+
+fn head_at[p, b, c]
+    if p
+        return b + c
+    return b
+
+derive head
+    return head_at[playing, base, clock]
+
+derive head_words
+    return 'head `head`'
+
+view clock_line[]
+    return row[p[head_words], p['at `head` s']]
+
+view panel[inner]
+    return stack[inner, gap = 's']
+
+view refused[]
+    return p['no access']
+
+view frame_of[title, actions, body]
+    shown = body
+    if title eq ''
+        shown = refused[]
+    return stack[row[p[title], actions], panel[shown]]
+
+fn play[]
+    playing = true
+
+fn tick[]
+    clock = clock + 1
+
+view render[]
+    return frame_of['Clock', row[button['Play', click = play], button['Tick', click = tick]], stack[clock_line[], p['steady']]]
+
+page['/', render]
+serve[3596]

@@ -215,6 +215,32 @@ impl ToJson for crate::tensor::CrowTensor {
 impl ToJson for crate::frame::CrowFrame {
     fn to_json(&self) -> serde_json::Value { crate::frame::records(self) }
 }
+/// A frame's column answers as the list of its cells, each as the records
+/// write it (a missing cell `null`), as the interpreter's column, a list,
+/// encodes: a map of a frame's columns had not built compiled (finchdash's
+/// charts, `encode[map[s = b.et_secs, …]]`).
+impl ToJson for crate::frame::CrowColumn {
+    fn to_json(&self) -> serde_json::Value {
+        use crate::frame::Column;
+        use serde_json::Value;
+        let cells = (0..self.len())
+            .map(|r| {
+                if !self.valid[r] {
+                    return Value::Null;
+                }
+                match self.data.as_ref() {
+                    Column::Int(v) => Value::from(v[r]),
+                    Column::Float(v) => float_to_json(v[r]),
+                    Column::Bool(v) => Value::Bool(v[r]),
+                    Column::Str(v) => Value::String(v[r].to_string()),
+                    Column::DateTime(ms, offsets) => Value::String(crate::frame::format_datetime(ms[r], offsets[r])),
+                    Column::Vectors(w, v) => Value::Array(v[r * w..(r + 1) * w].iter().map(|x| float_to_json(*x)).collect()),
+                }
+            })
+            .collect();
+        Value::Array(cells)
+    }
+}
 impl<T: ToJson> ToJson for Vec<T> {
     fn to_json(&self) -> serde_json::Value { serde_json::Value::Array(self.iter().map(|v| v.to_json()).collect()) }
 }

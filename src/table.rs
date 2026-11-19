@@ -111,6 +111,9 @@ pub const HANDLER: Sig = Sig { params: &[Kind::Request], ret: Kind::Response, re
 pub const TX_BODY: Sig = Sig { params: &[Kind::Tx], ret: Kind::Shown, rest: false, deferred: false };
 /// A chart's seek: handed the clicked bucket's moment, as a number.
 pub const SEEK: Sig = Sig { params: &[Kind::Float], ret: Kind::Unit, rest: false, deferred: false };
+/// A page's init (`page[…, init = f]`, `app[view, init = f]`): handed
+/// nothing, run once as a session opens the page.
+pub const OPENS: Sig = Sig { params: &[], ret: Kind::Unit, rest: false, deferred: false };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Kind {
@@ -1313,6 +1316,14 @@ pub fn read_bool(v: &CrowValue) -> Result<bool, String> {
     }
 }
 
+/// Text as a row takes it: a node a view made is its markup.
+pub fn read_text(v: &CrowValue) -> Result<Cow<'_, str>, String> {
+    match &v.value {
+        Value::Node(n) => Ok(Cow::Owned(crate::ops::tree::html(n))),
+        _ => read_str(v).map(Cow::Borrowed),
+    }
+}
+
 pub fn read_str(v: &CrowValue) -> Result<&str, String> {
     match &v.value {
         Value::Str(s) => Ok(s.as_str()),
@@ -1432,7 +1443,7 @@ pub fn read_frame(v: &CrowValue) -> Result<&crow_runtime::frame::CrowFrame, Stri
 
 pub fn read_strs(v: &CrowValue) -> Result<Vec<String>, String> {
     match &v.value {
-        Value::Array(items) => items.iter().map(|i| read_str(i).map(|s| s.to_string())).collect(),
+        Value::Array(items) => items.iter().map(|i| read_text(i).map(|s| s.into_owned())).collect(),
         _ => Err(format!("expected a list of text, got {}", named(v))),
     }
 }
@@ -1476,6 +1487,7 @@ pub fn read_cell(v: &CrowValue) -> Result<crow_runtime::cell::Cell, String> {
         Value::Float(x) => Ok(Cell::Float(*x)),
         Value::Bool(b) => Ok(Cell::Bool(*b)),
         Value::Str(s) => Ok(Cell::Text(s.clone())),
+        Value::Node(n) => Ok(Cell::Text(crate::ops::tree::html(n))),
         Value::Done => Ok(Cell::Null),
         Value::Array(_) => Ok(Cell::Other("a list")),
         Value::Map(_) => Ok(Cell::Other("a map")),
@@ -1500,6 +1512,8 @@ pub fn read_words(v: &CrowValue) -> Result<Vec<String>, String> {
                 // a failed item holds a placeholder, never a word
                 _ if i.is_error() => Err(if i.kind() == "missing" { crow_runtime::stops::missing_cell(n) } else { format!("item {} of the list failed: {}", n, i.reason()) }),
                 Value::Str(s) => Ok(s.clone()),
+                // a node a view made is its markup, as where text is taken
+                Value::Node(n) => Ok(crate::ops::tree::html(n)),
                 Value::Int(n) => Ok(n.to_string()),
                 Value::Float(x) => Ok(x.to_string()),
                 Value::Bool(b) => Ok(b.to_string()),
@@ -1899,7 +1913,7 @@ macro_rules! read {
     (Float, $g:expr) => { read_float(one($g)?)? };
     (Moment, $g:expr) => { read_moment(one($g)?)? };
     (Bool, $g:expr) => { read_bool(one($g)?)? };
-    (Str, $g:expr) => { read_str(one($g)?)? };
+    (Str, $g:expr) => { &*read_text(one($g)?)? };
     (Tensor, $g:expr) => { &*read_tensor(one($g)?)? };
     (Tensors, $g:expr) => { &read_tensors(one($g)?)? };
     (Sparse, $g:expr) => { read_sparse(one($g)?)? };
@@ -3056,8 +3070,10 @@ pub static FORMS: &[Row] = &[
     Row { params: &[Kind::Walked, Kind::FnOf(&PRED)], ret: Kind::Bool, props: &[Prop::Answers], ..form!("core.any", "", "any", ()) },
     Row { params: &[Kind::Walked, Kind::FnOf(&PRED)], ret: Kind::Bool, props: &[Prop::Answers], ..form!("core.all", "", "all", ()) },
     Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("core.notice", "", "notice", (Str)) },
-    form!("core.__notice_text", "", "__notice_text", ()),
-    form!("core.__notice_at", "", "__notice_at", ()),
+    // (the session's notice answers by the run: a view that shows it runs
+    // at every render)
+    Row { props: &[Prop::Varies], ..form!("core.__notice_text", "", "__notice_text", ()) },
+    Row { props: &[Prop::Varies], ..form!("core.__notice_at", "", "__notice_at", ()) },
     Row { params: &[Kind::FnOf(&DEFERRED)], ret: Kind::Bool, props: &[Prop::Ordered, Prop::Varies, Prop::Answers], ..form!("core.running", "", "running", ()) },
     // chart[frame, x = 'ts', candles = [], lines = [], bars_y = '', marker = 0, tz = 'UTC', height = 320, panes = [], levels = 0, points = 0, seek = 0]
     Row {
@@ -3097,14 +3113,16 @@ pub static FORMS: &[Row] = &[
     Row { params: &[Kind::FnOf(&FEED), Kind::Shows], ret: Kind::Response, props: &[Prop::Answers], ..form!("web.stream", "web", "stream", ()) },
     Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.page", "web", "page", (Str, Shown)) },
     Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.page_with", "web", "page", (Str, Shown, Shown)) },
+    // page[path, view, url = […], init = f]: f runs once as a session opens the page
+    Row { props: &[Prop::Does(crate::effects::Effect::Serving)], ..form!("web.page_init", "web", "page", (Str, Shown, Shown, Shown)) },
     Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("web.sign_in", "web", "sign_in", (Shown)) },
     Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("web.sign_out", "web", "sign_out", ()) },
     Row { props: &[Prop::Does(crate::effects::Effect::Session)], ..form!("web.download", "web", "download", (Str, Shown)) },
     form!("web.__reader", "web", "__reader", ()),
     // (the page's signed-in reader, written bare: the lowering's `__reader[]`)
     form!("web.reader", "web", "reader", ()),
-    // the test harness: app[view, width = 1280, wide = false]
-    Row { props: &[Prop::TestOnly], options: &[("width", Preset::Int(1280)), ("wide", Preset::Bool(false))], ..form!("web.app", "web", "app", (Shown, Int, Bool)) },
+    // the test harness: app[view, width = 1280, wide = false, init = f]
+    Row { props: &[Prop::TestOnly], options: &[("width", Preset::Int(1280)), ("wide", Preset::Bool(false)), ("init", Preset::Event(&OPENS))], ..form!("web.app", "web", "app", (Shown, Int, Bool, Shown)) },
     // ui: a page's data sources and its controls
     Row { props: &[Prop::Does(crate::effects::Effect::Network), Prop::Source], ..form!("ui.fetch", "ui", "fetch", (Str)) },
     Row { props: &[Prop::Does(crate::effects::Effect::Network), Prop::Source], ..form!("ui.poll", "ui", "poll", (Str, Float)) },
@@ -3869,7 +3887,7 @@ impl Arg {
                 Some(first) => Arg::of_items(Arg::of_value(first)),
                 None => Arg::AnyList,
             },
-            Value::Str(_) => Arg::Text,
+            Value::Str(_) | Value::Node(_) => Arg::Text,
             Value::Bool(_) => Arg::Truth,
             Value::Map(_) => Arg::Map,
             Value::StructInstance(_) => Arg::Record,
@@ -5109,6 +5127,7 @@ pub mod maps {
     fn key_of(v: &CrowValue) -> Result<K, String> {
         match &v.value {
             Value::Str(s) => Ok(K::Text(s.clone())),
+            Value::Node(n) => Ok(K::Text(crate::ops::tree::html(n))),
             Value::Int(n) => Ok(K::Int(*n)),
             _ => Err(format!("a map's key is text or an int, got {}", named(v))),
         }

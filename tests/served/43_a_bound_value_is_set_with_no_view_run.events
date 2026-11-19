@@ -1,0 +1,9 @@
+[{"open": "/"}, {"expect": "clock 0"},
+ {"event": "tick"}, {"expect": "clock 1"}, {"values": 2, "sent": "{\"set\":[[[0,0,0,0],\"clock 1\",\"p\"],[[0,0,2],\"progress\",{\"value\":\"1\"},[]]],\"type\":\"values\"}"},
+ {"event": "tick"}, {"expect": "clock 2"}, {"expect": "half 1"}, {"values": 3},
+ {"event": "add_row"}, {"expect": "row z"}, {"views": {"ran": 2, "kept": 2}},
+ {"event": "tick"}, {"expect": "clock 3"}, {"values": 3},
+ {"event": "rename"}, {"expect": "hello bo"}, {"values": 2},
+ {"event": "__field:name", "value": "cy"}, {"expect": "hello cy"}, {"values": 2},
+ {"open": "/"}, {"expect": "clock 0"},
+ {"event": "tick"}, {"expect": "clock 1"}, {"values": 2}]

@@ -1102,15 +1102,20 @@ impl Lowerer {
                         };
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }
-                    // page[path, view, url = ['day', 'sym']]: the facts the page's
-                    // address carries, lowered as a third argument that is a list
-                    // (a name there is page's older handler form)
+                    // page[path, view, url = ['day', 'sym'], init = f]: the facts
+                    // the page's address carries, lowered as a third argument
+                    // that is a list (a name there is page's older handler
+                    // form), and the handler a session opening the page runs
+                    // first, a fourth where it is given
                     Some("page") if !self.fns.contains_key("page") && has_named => {
-                        let params: Vec<String> = ["path", "view", "url"].iter().map(|s| s.to_string()).collect();
-                        let defaults: Vec<Option<Expr>> = vec![None, None, Some(Expr::Array(vec![]))];
-                        let resolved = self.resolve_args("page", &params, &defaults, args)?;
+                        let params: Vec<String> = ["path", "view", "url", "init"].iter().map(|s| s.to_string()).collect();
+                        let defaults: Vec<Option<Expr>> = vec![None, None, Some(Expr::Array(vec![])), Some(Expr::Int(0))];
+                        let mut resolved = self.resolve_args("page", &params, &defaults, args)?;
                         if !matches!(resolved.get(2), Some(Expr::Array(_))) {
                             return Err(self.err("page[…, url = …] takes a list of fact names: url = ['day', 'sym']".to_string()));
+                        }
+                        if matches!(resolved.get(3), Some(Expr::Int(0))) {
+                            resolved.truncate(3);
                         }
                         Expr::Call { callee: Box::new(callee), args: resolved }
                     }

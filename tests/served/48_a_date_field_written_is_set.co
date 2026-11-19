@@ -1,0 +1,41 @@
+--- A control a view binds is set where it shows when the page writes its
+--- fact (`__field:`), with no view run, whatever kind of input it is: a
+--- date, a time and a number field beside a text one, in a form whose
+--- other children are structural (one-view-design.md §7, three faults a
+--- real app found, 2026-11-16). The kept node and a render of every view
+--- answer the same (`CROW_VIEW_CACHE=check`), also where the form reaches
+--- the page through a view handed it as a node.
+use web, ui
+
+day = ''
+at = '09:30'
+count = 3
+name = 'ada'
+rows = ['x']
+
+view setup[n]
+    return stack[
+        form[
+            row[
+                field['Date', day, type = 'date'],
+                field['Time', at, type = 'time'],
+                field['Count', count],
+                field['Name', name, type = 'text'],
+                button['Start'],
+                gap = 's', wrap = true],
+            submit = start],
+        p['rows `n`']]
+
+fn start[]
+    rows = push[rows, day]
+
+--- the page's frame, handed its body as a node (as finchdash's pages
+--- hand theirs to Myna's `workbench.screen`)
+view frame_of[title, body]
+    return stack[p[title], body, gap = 's']
+
+view render[]
+    return frame_of['Setup', stack[setup[len[rows]], p['day is `day`']]]
+
+page['/', render]
+serve[3595]

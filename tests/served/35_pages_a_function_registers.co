@@ -1,0 +1,24 @@
+--- A page a function registers is served as one the top level registers
+--- (spec, LiveView / Pages): Myna's workbench registers its pages and
+--- routes in `fn pages[]`, which the app's top level calls. Compiled, the
+--- function had named the app and the state main holds, and the program
+--- did not build (E0425, `__crow_state`, finchdash's compiled server).
+use web, ui
+
+count = 0
+
+fn bump[]
+    count = count + 1
+
+view home[]
+    return stack[p['home, count `count`'], button['Go', click = bump]]
+
+view about[]
+    return p['about, count `count`']
+
+fn pages[]
+    page['/', home]
+    page['/about', about]
+
+pages[]
+serve[3582]

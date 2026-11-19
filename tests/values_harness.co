@@ -1,0 +1,70 @@
+use ui
+
+--- Bindings (one-view-design.md 3.5, phase 3): a place a view computes
+--- from the session's scalar facts and derivations alone — a clock's
+--- text, a derivation over it, a progress bar, a button's `disabled`, a
+--- bound field — shows after each click what a full render shows, beside
+--- a list the page's structure reads, both modes alike.
+clock = 0
+name = 'ada'
+rows = ['x']
+
+derive half
+    return clock / 2
+
+derive late
+    return clock gte 2
+
+--- a growing int (`floor[…]`), bound as an int is
+derive whole
+    return floor[float[clock] * 1.5] + 9223372036854775000
+
+view top_bar[]
+    return row[p['clock `clock`'], p['half `half`'], p[whole], progress[clock, 4]]
+
+view listing[]
+    out = for r in rows
+        p['row `r`']
+    return stack[out]
+
+view name_form[]
+    return stack[field['Name', name, 'text', 0], p['hello `name`']]
+
+fn tick[]
+    clock = clock + 1
+
+fn add_row[]
+    rows = push[rows, 'r`len[rows]`']
+
+fn rename[]
+    name = 'bo'
+
+view render[]
+    buttons = row[button['Tick', click = tick], button['Add', click = add_row, disabled = late], button['Rename', click = rename]]
+    return stack[top_bar[], listing[], name_form[], buttons]
+
+test bound_places_show_what_a_full_render_shows[]
+    a = app[render]
+    assert['clock 0' in html[a]]
+    click[a, tick]
+    h = html[a]
+    assert['clock 1' in h]
+    assert['half 0' in h]
+    assert['value="1"' in h]
+    click[a, add_row]
+    assert['row r1' in html[a]]
+    click[a, tick]
+    h = html[a]
+    assert['clock 2' in h]
+    assert['half 1' in h]
+    assert['<p>9223372036854775003</p>' in h]
+    assert['disabled' in h]
+    click[a, rename]
+    h = html[a]
+    assert['hello bo' in h]
+    assert['value="bo"' in h]
+    click[a, tick]
+    click[a, add_row]
+    h = html[a]
+    assert['clock 3' in h]
+    assert['row r2' in h]

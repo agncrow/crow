@@ -14,6 +14,11 @@ const { spawn } = require("child_process");
 
 const SELECTOR = { scheme: "file", language: "crow" };
 
+// the token types and modifiers VS Code's themes colour: the server is told
+// them, and announces the ones it tells names by in its capabilities
+const TOKEN_TYPES = ["namespace", "type", "class", "enum", "interface", "struct", "typeParameter", "parameter", "variable", "property", "enumMember", "event", "function", "method", "macro", "keyword", "modifier", "comment", "string", "number", "regexp", "operator", "decorator"];
+const TOKEN_MODIFIERS = ["declaration", "definition", "readonly", "static", "deprecated", "abstract", "async", "modification", "documentation", "defaultLibrary"];
+
 // ── the wire ──────────────────────────────────────────────────────────
 
 /** The messages a byte stream carries, each handed on whole as it ends. */
@@ -180,6 +185,8 @@ class Server {
     this.up = false;
     this.stopping = false;
     this.starts = [];
+    // (told what each server answers, as it starts)
+    this.serving = () => {};
   }
 
   start() {
@@ -205,8 +212,9 @@ class Server {
 
   async initialize(child) {
     const folders = vscode.workspace.workspaceFolders || [];
+    let result;
     try {
-      await this.request("initialize", {
+      result = await this.request("initialize", {
         processId: process.pid,
         clientInfo: { name: "Crow for VS Code" },
         rootUri: folders.length ? folders[0].uri.toString() : null,
@@ -225,6 +233,7 @@ class Server {
             documentSymbol: { hierarchicalDocumentSymbolSupport: true },
             codeAction: { codeActionLiteralSupport: { codeActionKind: { valueSet: ["", "quickfix", "refactor", "source"] } } },
             rename: { prepareSupport: true },
+            semanticTokens: { requests: { full: true }, tokenTypes: TOKEN_TYPES, tokenModifiers: TOKEN_MODIFIERS, formats: ["relative"] },
           },
         },
       });
@@ -238,6 +247,7 @@ class Server {
     // started is told here, and its changes after)
     this.up = true;
     for (const doc of vscode.workspace.textDocuments) this.opened(doc);
+    this.serving((result && result.capabilities) || {});
     return true;
   }
 
@@ -353,6 +363,64 @@ class Server {
   }
 }
 
+// ── colours ───────────────────────────────────────────────────────────
+
+/** Each name's kind as the server tells it — a parameter, a variable, a
+ * function, a struct, a field, a module — for the editor to colour by
+ * (semantic tokens), over what the grammar colours. Registered with the
+ * legend the server announces as it starts, so the server alone says what
+ * kinds there are; registered again when a server started anew announces
+ * another (a crow installed since), and asked again when it announces the
+ * same. */
+class Colours {
+  constructor(server) {
+    this.server = server;
+    this.legend = null;
+    this.registration = null;
+    this.changed = new vscode.EventEmitter();
+  }
+
+  serve(provider) {
+    const legend = (provider && provider.legend) || null;
+    if (JSON.stringify(legend) === JSON.stringify(this.legend)) {
+      if (legend) this.changed.fire();
+      return;
+    }
+    if (this.registration) this.registration.dispose();
+    this.registration = null;
+    this.legend = legend;
+    if (!legend) return;
+    const server = this.server;
+    this.registration = vscode.languages.registerDocumentSemanticTokensProvider(
+      SELECTOR,
+      {
+        onDidChangeSemanticTokens: this.changed.event,
+        async provideDocumentSemanticTokens(doc, token) {
+          let r = null;
+          if (await server.ready) {
+            try {
+              r = await server.request("textDocument/semanticTokens/full", { textDocument: { uri: doc.uri.toString() } }, token);
+            } catch (_) {
+              // (the document does not lex yet: the server says so)
+            }
+          }
+          // none to give — the server starting, the request cancelled, the
+          // document not lexing: the editor keeps the colours it has, moved
+          // with the edits since, and asks again at the next change
+          if (!r || !Array.isArray(r.data)) throw new vscode.CancellationError();
+          return new vscode.SemanticTokens(new Uint32Array(r.data));
+        },
+      },
+      new vscode.SemanticTokensLegend(legend.tokenTypes || [], legend.tokenModifiers || [])
+    );
+  }
+
+  dispose() {
+    if (this.registration) this.registration.dispose();
+    this.changed.dispose();
+  }
+}
+
 // ── the editor's side ─────────────────────────────────────────────────
 
 let server;
@@ -361,10 +429,13 @@ function activate(context) {
   const output = vscode.window.createOutputChannel("Crow Language Server");
   const diagnostics = vscode.languages.createDiagnosticCollection("crow");
   server = new Server(output, diagnostics);
+  const colours = new Colours(server);
+  server.serving = (capabilities) => colours.serve(capabilities.semanticTokensProvider);
   const at = (doc, position) => ({ textDocument: { uri: doc.uri.toString() }, position: toPosition(position) });
   context.subscriptions.push(
     output,
     diagnostics,
+    colours,
     vscode.workspace.onDidOpenTextDocument((doc) => server.opened(doc)),
     vscode.workspace.onDidChangeTextDocument((event) => server.changed(event)),
     vscode.workspace.onDidCloseTextDocument((doc) => server.closed(doc)),

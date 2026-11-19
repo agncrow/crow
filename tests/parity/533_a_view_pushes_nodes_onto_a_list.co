@@ -1,0 +1,62 @@
+--- A view that grows a list with `push` of nodes and places the list
+--- builds compiled and shows what the interpreter shows: the list holds
+--- the nodes' markup, as one a loop collects nodes into does — of views
+--- called, of elements, of a node held in a local first, and read by
+--- `len`. A list of text a node is pushed onto is text: the node shows
+--- as the text of its markup in both modes (markup mixed with text is
+--- text), as it does in a list a loop collects of both.
+
+use ui
+
+view card[n]
+    return p['card `n`']
+
+view of_views[names]
+    out = []
+    for n in names
+        out = push[out, card[n]]
+    return stack[out]
+
+view of_elements[names]
+    out = []
+    for n in names
+        out = push[out, p['`n`']]
+    return stack[out]
+
+view held_first[names]
+    out = []
+    for n in names
+        c = row[p['held `n`'], key = n]
+        out = push[out, c]
+    return row[out, p['end']]
+
+view counted[names]
+    out = []
+    for n in names
+        out = push[out, p['`n`']]
+    return stack[p['`len[out]` cards'], out]
+
+view mixed[names]
+    out = ['<b>t</b>']
+    for n in names
+        out = push[out, p['`n`']]
+    return stack[out]
+
+view mixed_loop[names]
+    out = for n in names
+        if n eq 'a'
+            'text <i>a</i>'
+        else
+            p['`n`']
+    return stack[out]
+
+fn show[]
+    names = ['a', 'b']
+    log[str[of_views[names]]]
+    log[str[of_elements[names]]]
+    log[str[held_first[names]]]
+    log[str[counted[names]]]
+    log[str[mixed[names]]]
+    log[str[mixed_loop[names]]]
+
+show[]

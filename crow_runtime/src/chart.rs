@@ -697,8 +697,8 @@ pub fn render_svg(spec: &ChartSpec) -> Result<String, String> {
             }
             let x = x0 + band * i as f64;
             svg.push_str(&format!(
-                "<rect class=\"crow-seek\" x=\"{x:.1}\" y=\"{mt}\" width=\"{bw:.2}\" height=\"{bh:.1}\" fill=\"transparent\" style=\"cursor:pointer\" data-crow-click=\"{h}\" data-crow-args=\"[{t}]\"/>",
-                bw = band, bh = yb - mt, h = esc(handler), t = trim_ts(*t)
+                "<rect class=\"crow-seek\" x=\"{x:.1}\" y=\"{mt}\" width=\"{bw:.2}\" height=\"{bh:.1}\" fill=\"transparent\" style=\"cursor:pointer\" data-crow-click=\"{h}\" data-crow-args=\"{t}\"/>",
+                bw = band, bh = yb - mt, h = esc(handler), t = seek_args(*t)
             ));
         }
     }
@@ -714,6 +714,27 @@ fn trim_num(v: f64) -> String {
         let s = format!("{:.2}", v);
         s.trim_end_matches('0').trim_end_matches('.').to_string()
     }
+}
+
+/// A seek band's click, as the page sends it back: the bucket's time.
+fn seek_args(t: f64) -> String {
+    format!("[{}]", trim_ts(t))
+}
+
+/// The clicks a chart's seek bands offer (handler, arguments): one for each
+/// bucket with a time, when the chart draws (`render_svg`: within its
+/// budget, with data, and with time ticks its zone can place) and seeks.
+pub fn seek_clicks(spec: &ChartSpec) -> Vec<(String, String)> {
+    let Some(h) = spec.seek else { return Vec::new() };
+    let n = spec.ts.len();
+    if n == 0 || check_budget(n, "chart").is_err() {
+        return Vec::new();
+    }
+    let t0 = spec.ts[0];
+    if time_ticks(t0, spec.ts[n - 1].max(t0 + 1.0), spec.tz, 6).is_err() {
+        return Vec::new();
+    }
+    spec.ts.iter().filter(|t| t.is_finite()).map(|t| (h.to_string(), seek_args(*t))).collect()
 }
 
 /// A moment as a JSON number: whole seconds stay integers, fractions keep

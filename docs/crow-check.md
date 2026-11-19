@@ -2,7 +2,8 @@
 
 `crow check` verifies a program without running it against the world: your
 test blocks, purity analysis, edge cases generated for the pure functions
-with their answers kept as regression snapshots (`.crow/snapshots/`),
+with their answers kept as regression snapshots (`.crow/snapshots/`,
+each function's under the file that declares it),
 live-loop hazards, and the app baseline (below). With a database URL it
 also cross-references the program's SQL against the schema the database
 actually enforces, and reports **concurrency hazards** — the class of bug

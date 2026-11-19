@@ -1,0 +1,6 @@
+[{"open": "/"}, {"expect": "counts 0 1 1 2 1"},
+ {"event": "step"}, {"expect": "counts 1 1 2 4 1"}, {"expect": "step 2/4"},
+ {"event": "other"}, {"expect": "counts 1 5 6 12 1"}, {"expect": "other 6"},
+ {"event": "grow"}, {"expect": "counts 1 5 6 12 2"}, {"expect": "grow 1-2"},
+ {"event": "refuse"}, {"expect": "counts 1 5 6 12 2"},
+ {"event": "step"}, {"expect": "counts 2 5 7 14 2"}, {"expect": "step 12/14"}]

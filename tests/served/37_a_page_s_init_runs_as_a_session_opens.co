@@ -1,0 +1,37 @@
+--- A page's init runs once as a session opens the page (spec, LiveView /
+--- Pages): after the address's facts are read and before the first
+--- render, as a handler runs — it writes the session's facts and reads a
+--- derivation over them. A click renders again and does not run it; a
+--- page opened again is a new session, which does. A page a function
+--- registers (Myna's `fn pages[]`) carries its init too.
+use web, ui
+
+day = ''
+opened = 0
+greeting = ''
+count = 0
+
+derive day_shown
+    if day eq ''
+        return 'no day'
+    return 'day `day`'
+
+fn open_page[]
+    opened = opened + 1
+    greeting = '`day_shown`, opened `opened`'
+
+fn bump[]
+    count = count + 1
+
+view home[]
+    return stack[p['`greeting`, count `count`'], button['Go', click = bump]]
+
+view other[]
+    return p['other: `greeting`']
+
+fn pages[]
+    page['/other', other, init = open_page]
+
+page['/', home, url = ['day'], init = open_page]
+pages[]
+serve[3585]

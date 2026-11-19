@@ -1,0 +1,51 @@
+--- A view handed a node for a parameter it only places — as a child, as
+--- its answer, a local it may give another node, or handed on to another
+--- such view — places the node, in
+--- both modes (one-view-design.md §7, three faults a real app found,
+--- 2026-11-16): a control inside keeps its value, a node held in a local
+--- is handed on, and a view that reads its node in any other way (its
+--- markup's length) is handed the markup, as before.
+use ui
+
+view inner[body]
+    return stack[body, gap = 's']
+
+view frame_of[title, actions, body]
+    shown = body
+    if title eq 'B'
+        shown = p['refused']
+    return stack[row[p[title], actions], inner[shown]]
+
+view just[body]
+    return body
+
+view measured[body]
+    m = str[body]
+    return p['`len[m] gt 0`']
+
+view form_of[]
+    return form[row[progress[3, 10], button['Go']], submit = go]
+
+fn go[]
+    log['go']
+
+view page_a[]
+    return frame_of['A', row[button['x']], form_of[]]
+
+view page_b[]
+    return frame_of['B', p['side'], just[p['plain']]]
+
+view page_m[]
+    return measured[p['m']]
+
+view page_c[]
+    b = stack[p['held'], form_of[]]
+    return frame_of['C', p['c'], b]
+
+fn show[]
+    log[str[page_a[]]]
+    log[str[page_b[]]]
+    log[str[page_m[]]]
+    log[str[page_c[]]]
+
+show[]

@@ -1,0 +1,36 @@
+--- A view a render did not call stays kept for a later render, within the
+--- session's budget (one-view-design.md, phase 2): switching back to a tab
+--- whose facts did not move finds its views where it left them; one whose
+--- facts moved while the other tab showed runs again, unless it reads them
+--- only in its bound places (phase 3): it is kept, those places set.
+use web, ui
+
+tab = 'one'
+a = 1
+b = 1
+
+--- (each tab is one view, so a check run, which runs every view, counts
+--- what a kept tab stands for as one view too)
+view one_tab[]
+    return stack[p['first `a`'], p['second `a`']]
+
+view two_tab[]
+    return stack[p['other `b`']]
+
+fn show_one[]
+    tab = 'one'
+
+fn show_two[]
+    tab = 'two'
+
+fn bump_a[]
+    a = a + 1
+
+view render[]
+    buttons = row[button['One', click = show_one], button['Two', click = show_two], button['A', click = bump_a]]
+    if tab eq 'one'
+        return stack[buttons, one_tab[]]
+    return stack[buttons, two_tab[]]
+
+page['/', render]
+serve[3590]

@@ -1,0 +1,57 @@
+--- A page's init runs in a test as it runs on the served page (spec,
+--- LiveView / Pages and Testing): `app[view, init = f]` opens a session
+--- that runs f once, before anything renders, as one transaction — it
+--- writes the session's facts and reads a derivation over them — so a
+--- test sees the page a reader sees. A click does not run it again; each
+--- session runs its own. An init that stops lands nothing, and the page
+--- tells the reader, as a stopped click's does. CI runs it against the
+--- interpreter and against the compiled program (crow test --compiled).
+use web, ui
+
+day = 'mon'
+opened = 0
+total = 0.0
+greeting = ''
+
+derive day_shown
+    return 'day `day`'
+
+fn add[x]
+    total = total + x
+
+fn open_page[]
+    opened = opened + 1
+    greeting = '`day_shown`, opened `opened`'
+
+fn open_failing[]
+    opened = opened + 1
+    add[float[day]]
+
+fn bump[]
+    day = 'tue'
+
+view render[]
+    return stack[p['`greeting`'], p['total `total`'], p['`notice.text`'], button['Go', click = bump]]
+
+page['/', render, url = ['day'], init = open_page]
+page['/broken', render, init = open_failing]
+
+test a_page_s_init_runs_as_the_session_opens[]
+    plain = app[render]
+    assert[plain.opened eq 0, 'with no init nothing runs: `plain.opened`']
+    t = app[render, init = open_page]
+    assert[t.opened eq 1, 'opened `t.opened`']
+    assert['day mon, opened 1' in html[t], 'the page `html[t]`']
+    click[t, bump]
+    assert[t.day eq 'tue']
+    assert[t.opened eq 1, 'a click does not run it again: `t.opened`']
+    assert['day mon, opened 1' in html[t], 'the page `html[t]`']
+    u = app[render, wide = true, init = open_page]
+    assert[u.opened eq 1, 'each session runs its own: `u.opened`']
+    assert[t.opened eq 1, 'and the first keeps its own: `t.opened`']
+
+test an_init_that_stops_lands_nothing[]
+    a = app[render, init = open_failing]
+    assert[a.opened eq 0 and a.total eq 0.0, 'nothing landed: opened `a.opened` total `a.total`']
+    assert['open_failing stopped, and nothing changed' in html[a], 'the page `html[a]`']
+    assert['cannot convert' not in html[a], 'the reader is not told the reason: `html[a]`']
