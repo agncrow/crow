@@ -1,0 +1,10 @@
+--- a bound input's change is a handler named, as click is: a value there
+--- is refused
+use web, ui
+
+pick = 'a'
+
+view v[]
+    return stack[select[['a', 'b'], pick, change = 'saved']]
+
+page['/', v]

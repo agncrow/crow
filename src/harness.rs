@@ -147,11 +147,60 @@ fn hnode_text(n: &HNode) -> String {
 fn hnode_matches(n: &HNode, tag: &str, class: &str) -> bool {
     if n.tag.is_empty() { return false; }
     if !tag.is_empty() && n.tag != tag { return false; }
+    // (`#go` or `button#go`: a step that names an element by its id)
+    if let Some(id) = class.strip_prefix('#') {
+        return n.attrs.iter().any(|(k, v)| k == "id" && v == id);
+    }
     if !class.is_empty() {
         let cls = n.attrs.iter().find(|(k, _)| k == "class").map(|(_, v)| v.clone()).unwrap_or_default();
         if !cls.split_whitespace().any(|c| c == class) { return false; }
     }
     true
+}
+
+impl HNode {
+    pub(crate) fn children(&self) -> &[HNode] {
+        &self.children
+    }
+
+    pub(crate) fn tag(&self) -> &str {
+        &self.tag
+    }
+
+    pub(crate) fn attr(&self, key: &str) -> Option<&str> {
+        self.attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+
+    /// The elements of a subtree, itself first, in document order.
+    pub(crate) fn walk<'a>(&'a self, out: &mut Vec<&'a HNode>) {
+        if !self.tag.is_empty() {
+            out.push(self);
+        }
+        for c in &self.children {
+            c.walk(out);
+        }
+    }
+}
+
+/// The elements of a page whose `id` is the one given.
+pub(crate) fn harness_by_id<'a>(page: &'a HNode, id: &str) -> Vec<&'a HNode> {
+    let mut all = Vec::new();
+    page.walk(&mut all);
+    all.into_iter().filter(|n| n.attr("id") == Some(id)).collect()
+}
+
+/// The variable a bound input binds, from what its markup wires.
+pub(crate) fn wired_var(el: &HNode) -> Option<String> {
+    let wired = el.attr("data-crow-input").or_else(|| el.attr("data-crow-change"))?;
+    wired.strip_prefix("__field:").or_else(|| wired.strip_prefix("__select:")).map(str::to_string)
+}
+
+/// The `change` handler of the input bound to `var`, if a view gave it
+/// one (`data-crow-then`, which the page sends with the change).
+pub(crate) fn harness_then_for(page: &HNode, var: &str) -> Option<String> {
+    let mut all = Vec::new();
+    page.walk(&mut all);
+    all.into_iter().find_map(|n| if wired_var(n).as_deref() == Some(var) { n.attr("data-crow-then").map(str::to_string) } else { None })
 }
 
 /// Descendant selection: `steps[i]` must match an ancestor-or-self chain in

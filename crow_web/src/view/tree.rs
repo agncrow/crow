@@ -337,7 +337,33 @@ pub fn control_binds(name: &str, args: usize, first_is_map: bool, field_kind: Op
         "select" if !first_is_map => 2,
         _ => return None,
     };
-    (args == arity).then_some(if name == "progress" { None } else { Some(1) })
+    // (a bound input given what it takes beside what it shows — an id, a
+    // class, a tip, its change's handler — is one too)
+    let own = name != "progress" && args == arity + CONTROL_OWN.len();
+    (args == arity || own).then_some(if name == "progress" { None } else { Some(1) })
+}
+
+/// What a bound input takes beside what it shows — what any element takes,
+/// and its change's handler — in the order its lowered call holds them
+/// after its own arguments.
+pub const CONTROL_OWN: &[&str] = &["id", "class", "tip", "change"];
+
+/// The arguments a bound input's lowered call holds of its own: `field`'s
+/// label, variable, type and lines, `slider`'s five, two for the rest;
+/// none for a name that is no bound input.
+pub fn control_arity(name: &str) -> Option<usize> {
+    Some(match name {
+        "field" => 4,
+        "slider" => 5,
+        "checkbox" | "toggle" | "radio" | "tabs" | "select" => 2,
+        _ => return None,
+    })
+}
+
+/// Whether a lowered call of the name with this many arguments is a bound
+/// input: its own arguments alone, or those and `CONTROL_OWN`.
+pub fn is_control_call(name: &str, argc: usize) -> bool {
+    control_arity(name).is_some_and(|n| argc == n || argc == n + CONTROL_OWN.len())
 }
 
 /// Whether an option of an element can be a bound place: one the page
@@ -371,6 +397,8 @@ pub struct Rows {
     pub confirm: Vec<(String, String)>,
     pub page: Option<layout::Paging>,
     pub sort: Option<layout::Sorting>,
+    /// `formats = map[pnl = 'money']`: each column's format (column, format)
+    pub formats: Vec<(String, String)>,
 }
 
 /// A control: what it shows and the fact it is bound to (`bind`), with the
@@ -379,22 +407,46 @@ pub struct Rows {
 pub enum Control {
     /// `field[label, var, type, lines]`: a text, number or file input, or
     /// a textarea of `lines` rows.
-    Field { label: String, bind: String, value: serde_json::Value, shown: String, kind: String, lines: i64 },
+    Field { label: String, bind: String, value: serde_json::Value, shown: String, kind: String, lines: i64, own: Option<Box<Own>> },
     /// `slider[label, var, min, max, step]`.
-    Slider { label: String, bind: String, value: serde_json::Value, shown: String, min: f64, max: f64, step: f64 },
+    Slider { label: String, bind: String, value: serde_json::Value, shown: String, min: f64, max: f64, step: f64, own: Option<Box<Own>> },
     /// `checkbox[label, var]`, `toggle[label, var]`.
-    Check { label: String, bind: String, on: bool, toggle: bool },
+    Check { label: String, bind: String, on: bool, toggle: bool, own: Option<Box<Own>> },
     /// `radio[options, var]`, `tabs[options, var]`.
-    Choice { options: Vec<String>, bind: String, current: String, tabs: bool },
+    Choice { options: Vec<String>, bind: String, current: String, tabs: bool, own: Option<Box<Own>> },
     /// `select[options, var]`.
-    Select { options: Vec<String>, bind: String, current: String },
+    Select { options: Vec<String>, bind: String, current: String, own: Option<Box<Own>> },
     /// `progress[value, max]`.
     Progress { value: f64, max: f64 },
     /// `icon[name, size, color]`, from the kernel's closed set.
     Icon { name: String, size: String, color: String },
 }
 
+/// What a bound input was given beside what it shows: an `id` and a
+/// `class` for the outermost element it draws (the one that holds its
+/// label's words and its input), a `tip`, as any element takes them; and
+/// the handler its change runs (`change = h`), after the change is
+/// written. The HTML puts the first three on that element and names the
+/// handler on its input (`data-crow-then`); the tree carries them beside
+/// what the control shows, the handler as its `change` event.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Own {
+    pub id: String,
+    pub class: String,
+    pub tip: String,
+    pub change: Option<String>,
+}
+
 impl Control {
+    /// What the bound input was given of its own (`Own`): none for a
+    /// progress bar, an icon, or a bound input given nothing.
+    pub fn own(&self) -> Option<&Own> {
+        match self {
+            Control::Field { own, .. } | Control::Slider { own, .. } | Control::Check { own, .. } | Control::Choice { own, .. } | Control::Select { own, .. } => own.as_deref(),
+            Control::Progress { .. } | Control::Icon { .. } => None,
+        }
+    }
+
     /// The control's name as the view wrote it.
     pub fn kind(&self) -> &'static str {
         match self {
@@ -567,6 +619,7 @@ pub fn element_bound(kind: &str, options: Vec<(String, Given)>, children: Vec<Gi
         confirm: Vec::new(),
         page: None,
         sort: None,
+        formats: Vec::new(),
     };
     let mut sort = false;
     for (k, v) in options {
@@ -609,6 +662,18 @@ pub fn element_bound(kind: &str, options: Vec<(String, Given)>, children: Vec<Gi
                     sort = *b;
                     continue;
                 }
+                // each column's cells in a format: refused when the table
+                // does not know it (a column the frame lacks, below)
+                ("formats", Given::Map(fs)) => {
+                    for (col, f) in fs {
+                        let f = f.shown();
+                        if !layout::cell_format_known(&f) {
+                            return Err(format!("table: formats gives '{}' the format '{}', which a table does not know — {}, or number:N for N decimals", col, f, layout::CELL_FORMATS.join(", ")));
+                        }
+                        rows.formats.push((col.clone(), f));
+                    }
+                    continue;
+                }
                 _ => {}
             }
         }
@@ -640,7 +705,12 @@ pub fn element_bound(kind: &str, options: Vec<(String, Given)>, children: Vec<Gi
         let before = kids.len();
         match c {
             // a table's frame is its rows
-            Given::Frame(f) if table => kids.push(Arc::new(Node::Rows(Box::new(Rows { frame: *f, ..rows.clone() })))),
+            Given::Frame(f) if table => {
+                if let Some((col, _)) = rows.formats.iter().find(|(col, _)| !f.columns.contains(col)) {
+                    return Err(format!("table: formats names '{}', a column the frame does not have — its columns are {}", col, f.columns.join(", ")));
+                }
+                kids.push(Arc::new(Node::Rows(Box::new(Rows { frame: *f, ..rows.clone() }))))
+            }
             other => splice(&mut kids, other),
         }
         if kids.len() == before + 1
@@ -698,27 +768,100 @@ fn splice(kids: &mut Vec<Arc<Node>>, c: Given) {
 
 /// `field[label, var, type, lines]`.
 pub fn field(label: &str, bind: &str, value: serde_json::Value, shown: &str, kind: &str, lines: i64) -> Node {
-    Node::Control(Control::Field { label: label.into(), bind: bind.into(), value, shown: shown.into(), kind: kind.into(), lines })
+    Node::Control(Control::Field { label: label.into(), bind: bind.into(), value, shown: shown.into(), kind: kind.into(), lines, own: None })
 }
 
 /// `slider[label, var, min, max, step]`.
 pub fn slider(label: &str, bind: &str, value: serde_json::Value, shown: &str, min: f64, max: f64, step: f64) -> Node {
-    Node::Control(Control::Slider { label: label.into(), bind: bind.into(), value, shown: shown.into(), min, max, step })
+    Node::Control(Control::Slider { label: label.into(), bind: bind.into(), value, shown: shown.into(), min, max, step, own: None })
 }
 
 /// `checkbox[label, var]`, or `toggle[label, var]`.
 pub fn check(label: &str, bind: &str, on: bool, toggle: bool) -> Node {
-    Node::Control(Control::Check { label: label.into(), bind: bind.into(), on, toggle })
+    Node::Control(Control::Check { label: label.into(), bind: bind.into(), on, toggle, own: None })
 }
 
 /// `radio[options, var]`, or `tabs[options, var]`.
 pub fn choice(options: Vec<String>, bind: &str, current: &str, tabs: bool) -> Node {
-    Node::Control(Control::Choice { options, bind: bind.into(), current: current.into(), tabs })
+    Node::Control(Control::Choice { options, bind: bind.into(), current: current.into(), tabs, own: None })
 }
 
 /// `select[options, var]`.
 pub fn select(options: Vec<String>, bind: &str, current: &str) -> Node {
-    Node::Control(Control::Select { options, bind: bind.into(), current: current.into() })
+    Node::Control(Control::Select { options, bind: bind.into(), current: current.into(), own: None })
+}
+
+/// A bound input given an `id`, a `class`, a `tip` or a `change` handler
+/// (`Own`): the control as it was where none is given, so a call that
+/// gives none is the node it was. Any other node is as it is. A file
+/// field's change is the render's stop: its file arrives after the change,
+/// beside the socket, and a handler run then would read none.
+pub fn owned(node: Node, id: &str, class: &str, tip: &str, change: Option<&str>) -> Result<Node, String> {
+    if id.is_empty() && class.trim().is_empty() && tip.is_empty() && change.is_none() {
+        return Ok(node);
+    }
+    if let (Node::Control(Control::Field { kind, bind, .. }), Some(h)) = (&node, change)
+        && kind == "file"
+    {
+        return Err(format!("field: a file field takes no change = {} — its file arrives after the reader picks it, when '{}' holds it; read it in the handler that uses it", h, bind));
+    }
+    let given = Own { id: id.to_string(), class: class.split_whitespace().collect::<Vec<_>>().join(" "), tip: tip.to_string(), change: change.map(str::to_string) };
+    match node {
+        Node::Control(mut c) => {
+            match &mut c {
+                Control::Field { own, .. } | Control::Slider { own, .. } | Control::Check { own, .. } | Control::Choice { own, .. } | Control::Select { own, .. } => *own = Some(Box::new(given)),
+                Control::Progress { .. } | Control::Icon { .. } => {}
+            }
+            Ok(Node::Control(c))
+        }
+        other => Ok(other),
+    }
+}
+
+/// The page's node of a bound input with what it was given of its own:
+/// its id, its classes after Crow's own, and its tip (`title`) on the
+/// outermost element; its change's handler on each element that sends the
+/// change (`data-crow-then`), which the page sends with it.
+fn with_own(v: CrowVNode, own: Option<&Own>) -> CrowVNode {
+    let Some(own) = own else { return v };
+    let v = match &own.change {
+        Some(h) => then_on_inputs(v, h),
+        None => v,
+    };
+    match v {
+        CrowVNode::Element { tag, mut attrs, children } => {
+            if !own.id.is_empty() {
+                attrs.insert("id".to_string(), own.id.clone());
+            }
+            if !own.class.is_empty() {
+                let joined = match attrs.get("class") {
+                    Some(c) if !c.is_empty() => format!("{} {}", c, own.class),
+                    _ => own.class.clone(),
+                };
+                attrs.insert("class".to_string(), joined);
+            }
+            if !own.tip.is_empty() {
+                attrs.insert("title".to_string(), own.tip.clone());
+            }
+            CrowVNode::Element { tag, attrs, children }
+        }
+        other => other,
+    }
+}
+
+/// Each element of a bound input that sends its change (`data-crow-input`,
+/// `data-crow-change`) names the handler the change runs then.
+fn then_on_inputs(v: CrowVNode, handler: &str) -> CrowVNode {
+    match v {
+        CrowVNode::Element { tag, mut attrs, children } => {
+            if attrs.contains_key("data-crow-input") || attrs.contains_key("data-crow-change") {
+                attrs.insert("data-crow-then".to_string(), handler.to_string());
+            }
+            let children = children.into_iter().map(|c| then_on_inputs(c, handler)).collect();
+            CrowVNode::Element { tag, attrs, children }
+        }
+        other => other,
+    }
 }
 
 /// `progress[value, max]`.
@@ -988,6 +1131,7 @@ pub(crate) fn table_of(r: &Rows) -> layout::TableOf<'_> {
         confirm: &r.confirm,
         page: r.page,
         sort: r.sort.as_ref(),
+        formats: &r.formats,
     }
 }
 
@@ -1195,11 +1339,11 @@ fn push_vnode(node: &Node, out: &mut Vec<CrowVNode>) {
         Node::Html(v) => out.push(v.clone()),
         Node::Rows(r) => out.extend(layout::frame_table_parts(&table_of(r)).iter().map(part_node)),
         Node::Control(c) => out.push(match c {
-            Control::Field { label, bind, shown, kind, lines, .. } => CrowVNode::field_typed(label, bind, shown, kind, *lines),
-            Control::Slider { label, bind, shown, min, max, step, .. } => CrowVNode::slider(label, bind, shown, *min, *max, *step),
-            Control::Check { label, bind, on, toggle } => CrowVNode::check_input(label, bind, *on, *toggle),
-            Control::Choice { options, bind, current, tabs } => CrowVNode::choice_input(options, bind, current, *tabs),
-            Control::Select { options, bind, current } => CrowVNode::select_input(options, bind, current),
+            Control::Field { label, bind, shown, kind, lines, own, .. } => with_own(CrowVNode::field_typed(label, bind, shown, kind, *lines), own.as_deref()),
+            Control::Slider { label, bind, shown, min, max, step, own, .. } => with_own(CrowVNode::slider(label, bind, shown, *min, *max, *step), own.as_deref()),
+            Control::Check { label, bind, on, toggle, own } => with_own(CrowVNode::check_input(label, bind, *on, *toggle), own.as_deref()),
+            Control::Choice { options, bind, current, tabs, own } => with_own(CrowVNode::choice_input(options, bind, current, *tabs), own.as_deref()),
+            Control::Select { options, bind, current, own } => with_own(CrowVNode::select_input(options, bind, current), own.as_deref()),
             Control::Progress { value, max } => CrowVNode::progress(*value, *max),
             Control::Icon { name, size, color } => match layout::icon_part(name, size, color) {
                 Ok(p) => part_node(&p),
@@ -1363,10 +1507,24 @@ pub fn to_json(node: &Node) -> serde_json::Value {
                 Control::Field { label, bind, value, kind, lines, .. } => json!({ "label": label, "bind": bind, "value": value, "type": if kind.is_empty() { "text" } else { kind }, "lines": lines }),
                 Control::Slider { label, bind, value, min, max, step, .. } => json!({ "label": label, "bind": bind, "value": value, "min": min, "max": max, "step": step }),
                 Control::Check { label, bind, on, .. } => json!({ "label": label, "bind": bind, "value": on }),
-                Control::Choice { options, bind, current, .. } | Control::Select { options, bind, current } => json!({ "options": options, "bind": bind, "value": current }),
+                Control::Choice { options, bind, current, .. } | Control::Select { options, bind, current, .. } => json!({ "options": options, "bind": bind, "value": current }),
                 Control::Progress { value, max } => json!({ "value": value, "max": max }),
                 Control::Icon { name, size, color } => json!({ "name": name, "size": size, "color": color }),
             };
+            // (what it was given of its own, beside what it shows, by the
+            // names an element's options give them — not in `options`,
+            // which a choice's are: only where it was given any)
+            if let Some(own) = c.own() {
+                for (k, v) in [("class", &own.class), ("id", &own.id), ("tip", &own.tip)] {
+                    if !v.is_empty() {
+                        out[k] = json!(v);
+                    }
+                }
+                // (its change's handler, as an element lists its events)
+                if let Some(h) = &own.change {
+                    out["events"] = json!([{ "on": "change", "handler": h }]);
+                }
+            }
             out["node"] = json!("control");
             out["kind"] = json!(c.kind());
             out
@@ -1486,6 +1644,38 @@ fn number(attrs: &HashMap<String, String>, name: &str, otherwise: f64) -> f64 {
     attrs.get(name).and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(otherwise)
 }
 
+/// The handler a bound input's change runs, as its inputs name it.
+fn then_in(kids: &[CrowVNode]) -> Option<String> {
+    kids.iter().find_map(|k| match k {
+        CrowVNode::Element { attrs, children, .. } => attrs.get("data-crow-then").cloned().or_else(|| then_in(children)),
+        CrowVNode::Shared(s) => then_in(std::slice::from_ref(s.node())),
+        _ => None,
+    })
+}
+
+/// The classes the vocabulary gives a bound input's outermost element.
+const CONTROL_CLASSES: &[&str] = &["crow-check", "crow-toggle", "crow-radio", "crow-tabs", "crow-select", "crow-field", "crow-slider"];
+
+/// A bound input read back with what its outermost element carries of its
+/// own (`Own`): its id, its classes past the vocabulary's, its tip, as
+/// `to_json` gives them — only where it carries any.
+fn read_own(mut control: serde_json::Value, attrs: &HashMap<String, String>, children: &[CrowVNode]) -> serde_json::Value {
+    use serde_json::json;
+    if let Some(h) = then_in(children) {
+        control["events"] = json!([{ "on": "change", "handler": h }]);
+    }
+    let class: Vec<&str> = classes(attrs).into_iter().filter(|c| !CONTROL_CLASSES.contains(c)).collect();
+    if !class.is_empty() {
+        control["class"] = json!(class.join(" "));
+    }
+    for (a, o) in [("id", "id"), ("title", "tip")] {
+        if let Some(v) = attrs.get(a) {
+            control[o] = json!(v);
+        }
+    }
+    control
+}
+
 fn read_element(tag: &str, attrs: &HashMap<String, String>, children: &[CrowVNode]) -> serde_json::Value {
     use serde_json::{json, Map, Value};
     let class = classes(attrs);
@@ -1496,7 +1686,7 @@ fn read_element(tag: &str, attrs: &HashMap<String, String>, children: &[CrowVNod
         && let Some((input, _)) = first(children, "input")
     {
         let kind = if has("crow-toggle") { "toggle" } else { "checkbox" };
-        return json!({ "node": "control", "kind": kind, "label": words(children), "bind": bound(input), "value": input.contains_key("checked") });
+        return read_own(json!({ "node": "control", "kind": kind, "label": words(children), "bind": bound(input), "value": input.contains_key("checked") }), attrs, children);
     }
     if tag == "div" && (has("crow-radio") || has("crow-tabs")) {
         let mut inputs = Vec::new();
@@ -1505,7 +1695,7 @@ fn read_element(tag: &str, attrs: &HashMap<String, String>, children: &[CrowVNod
         let current = inputs.iter().find(|(a, _)| a.contains_key("checked")).and_then(|(a, _)| a.get("value").cloned()).unwrap_or_default();
         let bind = inputs.first().map(|(a, _)| bound(a)).unwrap_or_default();
         let kind = if has("crow-tabs") { "tabs" } else { "radio" };
-        return json!({ "node": "control", "kind": kind, "options": options, "bind": bind, "value": current });
+        return read_own(json!({ "node": "control", "kind": kind, "options": options, "bind": bind, "value": current }), attrs, children);
     }
     if tag == "div"
         && has("crow-select")
@@ -1515,7 +1705,7 @@ fn read_element(tag: &str, attrs: &HashMap<String, String>, children: &[CrowVNod
         find_all(opts, "option", &mut all);
         let options: Vec<String> = all.iter().map(|(a, k)| a.get("value").cloned().unwrap_or_else(|| words(k))).collect();
         let current = all.iter().find(|(a, _)| a.contains_key("selected")).map(|(a, k)| a.get("value").cloned().unwrap_or_else(|| words(k))).unwrap_or_default();
-        return json!({ "node": "control", "kind": "select", "options": options, "bind": bound(sel), "value": current });
+        return read_own(json!({ "node": "control", "kind": "select", "options": options, "bind": bound(sel), "value": current }), attrs, children);
     }
     if tag == "div" && has("crow-field") {
         let label = first(children, "label").map(|(_, k)| words(k)).unwrap_or_default();
@@ -1524,15 +1714,15 @@ fn read_element(tag: &str, attrs: &HashMap<String, String>, children: &[CrowVNod
             let value = input.get("value").cloned().unwrap_or_default();
             if has("crow-slider") || kind == "range" {
                 let v = value.trim().parse::<f64>().map(|x| json!(x)).unwrap_or(json!(value));
-                return json!({ "node": "control", "kind": "slider", "label": label, "bind": bound(input), "value": v, "min": number(input, "min", 0.0), "max": number(input, "max", 100.0), "step": number(input, "step", 0.0) });
+                return read_own(json!({ "node": "control", "kind": "slider", "label": label, "bind": bound(input), "value": v, "min": number(input, "min", 0.0), "max": number(input, "max", 100.0), "step": number(input, "step", 0.0) }), attrs, children);
             }
             if !input.contains_key("data-crow-upload") {
-                return json!({ "node": "control", "kind": "field", "label": label, "bind": bound(input), "value": value, "type": kind, "lines": 0 });
+                return read_own(json!({ "node": "control", "kind": "field", "label": label, "bind": bound(input), "value": value, "type": kind, "lines": 0 }), attrs, children);
             }
         }
         if let Some((area, k)) = first(children, "textarea") {
             let lines = area.get("rows").and_then(|r| r.parse::<i64>().ok()).unwrap_or(3);
-            return json!({ "node": "control", "kind": "field", "label": label, "bind": bound(area), "value": super::text_of(k), "type": "text", "lines": lines });
+            return read_own(json!({ "node": "control", "kind": "field", "label": label, "bind": bound(area), "value": super::text_of(k), "type": "text", "lines": lines }), attrs, children);
         }
     }
     if tag == "progress" && has("crow-progress") {
@@ -2036,6 +2226,9 @@ fn rows_json(r: &Rows) -> serde_json::Value {
         "actions": r.actions.iter().map(|(label, h)| json!({ "label": label, "handler": h })).collect::<Vec<_>>(),
         "confirm": r.confirm.iter().map(|(label, t)| (label.clone(), json!(t))).collect::<Map<String, Value>>(),
     });
+    if !r.formats.is_empty() {
+        out["formats"] = r.formats.iter().map(|(c, f)| (c.clone(), json!(f))).collect::<Map<String, Value>>().into();
+    }
     if shown.is_none() {
         // more rows than a table shows unpaged: the table says so in their place
         out["frame"]["rows"] = json!([]);
@@ -2199,6 +2392,29 @@ mod tests {
         assert!(icon("nope", "", "").unwrap_err().starts_with("icon: icon 'nope'"));
     }
 
+    /// A table's `formats`: each cell shows in its column's format, in the
+    /// page and in the tree as data (`shown`, beside the values
+    /// underneath in `frame`), sorted by the values; an unknown format and
+    /// a column the frame lacks stop the build.
+    #[test]
+    fn a_table_shows_its_cells_in_formats() {
+        let sorted = TableState { page: None, sort: Some((0, Some(("px".to_string(), false)))) };
+        let formats = ("formats", Given::Map(vec![("px".into(), text("money"))]));
+        let table = element("table", opts(&[formats.clone(), ("sort", Given::Bool(true)), ("delta", Given::List(vec![text("px")]))]), vec![Given::Frame(Box::new(frame()))], sorted).unwrap();
+        let h = html(&table);
+        // (sorted by px, -2.0 first: by the value, not the words)
+        assert!(h.contains("<td>AAPL</td><td class=\"num down\">-2.00</td></tr><tr><td>IMRN</td><td class=\"num up\">1.50</td>"), "{}", h);
+        let data = to_json(&table)["children"][0].clone();
+        assert_eq!(data["node"], "rows", "{}", to_json(&table));
+        assert_eq!(data["shown"], json!([["AAPL", "-2.00"], ["IMRN", "1.50"]]));
+        assert_eq!(data["frame"]["rows"], json!([["AAPL", -2.0], ["IMRN", 1.5]]));
+        assert_eq!(data["formats"], json!({"px": "money"}));
+        let unknown = element("table", opts(&[("formats", Given::Map(vec![("px".into(), text("dollars"))]))]), vec![Given::Frame(Box::new(frame()))], TableState::default());
+        assert!(unknown.unwrap_err().contains("which a table does not know"));
+        let missing = element("table", opts(&[("formats", Given::Map(vec![("gone".into(), text("whole"))]))]), vec![Given::Frame(Box::new(frame()))], TableState::default());
+        assert!(missing.unwrap_err().contains("a column the frame does not have"));
+    }
+
     /// The tree as data: kinds, typed options, events with their frozen
     /// arguments, bindings and values, a table's rows as the table shows
     /// them, markup marked as markup — and nothing HTML's.
@@ -2333,6 +2549,51 @@ mod tests {
         assert_eq!(to_json(&select(vec!["a".into(), "b".into()], "pick", "b")), json!({"node": "control", "kind": "select", "options": ["a", "b"], "bind": "pick", "value": "b"}));
         assert_eq!(to_json(&progress(2.0, 4.0)), json!({"node": "control", "kind": "progress", "value": 2.0, "max": 4.0}));
         assert_eq!(to_json(&failed("why"))["node"], "failed");
+    }
+
+    /// A bound input given an id, a class or a tip carries them on the
+    /// outermost element it draws, its classes after the vocabulary's, and
+    /// in its data beside what it shows; read back from its markup it says
+    /// the same. Given none — or empty ones — it is the node it was.
+    #[test]
+    fn a_bound_input_carries_its_id_and_class() {
+        let plain = check("On", "on", true, false);
+        let given = owned(check("On", "on", true, false), "f-on", " ctl  wide ", "turns it on", None).unwrap();
+        assert_eq!(html(&given), "<label class=\"crow-check ctl wide\" id=\"f-on\" title=\"turns it on\"><input checked=\"\" data-crow-input=\"__field:on\" type=\"checkbox\">On</label>");
+        assert_eq!(to_json(&given), json!({"node": "control", "kind": "checkbox", "label": "On", "bind": "on", "value": true, "id": "f-on", "class": "ctl wide", "tip": "turns it on"}));
+        let none = owned(check("On", "on", true, false), "", " ", "", None).unwrap();
+        assert_eq!(html(&none), html(&plain));
+        assert_eq!(to_json(&none), to_json(&plain));
+        // (a select's `options` are its choices: its id stands beside them)
+        let pick = owned(select(vec!["a".into(), "b".into()], "pick", "b"), "f-pick", "", "", None).unwrap();
+        assert_eq!(to_json(&pick), json!({"node": "control", "kind": "select", "options": ["a", "b"], "bind": "pick", "value": "b", "id": "f-pick"}));
+        let name = owned(field("Name", "name", json!("ada"), "ada", "text", 0), "f-name", "ctl", "", None).unwrap();
+        assert!(html(&name).starts_with("<div class=\"crow-field ctl\" id=\"f-name\"><label>Name</label>"), "{}", html(&name));
+        let markup = format!("{}{}{}", html(&given), html(&pick), html(&name));
+        let read = read_back(&super::super::parse_markup(&markup));
+        assert_eq!(read[0], to_json(&given));
+        assert_eq!(read[1], to_json(&pick));
+        assert_eq!(read[2]["id"], "f-name");
+        assert_eq!(read[2]["class"], "ctl");
+        // (one given none reads back as it always has)
+        let read = read_back(&super::super::parse_markup(&html(&plain)));
+        assert_eq!(read[0], to_json(&plain));
+    }
+
+    /// A bound input's `change = handler` is written on the input the
+    /// change comes from, listed among the control's events in the tree,
+    /// and read back from markup; a file field takes none.
+    #[test]
+    fn a_bound_input_names_its_change_handler() {
+        let pick = owned(select(vec!["a".into(), "b".into()], "pick", "a"), "f-pick", "", "", Some("picked")).unwrap();
+        assert_eq!(html(&pick), "<div class=\"crow-select\" id=\"f-pick\"><select data-crow-change=\"__select:pick\" data-crow-then=\"picked\"><option selected=\"selected\" value=\"a\">a</option><option value=\"b\">b</option></select></div>");
+        assert_eq!(to_json(&pick), json!({"node": "control", "kind": "select", "options": ["a", "b"], "bind": "pick", "value": "a", "id": "f-pick", "events": [{"on": "change", "handler": "picked"}]}));
+        let read = read_back(&super::super::parse_markup(&html(&pick)));
+        assert_eq!(read[0], to_json(&pick));
+        let on = owned(check("On", "on", false, true), "", "", "", Some("switched")).unwrap();
+        assert!(html(&on).contains("data-crow-input=\"__field:on\" data-crow-then=\"switched\""), "{}", html(&on));
+        let file = owned(field("Doc", "doc", json!(""), "", "file", 0), "", "", "", Some("got"));
+        assert!(file.unwrap_err().contains("a file field takes no change"));
     }
 
     /// A drawn renderer's changes make the tree it held the next one,

@@ -1,0 +1,47 @@
+--- A derivation read several times in one turn is computed at most once
+--- in it — a view that shows it three times (a stat, a sentence, a count),
+--- a handler that reads it and the render after it — in both modes, as the
+--- dev panel counts them (`{"derived": …}`). One whose input the handler
+--- has just written is computed again after the write, once, and what the
+--- handler reads is the new value; one nothing moved is not computed.
+use web, ui
+
+rows = [3, 4]
+label = 'none'
+seen = 0
+
+derive total
+    t = 0
+    for r in rows
+        t = t + r
+    return t
+
+derive at_least
+    return int[float[now[]] * 0.0] + len[rows]
+
+derive shown_label
+    return 'label: `label`'
+
+fn add[]
+    rows = push[rows, 5]
+    seen = total
+
+fn look[]
+    seen = total + at_least
+
+fn rename[]
+    label = 'named'
+
+view render[]
+    return stack[
+        p['total `total`'],
+        p['the rows add up to `total`, read `seen`'],
+        p['`len[rows]` rows, `total` in all'],
+        p[shown_label],
+        p['at least `at_least gt 0`, again `at_least gt 0`'],
+        button['Add', click = add],
+        button['Look', click = look],
+        button['Rename', click = rename]]
+
+page['/', render]
+serve[3599]

@@ -34,6 +34,50 @@ history says the rest.
 
 ### Added
 
+- A bound input takes `id`, `class` and `tip`, as any element does:
+  `field['Name', name, id = 'f-name', class = 'ctl']`, and `select`,
+  `slider`, `checkbox`, `toggle`, `radio` and `tabs` alike. They go on the
+  outermost element the input draws — the one holding its label's words
+  and its input — the classes after Crow's own, so the id names both; in
+  the tree as data the control carries them beside what it shows, and
+  read back from a compiled page's markup it says the same. An input
+  given none is drawn as it was, byte for byte (parity 540). Pages had
+  wrapped each input in a `div` only to give it an id.
+- A bound input takes `change = handler`: once the reader's change is
+  written to the variable, the handler (which takes nothing, and is
+  named, as `click`'s is — both refused where written, errors k73, k74)
+  runs in the same round, with one render. A `field`'s runs when the text
+  is committed (the browser's `change`), not at each key. The page sends
+  the handler with the change and the server runs it only where the
+  render offered it; the tree as data lists it among the control's
+  events. In a test, `change[a, 'var', v]` runs it too. An input given an
+  id, class, tip or change is still bound: a change to it alone is a
+  values turn (parity 541, served 50 and 51).
+- Tests find, press and type by id: `'#the-id'` and `'tag#the-id'` in
+  `elements[]`, `style[]` and descendant chains (`'#f-name input'`);
+  `click[a, '#go']` runs what the element's click names, with its
+  arguments (a confirm's handler, answered yes), refused for a missing or
+  shared id, no click, or `disabled`; `change[a, '#f-name', v]` sets the
+  variable the input of that id binds and runs its change, a choice it
+  does not offer refused. `box[]` refuses an id: its boxes carry tags and
+  classes (tests/by_id_harness.co, both modes).
+- The dev panel says which derivations each turn computed and how many
+  times (`"derived": {"total": 1}`), and a served test holds it with a
+  `{"derived": …}` step: served 52 shows a derivation read five times in a
+  handler's run and its render computed once, in both modes, and one
+  nothing moved not computed.
+- A table shows a column's cells in a format:
+  `table[f, formats = map[pnl = 'money', qty = 'whole', pct = 'percent',
+  at = 'datetime']]`, and `number:N`, `date`, `time`. Sorting, `delta` and
+  alignment read the values underneath; the tree as data carries the
+  words shown beside the values. An unknown format or a column the frame
+  lacks stops the render (parity 543, 544).
+- A tip shows on a touch screen: holding a finger on an element with
+  `tip = '…'` for half a second shows its words beside it, and that press
+  does not click; a tap clicks as before (the page's script, both modes).
+- Views made in a loop keep their ids, on their elements and bound inputs,
+  through a list a local holds and a view it is handed to, in both modes
+  and in the tree a drawn page is sent (parity 542).
 - A mobile theme for served pages: on a phone (a coarse pointer, a side
   under 600px) every page gets 16px text, 44px controls, rows that wrap,
   grids in one column, tables and code that scroll in their own box, and

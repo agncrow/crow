@@ -1,0 +1,25 @@
+--- A bound input's `change = handler` is written on the input the change
+--- comes from (`data-crow-then`), beside its binding, on every kind of
+--- bound input and with an id beside it; one given no change is drawn as
+--- before, in both modes.
+use ui
+
+fn saved[]
+    log['saved']
+
+view inputs[name, on, pick, side, n]
+    return stack[
+        field['Name', name, change = saved],
+        checkbox['On', on, change = saved, id = 'c-on'],
+        toggle['Live', on, change = saved],
+        select[['a', 'b'], pick, change = saved, class = 'ctl'],
+        radio[['buy', 'sell'], side, change = saved],
+        tabs[['buy', 'sell'], side, change = saved],
+        slider['N', n, min = 0, max = 10, change = saved],
+        field['Plain', name]
+    ]
+
+fn show[]
+    log[str[inputs['ada', true, 'b', 'sell', 4]]]
+
+show[]

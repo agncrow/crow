@@ -461,6 +461,20 @@ static SHARED_DERIVED: std::sync::LazyLock<std::sync::RwLock<HashMap<String, Der
 pub(crate) static TABLE_MOVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub(crate) static DERIVE_MOVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The derivations each session computed since the dev panel last said so
+/// (only under `CROW_DEV`): its word on a turn says how many times each
+/// was computed in it, the handler's run and the render after it.
+static COMPUTED: std::sync::LazyLock<std::sync::Mutex<HashMap<u64, std::collections::BTreeMap<String, u64>>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// The derivations the session computed since this was last asked, by
+/// name (a name the interpreter tags with its program, `3#rows`, is told
+/// as `rows`), and how many times each.
+pub fn derived_counted(session: u64) -> std::collections::BTreeMap<String, u64> {
+    crow_runtime::lock(&COMPUTED).remove(&session).unwrap_or_default()
+}
+
+
 static TABLE_VERSIONS: std::sync::LazyLock<std::sync::RwLock<HashMap<String, u64>>> =
     std::sync::LazyLock::new(|| std::sync::RwLock::new(HashMap::new()));
 
@@ -1035,6 +1049,9 @@ pub struct Offers {
     /// the bound inputs that take any text (a field), whose fact a choice
     /// beside them does not hold to its options
     free: std::collections::HashSet<String>,
+    /// the handler each bound input's change runs then (`change = h`), by
+    /// the input's event: the page sends it with the change
+    thens: std::collections::HashSet<(String, String)>,
     /// what the subtrees a kept view holds offer, each read once while it is
     /// kept (`OffersMemo`): this render offers them too
     kept: Vec<std::sync::Arc<Offers>>,
@@ -1045,7 +1062,7 @@ pub struct Offers {
 impl PartialEq for Offers {
     fn eq(&self, other: &Offers) -> bool {
         let (a, b) = (self.flat(), other.flat());
-        a.clicks == b.clicks && a.named == b.named && a.uploads == b.uploads && a.widget_handlers == b.widget_handlers && a.choices == b.choices && a.free == b.free
+        a.clicks == b.clicks && a.named == b.named && a.uploads == b.uploads && a.widget_handlers == b.widget_handlers && a.choices == b.choices && a.free == b.free && a.thens == b.thens
     }
 }
 
@@ -1148,6 +1165,7 @@ impl Offers {
                 all.choices.entry(e.clone()).or_default().extend(vs.iter().cloned());
             }
             all.free.extend(k.free.iter().cloned());
+            all.thens.extend(k.thens.iter().cloned());
         }
         std::borrow::Cow::Owned(all)
     }
@@ -1210,29 +1228,41 @@ impl Offers {
                     self.clicks.insert((h, Some(args)));
                 }
             }
-            Node::Control(c) => match c {
-                tree::Control::Field { bind, kind, .. } if kind == "file" => {
-                    self.uploads.insert(format!("__field:{}", bind));
+            Node::Control(c) => {
+                // (a change that runs a handler then: the handler beside
+                // the input's own event)
+                if let Some(h) = c.own().and_then(|o| o.change.clone()) {
+                    let event = match c {
+                        tree::Control::Select { bind, .. } => format!("__select:{}", bind),
+                        tree::Control::Field { bind, .. } | tree::Control::Slider { bind, .. } | tree::Control::Check { bind, .. } | tree::Control::Choice { bind, .. } => format!("__field:{}", bind),
+                        tree::Control::Progress { .. } | tree::Control::Icon { .. } => String::new(),
+                    };
+                    self.thens.insert((event, h));
                 }
-                tree::Control::Field { bind, .. } | tree::Control::Slider { bind, .. } | tree::Control::Check { bind, .. } => {
-                    let event = format!("__field:{}", bind);
-                    self.named.insert(event.clone());
-                    self.free.insert(event);
-                }
-                tree::Control::Choice { options, bind, .. } => {
-                    if !options.is_empty() {
+                match c {
+                    tree::Control::Field { bind, kind, .. } if kind == "file" => {
+                        self.uploads.insert(format!("__field:{}", bind));
+                    }
+                    tree::Control::Field { bind, .. } | tree::Control::Slider { bind, .. } | tree::Control::Check { bind, .. } => {
                         let event = format!("__field:{}", bind);
+                        self.named.insert(event.clone());
+                        self.free.insert(event);
+                    }
+                    tree::Control::Choice { options, bind, .. } => {
+                        if !options.is_empty() {
+                            let event = format!("__field:{}", bind);
+                            self.named.insert(event.clone());
+                            self.choices.entry(event).or_default().extend(options.iter().cloned());
+                        }
+                    }
+                    tree::Control::Select { options, bind, .. } => {
+                        let event = format!("__select:{}", bind);
                         self.named.insert(event.clone());
                         self.choices.entry(event).or_default().extend(options.iter().cloned());
                     }
+                    tree::Control::Progress { .. } | tree::Control::Icon { .. } => {}
                 }
-                tree::Control::Select { options, bind, .. } => {
-                    let event = format!("__select:{}", bind);
-                    self.named.insert(event.clone());
-                    self.choices.entry(event).or_default().extend(options.iter().cloned());
-                }
-                tree::Control::Progress { .. } | tree::Control::Icon { .. } => {}
-            },
+            }
             Node::Chart(c) => {
                 if let Some(h) = &c.seek {
                     let ts = c.frame.col_native(&c.x).map(|col| col.to_f64_vec()).unwrap_or_default();
@@ -1287,6 +1317,10 @@ impl Offers {
                 }
                 if let Some(on) = attrs.get("data-crow-on") {
                     self.note_widget(on);
+                }
+                // a bound input's change and the handler it runs then
+                if let (Some(h), Some(event)) = (attrs.get("data-crow-then"), attrs.get("data-crow-change").or_else(|| attrs.get("data-crow-input"))) {
+                    self.thens.insert((event.clone(), h.clone()));
                 }
                 // a choice's values: a select's options, a radio's value
                 if let (CrowVNode::Element { tag, .. }, Some(event)) = (node, attrs.get("data-crow-change").or_else(|| attrs.get("data-crow-input"))) {
@@ -1373,6 +1407,9 @@ impl Offers {
             if let Some(on) = attr(tag, "data-crow-on") {
                 self.note_widget(&unescape_attr(on));
             }
+            if let (Some(h), Some(event)) = (attr(tag, "data-crow-then"), attr(tag, "data-crow-change").or_else(|| attr(tag, "data-crow-input"))) {
+                self.thens.insert((unescape_attr(event), unescape_attr(h)));
+            }
         }
     }
 
@@ -1383,6 +1420,13 @@ impl Offers {
                 self.widget_handlers.insert(h.to_string());
             }
         }
+    }
+
+    /// Whether this render offered `handler` to run after the bound input's
+    /// change `event` (`change = handler`).
+    pub fn allows_then(&self, event: &str, handler: &str) -> bool {
+        let pair = (event.to_string(), handler.to_string());
+        self.any(&|o| o.thens.contains(&pair))
     }
 
     /// Whether this render offered the event: a bound input, select or form
@@ -1579,6 +1623,12 @@ async fn arrive(state: &mut CrowLiveState, source: &DataSource, dev_events: &mut
     }
 }
 
+/// The handler a bound input's change asks to run once the change is
+/// written (`then`: its `change = h`), as the page sends it.
+fn then_of(text: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(text).ok()?.get("then")?.as_str().map(str::to_string)
+}
+
 /// A message from the page: the event, the value it carries, and the
 /// click's number, when it is a click the page marked busy.
 fn parse_event(text: &str) -> (String, Option<String>, Option<u64>) {
@@ -1761,9 +1811,14 @@ where
         eprintln!("crow live: refused '{}' — the page did not offer it", event);
         return (false, seq);
     }
-    if apply_field(state, &event, value.as_deref()) {
-        return (true, seq);
-    }
+    let (event, value) = if apply_field(state, &event, value.as_deref()) {
+        match then_of(text).filter(|h| offered.iter().any(|o| o.allows_then(&event, h))) {
+            Some(h) => (h, None),
+            None => return (true, seq),
+        }
+    } else {
+        (event, value)
+    };
     let copy = run_handler(state.working_copy(), &event, value.as_deref(), handle);
     if let Some(stopped) = state.commit(copy) {
         eprintln!("crow live: {}", stopped.logged());
@@ -2643,6 +2698,10 @@ impl CrowLiveState {
         equal: impl Fn(&T, &T) -> bool,
     ) -> Result<T, E> {
         let stamp = STAMP.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        if dev_token().is_some() {
+            let name = spec.name.split_once('#').map_or(spec.name, |(_, n)| n).to_string();
+            *crow_runtime::lock(&COMPUTED).entry(self.session_id).or_default().entry(name).or_insert(0) += 1;
+        }
         let value = self.deriving(|| compute(self))?;
         // a recompute stopped under its query answers nobody: its value
         // (the query's "cancelled") is never cached
@@ -3291,6 +3350,55 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
     return node;
   }}
 
+  // A tip (`tip = '…'`, the element's title) on a touch screen, which
+  // has no hover: a press held 500 ms without moving shows it beside the
+  // element until the next touch, a scroll or 4 s; the click that ends
+  // that press is not sent (a long press reads, it does not act)
+  var tipTimer = null, tipShown = null, tipAt = null, tipAte = false;
+  function hideTip() {{
+    if (tipTimer) {{ clearTimeout(tipTimer); tipTimer = null; }}
+    if (tipShown) {{ tipShown.remove(); tipShown = null; }}
+  }}
+  document.addEventListener('pointerdown', function(e) {{
+    hideTip();
+    tipAte = false;
+    if (e.pointerType !== 'touch') return;
+    var t = e.target && e.target.closest ? e.target.closest('[title]') : null;
+    if (!t || !t.getAttribute('title')) return;
+    tipAt = {{ x: e.clientX, y: e.clientY }};
+    tipTimer = setTimeout(function() {{
+      tipTimer = null;
+      var box = t.getBoundingClientRect();
+      var tip = document.createElement('div');
+      tip.className = 'crow-tip';
+      tip.setAttribute('role', 'tooltip');
+      tip.textContent = t.getAttribute('title');
+      document.body.appendChild(tip);
+      var w = tip.offsetWidth, h = tip.offsetHeight;
+      var left = Math.max(8, Math.min(box.left + box.width / 2 - w / 2, window.innerWidth - w - 8));
+      var top = box.top - h - 8 >= 8 ? box.top - h - 8 : box.bottom + 8;
+      tip.style.left = left + 'px';
+      tip.style.top = top + 'px';
+      tipShown = tip;
+      tipAte = true;
+      setTimeout(function() {{ if (tipShown === tip) hideTip(); }}, 4000);
+    }}, 500);
+  }}, true);
+  document.addEventListener('pointermove', function(e) {{
+    if (tipTimer && tipAt && Math.abs(e.clientX - tipAt.x) + Math.abs(e.clientY - tipAt.y) > 10) {{ clearTimeout(tipTimer); tipTimer = null; }}
+  }}, true);
+  ['pointerup', 'pointercancel'].forEach(function(n) {{
+    document.addEventListener(n, function() {{ if (tipTimer) {{ clearTimeout(tipTimer); tipTimer = null; }} }}, true);
+  }});
+  window.addEventListener('scroll', hideTip, true);
+  // (the browser's own menu on a long press would cover the tip)
+  document.addEventListener('contextmenu', function(e) {{
+    if (tipAte) e.preventDefault();
+  }}, true);
+  document.addEventListener('click', function(e) {{
+    if (tipAte) {{ tipAte = false; e.preventDefault(); e.stopPropagation(); }}
+  }}, true);
+
   // Event delegation: click
   document.addEventListener('click', function(e) {{
     var t = e.target;
@@ -3412,6 +3520,9 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
   document.addEventListener('input', function(e) {{
     var ev = e.target.getAttribute('data-crow-input');
     if (ev) {{
+      // (a tick or a choice whose change runs a handler sends it once, at
+      // its change, below)
+      if (e.target.hasAttribute('data-crow-then') && (e.target.type === 'checkbox' || e.target.type === 'radio')) return;
       var v = e.target.type === 'checkbox' ? (e.target.checked ? 'true' : 'false') : e.target.value;
       send({{event: ev, value: v}});
     }}
@@ -3458,7 +3569,13 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
   // Event delegation: change (select dropdowns)
   document.addEventListener('change', function(e) {{
     var ev = e.target.getAttribute('data-crow-change');
-    if (ev) {{
+    // a bound input's change that runs a handler (`change = h`): its value
+    // and the handler in one message, once the change is committed
+    var then = e.target.getAttribute('data-crow-then');
+    if (then) {{
+      var v = e.target.type === 'checkbox' ? (e.target.checked ? 'true' : 'false') : e.target.value;
+      send({{event: ev || e.target.getAttribute('data-crow-input'), value: v, then: then}});
+    }} else if (ev) {{
       send({{event: ev, value: e.target.value}});
     }}
   }});
@@ -4527,11 +4644,23 @@ where
                                 if dev_token().is_some() {
                                     dev_events.push(dev_label(&event));
                                 }
-                                if apply_field(&mut state, &event, value.as_deref()) {
-                                    acks.extend(seq);
-                                    render = true;
-                                    continue;
-                                }
+                                // (a bound input's change, written: the handler its
+                                // `change = h` names runs then, in the same turn)
+                                let (event, value) = if apply_field(&mut state, &event, value.as_deref()) {
+                                    match then_of(&text) {
+                                        Some(h) if [&offers, &offers_before].iter().any(|o| o.allows_then(&event, &h)) => (h, None),
+                                        then => {
+                                            if let Some(h) = then {
+                                                eprintln!("crow live: refused '{}' after '{}' — the page did not offer it", h, event);
+                                            }
+                                            acks.extend(seq);
+                                            render = true;
+                                            continue;
+                                        }
+                                    }
+                                } else {
+                                    (event, value)
+                                };
                                 // a click that asks first: the question opens, the
                                 // answer runs the handler or closes it
                                 let (event, value) = match event.as_str() {
@@ -4803,6 +4932,8 @@ where
                                 // the send)
                                 let (ran, kept) = state.views_counted();
                                 word["panel"]["views"] = serde_json::json!({ "ran": ran, "kept": kept });
+                                // the derivations the turn computed, and how often
+                                word["panel"]["derived"] = serde_json::json!(derived_counted(state.session_id));
                                 // a values turn: the bound places it changed
                                 if let Some((n, _)) = values_set {
                                     word["panel"]["values"] = serde_json::json!(n);
@@ -7857,6 +7988,40 @@ mod tests {
         settle(&s, "test_bg_clock");
     }
 
+    /// A bound input's `change = handler` runs the handler after the
+    /// change is written, in the same turn, where the render offered that
+    /// handler on that input; a handler the page names that the input was
+    /// not given, or a change sent with none, only writes the value.
+    #[test]
+    fn a_change_runs_the_handler_its_input_offered() {
+        use crate::view::tree;
+        let mut s = start_session(&CrowLiveState::new());
+        s.set("pick", serde_json::json!("a"));
+        let control = tree::owned(tree::select(vec!["a".into(), "b".into()], "pick", "a"), "", "", "", Some("picked")).unwrap();
+        let offers = Offers::of_tree(&control);
+        assert!(offers.allows_then("__select:pick", "picked"));
+        assert!(!offers.allows_then("__select:pick", "other"));
+        let handler = |st: &mut CrowLiveState, h: &str, _: Option<&str>| {
+            let seen = st.get("pick").unwrap_or_default();
+            st.set("ran", serde_json::json!(format!("{} saw {}", h, seen.as_str().unwrap_or(""))));
+        };
+        let send = |s: &mut CrowLiveState, v: &str, then: Option<&str>| {
+            let mut m = serde_json::json!({ "event": "__select:pick", "value": v });
+            if let Some(h) = then {
+                m["then"] = serde_json::json!(h);
+            }
+            apply_event(s, &m.to_string(), &[&offers], &handler);
+        };
+        send(&mut s, "b", None);
+        assert_eq!(s.get("pick"), Some(serde_json::json!("b")));
+        assert_eq!(s.get("ran"), None, "a change sent with no handler runs none");
+        send(&mut s, "a", Some("other"));
+        assert_eq!(s.get("pick"), Some(serde_json::json!("a")));
+        assert_eq!(s.get("ran"), None, "a handler the input was not given is not run");
+        send(&mut s, "b", Some("picked"));
+        assert_eq!(s.get("ran"), Some(serde_json::json!("picked saw b")), "the handler runs after the write and reads it");
+    }
+
     #[test]
     fn a_click_and_a_render_each_read_one_moment() {
         let mut s = start_session(&CrowLiveState::new());
@@ -8038,6 +8203,22 @@ mod tests {
         assert_eq!(coerce_field_value(Some(&json!(false)), "on"), Some(json!(true)));
         assert_eq!(coerce_field_value(Some(&json!("IMRN")), "AXTX"), Some(json!("AXTX")));
         assert_eq!(coerce_field_value(None, "7"), Some(json!("7")));
+    }
+
+    /// A tip shows on a long press on a touch screen: the page's script
+    /// holds a touch press for 500 ms over an element with a title, shows
+    /// its words in a `.crow-tip`, and eats the click that ends that press;
+    /// the stylesheet places it. (Checked in a browser by hand: a long
+    /// press showed the tip and did not press, a tap pressed, a mouse
+    /// showed none.)
+    #[test]
+    fn a_tip_shows_on_a_long_press() {
+        let js = page_js(None, "/_ws", "t");
+        assert!(js.contains("e.pointerType !== 'touch'"), "touch alone");
+        assert!(js.contains("closest('[title]')") && js.contains("}, 500);"));
+        assert!(crow_runtime::layout::DEFAULT_CSS.contains(".crow-tip{position:fixed;"));
+        assert!(js.contains("tip.className = 'crow-tip'"));
+        assert!(js.contains("if (tipAte) { tipAte = false; e.preventDefault(); e.stopPropagation(); }"));
     }
 
     #[test]

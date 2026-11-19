@@ -108,6 +108,9 @@ pub struct IrInterp {
     /// crow_runtime::stops::DEPTH).
     depth: usize,
     fns: HashMap<String, Arc<Fn>, Names>,
+    /// Whether any view gives a bound input a `change` handler, which a
+    /// test's `change[]` then runs (decided on the first change).
+    changes_run: Option<bool>,
     /// Each function's parameters a call may lend the caller's value
     /// (`ir::lendable_params`), decided over the program as it is loaded.
     lendable: Arc<HashMap<String, Vec<bool>>>,
@@ -566,6 +569,7 @@ impl IrInterp {
         IrInterp {
             depth: 0,
             fns: HashMap::default(),
+            changes_run: None,
             lendable: Arc::new(HashMap::new()),
             prepared: HashMap::default(),
             reg_pool: prepared::Pool::default(),
@@ -1371,8 +1375,8 @@ impl IrInterp {
             Expr::Call { target: Target::Runtime(name), args, .. }
                 if self.in_view > 0
                     && (matches!(name.as_str(), "field" | "slider" | "checkbox" | "toggle" | "radio" | "tabs")
-                        || (name == "select" && args.len() == 2 && !matches!(args.first(), Some(Expr::MapLit(..)))))
-                    && args.len() == match name.as_str() { "field" => 4, "slider" => 5, _ => 2 } =>
+                        || (name == "select" && !matches!(args.first(), Some(Expr::MapLit(..)))))
+                    && crate::ops::tree::is_control_call(name, args.len()) =>
             {
                 // a bound input: the variable's name is the binding's key
                 let key = match args.get(1) {
@@ -4180,6 +4184,27 @@ impl IrInterp {
         (!text.is_empty() && crow_runtime::moments::now() - at < 4.0).then(|| text.clone())
     }
 
+    /// Whether any view gives a bound input a `change` handler: a call of
+    /// one with its options given whose last is a function named.
+    fn changes_run(&mut self) -> bool {
+        if let Some(known) = self.changes_run {
+            return known;
+        }
+        let mut found = false;
+        for f in self.fns.values() {
+            crate::ir::visit_block(&f.body, &mut |e| {
+                if let Expr::Call { target: Target::Runtime(n), args, .. } = e {
+                    let full = crate::ops::tree::control_arity(n).map(|a| a + crate::ops::tree::CONTROL_OWN.len());
+                    if full == Some(args.len()) && matches!(args.last(), Some(Expr::FnRef(..))) {
+                        found = true;
+                    }
+                }
+            });
+        }
+        self.changes_run = Some(found);
+        found
+    }
+
     fn harness(&mut self, name: &str, vals: Vec<CrowValue>) -> Result<CrowValue, String> {
         let app_view = |v: &CrowValue| -> Option<(FnValue, f64, bool, u64)> {
             if let Value::App(a) = &v.value { Some((a.view.clone(), a.width, a.wide, a.id)) } else { None }
@@ -4370,16 +4395,27 @@ impl IrInterp {
                 CrowValue::ok(Value::Array(std::sync::Arc::new(hits)))
             }
             "change" => {
-                let id = match (vals.len(), &vals.first().map(|v| &v.value)) {
-                    (3, Some(Value::App(a))) => a.id,
+                let (f, id) = match (vals.len(), vals.first().and_then(app_view)) {
+                    (3, Some((f, _, _, id))) => (f, id),
                     _ => return Err("change[] first argument must be an app session: change[a, 'min_qty', 5]".into()),
                 };
                 self.activate(id);
-                let var = match &vals[1].value {
+                let named = match &vals[1].value {
                     Value::Str(s) => s.clone(),
                     _ => return Err("change[] names the reactive variable as a string: change[a, 'min_qty', 5]".into()),
                 };
                 let value = vals[2].clone();
+                // `'#the-id'`: the bound input the element of that id holds,
+                // as a reader would set it there
+                let (var, by_id) = match named.strip_prefix('#') {
+                    Some(eid) => {
+                        let html = self.session_html(&f.name, id)?;
+                        let tree = crate::harness::harness_parse_html(&html);
+                        let (var, then) = bound_by_id(&tree, eid, &value)?;
+                        (var, Some(then))
+                    }
+                    None => (named, None),
+                };
                 // a reader who signed in, as a handler's sign_in would say
                 if var == "reader" {
                     let m = match &value.value {
@@ -4421,13 +4457,30 @@ impl IrInterp {
                     (Value::Float(_), Value::Int(i)) => CrowValue::ok(Value::Float(*i as f64)),
                     _ => value,
                 };
+                // the input's `change` handler, read off the page as it
+                // stood before the change: it runs after the write, as the
+                // served page runs it in the same round
+                let then = match by_id {
+                    Some(then) => then,
+                    None if self.changes_run() => {
+                        let html = self.session_html(&f.name, id)?;
+                        crate::harness::harness_then_for(&crate::harness::harness_parse_html(&html), &var)
+                    }
+                    None => None,
+                };
                 if let Some(rid) = self.remote_sessions.get(&id).copied() {
                     self.remote()?.post("field", serde_json::json!({ "session": rid, "name": var, "value": crate::served::fact_to_json(&value) }))?;
                     self.remote_pull(id)?;
-                    return Ok(CrowValue::done());
+                    return match then {
+                        Some(h) => self.remote_click(id, &h, &[]),
+                        None => Ok(CrowValue::done()),
+                    };
                 }
                 self.set_fact(&var, value);
-                CrowValue::done()
+                match then {
+                    Some(h) => self.harness_transaction(&h, Vec::new())?,
+                    None => CrowValue::done(),
+                }
             }
             "click" => {
                 let id = match (vals.len(), &vals.first().map(|v| &v.value)) {
@@ -4436,12 +4489,19 @@ impl IrInterp {
                 };
                 self.activate(id);
                 let (name, args) = match &vals[1].value {
+                    // `'#the-id'`: what the element of that id runs, as a
+                    // reader's press would
+                    Value::Str(s) if s.starts_with('#') => {
+                        let (f, _, _, _) = app_view(&vals[0]).ok_or("click[] first argument must be an app session: click[a, go]")?;
+                        let html = self.session_html(&f.name, id)?;
+                        pressed_by_id(&crate::harness::harness_parse_html(&html), &s[1..])?
+                    }
                     Value::Fn(f) => (f.name.clone(), Vec::new()),
                     Value::Array(items) if matches!(items.first().map(|v| &v.value), Some(Value::Fn(_))) => {
                         let name = if let Value::Fn(f) = &items[0].value { f.name.clone() } else { unreachable!() };
                         (name, items[1..].to_vec())
                     }
-                    _ => return Err("click[] second argument must be a handler name or call: click[a, go] or click[a, go[x]]".to_string()),
+                    _ => return Err("click[] second argument must be a handler name or call, or an element's id: click[a, go], click[a, go[x]] or click[a, '#go']".to_string()),
                 };
                 if self.remote_sessions.contains_key(&id) {
                     return self.remote_click(id, &name, &args);
@@ -4500,6 +4560,11 @@ impl IrInterp {
                     _ => return Err("box[] selector must be a string like 'button' or 'div.stats .card'".into()),
                 };
                 let steps = selector_steps(&selector);
+                // (the layout's boxes carry each element's tag and class, not
+                // its id)
+                if steps.iter().any(|(_, c)| c.starts_with('#')) {
+                    return Err(format!("box[] selects by tag and class, and '{}' names an id; the boxes do not carry ids, so give the element a class: box[a, '.the-class']", selector));
+                }
                 let hits: Vec<CrowValue> = list
                     .into_iter()
                     .filter(|b| {
@@ -4518,15 +4583,81 @@ impl IrInterp {
     }
 }
 
-/// A selector's steps: `tag`, `.class`, `tag.class`, space-separated.
+/// A selector's steps: `tag`, `.class`, `tag.class`, `#id`, `tag#id`,
+/// space-separated (an id step's second half keeps its `#`).
 fn selector_steps(selector: &str) -> Vec<(String, String)> {
     selector
         .split_whitespace()
-        .map(|step| match step.find('.') {
-            Some(i) => (step[..i].to_string(), step[i + 1..].to_string()),
-            None => (step.to_string(), String::new()),
+        .map(|step| match (step.find('#'), step.find('.')) {
+            (Some(i), _) => (step[..i].to_string(), step[i..].to_string()),
+            (None, Some(i)) => (step[..i].to_string(), step[i + 1..].to_string()),
+            (None, None) => (step.to_string(), String::new()),
         })
         .collect()
+}
+
+/// The one element of a page with the id a test names.
+fn one_by_id<'a>(page: &'a crate::harness::HNode, id: &str, verb: &str) -> Result<&'a crate::harness::HNode, String> {
+    let hits = crate::harness::harness_by_id(page, id);
+    match hits.len() {
+        0 => Err(format!("{}[a, '#{}']: no element on the page has the id '{}'", verb, id, id)),
+        1 => Ok(hits[0]),
+        n => Err(format!("{}[a, '#{}']: {} elements on the page have the id '{}', and an id names one", verb, id, n, id)),
+    }
+}
+
+/// What a press of the element of that id runs: its handler and the
+/// arguments its markup carries (a confirm's, the handler it asks for).
+fn pressed_by_id(page: &crate::harness::HNode, id: &str) -> Result<(String, Vec<CrowValue>), String> {
+    let el = one_by_id(page, id, "click")?;
+    if el.attr("disabled").is_some() {
+        return Err(format!("click[a, '#{}']: the {} is disabled, so a reader cannot press it", id, el.tag()));
+    }
+    let handler = el.attr("data-crow-click").ok_or_else(|| format!("click[a, '#{}']: the {} has no click", id, el.tag()))?;
+    let list = |text: &str| -> Vec<serde_json::Value> { serde_json::from_str::<Vec<serde_json::Value>>(text).unwrap_or_default() };
+    let mut args = list(el.attr("data-crow-args").unwrap_or("[]"));
+    let mut handler = handler.to_string();
+    // (`__ask` carries the handler it asks for, its arguments, and the
+    // question: a test answers yes, as a click by the handler's name does)
+    if handler == "__ask" {
+        handler = args.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
+        args = list(args.get(1).and_then(|v| v.as_str()).unwrap_or("[]"));
+    }
+    Ok((handler, args.iter().map(|v| crate::builtins::json_to_crow("", v)).collect()))
+}
+
+/// The variable the element of that id binds (itself or the one input it
+/// holds), with the handler its change runs; a choice must be one offered.
+fn bound_by_id(page: &crate::harness::HNode, id: &str, value: &CrowValue) -> Result<(String, Option<String>), String> {
+    let el = one_by_id(page, id, "change")?;
+    let mut inside = Vec::new();
+    el.walk(&mut inside);
+    if inside.iter().any(|n| n.attr("data-crow-upload").is_some()) {
+        return Err(format!("change[a, '#{}']: a file input is set by the file a reader picks, not by change[]", id));
+    }
+    let bound: Vec<&crate::harness::HNode> = inside.iter().copied().filter(|n| crate::harness::wired_var(n).is_some()).collect();
+    let mut vars: Vec<String> = bound.iter().filter_map(|n| crate::harness::wired_var(n)).collect();
+    vars.dedup();
+    let var = match vars.as_slice() {
+        [] => return Err(format!("change[a, '#{}']: the {} holds no bound input (a field, select, slider, checkbox, toggle, radio or tabs)", id, el.tag())),
+        [v] => v.clone(),
+        _ => return Err(format!("change[a, '#{}']: the {} holds inputs bound to {}; give each its own id", id, el.tag(), vars.join(", "))),
+    };
+    // a select's, radio's or tabs' value is one of the choices it offers:
+    // what a select's children hold, or each of a group's inputs (a radio
+    // group's inputs share the name the group binds)
+    let offered: Vec<String> = bound
+        .iter()
+        .flat_map(|n| if n.attr("name").is_some() { vec![*n] } else { n.children().iter().collect() })
+        .filter_map(|n| n.attr("value").map(str::to_string))
+        .collect();
+    if let (false, Value::Str(v)) = (offered.is_empty(), &value.value) {
+        if !offered.contains(v) {
+            return Err(format!("change[a, '#{}', '{}']: the {} offers {}, not '{}'", id, v, bound[0].tag(), offered.iter().map(|o| format!("'{}'", o)).collect::<Vec<_>>().join(", "), v));
+        }
+    }
+    let then = bound.iter().find_map(|n| n.attr("data-crow-then").map(str::to_string));
+    Ok((var, then))
 }
 
 /// The resolved tokens of a rendered element, from its class and style.

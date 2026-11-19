@@ -1,0 +1,5 @@
+[{"open": "/"}, {"expect": "id=\"f-name\""}, {"expect": "name is ada"},
+ {"event": "__field:name", "value": "cy"}, {"expect": "value=\"cy\""}, {"expect": "name is cy"}, {"values": 2},
+ {"expect": "<div class=\"crow-field wide\" id=\"f-name\" title=\"Your name\">"},
+ {"event": "__select:pick", "value": "b"}, {"values": 1},
+ {"event": "__field:on", "value": "true"}, {"values": 1}, {"expect": "id=\"f-on\""}]

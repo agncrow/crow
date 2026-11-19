@@ -1,0 +1,20 @@
+--- A bound input given an `id`, a `class` and a `tip` is a binding site
+--- as one given none is: a change the page writes (`__field:`) is set
+--- where the control shows with no view run, a text field, a select and a
+--- checkbox alike, in both modes; the id stays on the control's outer
+--- element after each change.
+use web, ui
+
+name = 'ada'
+pick = 'a'
+on = false
+
+view render[]
+    return stack[
+        field['Name', name, id = 'f-name', class = 'wide', tip = 'Your name'],
+        select[['a', 'b'], pick, id = 'f-pick'],
+        checkbox['On', on, id = 'f-on'],
+        p['name is `name`']]
+
+page['/', render]
+serve[3597]

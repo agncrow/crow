@@ -20,7 +20,8 @@
 //! "/made", "body": "a widget"}`, its answer's status, content type,
 //! location and body compared — a streamed body put together from its
 //! chunks, and a body that is not text shown as its bytes
-//! (`<21 bytes: 82a4…>`).
+//! (`<21 bytes: 82a4…>`). `{"derived": {"rows": 1}}` says which
+//! derivations the last turn computed and how many times each.
 
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
@@ -202,6 +203,9 @@ struct Shown {
     /// view run: one-view-design.md 3.5), and the last `values` message
     values: Option<u64>,
     values_sent: Option<String>,
+    /// the derivations the last turn computed, and how often each (the
+    /// dev panel's `derived`)
+    derived: Option<serde_json::Value>,
 }
 
 impl Shown {
@@ -216,7 +220,7 @@ fn open_page(port: u16, path: &str, jar: &Option<String>) -> Result<(CrowVNode, 
     use tungstenite::client::IntoClientRequest;
     let first = request(port, "GET", path, jar)?;
     let title = first.split("<title>").nth(1).and_then(|t| t.split("</title>").next()).unwrap_or("").to_string();
-    let shown = Shown { title, address: path.to_string(), views: None, values: None, values_sent: None };
+    let shown = Shown { title, address: path.to_string(), views: None, values: None, values_sent: None, derived: None };
     let token: String = first.split("pageToken = '").nth(1).unwrap_or("").chars().take_while(|c| c.is_ascii_hexdigit()).collect();
     let page = CrowVNode::raw(
         &first
@@ -270,6 +274,7 @@ fn settle(ws: &mut Socket, page: &mut CrowVNode, shown: &mut Shown, port: u16, j
                     if m["type"] == "dev" && m["panel"]["views"].is_object() {
                         shown.views = Some((m["panel"]["views"]["ran"].as_u64().unwrap_or(0), m["panel"]["views"]["kept"].as_u64().unwrap_or(0)));
                         shown.values = m["panel"]["values"].as_u64();
+                        shown.derived = m["panel"].get("derived").cloned();
                     }
                     if m["type"] == "url" {
                         let (path, query) = (m["path"].as_str().unwrap_or(""), m["query"].as_str().unwrap_or(""));
@@ -343,7 +348,7 @@ pub(crate) fn drive(exe: &std::path::Path, mode: &[&str], file: &std::path::Path
         .env("CROW_BUILD_PROFILE", "dev")
         // (the dev panel tells the views a render ran, for a `views` step,
         // and the values a turn set, for a `values` step)
-        .envs(steps.iter().any(|s| s.get("views").is_some() || s.get("values").is_some()).then_some(("CROW_DEV", "served-parity")))
+        .envs(steps.iter().any(|s| s.get("views").is_some() || s.get("values").is_some() || s.get("derived").is_some()).then_some(("CROW_DEV", "served-parity")))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -458,6 +463,15 @@ pub(crate) fn page_steps(port: u16, dir: &std::path::Path, steps: &[serde_json::
                 }
                 continue;
             }
+            // `{"derived": {"rows": 1}}`: the derivations the last turn — the
+            // handler's run and the render after it — computed, each the
+            // number of times it was (one read again is not computed again)
+            if let Some(want) = step.get("derived") {
+                if shown.derived.as_ref() != Some(want) {
+                    return Err(format!("the last turn computed {:?}, not {}", shown.derived, want));
+                }
+                continue;
+            }
             // `{"values": 2}`: the last turn ran no view and set two bound
             // places (one-view-design.md 3.5); with the cache off
             // (CROW_VIEW_CACHE=off) every turn is a render, and the step
@@ -493,6 +507,17 @@ pub(crate) fn page_steps(port: u16, dir: &std::path::Path, steps: &[serde_json::
                 let mut m = serde_json::json!({ "event": step["event"], "seq": seq });
                 if let Some(v) = step.get("value") {
                     m["value"] = v.clone();
+                }
+                // a change to an input given a `change` handler carries it,
+                // as the page's script sends what the input's markup names
+                // (`"then": false` is a field's typing, which sends none)
+                let bound = step["event"].as_str().and_then(|e| e.strip_prefix("__field:").or_else(|| e.strip_prefix("__select:")));
+                let then = match step.get("then") {
+                    Some(t) => t.as_str().map(str::to_string),
+                    None => bound.and_then(|var| crate::harness::harness_then_for(&crate::harness::harness_parse_html(&page.to_html()), var)),
+                };
+                if let Some(h) = then {
+                    m["then"] = serde_json::Value::String(h);
                 }
                 m
             };

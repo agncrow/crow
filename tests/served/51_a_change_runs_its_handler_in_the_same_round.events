@@ -1,0 +1,5 @@
+[{"open": "/"}, {"expect": "data-crow-then=\"picked\""}, {"expect": "note: none yet"},
+ {"event": "__select:side", "value": "sell"}, {"expect": "note: sell picked"}, {"expect": "runs: 1"}, {"values": 3},
+ {"event": "__field:live", "value": "true"}, {"expect": "note: live is true"}, {"expect": "runs: 2"},
+ {"event": "__field:name", "value": "a", "then": false}, {"expect": "runs: 2"}, {"values": 1},
+ {"event": "__field:name", "value": "ann"}, {"expect": "note: named ann"}, {"expect": "runs: 3"}, {"values": 3}]

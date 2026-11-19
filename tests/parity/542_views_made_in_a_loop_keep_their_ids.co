@@ -1,0 +1,28 @@
+--- A view called in a loop keeps the id its call gives each element — a
+--- row's, a button's, a bound input's — computed from the item, through a
+--- list a local holds and a view it is handed to, in both modes (Rows
+--- keep their identity through `id`).
+use ui
+
+fn forget[]
+    log['forget']
+
+view session_row[s, on]
+    return row[
+        span[s, id = 'name-`s`'],
+        checkbox['Keep', on, id = 'keep-`s`'],
+        button['x', click = forget, id = 'forget-`s`'],
+        id = 'row-`s`', justify = 'between']
+
+view framed[body]
+    return stack[h2['Past'], body, gap = 's']
+
+view past_sessions[past, on]
+    rows = for s in past
+        session_row[s, on]
+    return framed[stack[rows]]
+
+fn show[]
+    log[str[past_sessions[['HSCS', 'EZGO', 'ANY'], true]]]
+
+show[]

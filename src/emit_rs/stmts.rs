@@ -836,7 +836,7 @@ impl Emitter {
             Expr::Call { target: Target::User(n), .. } => self.views.contains(n),
             Expr::Call { target: Target::Runtime(n), args, .. } => {
                 self.in_view()
-                    && (matches!(n.as_str(), "chart" | "field" | "slider" | "checkbox" | "toggle" | "radio" | "tabs" | "progress" | "icon") || (n == "select" && args.len() == 2))
+                    && (matches!(n.as_str(), "chart" | "field" | "slider" | "checkbox" | "toggle" | "radio" | "tabs" | "progress" | "icon") || (n == "select" && crate::ops::tree::is_control_call(n, args.len())))
             }
             _ => false,
         }
@@ -979,7 +979,7 @@ impl Emitter {
         let static_makes = |e: &Expr| match Emitter::raw(e) {
             Expr::Tree { .. } => true,
             Expr::Call { target: Target::User(n), .. } => fns.get(n).is_some_and(|g| g.kind == FnKind::View),
-            Expr::Call { target: Target::Runtime(n), args, .. } => matches!(n.as_str(), "chart" | "field" | "slider" | "checkbox" | "toggle" | "radio" | "tabs" | "progress" | "icon") || (n == "select" && args.len() == 2),
+            Expr::Call { target: Target::Runtime(n), args, .. } => matches!(n.as_str(), "chart" | "field" | "slider" | "checkbox" | "toggle" | "radio" | "tabs" | "progress" | "icon") || (n == "select" && crate::ops::tree::is_control_call(n, args.len())),
             _ => false,
         };
         loop {

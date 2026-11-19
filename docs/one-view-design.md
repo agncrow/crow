@@ -231,7 +231,7 @@ Every node is an object with a `node` field naming what it is:
 | --- | --- |
 | `element` | `kind` (as the view wrote it: `row`, `stack`, `button`, `p`, `table`, …), `options` (name to value, typed: text, number or truth, in name order), `events` (each `{on, handler, args?}`), `confirm` (the question a click asks first, when it asks one), `children`, and on a served page `binds` when the element holds a live value (phase 3, §7): each `{child: i, id}` (its `i`th child, a text or a control) or `{option: name, id}`, `id` the program's number for the binding |
 | `rows` | a table's rows, under the `table` element that holds them: `frame` (`columns`, each `{name, numeric}`, and `rows`, the rows the table shows in the order it shows them, each a list of cells as data, a missing one `null`), `total` (rows in all), `click`, `key`, `mark` (when given), `delta`, `hide`, `actions` (each `{label, handler}`), `confirm` (label to question), `page` (`{size, index, at}`) and `sort` (`{index, by?, desc?}`) when the table is paged or sorted, and `refused: true`, with no rows, for more rows than a table shows unpaged |
-| `control` | `kind`: `field` (`label`, `bind`, `value`, `type`, `lines`), `slider` (`label`, `bind`, `value`, `min`, `max`, `step`), `checkbox` and `toggle` (`label`, `bind`, `value`), `radio`, `tabs` and `select` (`options`, `bind`, `value`), `progress` (`value`, `max`), `icon` (`name`, `size`, `color`) |
+| `control` | `kind`: `field` (`label`, `bind`, `value`, `type`, `lines`), `slider` (`label`, `bind`, `value`, `min`, `max`, `step`), `checkbox` and `toggle` (`label`, `bind`, `value`), `radio`, `tabs` and `select` (`options`, `bind`, `value`), `progress` (`value`, `max`), `icon` (`name`, `size`, `color`); a bound input given an `id`, a `class` or a `tip` carries each, by that name, beside these (not in `options`, which are a choice's), and one given none carries none |
 | `chart` | what `chart[…]` was given: `frame`, `x`, `candles`, `lines`, `bars`, `marker` (`null` for none), `tz`, `height`, `panes`, `levels`, `points` (a frame or `null`), `seek` (a handler or `null`) |
 | `widget` | `module`, `props`, `on` (event to handler) |
 | `text` | `text` |
@@ -1093,7 +1093,10 @@ What phase 4 needs (the Lory host drawing the tree in WebGL):
   the texts' and options' own sizes.
 - Send events as a page does: `{"event": handler, "value": JSON text of
   the args array, "seq": n}`; a control's change `{"event":
-  "__field:<bind>", "value": …}` (`__select:` for a select); a table's
+  "__field:<bind>", "value": …}` (`__select:` for a select), with
+  `"then": handler` when the control's tree lists a `change` event (the
+  handler runs after the write, in the same turn, where the page offered
+  it; a field sends it only on commit); a table's
   `__sort` and `__page` with its index; `{"event":"__resync"}` when the
   tree it holds no longer fits, which brings the tree whole. Each event's
   `seq` comes back as `ack` on the message that answers it.

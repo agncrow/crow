@@ -1,0 +1,72 @@
+use web, ui
+
+--- A test finds, presses and types into a page by its elements' ids
+--- (`'#the-id'`), and setting a bound input runs its `change` handler, as
+--- the served page does: `elements[a, '#id']`, `click[a, '#id']` (a
+--- confirm's handler too, and a press's arguments), `change[a, '#id', v]`
+--- on a field, a select and a checkbox by the id their outer element
+--- carries — both modes alike.
+name = ''
+side = 'buy'
+agree = false
+n = 0
+picks = 0
+said = ''
+
+fn greet[]
+    said = 'Hello, `name`'
+
+fn put[x]
+    n = x
+
+fn wipe[]
+    n = 0
+    said = ''
+
+fn picked[]
+    picks = picks + 1
+
+view page_of[]
+    return stack[
+        field['Name', name, id = 'name'],
+        select[['buy', 'sell'], side, id = 'side', change = picked],
+        checkbox['I agree', agree, id = 'agree'],
+        button['Greet', click = greet, id = 'greet'],
+        button['Seven', click = put[7], id = 'seven'],
+        button['Wipe', click = wipe, id = 'wipe', confirm = 'Wipe it all?'],
+        p[said, id = 'out'],
+        p['n is `n`, picks `picks`', id = 'counts']
+    ]
+
+test found_by_id[]
+    a = app[page_of]
+    assert[len[elements[a, '#greet']] eq 1]
+    assert[elements[a, 'button#seven'][0].text eq 'Seven']
+    assert[elements[a, '#name'][0]['class'] eq 'crow-field']
+    assert[len[elements[a, '#name input']] eq 1]
+    assert[len[elements[a, '#nobody']] eq 0]
+
+test typed_and_pressed_by_id[]
+    a = app[page_of]
+    change[a, '#name', 'Ann']
+    click[a, '#greet']
+    assert[a.name eq 'Ann']
+    assert[elements[a, '#out'][0].text eq 'Hello, Ann']
+    click[a, '#seven']
+    assert[a.n eq 7]
+    click[a, '#wipe']
+    assert[a.n eq 0]
+
+test a_change_runs_its_handler[]
+    a = app[page_of]
+    change[a, '#side', 'sell']
+    assert[a.side eq 'sell']
+    assert[a.picks eq 1]
+    change[a, 'side', 'buy']
+    assert[a.picks eq 2]
+    change[a, '#agree', true]
+    assert[a.agree]
+    assert[a.picks eq 2]
+    assert[elements[a, '#counts'][0].text eq 'n is 0, picks 2']
+
+page['/', page_of]

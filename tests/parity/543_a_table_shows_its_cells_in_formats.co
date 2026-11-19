@@ -1,0 +1,19 @@
+--- A table shows a column's cells in a format — money, whole, percent,
+--- number:N, date, time, datetime — while its sort, its delta colouring
+--- and its right alignment read the values underneath (a cell that shows
+--- 0.00 is still below zero); a format the table does not know stops the
+--- render that draws it, in both modes.
+use ui, frame
+
+view formatted[f]
+    return table[f, formats = map[pnl = 'money', n = 'whole', pct = 'percent', px = 'number:3', day = 'date', at = 'time', when = 'datetime'], delta = ['pnl'], sort = true]
+
+view unknown[f]
+    return stack[table[f, formats = map[pnl = 'dollars']], p['after']]
+
+fn show[]
+    f = frame.new[sym = ['a', 'b', 'c'], pnl = [1234.5, -20.0, -0.001], n = [1234567, 3, -1000], pct = [12.5, -0.333, 100.0], px = [1.5, 2.0, 1000.25], day = [1762421400000, 0, 86400000], at = [1762421400000, 0, 1000], when = [1762421400000, 1762421401000, 0]]
+    log[str[formatted[f]]]
+    log[str[unknown[f]]]
+
+show[]

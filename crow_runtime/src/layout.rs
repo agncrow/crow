@@ -511,9 +511,106 @@ pub struct TableOf<'a> {
     pub confirm: &'a [(String, String)],
     pub page: Option<Paging>,
     pub sort: Option<&'a Sorting>,
+    /// `formats = map[pnl = 'money']`: the words a column's cells show in
+    /// (`cell_formatted`); the values underneath sort, colour and align.
+    pub formats: &'a [(String, String)],
+}
+
+/// The formats a table's cell can be shown in (`number:N` besides).
+pub const CELL_FORMATS: &[&str] = &["money", "whole", "percent", "date", "time", "datetime"];
+
+/// Whether a table knows the format: one of `CELL_FORMATS`, or `number:N`
+/// with N from 0 to 12.
+pub fn cell_format_known(format: &str) -> bool {
+    CELL_FORMATS.contains(&format) || format.strip_prefix("number:").and_then(|n| n.parse::<usize>().ok()).is_some_and(|n| n <= 12)
+}
+
+/// A number with `places` decimals and its thousands grouped by commas
+/// (`-1,234.50`), the minus kept.
+fn grouped(x: f64, places: usize) -> String {
+    // (half away from zero, as a ledger rounds: 1,234.5 is 1,235)
+    let scale = 10f64.powi(places as i32);
+    let text = format!("{:.*}", places, (x.abs() * scale).round() / scale);
+    let (whole, frac) = match text.split_once('.') {
+        Some((w, f)) => (w.to_string(), Some(f.to_string())),
+        None => (text.clone(), None),
+    };
+    let mut out = String::new();
+    for (i, ch) in whole.chars().enumerate() {
+        if i > 0 && (whole.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    if let Some(f) = frac {
+        out.push('.');
+        out.push_str(&f);
+    }
+    // (a value that rounds to zero shows no minus)
+    let zero = text.chars().all(|c| c == '0' || c == '.');
+    if x < 0.0 && !zero { format!("-{}", out) } else { out }
+}
+
+/// A cell as the format shows it. A missing cell, a number that is no
+/// number (nan, inf) and a value the format cannot read show as they
+/// would unformatted. A moment is read from a moment column (in its own
+/// zone), an int or float as epoch milliseconds (UTC), or ISO text.
+pub fn cell_formatted(col: &crate::frame::Column, r: usize, valid: bool, format: &str) -> String {
+    use crate::frame::Column;
+    let plain = || col.fmt_cell(r, valid);
+    if !valid {
+        return plain();
+    }
+    let number = match col {
+        Column::Int(v) => Some(v[r] as f64),
+        Column::Float(v) => Some(v[r]),
+        Column::Str(v) => v[r].trim().parse::<f64>().ok(),
+        _ => None,
+    };
+    let places = match format {
+        "money" => Some(2),
+        "whole" => Some(0),
+        "percent" => Some(2),
+        f => f.strip_prefix("number:").and_then(|n| n.parse::<usize>().ok()),
+    };
+    if let Some(places) = places {
+        return match number {
+            Some(x) if x.is_finite() => {
+                let shown = if format == "percent" { format!("{:.2}", (x * 100.0).round() / 100.0) } else { grouped(x, places) };
+                if format == "percent" { format!("{}%", shown) } else { shown }
+            }
+            _ => plain(),
+        };
+    }
+    let moment = match col {
+        Column::DateTime(ms, off) => Some((ms[r], off[r])),
+        Column::Int(v) => Some((v[r], 0)),
+        Column::Float(v) if v[r].is_finite() => Some((v[r] as i64, 0)),
+        Column::Str(v) => crate::frame::parse_datetime(&v[r]),
+        _ => None,
+    };
+    let Some((ms, off)) = moment else { return plain() };
+    let iso = crate::frame::format_datetime(ms, off);
+    let (day, rest) = iso.split_once('T').unwrap_or((iso.as_str(), "00:00:00"));
+    let clock = rest.get(..8).unwrap_or("00:00:00");
+    match format {
+        "date" => day.to_string(),
+        "time" => clock.to_string(),
+        "datetime" => format!("{} {}", day, clock),
+        _ => plain(),
+    }
 }
 
 impl TableOf<'_> {
+    /// The words a cell shows: in its column's format, else as it is.
+    fn cell_text(&self, c: usize, r: usize) -> String {
+        let f = self.frame;
+        match self.formats.iter().find(|(col, _)| col == &f.columns[c]) {
+            Some((_, format)) => cell_formatted(&f.data[c], r, f.validity[c][r], format),
+            None => f.data[c].fmt_cell(r, f.validity[c][r]),
+        }
+    }
+
     fn numeric(&self, c: usize) -> bool {
         matches!(self.frame.data[c].as_ref(), crate::frame::Column::Int(_) | crate::frame::Column::Float(_))
     }
@@ -576,7 +673,7 @@ impl TableOf<'_> {
                     sends.push(self.action(label, h, r));
                 }
             }
-            let shown: Vec<String> = (0..f.ncols()).map(|c| f.data[c].fmt_cell(r, f.validity[c][r])).collect();
+            let shown: Vec<String> = (0..f.ncols()).map(|c| self.cell_text(c, r)).collect();
             rows.push((sends, shown));
         }
         let sorts = match self.sort {
@@ -680,7 +777,7 @@ pub fn frame_table_parts(t: &TableOf) -> Vec<Part> {
             tr = tr.attr("data-crow-click", h).attr("data-crow-args", t.key_args(r)).attr("tabindex", "0");
         }
         for &c in &shown {
-            let text = f.data[c].fmt_cell(r, f.validity[c][r]);
+            let text = t.cell_text(c, r);
             let mut classes: Vec<&str> = Vec::new();
             if t.numeric(c) {
                 classes.push("num");
@@ -766,7 +863,7 @@ pub fn frame_table_clicks(t: &TableOf) -> Vec<(String, String)> {
 
 #[allow(clippy::too_many_arguments)]
 pub fn frame_table_html(f: &crate::frame::CrowFrame, click: Option<&str>, key: Option<&str>, mark: Option<&str>, delta: &[String], actions: &[(String, String)], hide: &[String], confirm: &[(String, String)], page: Option<Paging>, sort: Option<Sorting>) -> String {
-    let t = TableOf { frame: f, click, key, mark, delta, actions, hide, confirm, page, sort: sort.as_ref() };
+    let t = TableOf { frame: f, click, key, mark, delta, actions, hide, confirm, page, sort: sort.as_ref(), formats: &[] };
     let mut out = String::new();
     for p in frame_table_parts(&t) {
         p.write(&mut out);
@@ -995,6 +1092,7 @@ details > :not(summary){margin-top:0.5rem}
 .toast[style*="color:"]{border-left-color:currentColor}
 .toast[data-open="true"]{display:block;animation:crow-toast 4s ease forwards}
 @keyframes crow-toast{0%{opacity:0;transform:translateY(8px)}8%{opacity:1;transform:none}85%{opacity:1}100%{opacity:0;visibility:hidden}}
+.crow-tip{position:fixed;z-index:120;max-width:min(320px,90vw);background:var(--crow-text);color:var(--crow-bg);border-radius:4px;padding:0.35rem 0.6rem;font-size:0.85rem;line-height:1.3;pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,.2)}
 .crow-check{display:inline-flex;align-items:center;gap:0.5rem;color:var(--crow-text);font-size:var(--crow-control-font);min-height:var(--crow-target);cursor:pointer}
 .crow-check input{width:auto;margin:0;accent-color:var(--crow-accent)}
 .crow-toggle input{appearance:none;-webkit-appearance:none;width:2.2rem;height:1.25rem;border-radius:999px;background:var(--crow-border);position:relative;padding:0;border:0;transition:background 120ms ease;cursor:pointer}
@@ -1182,6 +1280,35 @@ pub fn mobile_css() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each format's words: grouped thousands and the minus kept, a
+    /// percent of the number as it is, a moment from its column, epoch
+    /// milliseconds or ISO text; what a format cannot read shows plain.
+    #[test]
+    fn a_cell_shows_in_its_format() {
+        use crate::frame::Column;
+        let f = |c: &Column, r: usize, fmt: &str| cell_formatted(c, r, true, fmt);
+        let x = Column::Float(vec![1234.5, -1234567.891, -0.001, f64::NAN, 0.0]);
+        assert_eq!(f(&x, 0, "money"), "1,234.50");
+        assert_eq!(f(&x, 1, "money"), "-1,234,567.89");
+        assert_eq!(f(&x, 2, "money"), "0.00");
+        assert_eq!(f(&x, 3, "money"), "nan");
+        assert_eq!(f(&x, 1, "whole"), "-1,234,568");
+        assert_eq!(f(&x, 0, "number:3"), "1,234.500");
+        assert_eq!(f(&x, 0, "number:0"), "1,235");
+        assert_eq!(f(&x, 0, "percent"), "1234.50%");
+        assert_eq!(f(&Column::Int(vec![1000]), 0, "whole"), "1,000");
+        let at = Column::Int(vec![1762421400000]);
+        assert_eq!(f(&at, 0, "date"), "2025-11-06");
+        assert_eq!(f(&at, 0, "time"), "09:30:00");
+        assert_eq!(f(&at, 0, "datetime"), "2025-11-06 09:30:00");
+        let iso = Column::strs(vec!["2026-11-06T09:30:05Z".into(), "soon".into()]);
+        assert_eq!(f(&iso, 0, "datetime"), "2026-11-06 09:30:05");
+        assert_eq!(f(&iso, 1, "date"), "soon");
+        assert_eq!(f(&Column::DateTime(vec![1762421400000], vec![-300]), 0, "time"), "04:30:00");
+        assert_eq!(cell_formatted(&x, 0, false, "money"), x.fmt_cell(0, false));
+        assert!(cell_format_known("number:2") && !cell_format_known("number:x") && !cell_format_known("dollars"));
+    }
 
     fn numbers(n: usize) -> crate::frame::CrowFrame {
         crate::frame::CrowFrame::new(vec!["n".to_string()], vec![crate::frame::Column::Int((0..n as i64).collect())], vec![vec![true; n]])
@@ -1463,6 +1590,7 @@ mod tests {
                 confirm: &confirm,
                 page: (next(2) == 0).then(|| Paging { size: next(4) + 1, index: next(3), at: next(5) }),
                 sort: sort.as_ref(),
+                formats: &[],
             };
             let mut from_parts = Vec::new();
             for p in frame_table_parts(&t) {

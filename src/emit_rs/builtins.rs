@@ -371,7 +371,7 @@ impl Emitter {
         // printed the dropdown in a page)
         let frame_select_widget = name == "select"
             && self.needs_ui
-            && n == 2
+            && crate::ops::tree::is_control_call(name, n)
             && providers.contains(&"frame")
             && self.reads_ui_names
             && crate::lower::is_ui_control(name, matches!(in0, Ty::Frame(_)));

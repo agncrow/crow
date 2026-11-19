@@ -1,0 +1,3 @@
+k74_a_change_that_is_no_handler.co:8:5: select: change takes a handler by name, as click does — change = save, where save[] takes nothing
+  8 │     return stack[select[['a', 'b'], pick, change = 'saved']]
+    │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -128,6 +128,50 @@ otherwise survives until someone looks at the page. The second block is
 two-way binding end to end: the field's variable changes, the paragraph
 re-renders with it, the handler puts it back.
 
+A test can also go through the page the way a reader does, by the ids
+the page gives its elements: `'#greet'` selects the element whose id is
+`greet`, `click[s, '#greet']` presses it — the handler its click names,
+with the arguments it carries — and `change[s, '#name', 'Ann']` types
+into the input the element of that id holds. A test written so breaks
+when the button loses its click or the field its binding, which a click
+by the handler's name would not notice:
+
+```crow
+use web, ui
+
+name = ''
+said = ''
+
+fn greet[]
+    said = 'Hello, `name`'
+
+view hello[]
+    return stack[
+        field['Name', name, id = 'name'],
+        button['Greet', click = greet, id = 'greet'],
+        p[said, id = 'out']
+    ]
+
+test through_the_page[]
+    s = app[hello]
+    change[s, '#name', 'Ann']
+    click[s, '#greet']
+    assert[elements[s, '#out'][0].text eq 'Hello, Ann']
+    assert[len[elements[s, '#name input']] eq 1]
+
+page['/', hello]
+log['hello defined']
+```
+
+```text
+hello defined
+```
+
+An id names one element: `click` and `change` refuse an id no element
+has, or one two elements share, and `click` refuses an element with no
+click or one that is `disabled`. `box[]` reads the layout's boxes, which
+carry tags and classes, so it selects by those alone.
+
 ## What a test block sees
 
 A test block sees declarations: functions, views, structs, imports. Of the

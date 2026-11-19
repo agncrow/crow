@@ -1,0 +1,12 @@
+--- A table's `formats` naming a column its frame does not have stops the
+--- render that draws it, with the frame's columns, in both modes.
+use ui, frame
+
+view missing[f]
+    return stack[table[f, formats = map[gone = 'money']], p['after']]
+
+fn show[]
+    f = frame.new[sym = ['a'], pnl = [1.5]]
+    log[str[missing[f]]]
+
+show[]

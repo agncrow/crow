@@ -35,7 +35,7 @@ impl TypeContext {
         if self.in_view
             && (crate::lower::UI_ELEMENTS.contains(&name)
                 || matches!(name, "chart" | "icon" | "progress" | "field" | "slider" | "checkbox" | "toggle" | "radio" | "tabs")
-                || (name == "select" && args.len() == 2))
+                || (name == "select" && crate::ops::tree::is_control_call(name, args.len())))
         {
             return Ty::Markup;
         }

@@ -1350,6 +1350,18 @@ fn view_widget(attrs: &std::collections::BTreeMap<String, CrowValue>, children: 
 /// and the evaluated arguments.
 pub fn view_control(name: &str, key: &str, vals: &[CrowValue]) -> Result<tree::Node, String> {
     let s = |v: &CrowValue| format!("{}", v.value);
+    // (what it takes of what any element takes, after its own arguments)
+    if let Some(base) = tree::control_arity(name)
+        && vals.len() == base + tree::CONTROL_OWN.len()
+    {
+        let node = view_control(name, key, &vals[..base])?;
+        // (`change = h`: a function; none given is 0)
+        let change = match &vals[base + 3].value {
+            Value::Fn(f) => Some(f.name.clone()),
+            _ => None,
+        };
+        return tree::owned(node, &s(&vals[base]), &s(&vals[base + 1]), &s(&vals[base + 2]), change.as_deref());
+    }
     let json = |v: &CrowValue| crate::builtins::crow_to_json("", v).unwrap_or(serde_json::Value::Null);
     let num = |v: &CrowValue| match &v.value {
         Value::Int(n) => *n as f64,

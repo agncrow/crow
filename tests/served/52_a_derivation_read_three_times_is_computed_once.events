@@ -1,0 +1,5 @@
+[{"open": "/"}, {"expect": "total 7"},
+ {"event": "look"}, {"expect": "read 9"},
+ {"event": "look"}, {"derived": {}},
+ {"event": "add"}, {"expect": "total 12"}, {"expect": "read 12"}, {"derived": {"at_least": 1, "total": 1}},
+ {"event": "rename"}, {"expect": "label: named"}, {"derived": {"shown_label": 1}}]

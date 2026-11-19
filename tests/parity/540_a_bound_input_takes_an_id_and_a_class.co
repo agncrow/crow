@@ -1,0 +1,40 @@
+--- A bound input takes an `id`, a `class` and a `tip`, as any element
+--- does: they go on the outermost element it draws (the one holding its
+--- label's words and its input), its classes after Crow's own — literal or
+--- computed, in a loop, through a node a local holds and through a view
+--- handed it — and a control given none is drawn as it was, in both modes.
+use ui
+
+view one_each[name, day, on, pick, side, n]
+    return stack[
+        field['Name', name, id = 'f-name', class = 'ctl wide'],
+        field['Day', day, type = 'date', id = 'f-day'],
+        field['Notes', name, lines = 2, class = 'ctl'],
+        checkbox['On', on, id = 'f-on', tip = 'turns it on'],
+        toggle['Live', on, class = 'ctl'],
+        select[['a', 'b'], pick, id = 'f-pick'],
+        radio[['buy', 'sell'], side, id = 'f-side'],
+        tabs[['buy', 'sell'], side, id = 'f-tabs', class = 'ctl'],
+        slider['N', n, min = 0, max = 10, id = 'f-n'],
+        field['Plain', name],
+        select[['a', 'b'], pick]
+    ]
+
+view looped[name]
+    rows = for i in range[3]
+        field['Row `i`', name, id = 'row-`i`', class = 'ctl c`i`']
+    return stack[rows]
+
+view placed[body]
+    return row[body, gap = 's']
+
+view held[on]
+    c = checkbox['Held', on, id = 'held-on', class = 'ctl']
+    return placed[c]
+
+fn show[]
+    log[str[one_each['ada', '2026-11-18', true, 'b', 'sell', 4]]]
+    log[str[looped['ada']]]
+    log[str[held[false]]]
+
+show[]

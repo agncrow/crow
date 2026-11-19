@@ -52,6 +52,60 @@ page['/', form]
 a textarea. `tabs` and `radio` hold one of several strings, `checkbox` and
 `toggle` a bool — the same binding drawn two ways.
 
+An input takes `id`, `class` and `tip` as any element does. They land on the
+outermost element it draws — the one holding its label and its input — so
+the id names both, and the classes follow Crow's own:
+
+```crow
+use web, ui
+
+email = ''
+agree = false
+
+view signup[]
+    return stack[
+        field['Email', email, id = 'signup-email', class = 'wide'],
+        checkbox['I agree', agree, id = 'signup-agree', tip = 'Read the terms first'],
+        gap = 'm'
+    ]
+
+test an_input_carries_its_id[]
+    a = app[signup]
+    h = html[a]
+    assert['<div class="crow-field wide" id="signup-email"><label>Email</label>' in h]
+    assert['<label class="crow-check" id="signup-agree" title="Read the terms first">' in h]
+
+page['/', signup]
+```
+
+An input can also name a handler to run once the reader's change is
+written: `change = picked`. The variable is set first, then `picked[]`
+runs in the same round, reading it, and the page is drawn once. A
+field's handler runs when the reader commits the text — leaving the field
+or pressing Enter — not at each key. In a test, `change` runs it too:
+
+```crow
+use web, ui
+
+side = 'buy'
+note = ''
+
+fn picked[]
+    note = 'now `side`'
+
+view order[]
+    return stack[select[['buy', 'sell'], side, change = picked], p[note]]
+
+test the_change_runs_its_handler[]
+    a = app[order]
+    change[a, 'side', 'sell']
+    assert[elements[a, 'p'][0].text eq 'now sell']
+
+page['/', order]
+```
+
+The handler takes nothing: what changed is in the variable.
+
 ## Revealing: disclosure, dropdowns, and the three layers
 
 `details` shows its summary always and its body when open. A `dropdown` is

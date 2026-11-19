@@ -1,0 +1,13 @@
+--- a bound input's change runs its handler with nothing: one that takes a
+--- parameter is refused where it is named
+use web, ui
+
+name = ''
+
+fn named[who]
+    log[who]
+
+view v[]
+    return stack[field['Name', name, change = named]]
+
+page['/', v]

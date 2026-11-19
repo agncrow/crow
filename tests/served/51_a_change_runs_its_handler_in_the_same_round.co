@@ -1,0 +1,35 @@
+--- A bound input's `change = handler` runs the handler once the page has
+--- written the change, in the same round, with one render: a select's
+--- change, a checkbox's, and a field's committed text (the page sends the
+--- handler with the browser's `change`, not with each key typed), in both
+--- modes.
+use web, ui
+
+side = 'buy'
+live = false
+name = ''
+note = 'none yet'
+runs = 0
+
+fn picked[]
+    runs = runs + 1
+    note = '`side` picked'
+
+fn switched[]
+    runs = runs + 1
+    note = 'live is `live`'
+
+fn named[]
+    runs = runs + 1
+    note = 'named `name`'
+
+view render[]
+    return stack[
+        select[['buy', 'sell'], side, change = picked, id = 'side'],
+        checkbox['Live', live, change = switched],
+        field['Name', name, change = named],
+        p['note: `note`'],
+        p['runs: `runs`']]
+
+page['/', render]
+serve[3598]

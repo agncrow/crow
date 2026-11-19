@@ -303,6 +303,19 @@ impl Emitter {
             return None;
         }
         let n = a.len();
+        // a bound input given what any element takes, after its own
+        // arguments: the control, then those on its outermost element
+        if let Some(base) = crate::ops::tree::control_arity(name)
+            && n == base + crate::ops::tree::CONTROL_OWN.len()
+        {
+            let control = self.ui_builtin(name, &args[..base], &a[..base])?;
+            // (`change = h`: a handler of the program's; none given is 0)
+            let change = match Emitter::raw(&args[base + 3]) {
+                Expr::FnRef(f, _) if self.fns.contains_key(f) => format!("Some(\"{}\")", f),
+                _ => "None".to_string(),
+            };
+            return Some(format!("tree::owned({}, &{}, &{}, &{}, {}){}", control, a[base], a[base + 1], a[base + 2], change, self.or_stop()));
+        }
         Some(match name {
             "slider" if n == 5 => {
                 let key = Self::bound_key_of(&args[1]);

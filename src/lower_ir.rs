@@ -6984,6 +6984,33 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+        // (a bound input's `change` is a handler named, which the page runs
+        // with nothing once the change is written: a value there, or a
+        // function that takes something, is no change to run)
+        if self.pass == Pass::Final
+            && !self.ctx.functions.contains_key(&name)
+            && !matches!(args.first(), Some(A::Map(..)))
+            && crate::ops::tree::control_arity(&name).map(|a| a + crate::ops::tree::CONTROL_OWN.len()) == Some(args.len())
+        {
+            match args.last() {
+                Some(A::Int(0)) | None => {}
+                Some(A::Ident(f)) if self.calls_fn(f) => {
+                    let takes = self.ctx.functions.get(f).map(|sig| sig.params.len()).unwrap_or(0);
+                    if takes > 0 {
+                        self.refuse(format!(
+                            "{}: change = {} runs {}[] with nothing once the change is written, and {}[] takes {} — read the variable the {} binds inside it instead",
+                            name,
+                            crate::lower::shown(f),
+                            crate::lower::shown(f),
+                            crate::lower::shown(f),
+                            if takes == 1 { "a parameter".to_string() } else { format!("{} parameters", takes) },
+                            name
+                        ));
+                    }
+                }
+                Some(_) => self.refuse(format!("{}: change takes a handler by name, as click does — change = save, where save[] takes nothing", name)),
+            }
+        }
         let row_fns: Vec<(usize, &'static crate::table::Sig)> = if self.ctx.functions.contains_key(&name) {
             Vec::new()
         } else {
@@ -8210,7 +8237,7 @@ impl<'a> Lowerer<'a> {
         // when the core's rows do not take the kinds — `max` of a tensor,
         // or of a list of numbers, is math's of the whole; `sort` of a list
         // with frame imported is the core's
-        let control = name == "select" && self.in_ui && lowered.len() == 2 && registry.providers_of(name).contains(&"frame");
+        let control = name == "select" && self.in_ui && crate::ops::tree::is_control_call(name, lowered.len()) && registry.providers_of(name).contains(&"frame");
         let element = matches!(self.at, Where::In(FnKind::View)) && crate::lower::UI_ELEMENTS.contains(&name);
         if control || element {
             return None;

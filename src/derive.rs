@@ -1555,7 +1555,10 @@ fn bound_control(e: &crate::ir::Expr, env: &Env, pure: &BTreeSet<String>) -> boo
         _ => None,
     };
     let Some(var) = vt::control_binds(n, args.len(), matches!(args.first(), Some(I::MapLit(..))), kind) else { return false };
-    let plain = args.iter().all(|a| !a.ty().is_result() && bindable(a, env, pure));
+    // (its change's handler, the last of what it takes beside what it
+    // shows, is a function named: the same at every render)
+    let handler_at = vt::control_arity(n).map(|a| a + vt::CONTROL_OWN.len() - 1).filter(|at| *at + 1 == args.len());
+    let plain = args.iter().enumerate().all(|(i, a)| (Some(i) == handler_at && matches!(a, I::FnRef(..))) || (!a.ty().is_result() && bindable(a, env, pure)));
     match var {
         Some(i) => plain && matches!(args.get(i), Some(I::Load(_, t)) if control_scalar(t)),
         None => plain,

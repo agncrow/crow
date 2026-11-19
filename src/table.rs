@@ -114,6 +114,9 @@ pub const SEEK: Sig = Sig { params: &[Kind::Float], ret: Kind::Unit, rest: false
 /// A page's init (`page[…, init = f]`, `app[view, init = f]`): handed
 /// nothing, run once as a session opens the page.
 pub const OPENS: Sig = Sig { params: &[], ret: Kind::Unit, rest: false, deferred: false };
+/// A bound input's `change = h`: run after the reader's change is written,
+/// with nothing, as a click's handler is.
+pub const CHANGES: Sig = Sig { params: &[], ret: Kind::Unit, rest: false, deferred: false };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Kind {
@@ -3132,6 +3135,16 @@ pub static FORMS: &[Row] = &[
     Row { props: &[Prop::Binds(1)], ..form!("ui.toggle", "ui", "toggle", (Str, Shown)) },
     Row { props: &[Prop::Binds(1)], ..form!("ui.radio", "ui", "radio", (Strs, Shown)) },
     Row { props: &[Prop::Binds(1)], ..form!("ui.tabs", "ui", "tabs", (Strs, Shown)) },
+    // a bound input given what any element takes — `id`, `class`, `tip` —
+    // and the handler its change runs, after its own: rows of their own, so
+    // a call that gives none is the call it was (the row filling in least
+    // is the call's)
+    Row { props: &[Prop::Binds(1)], options: &[("type", Preset::Str("")), ("lines", Preset::Int(0)), ("id", Preset::Str("")), ("class", Preset::Str("")), ("tip", Preset::Str("")), ("change", Preset::Event(&CHANGES))], ..form!("ui.field_own", "ui", "field", (Str, Shown, Str, Int, Str, Str, Str, Shown)) },
+    Row { props: &[Prop::Binds(1)], options: &[("min", Preset::Int(0)), ("max", Preset::Int(100)), ("step", Preset::Int(1)), ("id", Preset::Str("")), ("class", Preset::Str("")), ("tip", Preset::Str("")), ("change", Preset::Event(&CHANGES))], ..form!("ui.slider_own", "ui", "slider", (Str, Shown, Int, Int, Int, Str, Str, Str, Shown)) },
+    Row { props: &[Prop::Binds(1)], options: &[("id", Preset::Str("")), ("class", Preset::Str("")), ("tip", Preset::Str("")), ("change", Preset::Event(&CHANGES))], ..form!("ui.checkbox_own", "ui", "checkbox", (Str, Shown, Str, Str, Str, Shown)) },
+    Row { props: &[Prop::Binds(1)], options: &[("id", Preset::Str("")), ("class", Preset::Str("")), ("tip", Preset::Str("")), ("change", Preset::Event(&CHANGES))], ..form!("ui.toggle_own", "ui", "toggle", (Str, Shown, Str, Str, Str, Shown)) },
+    Row { props: &[Prop::Binds(1)], options: &[("id", Preset::Str("")), ("class", Preset::Str("")), ("tip", Preset::Str("")), ("change", Preset::Event(&CHANGES))], ..form!("ui.radio_own", "ui", "radio", (Strs, Shown, Str, Str, Str, Shown)) },
+    Row { props: &[Prop::Binds(1)], options: &[("id", Preset::Str("")), ("class", Preset::Str("")), ("tip", Preset::Str("")), ("change", Preset::Event(&CHANGES))], ..form!("ui.tabs_own", "ui", "tabs", (Strs, Shown, Str, Str, Str, Shown)) },
     Row { options: &[("max", Preset::Float(1.0))], ..form!("ui.progress", "ui", "progress", (Float, Float)) },
     Row { options: &[("size", Preset::Str("m")), ("color", Preset::Str(""))], ..form!("ui.icon", "ui", "icon", (Str, Str, Str)) },
     // db: its verbs that are forms of their own
@@ -3149,6 +3162,7 @@ pub static FORMS: &[Row] = &[
     // (counted by nothing, as before: `later`, a control, the harness verbs)
     Row { params: &[Kind::FnOf(&DEFERRED), Kind::Shows], props: &[Prop::Does(crate::effects::Effect::Session), Prop::Answers], ..form!("core.later", "", "later", ()) },
     Row { props: &[Prop::Binds(1), Prop::Unreserved], ..form!("ui.select", "ui", "select", (Shows)) },
+    Row { props: &[Prop::Binds(1), Prop::Unreserved], options: &[("id", Preset::Str("")), ("class", Preset::Str("")), ("tip", Preset::Str("")), ("change", Preset::Event(&CHANGES))], ..form!("ui.select_own", "ui", "select", (Strs, Shown, Str, Str, Str, Shown)) },
     Row { props: &[Prop::TestOnly], ..form!("web.click", "web", "click", (Shows)) },
     Row { props: &[Prop::TestOnly], ..form!("web.elements", "web", "elements", (Shows)) },
     Row { props: &[Prop::TestOnly], ..form!("web.change", "web", "change", (Shows)) },
