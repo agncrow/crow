@@ -3347,15 +3347,26 @@ fn page_js(ws_base: Option<&str>, ws_path: &str, page_token: &str) -> String {
   // a field shows what the server rendered, unless the reader is typing in
   // it and the value is not the program's (`takes`; `was` is the control
   // before the change); a tick or a choice, unless its own change is still
-  // on its way
+  // on its way. A select is set as a whole to the option the render marks,
+  // else its first (`shown`): unmarking one option moves nothing, so a select
+  // whose options were renamed in place kept its old index and showed the
+  // renamed option there.
   function follow(el, was) {{
     if (!el) return;
     if (el.tagName === 'TEXTAREA') {{ if (takes(el, was)) put(el, el.defaultValue); }}
-    else if (el.tagName === 'OPTION' && el.parentNode && el.parentNode.tagName === 'SELECT') {{ if (takes(el.parentNode, was)) el.selected = el.defaultSelected; }}
+    else if (el.tagName === 'OPTION' && el.parentNode && el.parentNode.tagName === 'SELECT') {{ if (takes(el.parentNode, was)) mark(el.parentNode, el); }}
+    else if (el.tagName === 'SELECT' && !el.multiple) {{ if (takes(el, was)) mark(el, null); }}
     else if (el.tagName === 'INPUT') {{
       if (el.type === 'checkbox' || el.type === 'radio') {{ if (el !== document.activeElement || !(sentAt[bindKey(el)] > acked)) el.checked = el.defaultChecked; }}
       else if (takes(el, was)) put(el, el.defaultValue);
     }}
+  }}
+  // a select shows the option its render marks, else its first; a select
+  // of many takes the one option's mark
+  function mark(sel, o) {{
+    if (sel.multiple) {{ o.selected = o.defaultSelected; return; }}
+    var m = sel.querySelector('option[selected]') || sel.options[0];
+    if (m && sel.selectedIndex !== m.index) sel.selectedIndex = m.index;
   }}
   function applyChange(p) {{
     var node = nodeAt(p.path), k, j, fresh, was;
@@ -6874,6 +6885,107 @@ mod tests {
                 let empty = if el == COUNT { "0" } else { "" };
                 b.until(&format!("{}.value === '{}'", el, empty), "wipe's value in the focused field");
                 assert_eq!(b.eval(&format!("document.activeElement === {}", el)), serde_json::json!(true));
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    /// The page the select test picks in: a theme select whose options are
+    /// the one kept first and whose choice its change empties (Myna's
+    /// Settings), and a size select whose options a button turns round, its
+    /// choice staying `m`; and enough rows that a render comes as changes.
+    fn picked_page(s: &CrowLiveState) -> CrowVNode {
+        let text = |k: &str| s.get(k).and_then(|v| v.as_str().map(|x| x.to_string())).unwrap_or_default();
+        let kept = text("kept");
+        let mut themes = vec![kept.clone()];
+        themes.extend(["Light", "Dark", "System"].iter().map(|t| t.to_string()).filter(|t| *t != kept));
+        let turn = s.get_i64("turn", 0) as usize;
+        let sizes: Vec<String> = (0..3).map(|i| ["s", "m", "l"][(i + turn) % 3].to_string()).collect();
+        let options = |opts: &[String], current: &str| {
+            opts.iter()
+                .map(|o| {
+                    let n = CrowVNode::option(vec![CrowVNode::text(o)]).attr("value", o);
+                    if o == current { n.attr("selected", "selected") } else { n }
+                })
+                .collect::<Vec<_>>()
+        };
+        CrowVNode::div(vec![
+            CrowVNode::select(options(&themes, &text("choice"))).attr("data-crow-change", "__select:choice").attr("data-crow-then", "keep"),
+            CrowVNode::select(options(&sizes, &text("size"))).attr("data-crow-change", "__select:size"),
+            CrowVNode::button(vec![CrowVNode::text("Turn")]).on_click("turn"),
+            CrowVNode::p(vec![CrowVNode::text(&format!("kept: {} turn: {}", kept, turn))]),
+            // rows that never change, so a render comes as changes
+            CrowVNode::tag("ul", (0..60).map(|i| CrowVNode::tag("li", vec![CrowVNode::text(&format!("row {}", i))])).collect()),
+        ])
+    }
+
+    /// A select in a real browser shows the program's choice when the
+    /// render renames its options in place: picked with the focus in it,
+    /// `keep` keeps the pick, puts it first and empties the choice, and the
+    /// select shows the first option (it had kept its old index, whose
+    /// option had been renamed); twice. A select without the focus whose
+    /// options a click turns round shows the option still marked.
+    /// `cargo test -p crow_web --features live,http a_focused_select_shows_the_choice_its_program_made -- --ignored`
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn a_focused_select_shows_the_choice_its_program_made() {
+        let mut initial = CrowLiveState::new();
+        initial.set("kept", serde_json::json!("Light"));
+        initial.set("choice", serde_json::json!(""));
+        initial.set("size", serde_json::json!("m"));
+        initial.set("turn", serde_json::json!(0));
+        let render = |s: &CrowLiveState| picked_page(s);
+        let handle = |s: &mut CrowLiveState, event: &str, _: Option<&str>| match event {
+            "keep" => {
+                let c = s.get("choice").and_then(|v| v.as_str().map(|x| x.to_string())).unwrap_or_default();
+                if !c.is_empty() {
+                    s.set("kept", serde_json::json!(c));
+                }
+                s.set("choice", serde_json::json!(""));
+            }
+            "turn" => {
+                let t = s.get_i64("turn", 0) + 1;
+                s.set("turn", serde_json::json!(t));
+            }
+            _ => {}
+        };
+        let router = CrowLiveView::new("/_ws/", initial, render, handle).into_router("/");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        tokio::task::spawn_blocking(move || {
+            let Some(mut b) = Browser::open("picked") else { return };
+            let hook = "(function(){var W=window.WebSocket;window.__kinds=[];window.WebSocket=function(u,p){var w=new W(u,p);\
+                w.addEventListener('message',function(e){try{window.__kinds.push(JSON.parse(e.data).type);}catch(x){}});return w;};\
+                window.WebSocket.prototype=W.prototype;})();";
+            b.call("Page.enable", serde_json::json!({}));
+            b.call("Page.addScriptToEvaluateOnNewDocument", serde_json::json!({ "source": hook }));
+            b.call("Page.navigate", serde_json::json!({ "url": format!("http://127.0.0.1:{}/", port) }));
+            b.until("window.__kinds && window.__kinds.indexOf('session') >= 0", "the socket");
+            const THEME: &str = "document.querySelector('[data-crow-change=\"__select:choice\"]')";
+            const SIZE: &str = "document.querySelector('[data-crow-change=\"__select:size\"]')";
+            let state = |b: &mut Browser, el: &str| {
+                b.eval(&format!("[document.activeElement==={0}, {0}.value, {0}.selectedIndex, Array.from({0}.options).map(o => o.value).join(',')]", el))
+            };
+            assert_eq!(state(&mut b, THEME), serde_json::json!([false, "Light", 0, "Light,Dark,System"]));
+            // the reader picks with the focus in the select, as a pick does
+            for (pick, order) in [("System", "System,Light,Dark"), ("Dark", "Dark,Light,System")] {
+                b.eval(&format!("{0}.focus(); {0}.value = '{1}'; {0}.dispatchEvent(new Event('change', {{bubbles: true}})); 1", THEME, pick));
+                b.until(&format!("document.body.innerText.indexOf('kept: {}') >= 0", pick), "keep's render");
+                b.until(&format!("Array.from({}.options).map(o => o.value).join(',') === '{}'", THEME, order), "the options renamed");
+                assert_eq!(state(&mut b, THEME), serde_json::json!([true, pick, 0, order]), "the program's choice after picking {}", pick);
+                let kinds = b.eval("window.__kinds.join(',')").as_str().unwrap_or("").to_string();
+                assert!(kinds.ends_with(",patches"), "keep's render came as changes: {}", kinds);
+            }
+            // a select without the focus, its options turned round by a click
+            b.eval(&format!("{}.blur(); 1", THEME));
+            assert_eq!(state(&mut b, SIZE), serde_json::json!([false, "m", 1, "s,m,l"]));
+            for (turn, order, at) in [(1, "m,l,s", 0), (2, "l,s,m", 2), (3, "s,m,l", 1)] {
+                b.eval("Array.from(document.querySelectorAll('button')).find(x => x.textContent === 'Turn').click(); 1");
+                b.until(&format!("document.body.innerText.indexOf('turn: {}') >= 0", turn), "turn's render");
+                b.until(&format!("Array.from({}.options).map(o => o.value).join(',') === '{}'", SIZE, order), "the options turned");
+                assert_eq!(state(&mut b, SIZE), serde_json::json!([false, "m", at, order]), "the marked size after turn {}", turn);
             }
         })
         .await

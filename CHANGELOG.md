@@ -276,6 +276,17 @@ history says the rest.
 
 ### Fixed
 
+- A select whose options a render renames in place shows the program's
+  choice: Myna's Settings lists the themes with the one kept first and
+  empties the choice after a pick, and the select, still focused, went on
+  showing the option at the old place (System picked, the page drawn in
+  System, the select showing Light). The page's loader unmarked the one
+  option a change touched, which moves nothing when it is not the one
+  shown, so the select kept its old index; it now sets the select itself
+  to the option the render marks, else its first, whenever the select
+  takes the server's value (an echo of the reader's own pick still never
+  moves it). The loader's browser test
+  `a_focused_select_shows_the_choice_its_program_made`.
 - A focused field shows the value its program set: a form its own submit
   cleared (`name = ''` after Enter) had kept showing what was typed, so
   the page and the program disagreed until the variable changed again,
